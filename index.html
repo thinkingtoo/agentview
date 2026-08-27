@@ -295,7 +295,12 @@ document.getElementById("main").addEventListener("click", async ev => {
   if (ev.target.closest(".edit, .guess, .clear, .pin")) return;
   const row = ev.target.closest(".row.can");
   if (!row) return;
+  // Acknowledge the click *now*. Raising the terminal takes the focus off
+  // this page, and a browser throttles a page it is not showing -- feedback
+  // that waits for the response is feedback you never see.
   row.classList.remove("jumped", "failed");
+  void row.offsetWidth;
+  row.classList.add("jumped");
   try {
     const r = await fetch("/api/jump", {
       method: "POST",
@@ -303,8 +308,11 @@ document.getElementById("main").addEventListener("click", async ev => {
       body: JSON.stringify({ pid: Number(row.dataset.pid) }),
     });
     const out = await r.json();
-    row.classList.add(out.ok ? "jumped" : "failed");
-    if (!out.ok) document.getElementById("stamp").textContent = out.reason || "jump failed";
+    if (!out.ok) {
+      row.classList.remove("jumped");
+      row.classList.add("failed");
+      document.getElementById("stamp").textContent = out.reason || "jump failed";
+    }
   } catch (e) {
     row.classList.add("failed");
   }

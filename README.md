@@ -34,6 +34,25 @@ systemctl --user enable --now claude-team
 Bound to `127.0.0.1` deliberately: the page shows your prompts verbatim, which
 is client work and occasionally a credential someone pasted into an error.
 
+## Speed
+
+Transcripts are big — 58 MB across ten sessions here, one of them 27 MB — and
+the busy ones change every few seconds. Reading them whole on every poll cost
+**~9 seconds a round**, which is what made clicking feel broken: the click was
+fine, the server was busy re-reading megabytes.
+
+So a transcript is read **once, from its tail**, and after that only the bytes
+appended since. A partial final line is left for next time; a file that shrank
+or whose opening bytes changed is read again from scratch. Cold **14.4s →
+0.84s**, warm **0.28s → 0.03s**.
+
+A jump asks WezTerm and tmux first and only enumerates Konsole over D-Bus if
+neither claimed the session, and validates the pid from the peer files alone
+rather than building the whole page. The click is also acknowledged before the
+request goes out — raising a terminal takes the focus off the page, and a
+browser throttles a page it is not showing, so feedback that waits for the
+response is feedback you never see.
+
 ## Click a card, get the terminal
 
 Clicking a session raises the terminal it is running in. The page never guesses

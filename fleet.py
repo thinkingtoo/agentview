@@ -250,6 +250,215 @@ def pending_tool(path):
     return max(0.0, (now - started).total_seconds() / 60)
 
 
+def scan(path):
+    """Everything the page needs from a transcript, in one pass.
+
+    Title, last prompt, branch, the paths it has been touching and whether a
+    tool call is outstanding used to be three separate full reads of a file
+    that runs to hundreds of kilobytes -- per session, per poll. The page
+    polls every three seconds; that cost is what made a click feel broken.
+    """
+    out = {"title": "", "prompt": "", "branch": "", "paths": [], "pending": None}
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return out
+
+    home = str(Path.home())
+    uses, done = {}, set()
+    tail_from = max(0, len(lines) - TAIL_LINES)
+    for i, line in enumerate(lines):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        kind = rec.get("type")
+        if kind == "ai-title" and rec.get("aiTitle"):
+            out["title"] = rec["aiTitle"]
+            continue
+        if kind == "last-prompt" and rec.get("lastPrompt"):
+            out["prompt"] = rec["lastPrompt"]
+        branch = rec.get("gitBranch")
+        if branch and branch != "HEAD":
+            out["branch"] = branch
+        if i < tail_from:
+            continue                       # the rest is about recent activity
+        content = (rec.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "tool_use":
+                if part.get("id"):
+                    uses[part["id"]] = rec.get("timestamp")
+                inp = part.get("input") or {}
+                for key in ("file_path", "path", "notebook_path"):
+                    if isinstance(inp.get(key), str):
+                        out["paths"].append(inp[key])
+                for key in ("command", "pattern", "prompt"):
+                    if isinstance(inp.get(key), str):
+                        out["paths"] += PATH_IN_TEXT.findall(inp[key])
+            elif part.get("type") == "tool_result" and part.get("tool_use_id"):
+                done.add(part["tool_use_id"])
+
+    out["paths"] = [os.path.normpath(p.replace("~", home, 1)) for p in out["paths"]]
+    stamps = [t for tid, t in uses.items() if tid not in done and t]
+    if stamps:
+        try:
+            started = max(datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+                          for s in stamps)
+            now = datetime.datetime.now(datetime.timezone.utc)
+            out["pending"] = max(0.0, (now - started).total_seconds() / 60)
+        except ValueError:
+            pass
+    return out
+
+
+def _read_from(path, offset):
+    """Bytes appended since `offset`, up to the last complete line.
+
+    A session may be mid-write, so the final fragment is left for next time
+    rather than parsed as a broken record.
+    """
+    with path.open("rb") as fh:
+        fh.seek(offset)
+        data = fh.read()
+    cut = data.rfind(b"\n") + 1
+    return data[:cut].decode("utf-8", errors="ignore"), offset + cut
+
+
+HEAD_BYTES = 256
+COLD_BYTES = 2_000_000   # enough tail to answer 'what is it doing now'
+
+
+def _head(path):
+    """The first bytes of the file, as a cheap identity for its contents."""
+    try:
+        with path.open("rb") as fh:
+            return fh.read(HEAD_BYTES)
+    except OSError:
+        return b""
+
+
+def _blank_state():
+    return {"offset": 0, "ino": None, "head": b"", "title": "", "prompt": "", "branch": "",
+            "uses": {}, "done": set(), "paths": collections.deque(maxlen=400)}
+
+
+def _absorb(state, text):
+    """Fold newly written lines into what we already know."""
+    home = str(Path.home())
+    for line in text.splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        kind = rec.get("type")
+        if kind == "ai-title" and rec.get("aiTitle"):
+            state["title"] = rec["aiTitle"]
+        elif kind == "last-prompt" and rec.get("lastPrompt"):
+            state["prompt"] = rec["lastPrompt"]
+        branch = rec.get("gitBranch")
+        if branch and branch != "HEAD":
+            state["branch"] = branch
+        content = (rec.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "tool_use":
+                if part.get("id"):
+                    state["uses"][part["id"]] = rec.get("timestamp")
+                inp = part.get("input") or {}
+                for key in ("file_path", "path", "notebook_path"):
+                    if isinstance(inp.get(key), str):
+                        state["paths"].append(
+                            os.path.normpath(inp[key].replace("~", home, 1)))
+                for key in ("command", "pattern", "prompt"):
+                    if isinstance(inp.get(key), str):
+                        for hit in PATH_IN_TEXT.findall(inp[key]):
+                            state["paths"].append(
+                                os.path.normpath(hit.replace("~", home, 1)))
+            elif part.get("type") == "tool_result" and part.get("tool_use_id"):
+                state["done"].add(part["tool_use_id"])
+    # Answered calls stop mattering, and neither set may grow without end.
+    for tid in [t for t in state["uses"] if t in state["done"]][:-8]:
+        state["uses"].pop(tid, None)
+        state["done"].discard(tid)
+    return state
+
+
+def _view(state):
+    stamps = [t for tid, t in state["uses"].items()
+              if tid not in state["done"] and t]
+    pending = None
+    if stamps:
+        try:
+            started = max(datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+                          for s in stamps)
+            now = datetime.datetime.now(datetime.timezone.utc)
+            pending = max(0.0, (now - started).total_seconds() / 60)
+        except ValueError:
+            pending = None
+    return {"title": state["title"], "prompt": state["prompt"],
+            "branch": state["branch"], "paths": list(state["paths"]),
+            "pending": pending}
+
+
+def scan_cached(path):
+    """What the page needs from a transcript, reading only what is new.
+
+    These files reach tens of megabytes and the busy ones change every few
+    seconds. Re-reading them whole on every poll cost ~9 seconds a round and
+    made clicking feel broken.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return _view(_blank_state())
+    key = ("state", str(path))
+    state = _cache.get(key)
+    head = _head(path)
+    # Same inode and a file that only grew is the normal case. A shrunken file
+    # or a changed opening means it was rewritten, and what we remember about
+    # it is about a file that no longer exists.
+    # A file shorter than HEAD_BYTES grows its own head as it is appended to,
+    # so one being a prefix of the other still means the same file.
+    same_file = (state is not None
+                 and state["ino"] == stat.st_ino
+                 and stat.st_size >= state["offset"]
+                 and (head.startswith(state["head"])
+                      or state["head"].startswith(head)))
+    if not same_file:
+        state = _blank_state()          # new file, or rewritten from the top
+        state["ino"] = stat.st_ino
+    state["head"] = head
+    if state["offset"] == 0 and stat.st_size > COLD_BYTES:
+        # First sight of a large transcript. Every value here is a *latest*
+        # one, so the tail answers them; only a title that was set early and
+        # never again needs the whole file, and that is one read, once.
+        text, offset = _read_from(path, stat.st_size - COLD_BYTES)
+        state = _absorb(state, text)
+        state["offset"] = offset
+        if not state["title"]:
+            head_text, _ = _read_from(path, 0)
+            for line in head_text.splitlines():
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("type") == "ai-title" and rec.get("aiTitle"):
+                    state["title"] = rec["aiTitle"]
+    elif stat.st_size > state["offset"]:
+        text, offset = _read_from(path, state["offset"])
+        state = _absorb(state, text)
+        state["offset"] = offset
+    _cache[key] = state
+    return _view(state)
+
+
 def suggestion_cached(path, shelves):
     key = ("suggest", str(path))
     try:
@@ -263,6 +472,25 @@ def suggestion_cached(path, shelves):
     guess = suggest_project(touched_paths(path), shelves)
     _cache[key] = (stamp, guess)
     return guess
+
+
+def live_session(pid, cfg=None):
+    """The peer record for a live pid, reading nothing else.
+
+    `sessions()` reads every transcript to build the page; a jump only needs
+    to know this pid is really a session Claude Code registered, and paying
+    1.5s for that makes the click feel broken.
+    """
+    cfg = cfg or claude_dir()
+    for path in (cfg / "sessions").glob("*.json"):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                rec = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if isinstance(rec, dict) and rec.get("pid") == pid and alive(pid):
+            return rec
+    return None
 
 
 def sessions(cfg=None):
@@ -282,21 +510,20 @@ def sessions(cfg=None):
         cwd = rec.get("cwd") or ""
         sid = rec.get("sessionId") or ""
         transcript = transcript_for(sid, cwd, cfg) if sid else None
-        summary = summary_cached(transcript) if transcript else {
-            "title": "", "prompt": "", "branch": ""}
+        summary = scan_cached(transcript) if transcript else {
+            "title": "", "prompt": "", "branch": "", "paths": [], "pending": None}
         quiet = None
         if transcript:
             try:
                 quiet = (time.time() - transcript.stat().st_mtime) / 60
             except OSError:
                 quiet = None
-        in_flight = (pending_tool(transcript)
-                     if transcript and rec.get("status") == "busy" else None)
+        in_flight = summary["pending"] if rec.get("status") == "busy" else None
         status_since = rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0
         project = assigned.get(sid) or resolve_project(cwd, shelves)
         # Only guess for the ones that have nothing better -- the guess costs
         # a transcript scan, and a session with a real cwd does not need it.
-        guess = (suggestion_cached(transcript, shelves)
+        guess = (suggest_project(summary["paths"], shelves)
                  if not project and transcript else None)
         out.append({
             "name": rec.get("name") or "(unnamed)",

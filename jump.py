@@ -231,15 +231,16 @@ def _x_windows():
 
 
 def route_for(pid, tmux=""):
-    """The route to a live session's terminal, or None if it has no terminal."""
-    return choose_route(
-        tty=tty_of(pid),
-        ancestry=ancestry_of(pid),
-        tmux=tmux,
-        panes=wezterm_panes(),
-        clients=tmux_clients(),
-        konsole=konsole_apps(),
-    )
+    """The route to a live session's terminal, or None if it has no terminal.
+
+    Konsole is asked last and only if nothing else claimed the session:
+    enumerating its sessions is one `qdbus` call each, on a path a click is
+    waiting for.
+    """
+    args = dict(tty=tty_of(pid), ancestry=ancestry_of(pid), tmux=tmux,
+                panes=wezterm_panes(), clients=tmux_clients())
+    return choose_route(konsole=[], **args) or choose_route(
+        konsole=konsole_apps(), **args)
 
 
 def jump(pid, tmux=""):

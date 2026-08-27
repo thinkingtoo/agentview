@@ -84,10 +84,11 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError):
             return self.send_error(400, "expected {pid}")
         # Only ever act on a pid Claude Code itself registered as a session.
-        live = {s["pid"]: s for s in fleet.sessions()}
-        if pid not in live:
+        rec = fleet.live_session(pid)
+        if not rec:
             return self.send_error(404, "no such live session")
-        self._send(json.dumps(jump.jump(pid, live[pid]["tmux"])), "application/json")
+        self._send(json.dumps(jump.jump(pid, rec.get("tmux") or "")),
+                   "application/json")
 
     def _order(self, body):
         pinned = body.get("pinned")
