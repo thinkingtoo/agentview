@@ -86,3 +86,22 @@ class ReadSummary(unittest.TestCase):
         summary = fleet.read_summary(path)
         self.assertEqual(summary["title"], "")
         self.assertTrue(summary["prompt"].startswith("# Nightly report"))
+
+    def test_hidden_directories_are_not_projects(self):
+        # ~/.claude/plans is under the ~ shelf, so it used to resolve as a
+        # project called ".claude" and outvote the real answer when guessing.
+        self.assertIsNone(fleet.resolve_project("/home/alice/.claude/plans", SHELVES))
+        self.assertIsNone(fleet.resolve_project("/home/alice/.config/foo", SHELVES))
+
+    def test_scratch_space_is_not_a_project(self):
+        self.assertIsNone(fleet.resolve_project(
+            "/tmp/claude-1000/-home-tiroir/abc/scratchpad", SHELVES))
+
+    def test_a_deep_path_keeps_only_client_and_project(self):
+        # A file deep inside a repo must land on the same label as the repo,
+        # not grow a breadcrumb per directory.
+        self.assertEqual(
+            fleet.resolve_project(
+                "/home/alice/Projects/clients/acme/site/src/app",
+                SHELVES),
+            "acme › site")

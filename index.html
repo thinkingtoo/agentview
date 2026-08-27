@@ -43,6 +43,13 @@
   .edit { cursor:text; border-bottom:1px dashed transparent; }
   .edit:hover { border-bottom-color:var(--faint); }
   .own { color:var(--claude); }
+  .assign { margin-top:7px; display:flex; gap:9px; align-items:center; font-size:11.5px; }
+  .guess, .assign-edit, .clear { cursor:pointer; color:var(--faint); }
+  .guess { color:var(--claude); border:1px solid color-mix(in srgb,var(--claude) 40%,transparent);
+           border-radius:999px; padding:1px 9px; }
+  .guess:hover { background:color-mix(in srgb,var(--claude) 16%,transparent); }
+  .assign-edit:hover, .clear:hover { color:var(--accent); }
+  .row.target { background:color-mix(in srgb,var(--claude) 12%,transparent); }
   input.inline { font:inherit; color:var(--ink); background:var(--bg);
                  border:1px solid var(--claude); border-radius:6px; padding:2px 7px;
                  min-width:220px; }
@@ -99,6 +106,7 @@
 <script>
 let PINNED = [];
 let editing = false;
+let dragging = false;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const home = "/home/alice";
 
@@ -125,7 +133,8 @@ function row(m) {
   const tag = m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "";
   const go = m.canJump ? `<span class="go">open ↗</span>` : "";
   const title = m.title || (m.prompt ? "" : "<span style='color:var(--faint)'>no title yet</span>");
-  return `<div class="row ${m.canJump ? "can" : ""}" data-pid="${esc(m.pid)}">
+  return `<div class="row ${m.canJump ? "can" : ""}" data-pid="${esc(m.pid)}"
+        data-sid="${esc(m.sessionId)}" draggable="true">
     <div class="rhead">
       <span class="dot ${esc(m.status)}"></span>
       <span class="nm">${esc(m.name)}</span>${tag}${go}
@@ -135,6 +144,21 @@ function row(m) {
          data-sid="${esc(m.sessionId)}">${esc(m.title) || "<span style='color:var(--faint)'>—</span>"}</div>
     ${m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : ""}
     <div class="where">${where(m)}</div>
+    ${assignBar(m)}
+  </div>`;
+}
+
+function assignBar(m) {
+  if (m.assigned) {
+    return `<div class="assign"><span class="own">assegnata</span>
+      <span class="clear" data-sid="${esc(m.sessionId)}">togli</span></div>`;
+  }
+  if (!m.orphan) return "";
+  const guess = m.suggestion
+    ? `<span class="guess" data-sid="${esc(m.sessionId)}" data-project="${esc(m.suggestion)}">
+         ${esc(m.suggestion)}?</span>` : "";
+  return `<div class="assign">${guess}
+    <span class="edit assign-edit" data-edit="assign" data-sid="${esc(m.sessionId)}">assegna…</span>
   </div>`;
 }
 
@@ -143,13 +167,14 @@ function block(b) {
   const n = b.members.length;
   const pinned = PINNED.includes(b.project);
   return `<section class="block ${b.orphan ? "orphan" : ""} ${pinned ? "pinned" : ""}"
-           data-project="${esc(b.project)}" ${b.orphan ? "" : 'draggable="true"'}>
+           data-project="${esc(b.project)}">
     <div class="bhead">
-      ${b.orphan ? "" : `<span class="pin" title="${pinned ? "fissato — trascina per riordinare" : "trascina per fissare in cima"}">✳</span>`}
+      ${b.orphan ? "" : `<span class="pin" draggable="true"
+             title="${pinned ? "fissato — trascina per spostare, clic per liberare" : "trascina per fissare in cima"}">✳</span>`}
       <span class="pname edit ${b.renamed ? "own" : ""}" data-edit="name">${esc(b.label)}</span>${br}
       <span class="who">${n} ${n === 1 ? "session" : "sessions"}${b.busy ? ` · ${b.busy} busy` : ""}</span>
     </div>
-    ${b.members.map(row).join("")}
+    ${b.members.map(m => row({ ...m, orphan: b.orphan })).join("")}
   </section>`;
 }
 
@@ -174,7 +199,10 @@ async function load() {
 // Click a row and its terminal comes to the front. The page never guesses
 // how: the server works out whether that means WezTerm, tmux or Konsole.
 document.getElementById("main").addEventListener("click", async ev => {
-  if (ev.target.closest(".edit")) return;   // that click is an edit, not a jump
+  // Every control inside a row -- edit, guess, clear, pin -- is a click on
+  // that control, never a jump. They share this element, so stopPropagation
+  // on their own handlers cannot help: the guard has to live here.
+  if (ev.target.closest(".edit, .guess, .clear, .pin")) return;
   const row = ev.target.closest(".row.can");
   if (!row) return;
   row.classList.remove("jumped", "failed");
@@ -213,10 +241,13 @@ document.getElementById("main").addEventListener("click", ev => {
     if (!editing) return;
     editing = false;
     if (commit && input.value.trim() !== before) {
+      const endpoint = { name: "/api/name", line: "/api/line", assign: "/api/assign" }[kind];
       const body = kind === "name"
         ? { project: input.closest("section").dataset.project, label: input.value }
-        : { sessionId: cell.dataset.sid, text: input.value };
-      await fetch(kind === "name" ? "/api/name" : "/api/line", {
+        : kind === "assign"
+          ? { sessionId: cell.dataset.sid, project: input.value }
+          : { sessionId: cell.dataset.sid, text: input.value };
+      await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Fleet": "1" },
         body: JSON.stringify(body),
@@ -240,21 +271,44 @@ document.getElementById("main").addEventListener("click", ev => {
 // Drag a block to pin it; the order you drop them in is the order they keep.
 let dragged = null;
 const main = document.getElementById("main");
+let draggedRow = null;
 main.addEventListener("dragstart", ev => {
-  const b = ev.target.closest(".block");
+  const r = ev.target.closest(".row");
+  if (r) {
+    // A re-render mid-drag detaches what you are holding and the drag dies
+    // without a word, so the poll waits until you have dropped it.
+    dragging = true;
+    draggedRow = r;
+    ev.dataTransfer.effectAllowed = "move";
+    ev.stopPropagation();
+    return;
+  }
+  const handle = ev.target.closest(".pin");
+  if (!handle) return;
+  const b = handle.closest(".block");
   if (!b) return;
+  dragging = true;
   dragged = b;
   b.classList.add("dragging");
   ev.dataTransfer.effectAllowed = "move";
 });
 main.addEventListener("dragend", () => {
+  dragging = false;
   if (dragged) dragged.classList.remove("dragging");
   dragged = null;
+  draggedRow = null;
   [...main.querySelectorAll(".over")].forEach(e => e.classList.remove("over"));
 });
 main.addEventListener("dragover", ev => {
   const over = ev.target.closest(".block");
-  if (!over || !dragged || over === dragged || over.classList.contains("orphan")) return;
+  if (!over) return;
+  if (draggedRow) {                       // a session looking for a project
+    if (over.contains(draggedRow) || over.classList.contains("orphan")) return;
+    ev.preventDefault();
+    over.classList.add("over");
+    return;
+  }
+  if (!dragged || over === dragged || over.classList.contains("orphan")) return;
   ev.preventDefault();
   over.classList.add("over");
 });
@@ -264,7 +318,15 @@ main.addEventListener("dragleave", ev => {
 });
 main.addEventListener("drop", async ev => {
   const over = ev.target.closest(".block");
-  if (!over || !dragged || over === dragged) return;
+  if (!over) return;
+  if (draggedRow) {
+    ev.preventDefault();
+    over.classList.remove("over");
+    const sid = draggedRow.dataset.sid;
+    draggedRow = null;
+    return assign(sid, over.dataset.project);
+  }
+  if (!dragged || over === dragged) return;
   ev.preventDefault();
   over.classList.remove("over");
   const blocks = [...main.querySelectorAll(".block:not(.orphan)")];
@@ -280,6 +342,22 @@ main.addEventListener("drop", async ev => {
     body: JSON.stringify({ pinned }),
   });
   load();
+});
+
+async function assign(sid, project) {
+  await fetch("/api/assign", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify({ sessionId: sid, project }),
+  });
+  load();
+}
+
+main.addEventListener("click", ev => {
+  const guess = ev.target.closest(".guess");
+  if (guess) { ev.stopPropagation(); return assign(guess.dataset.sid, guess.dataset.project); }
+  const clear = ev.target.closest(".clear");
+  if (clear) { ev.stopPropagation(); return assign(clear.dataset.sid, ""); }
 });
 
 // Unpin: click the mark.
@@ -299,7 +377,7 @@ main.addEventListener("click", async ev => {
 
 document.getElementById("refresh").addEventListener("click", load);
 load();
-setInterval(() => { if (!editing) load(); }, 3000);
+setInterval(() => { if (!editing && !dragging) load(); }, 3000);
 </script>
 </body>
 </html>

@@ -74,6 +74,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._name(body)
         if self.path.startswith("/api/line"):
             return self._line(body)
+        if self.path.startswith("/api/assign"):
+            return self._assign(body)
         return self.send_error(404)
 
     def _jump(self, body):
@@ -103,6 +105,17 @@ class Handler(BaseHTTPRequestHandler):
         names.pop(key, None) if not label.strip() else names.update({key: label.strip()})
         fleet.write_config({"names": names})
         self._send(json.dumps({"ok": True}), "application/json")
+
+    def _assign(self, body):
+        sid, project = body.get("sessionId"), body.get("project")
+        if not isinstance(sid, str) or not isinstance(project, str):
+            return self.send_error(400, "expected {sessionId, project}")
+        project = project.strip()
+        assign = fleet.config_value("assign", {})
+        # Empty puts the session back where its directory says it belongs.
+        assign.pop(sid, None) if not project else assign.update({sid: project})
+        fleet.write_config({"assign": assign})
+        self._send(json.dumps({"ok": True, "project": project}), "application/json")
 
     def _line(self, body):
         sid, text = body.get("sessionId"), body.get("text")

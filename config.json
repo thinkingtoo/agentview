@@ -11,5 +11,6 @@
   "names": {},
   "pinned": [],
   "lines": {},
-  "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by sessionId — it also retitles that terminal tab. pinned: projects held at the top, in this order."
+  "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by sessionId — it also retitles that terminal tab. pinned: projects held at the top, in this order.",
+  "assign": {}
 }

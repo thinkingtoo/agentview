@@ -6,8 +6,10 @@ Claude Code already writes everything this needs. Peer files under
 answer to "what is this session about" -- and a `last-prompt` record. Nothing
 here generates a summary; it collects the ones already on disk.
 """
+import collections
 import json
 import os
+import re
 from pathlib import Path
 
 
@@ -19,6 +21,9 @@ def resolve_project(cwd, shelves):
     first directory below the deepest shelf that contains `cwd`.
     """
     cwd = os.path.normpath(cwd)
+    # Scratch space is where work passes through, never where it lives.
+    if cwd.startswith(("/tmp/", "/var/tmp/")):
+        return None
     shelf = max(
         (s for s in (os.path.normpath(x) for x in shelves)
          if cwd == s or cwd.startswith(s + os.sep)),
@@ -32,7 +37,14 @@ def resolve_project(cwd, shelves):
     rest = cwd[len(shelf):].strip(os.sep)
     if not rest:
         return None
-    return " \u203a ".join(rest.split(os.sep))
+    parts = rest.split(os.sep)
+    # A dotted directory is configuration or state, not a project -- and it
+    # used to outvote the real answer when guessing from touched files.
+    if any(p.startswith(".") for p in parts):
+        return None
+    # At most client › project. Deeper is a path inside a project, and a file
+    # buried in a repo must land on the same label as the repo itself.
+    return " \u203a ".join(parts[:2])
 
 
 def read_summary(path):
@@ -162,10 +174,62 @@ def _on_a_terminal(pid):
         return False
 
 
+PATH_IN_TEXT = re.compile(r"(?:~|/home/[\w.-]+)/[\w./@-]+")
+TAIL_LINES = 400
+
+
+def touched_paths(path):
+    """Filesystem paths a session's recent tool calls mention.
+
+    Only the tail: what it is doing now, not what it did on Tuesday.
+    """
+    out = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return out
+    for line in lines[-TAIL_LINES:]:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        content = (rec.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "tool_use":
+                continue
+            inp = part.get("input") or {}
+            for key in ("file_path", "path", "notebook_path"):
+                if isinstance(inp.get(key), str):
+                    out.append(inp[key])
+            for key in ("command", "pattern", "prompt"):
+                if isinstance(inp.get(key), str):
+                    out += PATH_IN_TEXT.findall(inp[key])
+    home = str(Path.home())
+    return [os.path.normpath(p.replace("~", home, 1)) for p in out]
+
+
+def suggestion_cached(path, shelves):
+    key = ("suggest", str(path))
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    hit = _cache.get(key)
+    if hit and hit[0] == stamp:
+        return hit[1]
+    guess = suggest_project(touched_paths(path), shelves)
+    _cache[key] = (stamp, guess)
+    return guess
+
+
 def sessions(cfg=None):
     """Every live Claude session on this machine, with its summary attached."""
     cfg = cfg or claude_dir()
     shelves = config()
+    assigned = config_value("assign", {})
     out = []
     for path in (cfg / "sessions").glob("*.json"):
         try:
@@ -180,6 +244,11 @@ def sessions(cfg=None):
         transcript = transcript_for(sid, cwd, cfg) if sid else None
         summary = summary_cached(transcript) if transcript else {
             "title": "", "prompt": "", "branch": ""}
+        project = assigned.get(sid) or resolve_project(cwd, shelves)
+        # Only guess for the ones that have nothing better -- the guess costs
+        # a transcript scan, and a session with a real cwd does not need it.
+        guess = (suggestion_cached(transcript, shelves)
+                 if not project and transcript else None)
         out.append({
             "name": rec.get("name") or "(unnamed)",
             "status": rec.get("status") or "?",
@@ -189,7 +258,9 @@ def sessions(cfg=None):
             "pid": rec.get("pid"),
             "sessionId": sid,
             "updatedAt": rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0,
-            "project": resolve_project(cwd, shelves),
+            "project": project,
+            "assigned": sid in assigned,
+            "suggestion": guess,
             # Cheap: a session on a pty is hosted by some emulator, so a route
             # exists. Working out which one costs subprocesses, so that waits
             # until you actually click.
@@ -230,6 +301,35 @@ def roster(cfg=None):
     for b in blocks:
         b["pinned"] = b["project"] in pinned
     return order_blocks(blocks, pinned)
+
+
+MIN_VOTES = 3          # below this it is noise, not a habit
+LEAD = 1.5             # the winner has to be clearly ahead of the runner-up
+
+
+def suggest_project(paths, shelves):
+    """Guess a session's project from the files it keeps touching.
+
+    Only ever a suggestion. It is right when a session works in one place and
+    silent when it does not -- being confidently wrong is the one outcome that
+    matters here, because you would never know to look.
+    """
+    votes = collections.Counter()
+    for path in paths:
+        # Files vote for the directory they live in.
+        folder = os.path.dirname(path) if os.path.splitext(path)[1] else path
+        project = resolve_project(folder, shelves)
+        if project:
+            votes[project] += 1
+    if not votes:
+        return None
+    ranked = votes.most_common(2)
+    top, count = ranked[0]
+    if count < MIN_VOTES:
+        return None
+    if len(ranked) > 1 and count < ranked[1][1] * LEAD:
+        return None
+    return top
 
 
 def apply_overrides(block, names, lines):
