@@ -13,6 +13,7 @@
     :root { --bg:#f6f7f9; --card:#fff; --line:#e2e5ea; --ink:#14171c; --dim:#5b6472;
             --faint:#8a929e; --busy:#1a9e5c; --wait:#b8860b; --idle:#a2aab5; --accent:#3b5bdb; }
   }
+  html { zoom: {{ZOOM}}; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
@@ -26,7 +27,7 @@
            border:1px solid var(--line); border-radius:7px; padding:5px 12px; cursor:pointer; }
   button:hover { border-color:var(--accent); color:var(--accent); }
   main { padding:18px 20px 40px; display:grid; gap:14px;
-         grid-template-columns:repeat(auto-fill,minmax(400px,1fr)); align-items:start; }
+         grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); align-items:start; }
   .block { background:var(--card); border:1px solid var(--line); border-radius:11px; overflow:hidden; }
   .block.orphan { opacity:.82; }
   .bhead { display:flex; align-items:baseline; gap:9px; padding:11px 15px;
@@ -95,7 +96,7 @@ function where(m) {
 
 function row(m) {
   const tag = m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "";
-  const go = m.canJump ? `<span class="go">apri ↗</span>` : "";
+  const go = m.canJump ? `<span class="go">open ↗</span>` : "";
   const title = m.title || (m.prompt ? "" : "<span style='color:var(--faint)'>no title yet</span>");
   return `<div class="row ${m.canJump ? "can" : ""}" data-pid="${esc(m.pid)}">
     <div class="rhead">

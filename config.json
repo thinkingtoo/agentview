@@ -5,5 +5,7 @@
     "~/Projects",
     "~/Projects/clients"
   ],
-  "port": 8765
+  "port": 8765,
+  "_zoom": "Base scale of the page. Set this instead of zooming in the browser every time; keep the browser itself at 100% or the two multiply.",
+  "zoom": 1.5
 }

@@ -57,6 +57,19 @@ raise another client's window, and the in-emulator half would still work while
 the window stayed where it was. Also needs whichever of `wezterm`, `tmux` and
 `qdbus` you actually use — each route is skipped if its tool is missing.
 
+## Size
+
+`config.json` carries the page's own scale:
+
+```json
+{ "zoom": 1.5 }
+```
+
+Set it there rather than zooming in the browser, and keep the browser itself at
+100% — the two multiply, and 150% twice over is 225%, which drops the grid to a
+single column. The value is substituted server-side, so the page never renders
+at the wrong size first and then jumps.
+
 ## Shelves — how a project gets its name
 
 The hard part is that a working directory is not a project name.

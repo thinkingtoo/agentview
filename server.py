@@ -15,12 +15,22 @@ import jump
 HERE = Path(__file__).resolve().parent
 
 
-def port():
+def setting(key, default):
     try:
         with (HERE / "config.json").open(encoding="utf-8") as fh:
-            return int(json.load(fh).get("port", 8765))
+            return type(default)(json.load(fh).get(key, default))
     except (OSError, ValueError, TypeError):
-        return 8765
+        return default
+
+
+def page():
+    """The page, with the configured scale baked in.
+
+    Substituted server-side rather than applied by script, so the page never
+    renders once at the wrong size and then jumps.
+    """
+    html = (HERE / "index.html").read_text(encoding="utf-8")
+    return html.replace("{{ZOOM}}", str(setting("zoom", 1.5)))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -65,8 +75,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/roster"):
             self._send(json.dumps({"blocks": fleet.roster()}), "application/json")
         elif self.path in ("/", "/index.html"):
-            self._send((HERE / "index.html").read_text(encoding="utf-8"),
-                       "text/html; charset=utf-8")
+            self._send(page(), "text/html; charset=utf-8")
         else:
             self.send_error(404)
 
@@ -75,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    p = port()
+    p = setting("port", 8765)
     server = ThreadingHTTPServer(("127.0.0.1", p), Handler)
     print(f"fleet on http://127.0.0.1:{p}", flush=True)
     server.serve_forever()
