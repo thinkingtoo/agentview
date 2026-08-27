@@ -129,6 +129,13 @@ def summary_cached(path):
     return summary
 
 
+def _on_a_terminal(pid):
+    try:
+        return os.readlink(f"/proc/{pid}/fd/0").startswith("/dev/pts/")
+    except OSError:
+        return False
+
+
 def sessions(cfg=None):
     """Every live Claude session on this machine, with its summary attached."""
     cfg = cfg or claude_dir()
@@ -157,6 +164,11 @@ def sessions(cfg=None):
             "sessionId": sid,
             "updatedAt": rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0,
             "project": resolve_project(cwd, shelves),
+            # Cheap: a session on a pty is hosted by some emulator, so a route
+            # exists. Working out which one costs subprocesses, so that waits
+            # until you actually click.
+            "canJump": (rec.get("kind") == "interactive"
+                        and _on_a_terminal(rec.get("pid"))),
             "title": summary["title"],
             "prompt": summary["prompt"],
             "branch": summary["branch"],

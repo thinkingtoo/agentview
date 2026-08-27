@@ -35,6 +35,14 @@
   .branch { color:var(--faint); font-size:12px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   .who { color:var(--dim); font-size:12px; margin-left:auto; }
   .row { padding:11px 15px; border-top:1px solid var(--line); }
+  .row.can { cursor:pointer; }
+  .row.can:hover { background:color-mix(in srgb,var(--accent) 9%,transparent); }
+  .row.can:hover .go { opacity:1; }
+  .go { opacity:0; transition:opacity .12s; color:var(--accent); font-size:12px; }
+  .row.jumped { animation:flash .7s ease-out; }
+  @keyframes flash { from { background:color-mix(in srgb,var(--busy) 26%,transparent); } }
+  .row.failed { animation:flash-bad 1.4s ease-out; }
+  @keyframes flash-bad { from { background:color-mix(in srgb,#e5534b 26%,transparent); } }
   .row:first-of-type { border-top:0; }
   .rhead { display:flex; align-items:center; gap:8px; }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--idle); flex:none; }
@@ -87,11 +95,12 @@ function where(m) {
 
 function row(m) {
   const tag = m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "";
+  const go = m.canJump ? `<span class="go">apri ↗</span>` : "";
   const title = m.title || (m.prompt ? "" : "<span style='color:var(--faint)'>no title yet</span>");
-  return `<div class="row">
+  return `<div class="row ${m.canJump ? "can" : ""}" data-pid="${esc(m.pid)}">
     <div class="rhead">
       <span class="dot ${esc(m.status)}"></span>
-      <span class="nm">${esc(m.name)}</span>${tag}
+      <span class="nm">${esc(m.name)}</span>${tag}${go}
       <span class="ago">${esc(m.status)} · ${ago(m.updatedAt)}</span>
     </div>
     ${title ? `<div class="title">${esc(m.title) || title}</div>` : ""}
@@ -128,6 +137,26 @@ async function load() {
     document.getElementById("stamp").textContent = "server unreachable";
   }
 }
+
+// Click a row and its terminal comes to the front. The page never guesses
+// how: the server works out whether that means WezTerm, tmux or Konsole.
+document.getElementById("main").addEventListener("click", async ev => {
+  const row = ev.target.closest(".row.can");
+  if (!row) return;
+  row.classList.remove("jumped", "failed");
+  try {
+    const r = await fetch("/api/jump", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+      body: JSON.stringify({ pid: Number(row.dataset.pid) }),
+    });
+    const out = await r.json();
+    row.classList.add(out.ok ? "jumped" : "failed");
+    if (!out.ok) document.getElementById("stamp").textContent = out.reason || "jump failed";
+  } catch (e) {
+    row.classList.add("failed");
+  }
+});
 
 document.getElementById("refresh").addEventListener("click", load);
 load();

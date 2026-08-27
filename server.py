@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import fleet
+import jump
 
 HERE = Path(__file__).resolve().parent
 
@@ -31,6 +32,34 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(raw)
+
+    def _local(self):
+        """A page on another origin can POST here; it cannot forge these.
+
+        The damage would only be a switched terminal tab, but a jump is still
+        an action, and actions get a guard.
+        """
+        origin = self.headers.get("Origin")
+        if origin and not origin.startswith(("http://127.0.0.1", "http://localhost")):
+            return False
+        return self.headers.get("X-Fleet") == "1"
+
+    def do_POST(self):
+        if not self.path.startswith("/api/jump"):
+            return self.send_error(404)
+        if not self._local():
+            return self.send_error(403, "not a local request")
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length) or "{}")
+            pid = int(body["pid"])
+        except (ValueError, KeyError, TypeError):
+            return self.send_error(400, "expected {pid, tmux}")
+        # Only ever act on a pid Claude Code itself registered as a session.
+        live = {s["pid"]: s for s in fleet.sessions()}
+        if pid not in live:
+            return self.send_error(404, "no such live session")
+        self._send(json.dumps(jump.jump(pid, live[pid]["tmux"])), "application/json")
 
     def do_GET(self):
         if self.path.startswith("/api/roster"):

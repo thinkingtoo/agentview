@@ -34,6 +34,29 @@ systemctl --user enable --now claude-fleet
 Bound to `127.0.0.1` deliberately: the page shows your prompts verbatim, which
 is client work and occasionally a credential someone pasted into an error.
 
+## Click a card, get the terminal
+
+Clicking a session raises the terminal it is running in. The page never guesses
+how — the server resolves the route per session, because they are not alike:
+
+| Host | How it is asked | Matched by |
+|---|---|---|
+| WezTerm | `wezterm cli activate-pane` | the session's pty against `tty_name` in `wezterm cli list` |
+| tmux | `select-window` + `select-pane`, **then** whatever hosts the attached client | the `tmux` field in the peer file, then the client's tty |
+| Konsole | `Window.setCurrentSession` over D-Bus | `Session.processId()` against the session's ancestry |
+
+Then `wmctrl` raises the window. A session inside tmux inside WezTerm needs two
+of these in the right order — selecting the tmux pane achieves nothing while the
+WezTerm tab stays hidden.
+
+Sessions Claude Code spawned itself have a pty but no window, and are not
+clickable.
+
+**Requires X11.** Window raising uses `wmctrl`; under Wayland a client cannot
+raise another client's window, and the in-emulator half would still work while
+the window stayed where it was. Also needs whichever of `wezterm`, `tmux` and
+`qdbus` you actually use — each route is skipped if its tool is missing.
+
 ## Shelves — how a project gets its name
 
 The hard part is that a working directory is not a project name.
@@ -64,6 +87,8 @@ Add a shelf whenever a directory starts holding projects instead of being one.
 python3 -m unittest discover -s tests
 ```
 
-They cover the two things worth covering: project resolution (including the
+They cover the three things worth covering: route selection for each terminal
+(including tmux-inside-WezTerm and a headless session with nowhere to go),
+project resolution (including the
 `acme › site` and on-a-shelf cases) and reading the summary records out of
 a transcript, including a headless session that has no title at all.
