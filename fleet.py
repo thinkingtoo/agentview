@@ -14,6 +14,8 @@ import re
 import time
 from pathlib import Path
 
+import seen
+
 
 def resolve_project(cwd, shelves):
     """Name the project a session is working on, or None if it has none.
@@ -419,6 +421,12 @@ def _absorb(state, text):
         # past it, the result is never coming and nothing is running.
         if kind in ("user", "assistant") and rec.get("timestamp"):
             state["spoke"] = max(state["spoke"], rec["timestamp"])
+        # A subagent must never speak for the session it works for.
+        if kind == "assistant" and not rec.get("isSidechain"):
+            for part in content:
+                if (isinstance(part, dict) and part.get("type") == "text"
+                        and isinstance(part.get("text"), str) and part["text"].strip()):
+                    state["said"] = part["text"].strip()
         for part in content:
             if not isinstance(part, dict):
                 continue
@@ -450,6 +458,32 @@ def _absorb(state, text):
     return state
 
 
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+NOT_PROSE = ("|", "#", ">", "```", "---")
+
+
+def last_words(text, limit=140):
+    """The sentence a session left you with, fit to read at a glance.
+
+    The last line rather than the first: a turn opens with what it did and
+    ends with what it wants. Tables, headings and code blocks are not
+    something anyone was told, so they are skipped rather than quoted.
+    """
+    if not text:
+        return ""
+    body = re.sub(r"```.*?```", " ", text, flags=re.S)
+    lines = [line.strip() for line in body.splitlines()]
+    lines = [line for line in lines if line and not line.startswith(NOT_PROSE)]
+    if not lines:
+        return ""
+    line = re.sub(r"^[-*+]\s+", "", lines[-1])      # a bullet is still a sentence
+    line = re.sub(r"[*_`]+", "", line)
+    if len(line) > limit:
+        tail = SENTENCE_END.split(line)[-1]
+        line = tail if len(tail) <= limit else line[:limit - 1].rstrip() + "\u2026"
+    return line
+
+
 def _view(state):
     # Only calls in the session's newest message. An unanswered call the
     # session has since talked past is not running -- and because this file
@@ -468,7 +502,7 @@ def _view(state):
             pending = None
     return {"title": state["title"], "prompt": state["prompt"],
             "branch": state["branch"], "paths": list(state["paths"]),
-            "pending": pending}
+            "said": last_words(state["said"]), "pending": pending}
 
 
 def scan_cached(path):
@@ -562,6 +596,7 @@ def sessions(cfg=None):
     cfg = cfg or claude_dir()
     shelves = config()
     assigned = config_value("assign", {})
+    marks = seen.load()
     out = []
     for path in (cfg / "sessions").glob("*.json"):
         try:
@@ -575,7 +610,8 @@ def sessions(cfg=None):
         sid = rec.get("sessionId") or ""
         transcript = transcript_for(sid, cwd, cfg) if sid else None
         summary = scan_cached(transcript) if transcript else {
-            "title": "", "prompt": "", "branch": "", "paths": [], "pending": None}
+            "title": "", "prompt": "", "branch": "", "paths": [], "said": "",
+            "pending": None}
         quiet = None
         if transcript:
             try:
@@ -584,6 +620,10 @@ def sessions(cfg=None):
                 quiet = None
         in_flight = summary["pending"] if rec.get("status") == "busy" else None
         status_since = rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0
+        status = rec.get("status") or "?"
+        # Keyed to the moment it stopped, so a session that works and stops
+        # again is ready once more without anything having to clear it.
+        unseen = seen.ready(sid, rec.get("statusUpdatedAt"), marks)
         project = assigned.get(sid) or resolve_project(cwd, shelves)
         routine = routine_of(rec, cfg)
         # Only guess for the ones that have nothing better -- the guess costs
@@ -594,7 +634,7 @@ def sessions(cfg=None):
                  if not project and transcript and not routine else None)
         out.append({
             "name": rec.get("name") or "(unnamed)",
-            "status": rec.get("status") or "?",
+            "status": status,
             "kind": rec.get("kind") or "?",
             "cwd": cwd,
             "tmux": rec.get("tmux") or "",
@@ -608,13 +648,20 @@ def sessions(cfg=None):
             "suggestion": guess,
             "quietFor": round(quiet, 1) if quiet is not None else None,
             "toolFor": round(in_flight, 1) if in_flight is not None else None,
-            "stuck": classify(
-                rec.get("status") or "", quiet,
+            # Claude Code's own words for what it is blocked on, and the last
+            # thing it said to you. Neither is generated here.
+            "waitingFor": rec.get("waitingFor") or "",
+            "said": summary["said"],
+            "bg": status == "shell",
+            "flag": classify(
+                status, quiet,
                 config_value("stuck_after_minutes", 5),
                 in_flight=in_flight,
                 tool_after=config_value("long_tool_minutes", 20),
                 waiting_for=(time.time() * 1000 - status_since) / 60000,
-                waiting_after=config_value("waiting_after_seconds", 20) / 60),
+                waiting_after=config_value("waiting_after_seconds", 20) / 60,
+                named=bool(rec.get("waitingFor")),
+                unseen=unseen),
             # Cheap: a session on a pty is hosted by some emulator, so a route
             # exists. Working out which one costs subprocesses, so that waits
             # until you actually click.
@@ -649,10 +696,15 @@ def roster(cfg=None):
 
     blocks = []
     for (routines, project), members in groups.items():
-        members.sort(key=lambda s: (s["status"] != "busy", -s["updatedAt"]))
+        # What wants you, then what is ready for you, then what is working.
+        members.sort(key=lambda s: (s["flag"] not in ("waiting", "stuck"),
+                                    s["flag"] != "ready",
+                                    s["status"] != "busy",
+                                    -s["updatedAt"]))
         branches = sorted({s["branch"] for s in members if s["branch"]})
         blocks.append({
-            "stuck": sum(1 for s in members if s["stuck"]),
+            "alarms": sum(1 for s in members if s["flag"] in ("waiting", "stuck")),
+            "ready": sum(1 for s in members if s["flag"] == "ready"),
             "project": project or "No project",
             "orphan": not project,
             "routines": routines,
@@ -700,9 +752,12 @@ def suggest_project(paths, shelves):
 
 
 def classify(status, quiet, after, in_flight=None, tool_after=20,
-             waiting_for=None, waiting_after=0):
-    """Is this session stuck, waiting on you, running long, or just working?
+             waiting_for=None, waiting_after=0, named=False, unseen=False):
+    """Is this session stuck, waiting on you, ready, running long, or working?
 
+    - `ready` -- it finished its turn and you have not looked since. This is
+      the common case the page used to say nothing about: `idle` covered
+      both "your move" and "abandoned on Tuesday" with the same grey dot.
     - `waiting` -- Claude Code has asked something and nobody replied. It
       needs *you*, and there is no grace period.
     - a tool call in flight -- the transcript is silent for the whole of a
@@ -717,11 +772,20 @@ def classify(status, quiet, after, in_flight=None, tool_after=20,
     and flashing it forever would only teach you to ignore the flashing.
     """
     if status == "waiting":
-        # `/btw` and friends spawn helpers that sit in `waiting` for a few
-        # seconds. A flag that fires on those is a flag you learn to ignore.
+        # Claude Code writes `waitingFor` when a dialog is genuinely open --
+        # "input needed", "sandbox request", the dialog's own label. If it
+        # names what it wants, that is a real question and it is real now.
+        if named:
+            return "waiting"
+        # Unnamed, it may be a `/btw` helper sitting in `waiting` for a few
+        # seconds. A flag that fires on those is one you learn to ignore.
         if waiting_for is not None and waiting_for < waiting_after:
             return None
         return "waiting"
+    if status in ("idle", "shell"):
+        # `shell` is idle with a background job still running -- the turn is
+        # over either way, which is what ready is about.
+        return "ready" if unseen else None
     if status != "busy":
         return None
     if in_flight is not None:
@@ -764,7 +828,8 @@ def order_blocks(blocks, pinned):
         b.get("routines", False),
         b["orphan"],
         rank.get(b["project"], len(rank)),
-        -b.get("stuck", 0),      # something needing you outranks something busy
+        -b.get("alarms", 0),     # something needing you outranks something busy
+        -b.get("ready", 0),      # and something finished outranks something running
         -b["busy"],
         -b["updatedAt"],
     ))

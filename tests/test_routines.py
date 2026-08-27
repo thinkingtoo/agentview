@@ -37,7 +37,7 @@ class RoutineOf(unittest.TestCase):
 
 def session(name, routine="", project=None, **kw):
     base = {"name": name, "routine": routine, "project": project, "status": "idle",
-            "stuck": None, "updatedAt": 0, "branch": "", "sessionId": name}
+            "flag": None, "updatedAt": 0, "branch": "", "sessionId": name}
     base.update(kw)
     return base
 

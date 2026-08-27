@@ -169,7 +169,7 @@ def note_roster(blocks):
     while the page is being built -- so this hangs off the poll rather than
     the watcher thread. It says nothing on a poll where nothing changed.
     """
-    after = {m["sessionId"]: (m["stuck"], m.get("name"))
+    after = {m["sessionId"]: (m["flag"], m.get("name"))
              for b in blocks for m in b["members"]}
     for sid, (flag, name) in after.items():
         was = _flags.get(sid, (None, None))[0]

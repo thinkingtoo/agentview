@@ -150,22 +150,43 @@ Each session also shows **how long it has been up**. A background worker two
 days old reads very differently from a tab opened a minute ago — and it is the
 usual explanation for a session that will not go away.
 
-## Stuck and waiting
+## What the mark in front of a name means
 
-Two different problems, so two different marks — the row is tinted, its dot
-beats, the tab title carries a count, and the project it belongs to rises.
+Claude Code writes four statuses — `busy`, `waiting`, `idle`, `shell` — and
+`idle` is the whole problem: it means *finished, your turn* and *abandoned on
+Tuesday* with the same grey dot. So the page works out one flag per session:
 
 | Mark | What it means | Where it comes from |
 |---|---|---|
-| **waiting** (amber) | Blocked on something outside itself | status `waiting`, after a short grace |
-| **stuck Nm** (red) | It thinks it is working and it is not | `busy`, transcript silent, **and nothing running** |
-| **tool Nm** (grey) | A tool call has been going a very long time | a `tool_use` with no `tool_result` yet |
+| **blue ✓ ready** | It finished, and you have not looked since | `idle`, and not seen since it stopped |
+| **amber waiting** | Something on screen is asking | status `waiting` — at once if it names what it wants |
+| **red stuck Nm** | It thinks it is working and it is not | `busy`, transcript silent, **and nothing running** |
+| **grey tool Nm** | A tool call has been going a very long time | an unanswered `tool_use` that is still the newest thing said |
+| **green, breathing** | Working | `busy` |
 
-**`waiting` does not always mean waiting for *you*.** Often it does — a
-permission prompt, a question. But a session that runs `/btw` also sits in
-`waiting` while the helper it spawned answers, and nobody needs to do anything.
-So the label says `waiting` and no more than that; `"waiting_after_seconds": 20`
-keeps the two-second flickers out.
+**Ready is keyed to the moment it stopped**, not to the session
+(`~/.local/state/claude-team/seen.json`). A session that works again and stops
+again carries a new `statusUpdatedAt`, so it comes back as ready by itself —
+nothing has to be cleared and nothing can go stale. Clicking a card marks it
+seen, whether or not the jump lands. A ready row prints **the last thing the
+session said to you** rather than the last thing you said to it: on a finished
+session, the newer of the two is the handover.
+
+**`waiting` does not always mean waiting for *you*.** Claude Code writes a
+`waitingFor` string — `input needed`, `sandbox request`, the dialog's own
+label — whenever something is really on screen, and the page prints it. A
+`/btw` helper sits in `waiting` for a few seconds and names nothing, so an
+unnamed wait still serves `"waiting_after_seconds": 20` before it is flagged.
+
+**`shell` is not what it sounds like.** It is `idle` with a background job the
+session started still running — Claude Code's own taxonomy calls a background
+`local_bash` task a *shell*. The turn is over, so it can be ready; the running
+job earns a small `bg` badge and nothing more.
+
+**Motion means working, and only working.** The busy dot breathes slowly and a
+soft highlight travels through the name. Waiting and stuck nudge, barely — the
+colour is the alarm; anything stronger is a thing you learn to stop seeing. A
+still page means nothing is running.
 
 **A running tool call is not a stuck session.** The transcript is silent for the
 whole of a tool call, so silence alone proves nothing — a session six minutes

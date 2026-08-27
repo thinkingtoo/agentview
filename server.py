@@ -12,6 +12,7 @@ from pathlib import Path
 import fleet
 import jump
 import log
+import seen
 
 HERE = Path(__file__).resolve().parent
 
@@ -101,6 +102,8 @@ class Handler(BaseHTTPRequestHandler):
         rec = fleet.live_session(pid)
         if not rec:
             return self.send_error(404, "no such live session")
+        # Looking is looking, whether or not the terminal comes to the front.
+        seen.mark(rec.get("sessionId"), rec.get("statusUpdatedAt"))
         done = jump.jump(pid, rec.get("tmux") or "")
         log.event("jumped", pid=pid, name=rec.get("name"), **done)
         self._send(json.dumps(done), "application/json")
@@ -174,6 +177,7 @@ class Handler(BaseHTTPRequestHandler):
             with log.timed("roster", 1.5):
                 blocks = fleet.roster()
             log.note_roster(blocks)
+            seen.forget({m["sessionId"] for b in blocks for m in b["members"]})
             self._send(json.dumps({"blocks": blocks,
                                    "hold": fleet.config_value("hold", False)}),
                        "application/json")

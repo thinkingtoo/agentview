@@ -1,6 +1,6 @@
 # What a session's dot should mean
 
-**Status:** approved design, not yet built · 2026-08-27
+**Status:** built · 2026-08-27
 
 ## The problem
 

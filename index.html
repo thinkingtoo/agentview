@@ -51,21 +51,32 @@
   .edit { cursor:text; border-bottom:1px dashed transparent; }
   .edit:hover { border-bottom-color:var(--faint); }
   .own { color:var(--claude); }
-  /* Two problems, two colours: amber wants you, red is not moving. */
+  /* Three colours, three claims on you: amber wants an answer, red is not
+     moving, blue has something finished waiting to be read. */
   .row.waiting { background:color-mix(in srgb,var(--wait) 9%,transparent);
                  box-shadow:inset 3px 0 0 var(--wait); }
   .row.stuck   { background:color-mix(in srgb,var(--bad) 10%,transparent);
                  box-shadow:inset 3px 0 0 var(--bad); }
-  .row.waiting .dot { animation:beat 1.25s ease-in-out infinite; background:var(--wait); }
-  .row.stuck .dot   { animation:beat 1.25s ease-in-out infinite; background:var(--bad); }
-  @keyframes beat { 0%,100% { transform:scale(1); opacity:1; }
-                    50% { transform:scale(1.55); opacity:.45; } }
+  .row.ready   { background:color-mix(in srgb,var(--accent) 7%,transparent);
+                 box-shadow:inset 3px 0 0 var(--accent); }
+  /* A nudge, not a beat: the colour is the alarm, the movement only says
+     the page is live. Anything stronger you learn to stop seeing. */
+  .row.waiting .dot { animation:nudge 2.2s ease-in-out infinite; background:var(--wait); }
+  .row.stuck .dot   { animation:nudge 1.8s ease-in-out infinite; background:var(--bad); }
+  @keyframes nudge { 0%,100% { transform:scale(1); opacity:1; }
+                     50% { transform:scale(1.12); opacity:.8; } }
   .flag { font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
           border-radius:5px; padding:1px 6px; }
   .flag.waiting { color:var(--wait); border:1px solid color-mix(in srgb,var(--wait) 45%,transparent); }
   .flag.stuck { color:var(--bad); border:1px solid color-mix(in srgb,var(--bad) 45%,transparent); }
   /* A long tool call is news, not an alarm: no tint, no beat. */
   .flag.tool { color:var(--faint); border:1px solid var(--line); }
+  .flag.ready { color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 45%,transparent); }
+  .alarm.ready { color:var(--accent); }
+  /* What it is blocked on, in Claude Code's own words. */
+  .wf { color:var(--wait); font-size:11.5px; }
+  .said { margin-top:3px; color:var(--dim); font-size:13px;
+          display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .alarm { color:var(--bad); font-weight:650; }
   .alarm.wait { color:var(--wait); }
   .assign { margin-top:7px; display:flex; gap:9px; align-items:center; font-size:11.5px; }
@@ -102,9 +113,21 @@
   .fold:hover { color:var(--accent); }
   .rhead { display:flex; align-items:center; gap:8px; }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--idle); flex:none; }
-  .dot.busy { background:var(--busy); box-shadow:0 0 0 3px color-mix(in srgb,var(--busy) 22%,transparent); }
-  .dot.waiting, .dot.shell { background:var(--wait); }
+  /* Slow: a session at work should look alive from across the room, not
+     urgent. Motion on this page means working, and only working. */
+  .dot.busy { background:var(--busy); animation:breathe 3.6s ease-in-out infinite;
+              box-shadow:0 0 0 3px color-mix(in srgb,var(--busy) 22%,transparent); }
+  @keyframes breathe { 0%,100% { transform:scale(1); opacity:1; }
+                       50% { transform:scale(1.18); opacity:.65; } }
+  .dot.waiting { background:var(--wait); }
+  /* Finished, and you have not read it: a tick, not a light. */
+  .tick { color:var(--accent); font-size:12px; line-height:1; flex:none; font-weight:700; }
   .nm { font-weight:600; }
+  /* The same highlight the dot has, travelling through the letters. */
+  .working .nm { color:transparent; background-clip:text; -webkit-background-clip:text;
+    background-image:linear-gradient(100deg, var(--ink) 38%, var(--faint) 50%, var(--ink) 62%);
+    background-size:280% 100%; animation:shimmer 4.5s linear infinite; }
+  @keyframes shimmer { from { background-position:150% 0; } to { background-position:-50% 0; } }
   .bg-tag { font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint);
             border:1px solid var(--line); border-radius:5px; padding:1px 5px; }
   .ago { margin-left:auto; color:var(--faint); font-size:12px; font-variant-numeric:tabular-nums; }
@@ -181,34 +204,57 @@ function where(m) {
 }
 
 function stub(m) {
-  // Folded: the dot, the name, and any flag -- an alarm must be visible
+  // Folded: the mark, the name, and any flag -- an alarm must be visible
   // whether or not you have opened the row it belongs to.
-  return `<div class="row stub" data-sid="${esc(m.sessionId)}" data-pid="${esc(m.pid)}"
+  return `<div class="row stub ${m.status === "busy" ? "working" : ""}"
+        data-sid="${esc(m.sessionId)}" data-pid="${esc(m.pid)}"
         draggable="true" title="click to open">
     <div class="rhead">
       <span class="fold">▸</span>
-      <span class="dot ${esc(m.status)}"></span>
+      ${mark(m)}
       <span class="nm">${esc(m.name)}</span>${badge(m)}${flagOf(m)}
-      <span class="ago">${esc(m.status)} · ${ago(m.updatedAt)}</span>
+      <span class="ago">${says(m)} · ${ago(m.updatedAt)}</span>
     </div>
   </div>`;
 }
 
+function mark(m) {
+  // A tick reads as done in a way no colour of dot does.
+  return m.flag === "ready" ? `<span class="tick">✓</span>`
+    : `<span class="dot ${esc(m.status)}"></span>`;
+}
+
+function says(m) {
+  // `idle` is Claude Code's word, and it covers both "your move" and
+  // "abandoned on Tuesday". Say which one this is.
+  if (m.flag === "ready") return "ready";
+  if (m.status === "shell") return "idle";     // idle with a background job
+  return esc(m.status);
+}
+
 function badge(m) {
   // The badge on a routine row names the routine; `Routines` above already
-  // said what kind of thing it is.
-  return m.routine ? `<span class="bg-tag">${esc(m.routine)}</span>`
-    : m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "";
+  // said what kind of thing it is. `bg` marks a session whose model has
+  // stopped while a job it started keeps running -- Claude Code calls that
+  // status `shell`, which sounds like something else entirely.
+  const job = m.bg ? `<span class="bg-tag" title="a background job is still running">bg</span>` : "";
+  return (m.routine ? `<span class="bg-tag">${esc(m.routine)}</span>`
+    : m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "") + job;
 }
 
 function flagOf(m) {
-  // Three different things, and only two of them are alarms.
-  return m.stuck === "waiting"
-    ? `<span class="flag waiting">waiting</span>`
-    : m.stuck === "stuck"
+  // Four different things, and only two of them are alarms. A waiting row
+  // prints what Claude Code says it is blocked on, rather than the word
+  // `waiting`, which you already knew from the colour.
+  return m.flag === "waiting"
+    ? `<span class="flag waiting">waiting</span>` +
+      (m.waitingFor ? `<span class="wf">${esc(m.waitingFor)}</span>` : "")
+    : m.flag === "stuck"
       ? `<span class="flag stuck">stuck ${Math.round(m.quietFor)}m</span>`
-      : m.stuck === "tool"
-        ? `<span class="flag tool">tool ${Math.round(m.toolFor ?? m.quietFor)}m</span>` : "";
+      : m.flag === "ready"
+        ? `<span class="flag ready">ready</span>`
+        : m.flag === "tool"
+          ? `<span class="flag tool">tool ${Math.round(m.toolFor ?? m.quietFor)}m</span>` : "";
 }
 
 function row(m) {
@@ -219,19 +265,27 @@ function row(m) {
   // Only a row you opened yourself offers to fold again: the liveliest one
   // is the answer to "what is happening here" and always stays open.
   const fold = m.foldable ? `<span class="fold" title="fold">▾</span>` : "";
-  // Only the alarms tint their row; a long tool call gets a badge and no more.
-  const alarm = m.stuck === "waiting" || m.stuck === "stuck" ? m.stuck : "";
-  return `<div class="row ${m.canJump ? "can" : ""} ${alarm}" data-pid="${esc(m.pid)}"
+  // The three that claim you tint their row; a long tool call gets a badge
+  // and no more, because it is news rather than a claim.
+  const alarm = ["waiting", "stuck", "ready"].includes(m.flag) ? m.flag : "";
+  // What it said last, rather than what you said last: on a finished session
+  // the newer of the two is the handover, and it is the whole point of the
+  // row. Everywhere else the prompt is still the better line.
+  const line = m.flag === "ready" && m.said
+    ? `<div class="said">“${esc(m.said)}”</div>`
+    : m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : "";
+  return `<div class="row ${m.canJump ? "can" : ""} ${alarm}
+        ${m.status === "busy" ? "working" : ""}" data-pid="${esc(m.pid)}"
         data-sid="${esc(m.sessionId)}" draggable="true">
     <div class="rhead">
-      <span class="dot ${esc(m.status)}"></span>
+      ${mark(m)}
       ${fold}<span class="nm">${esc(m.name)}</span>${tag}${flag}${go}
-      <span class="ago">${esc(m.status)} · ${ago(m.updatedAt)}</span>
+      <span class="ago">${says(m)} · ${ago(m.updatedAt)}</span>
     </div>
     ${m.title && m.title.trim() === (m.name || "").trim() ? "" : `
     <div class="title edit ${m.overridden ? "own" : ""}" data-edit="line"
          data-sid="${esc(m.sessionId)}">${esc(m.title) || "<span style='color:var(--faint)'>—</span>"}</div>`}
-    ${m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : ""}
+    ${line}
     <div class="where">${where(m)}</div>
     ${assignBar(m)}
   </div>`;
@@ -263,7 +317,7 @@ function unfolded(b, m) {
   // stays open until you fold it again.
   if (b.members.length < 2) return true;
   if (m.sessionId === b.members[0].sessionId) return true;
-  if (m.stuck === "waiting" || m.stuck === "stuck") return true;
+  if (["waiting", "stuck", "ready"].includes(m.flag)) return true;
   if (query.trim().length >= 3) return true;
   return OPEN.has(m.sessionId);
 }
@@ -278,9 +332,12 @@ function block(b) {
   const pinned = PINNED.includes(b.project);
   // Neither pinnable nor renamable: it is not a project you chose, it is
   // whichever routines happen to be mid-run.
+  // A name you typed is just the name: it does not need a colour saying so.
+  // The tooltip keeps the fact for when you wonder where a label came from.
   const name = b.routines
     ? `<span class="pname">${esc(b.label)}</span>`
-    : `<span class="pname edit ${b.renamed ? "own" : ""}" data-edit="name">${esc(b.label)}</span>`;
+    : `<span class="pname edit" data-edit="name"
+             ${b.renamed ? `title="your name for ${esc(b.project)}"` : ""}>${esc(b.label)}</span>`;
   return `<section class="block ${b.orphan ? "orphan" : ""} ${b.routines ? "routines" : ""} ${pinned ? "pinned" : ""}"
            data-project="${esc(b.project)}">
     <div class="bhead">
@@ -399,12 +456,17 @@ function paint() {
   const everyone = all.reduce((a, b) => a + b.members.length, 0);
   const busy = blocks.reduce((a, b) => a + b.busy, 0);
   const waiting = all.reduce((a, b) =>
-    a + b.members.filter(m => m.stuck === "waiting").length, 0);
+    a + b.members.filter(m => m.flag === "waiting").length, 0);
   const stuck = all.reduce((a, b) =>
-    a + b.members.filter(m => m.stuck === "stuck").length, 0);
+    a + b.members.filter(m => m.flag === "stuck").length, 0);
+  const ready = all.reduce((a, b) =>
+    a + b.members.filter(m => m.flag === "ready").length, 0);
+  // The tab title deliberately leaves `ready` out: that count is an alarm,
+  // and a finished session is not one -- it would read (5) all evening.
   const alarms = [
     waiting ? `<span class="alarm wait">${waiting} waiting</span>` : "",
     stuck ? `<span class="alarm">${stuck} stuck</span>` : "",
+    ready ? `<span class="alarm ready">${ready} ready</span>` : "",
   ].filter(Boolean).join(" · ");
   document.getElementById("count").innerHTML =
     `${total} sessions · ${busy} busy · ${blocks.filter(b => !b.routines).length} projects`

@@ -25,12 +25,12 @@ def _member(name, status, stuck, quiet, sid):
             "title": f"{name} at work", "prompt": "carry on", "branch": "main",
             "canJump": True, "assigned": False, "suggestion": None,
             "quietFor": quiet, "toolFor": quiet if stuck == "tool" else None,
-            "stuck": stuck, "startedAt": 1787830000000}
+            "flag": stuck, "startedAt": 1787830000000}
 
 
 STUCK_PAYLOAD = {"blocks": [{
     "project": "maple", "label": "maple", "orphan": False, "renamed": False,
-    "pinned": False, "branches": ["main"], "busy": 1, "stuck": 2,
+    "pinned": False, "branches": ["main"], "busy": 1, "alarms": 2, "ready": 0,
     "updatedAt": 1787830000000, "members": [
         _member("Vera", "waiting", "waiting", 0.3, "s1"),
         _member("Mei", "busy", "stuck", 17.0, "s2"),
@@ -51,7 +51,7 @@ def _routine(name, routine, sid):
 ROUTINES_PAYLOAD = {"blocks": [
     STUCK_PAYLOAD["blocks"][0],
     {"project": "Routines", "label": "Routines", "orphan": False, "routines": True,
-     "renamed": False, "pinned": False, "branches": [], "busy": 2, "stuck": 0,
+     "renamed": False, "pinned": False, "branches": [], "busy": 2, "alarms": 0, "ready": 0,
      "updatedAt": 1787830000000, "members": [
          _routine("Ansgar", "nightly-report", "r1"),
          _routine("Bruno", "disk-check", "r2")]}]}
@@ -60,7 +60,7 @@ ROUTINES_PAYLOAD = {"blocks": [
 # because an alarm must survive folding.
 FOLD_PAYLOAD = {"blocks": [{
     "project": "maple", "label": "maple", "orphan": False, "routines": False,
-    "renamed": False, "pinned": False, "branches": ["main"], "busy": 1, "stuck": 0,
+    "renamed": False, "pinned": False, "branches": ["main"], "busy": 1, "alarms": 0, "ready": 0,
     "updatedAt": 1787830000000, "members": [
         _member("Vera", "busy", None, 0.1, "f1"),
         _member("Mei", "idle", None, 3.0, "f2"),
@@ -68,7 +68,7 @@ FOLD_PAYLOAD = {"blocks": [{
         _member("Aziz", "idle", None, 40.0, "f4")]}]}
 def _block(project, sid, busy=1):
     return {"project": project, "label": project, "orphan": False, "routines": False,
-            "renamed": False, "pinned": False, "branches": [], "busy": busy, "stuck": 0,
+            "renamed": False, "pinned": False, "branches": [], "busy": busy, "alarms": 0, "ready": 0,
             "updatedAt": 1787830000000,
             "members": [_member(sid.upper(), "busy", None, 0.1, sid)]}
 
@@ -77,6 +77,21 @@ def _block(project, sid, busy=1):
 # ignore the second one's order and keep showing the first one's.
 HOLD_BEFORE = {"blocks": [_block("alpha", "h1"), _block("beta", "h2")], "hold": False}
 HOLD_AFTER = {"blocks": [_block("beta", "h2"), _block("alpha", "h1")], "hold": True}
+def _state(name, status, flag, sid, **kw):
+    return {**_member(name, status, flag, 0.2, sid), **kw}
+
+
+# One of each, so the five states can be told apart at a glance.
+STATES_PAYLOAD = {"blocks": [{
+    "project": "maple", "label": "maple", "orphan": False, "routines": False,
+    "renamed": False, "pinned": False, "branches": [], "busy": 1,
+    "alarms": 2, "ready": 1, "updatedAt": 1787830000000, "members": [
+        _state("Vera", "waiting", "waiting", "p1", waitingFor="input needed"),
+        _state("Mei", "busy", "stuck", "p2", quietFor=17.0),
+        _state("Nour", "idle", "ready", "p3",
+               said="Two had no composer — guess or skip?"),
+        _state("Halima", "busy", None, "p4"),
+        _state("Dmitri", "shell", None, "p5", bg=True)]}]}
 URL = "http://127.0.0.1:8765/"
 failures = []
 
@@ -418,6 +433,35 @@ with sync_playwright() as pw:
         check("riacceso, si riordina subito", order() == ["beta", "alpha"], order())
         check("e il pulsante torna normale",
               page.locator("#hold").inner_text() == "auto-arrange" and not cfg("hold"))
+        page.unroute("**/api/roster")
+
+        # --- the five states ----------------------------------------------
+        page.route("**/api/roster", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(STATES_PAYLOAD)))
+        page.reload(wait_until="load")
+        page.wait_for_selector(".row")
+        check("finito e non letto è una spunta blu",
+              page.locator('.row[data-sid="p3"] .tick').count() == 1
+              and page.locator('.row[data-sid="p3"] .dot').count() == 0
+              and page.locator(".row.ready").count() == 1)
+        check("dice l'ultima cosa che ha detto",
+              "guess or skip" in page.locator('.row[data-sid="p3"] .said').inner_text())
+        check("e la riga dice ready, non idle",
+              "ready" in page.locator('.row[data-sid="p3"] .ago').inner_text())
+        check("chi aspetta dice cosa aspetta",
+              page.locator('.row[data-sid="p1"] .wf').inner_text() == "input needed")
+        check("un lavoro in background è marcato bg",
+              page.locator('.row[data-sid="p5"] .bg-tag').inner_text().lower() == "bg"
+              and "idle" in page.locator('.row[data-sid="p5"] .ago').inner_text())
+        # Motion means working, and only working.
+        check("si muove solo chi lavora",
+              page.locator(".row.working").count() == 2
+              and page.locator('.row[data-sid="p3"].working').count() == 0
+              and page.locator('.row[data-sid="p1"].working').count() == 0)
+        head = page.locator("#count").inner_text()
+        check("la testata conta anche i pronti", "1 ready" in head, head)
+        check("il titolo della scheda no",
+              page.title().startswith("(2)"), page.title())
         page.unroute("**/api/roster")
 
         # --- uptime and the filter box ------------------------------------
