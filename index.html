@@ -75,7 +75,7 @@
   input.inline { font:inherit; color:var(--ink); background:var(--bg);
                  border:1px solid var(--claude); border-radius:6px; padding:2px 7px;
                  min-width:220px; }
-  .block.orphan { opacity:.82; }
+  .block.orphan, .block.routines { opacity:.82; }
   .bhead { display:flex; align-items:baseline; gap:9px; padding:11px 15px;
            border-bottom:1px solid var(--line); }
   .pname { font-weight:650; font-size:15px; }
@@ -91,6 +91,12 @@
   .row.failed { animation:flash-bad 1.4s ease-out; }
   @keyframes flash-bad { from { background:color-mix(in srgb,#e5534b 26%,transparent); } }
   .row:first-of-type { border-top:0; }
+  /* A folded session: who is there, and nothing else. */
+  .row.stub { padding:6px 15px; cursor:pointer; }
+  .row.stub:hover { background:color-mix(in srgb,var(--accent) 8%,transparent); }
+  .row.stub .nm { font-weight:500; color:var(--dim); }
+  .fold { color:var(--faint); font-size:11px; cursor:pointer; padding:0 3px; }
+  .fold:hover { color:var(--accent); }
   .rhead { display:flex; align-items:center; gap:8px; }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--idle); flex:none; }
   .dot.busy { background:var(--busy); box-shadow:0 0 0 3px color-mix(in srgb,var(--busy) 22%,transparent); }
@@ -128,6 +134,8 @@
 <main id="main"><div class="empty">loading…</div></main>
 <script>
 let PINNED = [];
+let LATEST = [];            // the last roster the server sent, to repaint from
+const OPEN = new Set();     // sessions you unfolded by hand
 let query = "";
 let editing = false;
 let dragging = false;
@@ -167,24 +175,52 @@ function where(m) {
   return bits.join("  ·  ");
 }
 
-function row(m) {
-  const tag = m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "";
-  const go = m.canJump ? `<span class="go">open ↗</span>` : "";
-  const title = m.title || (m.prompt ? "" : "<span style='color:var(--faint)'>no title yet</span>");
+function stub(m) {
+  // Folded: the dot, the name, and any flag -- an alarm must be visible
+  // whether or not you have opened the row it belongs to.
+  return `<div class="row stub" data-sid="${esc(m.sessionId)}" data-pid="${esc(m.pid)}"
+        draggable="true" title="click to open">
+    <div class="rhead">
+      <span class="fold">▸</span>
+      <span class="dot ${esc(m.status)}"></span>
+      <span class="nm">${esc(m.name)}</span>${badge(m)}${flagOf(m)}
+      <span class="ago">${esc(m.status)} · ${ago(m.updatedAt)}</span>
+    </div>
+  </div>`;
+}
+
+function badge(m) {
+  // The badge on a routine row names the routine; `Routines` above already
+  // said what kind of thing it is.
+  return m.routine ? `<span class="bg-tag">${esc(m.routine)}</span>`
+    : m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "";
+}
+
+function flagOf(m) {
   // Three different things, and only two of them are alarms.
-  const flag = m.stuck === "waiting"
+  return m.stuck === "waiting"
     ? `<span class="flag waiting">waiting</span>`
     : m.stuck === "stuck"
       ? `<span class="flag stuck">stuck ${Math.round(m.quietFor)}m</span>`
       : m.stuck === "tool"
         ? `<span class="flag tool">tool ${Math.round(m.toolFor ?? m.quietFor)}m</span>` : "";
+}
+
+function row(m) {
+  const tag = badge(m);
+  const go = m.canJump ? `<span class="go">open ↗</span>` : "";
+  const title = m.title || (m.prompt ? "" : "<span style='color:var(--faint)'>no title yet</span>");
+  const flag = flagOf(m);
+  // Only a row you opened yourself offers to fold again: the liveliest one
+  // is the answer to "what is happening here" and always stays open.
+  const fold = m.foldable ? `<span class="fold" title="fold">▾</span>` : "";
   // Only the alarms tint their row; a long tool call gets a badge and no more.
   const alarm = m.stuck === "waiting" || m.stuck === "stuck" ? m.stuck : "";
   return `<div class="row ${m.canJump ? "can" : ""} ${alarm}" data-pid="${esc(m.pid)}"
         data-sid="${esc(m.sessionId)}" draggable="true">
     <div class="rhead">
       <span class="dot ${esc(m.status)}"></span>
-      <span class="nm">${esc(m.name)}</span>${tag}${flag}${go}
+      ${fold}<span class="nm">${esc(m.name)}</span>${tag}${flag}${go}
       <span class="ago">${esc(m.status)} · ${ago(m.updatedAt)}</span>
     </div>
     ${m.title && m.title.trim() === (m.name || "").trim() ? "" : `
@@ -210,19 +246,47 @@ function assignBar(m) {
   </div>`;
 }
 
+function unfolded(b, m) {
+  // Several sessions on one project is the normal case, and printing them
+  // all in full turns the page into a wall you have to scroll. The liveliest
+  // -- busy first, then most recent, as the server sorted them -- is the one
+  // you came to read.
+  //
+  // Three things override that, and all three are the same rule: never fold
+  // away something you are looking for. An alarm is never folded, whatever
+  // you clicked; a search shows every row it matched; and a row you opened
+  // stays open until you fold it again.
+  if (b.members.length < 2) return true;
+  if (m.sessionId === b.members[0].sessionId) return true;
+  if (m.stuck === "waiting" || m.stuck === "stuck") return true;
+  if (query.trim().length >= 3) return true;
+  return OPEN.has(m.sessionId);
+}
+
 function block(b) {
-  const br = b.branches.length ? `<span class="branch">${esc(b.branches.join(" · "))}</span>` : "";
+  // Routines have no branch to show and nothing you can open: they run
+  // unattended on a timer, which is what the header says instead.
+  const br = b.routines
+    ? `<span class="branch">unattended · on a timer</span>`
+    : b.branches.length ? `<span class="branch">${esc(b.branches.join(" · "))}</span>` : "";
   const n = b.members.length;
   const pinned = PINNED.includes(b.project);
-  return `<section class="block ${b.orphan ? "orphan" : ""} ${pinned ? "pinned" : ""}"
+  // Neither pinnable nor renamable: it is not a project you chose, it is
+  // whichever routines happen to be mid-run.
+  const name = b.routines
+    ? `<span class="pname">${esc(b.label)}</span>`
+    : `<span class="pname edit ${b.renamed ? "own" : ""}" data-edit="name">${esc(b.label)}</span>`;
+  return `<section class="block ${b.orphan ? "orphan" : ""} ${b.routines ? "routines" : ""} ${pinned ? "pinned" : ""}"
            data-project="${esc(b.project)}">
     <div class="bhead">
-      ${b.orphan ? "" : `<span class="pin" draggable="true"
+      ${b.orphan || b.routines ? "" : `<span class="pin" draggable="true"
              title="${pinned ? "pinned — drag to move, click to release" : "drag to pin at the top"}">✳</span>`}
-      <span class="pname edit ${b.renamed ? "own" : ""}" data-edit="name">${esc(b.label)}</span>${br}
+      ${name}${br}
       <span class="who">${n} ${n === 1 ? "session" : "sessions"}${b.busy ? ` · ${b.busy} busy` : ""}</span>
     </div>
-    ${b.members.map(m => row({ ...m, orphan: b.orphan })).join("")}
+    ${b.members.map(m => unfolded(b, m)
+      ? row({ ...m, orphan: b.orphan, foldable: m.sessionId !== b.members[0].sessionId })
+      : stub(m)).join("")}
   </section>`;
 }
 
@@ -235,7 +299,8 @@ function filtered(blocks) {
   return blocks.map(b => {
     if (hit(b.label) || hit(b.project)) return b;   // the whole project matched
     const members = b.members.filter(m =>
-      hit(m.name) || hit(m.title) || hit(m.prompt) || hit(m.cwd) || hit(m.branch));
+      hit(m.name) || hit(m.title) || hit(m.prompt) || hit(m.cwd) || hit(m.branch)
+      || hit(m.routine));
     return members.length ? { ...b, members } : null;
   }).filter(Boolean);
 }
@@ -257,33 +322,41 @@ async function load() {
     // you have already started typing in.
     const { blocks: all } = await r.json();
     if (busyWithUser()) return;
-    PINNED = all.filter(b => b.pinned).map(b => b.project);
-    const blocks = filtered(all);
-    const total = blocks.reduce((a, b) => a + b.members.length, 0);
-    const everyone = all.reduce((a, b) => a + b.members.length, 0);
-    const busy = blocks.reduce((a, b) => a + b.busy, 0);
-    const waiting = all.reduce((a, b) =>
-      a + b.members.filter(m => m.stuck === "waiting").length, 0);
-    const stuck = all.reduce((a, b) =>
-      a + b.members.filter(m => m.stuck === "stuck").length, 0);
-    const alarms = [
-      waiting ? `<span class="alarm wait">${waiting} waiting</span>` : "",
-      stuck ? `<span class="alarm">${stuck} stuck</span>` : "",
-    ].filter(Boolean).join(" · ");
-    document.getElementById("count").innerHTML =
-      `${total} sessions · ${busy} busy · ${blocks.length} projects`
-      + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
-      + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "");
-    document.title = (waiting + stuck) ? `(${waiting + stuck}) Claude Team` : "Claude Team";
-    document.getElementById("main").innerHTML =
-      blocks.length ? blocks.map(block).join("")
-        : `<div class="empty">${query.trim().length >= 3
-             ? `Nothing matches “${esc(query.trim())}”.` : "No Claude sessions running."}</div>`;
-    document.getElementById("stamp").textContent =
-      "updated " + new Date().toLocaleTimeString();
+    LATEST = all;
+    paint();
   } catch (e) {
     document.getElementById("stamp").textContent = "server unreachable";
   }
+}
+
+// Folding repaints from the roster already in hand: waiting for the next
+// poll would make the click feel like it missed.
+function paint() {
+  const all = LATEST;
+  PINNED = all.filter(b => b.pinned).map(b => b.project);
+  const blocks = filtered(all);
+  const total = blocks.reduce((a, b) => a + b.members.length, 0);
+  const everyone = all.reduce((a, b) => a + b.members.length, 0);
+  const busy = blocks.reduce((a, b) => a + b.busy, 0);
+  const waiting = all.reduce((a, b) =>
+    a + b.members.filter(m => m.stuck === "waiting").length, 0);
+  const stuck = all.reduce((a, b) =>
+    a + b.members.filter(m => m.stuck === "stuck").length, 0);
+  const alarms = [
+    waiting ? `<span class="alarm wait">${waiting} waiting</span>` : "",
+    stuck ? `<span class="alarm">${stuck} stuck</span>` : "",
+  ].filter(Boolean).join(" · ");
+  document.getElementById("count").innerHTML =
+    `${total} sessions · ${busy} busy · ${blocks.filter(b => !b.routines).length} projects`
+    + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
+    + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "");
+  document.title = (waiting + stuck) ? `(${waiting + stuck}) Claude Team` : "Claude Team";
+  document.getElementById("main").innerHTML =
+    blocks.length ? blocks.map(block).join("")
+      : `<div class="empty">${query.trim().length >= 3
+           ? `Nothing matches “${esc(query.trim())}”.` : "No Claude sessions running."}</div>`;
+  document.getElementById("stamp").textContent =
+    "updated " + new Date().toLocaleTimeString();
 }
 
 // Click a row and its terminal comes to the front. The page never guesses
@@ -293,6 +366,15 @@ document.getElementById("main").addEventListener("click", async ev => {
   // that control, never a jump. They share this element, so stopPropagation
   // on their own handlers cannot help: the guard has to live here.
   if (ev.target.closest(".edit, .guess, .clear, .pin")) return;
+  // Folding comes first: a folded row is a control, not a session you are
+  // trying to reach, and the chevron on an open row is not a jump either.
+  const folded = ev.target.closest(".row.stub");
+  if (folded) { OPEN.add(folded.dataset.sid); return paint(); }
+  const chevron = ev.target.closest(".fold");
+  if (chevron) {
+    OPEN.delete(chevron.closest(".row").dataset.sid);
+    return paint();
+  }
   const row = ev.target.closest(".row.can");
   if (!row) return;
   // Acknowledge the click *now*. Raising the terminal takes the focus off
@@ -407,16 +489,20 @@ main.addEventListener("dragend", () => {
   draggedRow = null;
   [...main.querySelectorAll(".over")].forEach(e => e.classList.remove("over"));
 });
+// Neither of these takes a drop: `No project` is where an unassigned session
+// already is, and Routines is not a project you can put anyone in.
+const sealed = el => el.classList.contains("orphan") || el.classList.contains("routines");
+
 main.addEventListener("dragover", ev => {
   const over = ev.target.closest(".block");
   if (!over) return;
   if (draggedRow) {                       // a session looking for a project
-    if (over.contains(draggedRow) || over.classList.contains("orphan")) return;
+    if (over.contains(draggedRow) || sealed(over)) return;
     ev.preventDefault();
     over.classList.add("over");
     return;
   }
-  if (!dragged || over === dragged || over.classList.contains("orphan")) return;
+  if (!dragged || over === dragged || sealed(over)) return;
   ev.preventDefault();
   over.classList.add("over");
 });
@@ -437,7 +523,7 @@ main.addEventListener("drop", async ev => {
   if (!dragged || over === dragged) return;
   ev.preventDefault();
   over.classList.remove("over");
-  const blocks = [...main.querySelectorAll(".block:not(.orphan)")];
+  const blocks = [...main.querySelectorAll(".block:not(.orphan):not(.routines)")];
   const from = blocks.indexOf(dragged);
   const to = blocks.indexOf(over);
   blocks.splice(to, 0, blocks.splice(from, 1)[0]);

@@ -107,6 +107,29 @@ by hand.
 which is gone once you close that Claude. A project rename is keyed by the
 project and lives forever.
 
+## Routines keep to themselves
+
+A systemd timer firing `claude -p` is a session like any other, and there are
+six of them here — `nightly-report` every 20 minutes, `gpu-watch`
+every 10, and the daily ones. They run from `~`, which is no project, so they
+used to land in **No project**: the pile that means *assign me*, which is the
+one thing a routine never needs.
+
+So they get a block of their own, at the very bottom — below `No project`,
+because that pile is asking you for something and a routine is asking for
+nothing. Each row is badged with the routine that started it, and the block
+takes no pin, no rename and no drop.
+
+Two signals are needed to call one, and both must agree. The peer file says
+`entrypoint: sdk-cli` where a terminal says `cli` — that only proves it is
+headless. The *name* comes from the script above it in the process tree,
+`~/.claude/routines/nightly-report.sh` → `nightly-report`. `claude -p` typed by
+hand is headless too, and calling that a routine would be a guess.
+
+**Nothing has to clean them up.** A run lasts three or four minutes — twenty
+when a transcription is in flight — and the page lists a session only while
+its pid answers, so the card goes on its own the moment the run ends.
+
 ## Finding one
 
 Type in the box (or press **`/`**) to filter. It matches a project's name, a

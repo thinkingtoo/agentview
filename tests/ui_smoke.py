@@ -11,6 +11,7 @@ that starts after a scroll grabs whatever moved under the cursor.
 import json
 import pathlib
 import sys
+import urllib.request
 
 from playwright.sync_api import sync_playwright
 
@@ -39,6 +40,32 @@ STUCK_PAYLOAD = {"blocks": [{
         # title. Printing both would say the same thing twice.
         {**_member("Handoff review", "idle", None, 1.0, "s5"),
          "title": "Handoff review", "kind": "bg"}]}]}
+def _routine(name, routine, sid):
+    return {**_member(name, "busy", None, 0.2, sid), "routine": routine,
+            "cwd": "/home/alice", "project": None, "branch": "", "canJump": False,
+            "title": "", "prompt": "processing a recording"}
+
+
+# A routine lives a few minutes on a timer, so the block is checked against a
+# crafted payload rather than by waiting for one to fire.
+ROUTINES_PAYLOAD = {"blocks": [
+    STUCK_PAYLOAD["blocks"][0],
+    {"project": "Routines", "label": "Routines", "orphan": False, "routines": True,
+     "renamed": False, "pinned": False, "branches": [], "busy": 2, "stuck": 0,
+     "updatedAt": 1787830000000, "members": [
+         _routine("Ansgar", "nightly-report", "r1"),
+         _routine("Bruno", "disk-check", "r2")]}]}
+# Four on one project. Only the liveliest is printed in full; the rest are
+# a name until you ask. Nobody here is stuck -- that is checked separately,
+# because an alarm must survive folding.
+FOLD_PAYLOAD = {"blocks": [{
+    "project": "maple", "label": "maple", "orphan": False, "routines": False,
+    "renamed": False, "pinned": False, "branches": ["main"], "busy": 1, "stuck": 0,
+    "updatedAt": 1787830000000, "members": [
+        _member("Vera", "busy", None, 0.1, "f1"),
+        _member("Mei", "idle", None, 3.0, "f2"),
+        _member("Leila", "idle", None, 9.0, "f3"),
+        _member("Aziz", "idle", None, 40.0, "f4")]}]}
 URL = "http://127.0.0.1:8765/"
 failures = []
 
@@ -57,13 +84,34 @@ def reset():
     write(kept)
 
 
-def restore(page, snapshot):
+def untitle(sid):
+    """Hand a session's tab back to the terminal.
+
+    An override does not only live in config.json: writing one *renames that
+    terminal tab*, and rewriting the file does not undo the rename. Two runs
+    of this test left two of the user's tabs called RIGA. Clearing the
+    override through the server is what puts the name back, because it is the
+    same path the page uses.
+    """
+    req = urllib.request.Request(
+        "http://127.0.0.1:8765/api/line",
+        data=json.dumps({"sessionId": sid, "text": ""}).encode(),
+        headers={"Content-Type": "application/json", "X-Fleet": "1"})
+    try:
+        urllib.request.urlopen(req, timeout=10).read()
+    except OSError as e:
+        print(f"(non sono riuscito a ripristinare il titolo di {sid}: {e})")
+
+
+def restore(page, snapshot, retitled=()):
     """Put the user's own settings back, and make sure they stayed put.
 
     A commit fires an async POST and the server rewrites config.json on its
     own clock. Restoring before that lands leaves test data in a file the
     user owns -- which happened three times before this existed.
     """
+    for sid in retitled:
+        untitle(sid)
     for _ in range(5):
         page.wait_for_timeout(1200)
         write(snapshot)
@@ -100,6 +148,7 @@ with sync_playwright() as pw:
             lambda r: jumps.append(r.url) if "/api/jump" in r.url else None)
 
     SNAPSHOT = json.loads(CFG.read_text())
+    retitled = []          # every session whose tab this run renamed
     removals = []
     page.expose_function("noteRemoval", lambda s: removals.append(s))
     try:
@@ -116,7 +165,7 @@ with sync_playwright() as pw:
         }""")
 
         # --- renaming and relabelling -------------------------------------
-        target = page.locator(".block:not(.orphan)").first
+        target = page.locator(".block:not(.orphan):not(.routines)").first
         project = target.get_attribute("data-project")
         open_editor(page, target.locator('[data-edit="name"]'))
         page.locator("input.inline").fill("RINOMINATO")
@@ -127,8 +176,9 @@ with sync_playwright() as pw:
               page.locator(f'.block[data-project="{project}"] [data-edit="name"]')
                   .inner_text().strip() == "RINOMINATO")
 
-        row = page.locator('.block:not(.orphan) [data-edit="line"]').first
+        row = page.locator('.block:not(.orphan):not(.routines) [data-edit="line"]').first
         sid = row.get_attribute("data-sid")
+        retitled.append(sid)
         open_editor(page, row)
         page.locator("input.inline").fill("RIGA")
         page.locator("input.inline").press("Enter")
@@ -141,7 +191,7 @@ with sync_playwright() as pw:
 
         # An open field must survive the poll: two full cycles, untouched, with
         # what was typed still in it and the cursor still there.
-        open_editor(page, page.locator('.block:not(.orphan) [data-edit="line"]').first)
+        open_editor(page, page.locator('.block:not(.orphan):not(.routines) [data-edit="line"]').first)
         page.keyboard.type("mezzo scritto")
         page.wait_for_timeout(7000)
         check("il campo regge due poll",
@@ -156,27 +206,34 @@ with sync_playwright() as pw:
         reset()
         page.reload(wait_until="load")
         page.wait_for_selector(".block")
-        blocks = page.locator(".block:not(.orphan)")
-        third = blocks.nth(2).get_attribute("data-project")
-        print(f"   (fisso {third!r} trascinandolo in cima)")
-        # The ✳ is the handle -- a block is mostly rows, and grabbing its middle
-        # used to pick up a session instead of the block.
-        blocks.nth(2).locator(".pin").drag_to(blocks.nth(0))
-        page.wait_for_timeout(1200)
-        check("trascinare fissa il blocco", third in cfg("pinned"), cfg("pinned"))
-        # Wait for the pin to actually show as pinned before clicking it: a click
-        # on a block the page has not yet drawn as pinned is correctly ignored.
-        page.wait_for_function(
-            """p => document.querySelector(`.block[data-project="${p}"]`)?.classList.contains('pinned')""",
-            arg=third, timeout=5000)
-        page.locator(f'.block[data-project="{third}"] .pin').click()
-        try:
+        # Three projects have to be running for there to be a third to drag,
+        # and on a quiet machine there are not. Skipping says so; timing out
+        # thirty seconds into the run says nothing.
+        blocks = page.locator(".block:not(.orphan):not(.routines)")
+        if blocks.count() < 3:
+            print("(meno di tre progetti in questo momento: salto il pin)")
+        else:
+            third = blocks.nth(2).get_attribute("data-project")
+            print(f"   (fisso {third!r} trascinandolo in cima)")
+            # The ✳ is the handle -- a block is mostly rows, and grabbing its
+            # middle used to pick up a session instead of the block.
+            blocks.nth(2).locator(".pin").drag_to(blocks.nth(0))
+            page.wait_for_timeout(1200)
+            check("trascinare fissa il blocco", third in cfg("pinned"), cfg("pinned"))
+            # Wait for the pin to actually show as pinned before clicking it: a
+            # click on a block the page has not yet drawn as pinned is correctly
+            # ignored.
             page.wait_for_function(
-                """p => !document.querySelector(`.block[data-project="${p}"]`)?.classList.contains('pinned')""",
+                """p => document.querySelector(`.block[data-project="${p}"]`)?.classList.contains('pinned')""",
                 arg=third, timeout=5000)
-        except Exception:
-            pass
-        check("la ✳ lo libera", third not in cfg("pinned"), cfg("pinned"))
+            page.locator(f'.block[data-project="{third}"] .pin').click()
+            try:
+                page.wait_for_function(
+                    """p => !document.querySelector(`.block[data-project="${p}"]`)?.classList.contains('pinned')""",
+                    arg=third, timeout=5000)
+            except Exception:
+                pass
+            check("la ✳ lo libera", third not in cfg("pinned"), cfg("pinned"))
 
         # --- assigning a session to a project -----------------------------
         reset()
@@ -194,26 +251,34 @@ with sync_playwright() as pw:
         else:
             print("(nessun suggerimento da accettare in questo momento)")
 
+        # Both of these need a session with no project, and routines -- which
+        # used to supply one at every timer tick -- no longer land there.
         cell = page.locator(".assign-edit").first
-        sid2 = cell.get_attribute("data-sid")
-        open_editor(page, cell)
-        page.locator("input.inline").fill("progetto-scritto")
-        page.locator("input.inline").press("Enter")
-        page.wait_for_timeout(900)
-        check("assegnare scrivendo il nome",
-              cfg("assign").get(sid2) == "progetto-scritto", cfg("assign"))
+        if not cell.count():
+            print("(nessuna sessione senza progetto da assegnare)")
+        else:
+            sid2 = cell.get_attribute("data-sid")
+            open_editor(page, cell)
+            page.locator("input.inline").fill("progetto-scritto")
+            page.locator("input.inline").press("Enter")
+            page.wait_for_timeout(900)
+            check("assegnare scrivendo il nome",
+                  cfg("assign").get(sid2) == "progetto-scritto", cfg("assign"))
 
         reset()
         page.reload(wait_until="load")
-        page.wait_for_selector("section.orphan .row")
+        page.wait_for_selector(".block")
         src = page.locator("section.orphan .row").first
-        sid3 = src.get_attribute("data-sid")
-        dst = page.locator(".block:not(.orphan)").first
-        dproj = dst.get_attribute("data-project")
-        src.drag_to(dst)
-        page.wait_for_timeout(1000)
-        check("trascinare assegna la sessione",
-              cfg("assign").get(sid3) == dproj, cfg("assign"))
+        if not src.count():
+            print("(nessuna sessione senza progetto da trascinare)")
+        else:
+            sid3 = src.get_attribute("data-sid")
+            dst = page.locator(".block:not(.orphan):not(.routines)").first
+            dproj = dst.get_attribute("data-project")
+            src.drag_to(dst)
+            page.wait_for_timeout(1000)
+            check("trascinare assegna la sessione",
+                  cfg("assign").get(sid3) == dproj, cfg("assign"))
 
         # --- stuck and waiting --------------------------------------------
         # Nothing is stuck most of the time, so the rendering is checked against
@@ -243,6 +308,79 @@ with sync_playwright() as pw:
         head = page.locator("#count").inner_text()
         check("la testata avvisa", "waiting" in head and "stuck" in head, head)
         check("il titolo della scheda conta", page.title().startswith("(2)"), page.title())
+        page.unroute("**/api/roster")
+
+        # --- routines -----------------------------------------------------
+        page.route("**/api/roster", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(ROUTINES_PAYLOAD)))
+        page.reload(wait_until="load")
+        page.wait_for_selector(".block.routines")
+        check("le routine stanno in un blocco solo",
+              page.locator(".block.routines").count() == 1
+              and page.locator(".block.routines .row").count() == 2)
+        check("il blocco routine sta in fondo",
+              "routines" in page.locator(".block").last.get_attribute("class"))
+        check("non si fissa e non si rinomina",
+              page.locator(".block.routines .pin").count() == 0
+              and page.locator('.block.routines [data-edit="name"]').count() == 0)
+        # The badge is styled uppercase, like every other bg-tag.
+        check("ogni riga dice quale routine è",
+              sorted(t.lower() for t in
+                     page.locator(".block.routines .bg-tag").all_inner_texts())
+              == ["disk-check", "nightly-report"],
+              page.locator(".block.routines .bg-tag").all_inner_texts())
+        check("nessuna riga chiede di essere assegnata",
+              page.locator(".block.routines .assign").count() == 0)
+        head = page.locator("#count").inner_text()
+        check("le routine non contano come progetto", "1 projects" in head, head)
+        page.unroute("**/api/roster")
+
+        # --- folding ------------------------------------------------------
+        page.route("**/api/roster", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(FOLD_PAYLOAD)))
+        page.reload(wait_until="load")
+        page.wait_for_selector(".row.stub")
+        check("solo il più attivo è aperto",
+              page.locator(".row:not(.stub)").count() == 1
+              and page.locator(".row.stub").count() == 3
+              and page.locator('.row:not(.stub) .nm').inner_text() == "Vera")
+        page.locator('.row.stub[data-sid="f3"]').click()
+        page.wait_for_timeout(300)
+        check("cliccarne una la apre",
+              page.locator('.row[data-sid="f3"]:not(.stub)').count() == 1
+              and page.locator(".row.stub").count() == 2)
+        # An open row still jumps; only the chevron folds it back.
+        page.locator('.row[data-sid="f3"] .fold').click()
+        page.wait_for_timeout(300)
+        check("il chevron la richiude",
+              page.locator('.row.stub[data-sid="f3"]').count() == 1)
+        check("aprire e chiudere non fa il jump", not jumps, jumps)
+        # Two polls: what you opened must survive the page redrawing itself.
+        page.locator('.row.stub[data-sid="f4"]').click()
+        page.wait_for_timeout(7000)
+        check("resta aperta attraverso i poll",
+              page.locator('.row[data-sid="f4"]:not(.stub)').count() == 1)
+        box = page.locator("#q")
+        box.fill("leila")
+        page.wait_for_timeout(500)
+        check("cercando si apre quello che trova",
+              page.locator(".row.stub").count() == 0
+              and page.locator(".row").count() == 1)
+        box.fill("")
+        page.wait_for_timeout(400)
+        page.unroute("**/api/roster")
+
+        # An alarm is never folded away, whatever you clicked.
+        page.route("**/api/roster", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(STUCK_PAYLOAD)))
+        page.reload(wait_until="load")
+        page.wait_for_selector(".row")
+        check("chi è fermo o in attesa non si piega mai",
+              page.locator(".row.stub.stuck").count() == 0
+              and page.locator(".row.stub.waiting").count() == 0
+              and page.locator(".row.waiting, .row.stuck").count() == 2)
+        check("una chiamata lunga resta leggibile anche piegata",
+              page.locator(".row.stub .flag.tool").count() == 1)
         page.unroute("**/api/roster")
 
         # --- uptime and the filter box ------------------------------------
@@ -286,7 +424,7 @@ with sync_playwright() as pw:
 
         check("nessun errore JS", not errors, errors)
     finally:
-        ok = restore(page, SNAPSHOT)
+        ok = restore(page, SNAPSHOT, retitled)
     check("la config dell'utente torna com'era", ok,
           json.loads(CFG.read_text()))
     browser.close()

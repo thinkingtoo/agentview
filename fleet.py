@@ -176,6 +176,49 @@ def _on_a_terminal(pid):
         return False
 
 
+def _ancestry(pid, depth=6):
+    """The command lines above a pid, closest parent first.
+
+    Six is generous: a routine is `timer -> script -> claude`, and the extra
+    room covers the shells and pipes those scripts wrap themselves in.
+    """
+    for _ in range(depth):
+        try:
+            with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
+                pid = next(int(line.split()[1]) for line in fh
+                           if line.startswith("PPid:"))
+            if pid <= 1:
+                return
+            with open(f"/proc/{pid}/cmdline", "rb") as fh:
+                yield fh.read().decode("utf-8", "replace").replace("\0", " ")
+        except (OSError, ValueError, StopIteration):
+            return
+
+
+def routine_of(rec, cfg=None, ancestry=None):
+    """Which routine started this session, if a routine did.
+
+    A routine is `claude -p` fired by a systemd timer, so its peer file says
+    `entrypoint: sdk-cli` where a terminal says `cli`. That alone only proves
+    it is headless -- the *name* comes from the script above it in the
+    process tree, `~/.claude/routines/nightly-report.sh` -> `nightly-report`.
+
+    Both halves are required. Headless with no routine script above it is
+    somebody running `claude -p` by hand, and calling that a routine would be
+    a guess.
+    """
+    if rec.get("entrypoint") == "cli":
+        return ""
+    root = str((cfg or claude_dir()) / "routines") + os.sep
+    if ancestry is None:
+        ancestry = _ancestry(rec.get("pid"))
+    for cmd in ancestry:
+        for token in cmd.split():
+            if token.startswith(root):
+                return os.path.splitext(os.path.basename(token))[0]
+    return ""
+
+
 PATH_IN_TEXT = re.compile(r"(?:~|/home/[\w.-]+)/[\w./@-]+")
 TAIL_LINES = 400
 
@@ -521,10 +564,13 @@ def sessions(cfg=None):
         in_flight = summary["pending"] if rec.get("status") == "busy" else None
         status_since = rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0
         project = assigned.get(sid) or resolve_project(cwd, shelves)
+        routine = routine_of(rec, cfg)
         # Only guess for the ones that have nothing better -- the guess costs
         # a transcript scan, and a session with a real cwd does not need it.
+        # A routine is never guessed for: it belongs to the routine that
+        # started it, whatever files it happens to touch on the way.
         guess = (suggest_project(summary["paths"], shelves)
-                 if not project and transcript else None)
+                 if not project and transcript and not routine else None)
         out.append({
             "name": rec.get("name") or "(unnamed)",
             "status": rec.get("status") or "?",
@@ -536,6 +582,7 @@ def sessions(cfg=None):
             "updatedAt": rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0,
             "startedAt": rec.get("startedAt") or 0,
             "project": project,
+            "routine": routine,
             "assigned": sid in assigned,
             "suggestion": guess,
             "quietFor": round(quiet, 1) if quiet is not None else None,
@@ -559,23 +606,35 @@ def sessions(cfg=None):
     return out
 
 
+ROUTINES = "Routines"
+
+
 def roster(cfg=None):
     """Sessions grouped into project blocks, liveliest project first.
 
     Project-first: the question is what is happening, and who is on it.
+
+    Routines are the exception: they are grouped by being routines rather
+    than by where they run. A routine runs from `~`, which is no project, so
+    it used to land in `No project` -- the pile that means "assign me", which
+    is the one thing a routine never needs. They get their own block, keyed
+    apart from the projects so a real project of the same name cannot be
+    swallowed into it.
     """
     groups = {}
     for s in sessions(cfg):
-        groups.setdefault(s["project"] or "", []).append(s)
+        key = (True, ROUTINES) if s["routine"] else (False, s["project"] or "")
+        groups.setdefault(key, []).append(s)
 
     blocks = []
-    for project, members in groups.items():
+    for (routines, project), members in groups.items():
         members.sort(key=lambda s: (s["status"] != "busy", -s["updatedAt"]))
         branches = sorted({s["branch"] for s in members if s["branch"]})
         blocks.append({
             "stuck": sum(1 for s in members if s["stuck"]),
             "project": project or "No project",
             "orphan": not project,
+            "routines": routines,
             "branches": branches,
             "busy": sum(1 for s in members if s["status"] == "busy"),
             "updatedAt": max(s["updatedAt"] for s in members),
@@ -675,9 +734,13 @@ def order_blocks(blocks, pinned):
     should not move because something else woke up. Everything unpinned still
     floats liveliest-first underneath, and `No project` stays at the bottom
     whatever happens.
+
+    Routines sit below even that. `No project` is asking you for something;
+    routines are asking for nothing and will be gone in a few minutes.
     """
     rank = {name: i for i, name in enumerate(pinned)}
     return sorted(blocks, key=lambda b: (
+        b.get("routines", False),
         b["orphan"],
         rank.get(b["project"], len(rank)),
         -b.get("stuck", 0),      # something needing you outranks something busy
