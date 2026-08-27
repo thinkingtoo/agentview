@@ -1,0 +1,9 @@
+{
+  "_comment": "A shelf holds projects without being one. Everything directly below a shelf is a project; anything deeper becomes a breadcrumb (acme > tiroir).",
+  "shelves": [
+    "~",
+    "~/Projects",
+    "~/Projects/clients"
+  ],
+  "port": 8765
+}
