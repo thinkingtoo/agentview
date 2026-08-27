@@ -305,6 +305,26 @@ function filtered(blocks) {
   }).filter(Boolean);
 }
 
+// A JavaScript error used to be invisible: the poll stops, the page quietly
+// goes stale, and nothing anywhere says why. Send it to the server so it
+// lands in the same log as everything else -- deduped, because the poll fires
+// every few seconds and a broken page would otherwise write a book.
+const reported = new Map();
+function report(where, message, stack) {
+  const key = where + String(message);
+  if (Date.now() - (reported.get(key) || 0) < 60000) return;
+  reported.set(key, Date.now());
+  fetch("/api/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify({ where, message: String(message).slice(0, 500),
+                           stack: String(stack || "").slice(0, 2000) }),
+  }).catch(() => {});      // the server being gone is what we were reporting
+}
+window.addEventListener("error", e => report("window", e.message, e.error?.stack));
+window.addEventListener("unhandledrejection",
+  e => report("promise", e.reason?.message ?? e.reason, e.reason?.stack));
+
 function busyWithUser() {
   return editing || dragging || !!document.querySelector("input.inline");
 }
@@ -326,6 +346,7 @@ async function load() {
     paint();
   } catch (e) {
     document.getElementById("stamp").textContent = "server unreachable";
+    report("poll", e.message, e.stack);
   }
 }
 

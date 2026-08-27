@@ -11,6 +11,7 @@ from pathlib import Path
 
 import fleet
 import jump
+import log
 
 HERE = Path(__file__).resolve().parent
 
@@ -58,25 +59,38 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
+    ROUTES = ("jump", "order", "name", "line", "assign")
+
     def do_POST(self):
         if not self._local():
+            log.event("refused", path=self.path, origin=self.headers.get("Origin"))
             return self.send_error(403, "not a local request")
         try:
             body = self._body()
         except ValueError:
             return self.send_error(400, "expected JSON")
 
-        if self.path.startswith("/api/jump"):
-            return self._jump(body)
-        if self.path.startswith("/api/order"):
-            return self._order(body)
-        if self.path.startswith("/api/name"):
-            return self._name(body)
-        if self.path.startswith("/api/line"):
-            return self._line(body)
-        if self.path.startswith("/api/assign"):
-            return self._assign(body)
+        if self.path.startswith("/api/log"):
+            return self._log(body)
+        for name in self.ROUTES:
+            if self.path.startswith(f"/api/{name}"):
+                # Every action is written down. A tab that ends up called
+                # something surprising can then be traced back to the click
+                # that did it, which is exactly the trail that was missing.
+                log.event("action", what=name, asked=body)
+                with log.timed(f"action.{name}", 2.0, asked=body):
+                    return getattr(self, f"_{name}")(body)
         return self.send_error(404)
+
+    def _log(self, body):
+        """Errors from the page itself.
+
+        A JavaScript exception used to be invisible: the poll stops, the page
+        goes stale, and nothing anywhere says why.
+        """
+        log.event("page.error", **{k: str(v)[:2000] for k, v in body.items()
+                                   if k in ("message", "stack", "source", "where")})
+        self._send(json.dumps({"ok": True}), "application/json")
 
     def _jump(self, body):
         try:
@@ -87,8 +101,9 @@ class Handler(BaseHTTPRequestHandler):
         rec = fleet.live_session(pid)
         if not rec:
             return self.send_error(404, "no such live session")
-        self._send(json.dumps(jump.jump(pid, rec.get("tmux") or "")),
-                   "application/json")
+        done = jump.jump(pid, rec.get("tmux") or "")
+        log.event("jumped", pid=pid, name=rec.get("name"), **done)
+        self._send(json.dumps(done), "application/json")
 
     def _order(self, body):
         pinned = body.get("pinned")
@@ -134,11 +149,19 @@ class Handler(BaseHTTPRequestHandler):
             if s["sessionId"] == sid:
                 ran = jump.set_title(s["pid"], s["tmux"], text)
                 break
+        # What was actually run on the terminal, not just what was intended:
+        # an empty list here is a rename that silently did nothing.
+        log.event("retitle", sessionId=sid, text=text, ran=ran)
         self._send(json.dumps({"ok": True, "ran": ran}), "application/json")
 
     def do_GET(self):
         if self.path.startswith("/api/roster"):
-            self._send(json.dumps({"blocks": fleet.roster()}), "application/json")
+            # A poll is expected to be fast. The 9-second round that made
+            # clicking feel broken would have written a line every time.
+            with log.timed("roster", 1.5):
+                blocks = fleet.roster()
+            log.note_roster(blocks)
+            self._send(json.dumps({"blocks": blocks}), "application/json")
         elif self.path in ("/", "/index.html"):
             self._send(page(), "text/html; charset=utf-8")
         else:
@@ -151,7 +174,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     p = setting("port", 8765)
     server = ThreadingHTTPServer(("127.0.0.1", p), Handler)
+    log.start(fleet.claude_dir())
     print(f"fleet on http://127.0.0.1:{p}", flush=True)
+    print(f"log      {log.LOG}", flush=True)
     server.serve_forever()
 
 

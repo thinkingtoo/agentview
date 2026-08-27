@@ -217,10 +217,36 @@ projects without being one.
 A project is the first directory below the deepest shelf containing the cwd.
 Anything deeper becomes a breadcrumb, which is exactly the client/project
 distinction: **acme › site**. A session sitting *on* a shelf has no project
-and lands in the `No project` block at the bottom — that block is where ad-hoc
-work and unattended routines live, and it is not hidden.
+and lands in the `No project` block near the bottom — ad-hoc work, and it is
+not hidden. Routines sit lower still, in a block of their own.
 
 Add a shelf whenever a directory starts holding projects instead of being one.
+
+## When something looks wrong
+
+Nothing on this page is generated, so when it says something strange the
+answer is usually in what it read, or in what a click actually ran. Both are
+written down:
+
+```bash
+python3 log.py            # the last 60 events
+python3 log.py -f         # follow
+python3 log.py -k error -k slow
+python3 log.py -w Vera    # everything mentioning one session
+```
+
+`~/.local/state/claude-team/events.jsonl`, one JSON object per line, rotated
+at 5 MB. It records four things, and each one is there because it is what you
+go looking for:
+
+| Kind | Why it is kept |
+|---|---|
+| `session.seen` / `session.gone` / `status` / `waitingFor` | Sampled from the peer files every two seconds by a thread of its own, so the history exists whether or not a browser was open. A routine that ran for four minutes at 03:00 left no trace at all before this. |
+| `action` / `retitle` / `jumped` | Every POST, with what it asked for and what actually ran on the terminal. A tab that ends up called something surprising can be traced to the click that did it — which is how two tabs came to be called `RIGA`. |
+| `error` / `page.error` | Exceptions, including JavaScript ones, which used to be invisible: the poll stops, the page goes quietly stale, and nothing anywhere says why. Repeats are collapsed — the first one is the news, the next four hundred are noise. |
+| `slow` | An operation over its budget, and **no line at all** when it was fast. The 9-second poll that made clicking feel broken would have written a line a round. |
+
+Silence is the normal state of the file.
 
 ## Tests
 
@@ -229,11 +255,15 @@ python3 -m unittest discover -s tests
 ```
 
 `tests/ui_smoke.py` is separate: it drives the real page with Playwright
-against a running server — rename, line override, drag-to-pin, unpin — and is
-not part of `unittest discover`. Run it with `python3 tests/ui_smoke.py`.
+against a running server — rename, line override, drag-to-pin, unpin, folding,
+the routines block — and is not part of `unittest discover`. Run it with
+`python3 tests/ui_smoke.py`. It puts back everything it touched, **including
+the tab titles it renamed**: an override does not only live in `config.json`.
 
-The unit tests cover the three things worth covering: route selection for each terminal
-(including tmux-inside-WezTerm and a headless session with nowhere to go),
-project resolution (including the
-`acme › site` and on-a-shelf cases) and reading the summary records out of
-a transcript, including a headless session that has no title at all.
+The unit tests cover the things worth covering: route selection for each
+terminal (including tmux-inside-WezTerm and a headless session with nowhere to
+go), project resolution (including the `acme › site` and on-a-shelf
+cases), reading the summary records out of a transcript, telling a routine
+from a hand-run `claude -p`, and the log — that a heartbeat alone says
+nothing, that a repeated error is written once, and that a fast operation
+writes no line at all.
