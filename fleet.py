@@ -10,6 +10,7 @@ import collections
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 
@@ -244,6 +245,12 @@ def sessions(cfg=None):
         transcript = transcript_for(sid, cwd, cfg) if sid else None
         summary = summary_cached(transcript) if transcript else {
             "title": "", "prompt": "", "branch": ""}
+        quiet = None
+        if transcript:
+            try:
+                quiet = (time.time() - transcript.stat().st_mtime) / 60
+            except OSError:
+                quiet = None
         project = assigned.get(sid) or resolve_project(cwd, shelves)
         # Only guess for the ones that have nothing better -- the guess costs
         # a transcript scan, and a session with a real cwd does not need it.
@@ -261,6 +268,9 @@ def sessions(cfg=None):
             "project": project,
             "assigned": sid in assigned,
             "suggestion": guess,
+            "quietFor": round(quiet, 1) if quiet is not None else None,
+            "stuck": classify(rec.get("status") or "", quiet,
+                              config_value("stuck_after_minutes", 5)),
             # Cheap: a session on a pty is hosted by some emulator, so a route
             # exists. Working out which one costs subprocesses, so that waits
             # until you actually click.
@@ -287,6 +297,7 @@ def roster(cfg=None):
         members.sort(key=lambda s: (s["status"] != "busy", -s["updatedAt"]))
         branches = sorted({s["branch"] for s in members if s["branch"]})
         blocks.append({
+            "stuck": sum(1 for s in members if s["stuck"]),
             "project": project or "No project",
             "orphan": not project,
             "branches": branches,
@@ -332,6 +343,27 @@ def suggest_project(paths, shelves):
     return top
 
 
+def classify(status, quiet, after):
+    """Is this session stuck, waiting on you, or simply working?
+
+    Two different problems with two different answers:
+
+    - `waiting` -- Claude Code has asked something and nobody replied. It
+      needs *you*, and it needs you now.
+    - `busy` with a silent transcript -- it thinks it is working and it is
+      not. The transcript's mtime is the only honest heartbeat here:
+      `updatedAt` in the peer file does not move while a session works.
+
+    Idle is not stuck. A session idle for two days is finished or abandoned,
+    and flashing it forever would only teach you to ignore the flashing.
+    """
+    if status == "waiting":
+        return "waiting"
+    if status == "busy" and quiet is not None and quiet >= after:
+        return "stuck"
+    return None
+
+
 def apply_overrides(block, names, lines):
     """Lay your own labels over the generated ones.
 
@@ -361,6 +393,7 @@ def order_blocks(blocks, pinned):
     return sorted(blocks, key=lambda b: (
         b["orphan"],
         rank.get(b["project"], len(rank)),
+        -b.get("stuck", 0),      # something needing you outranks something busy
         -b["busy"],
         -b["updatedAt"],
     ))

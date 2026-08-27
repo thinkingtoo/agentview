@@ -86,6 +86,25 @@ by hand.
 which is gone once you close that Claude. A project rename is keyed by the
 project and lives forever.
 
+## Stuck and waiting
+
+Two different problems, so two different marks — the row is tinted, its dot
+beats, the tab title carries a count, and the project it belongs to rises.
+
+| Mark | What it means | Where it comes from |
+|---|---|---|
+| **waiting for you** (amber) | It asked something and nobody answered | status `waiting`, flagged at once |
+| **stuck Nm** (red) | It thinks it is working and it is not | status `busy` while its transcript has been silent |
+
+The transcript's mtime is the heartbeat here, and it has to be: `updatedAt` in
+the peer file **does not move while a session works** — a session busy for ten
+minutes looks identical to one hung for ten minutes if you only read that.
+
+**Idle is never stuck.** A session idle for two days is finished or abandoned;
+flashing it forever would only teach you to ignore the flashing.
+
+`"stuck_after_minutes": 5` in `config.json` sets how long silence is allowed.
+
 ## Size
 
 `config.json` carries the page's own scale:

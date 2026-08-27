@@ -15,6 +15,24 @@ import sys
 from playwright.sync_api import sync_playwright
 
 CFG = pathlib.Path(__file__).resolve().parent.parent / "config.json"
+
+
+def _member(name, status, stuck, quiet, sid):
+    return {"name": name, "status": status, "kind": "interactive",
+            "cwd": "/home/alice/Projects/maple", "tmux": "", "pid": 111,
+            "sessionId": sid, "updatedAt": 1787830000000, "project": "maple",
+            "title": f"{name} at work", "prompt": "carry on", "branch": "main",
+            "canJump": True, "assigned": False, "suggestion": None,
+            "quietFor": quiet, "stuck": stuck}
+
+
+STUCK_PAYLOAD = {"blocks": [{
+    "project": "maple", "label": "maple", "orphan": False, "renamed": False,
+    "pinned": False, "branches": ["main"], "busy": 1, "stuck": 2,
+    "updatedAt": 1787830000000, "members": [
+        _member("Vera", "waiting", "waiting", 0.3, "s1"),
+        _member("Mei", "busy", "stuck", 17.0, "s2"),
+        _member("Leila", "busy", None, 0.1, "s3")]}]}
 URL = "http://127.0.0.1:8765/"
 failures = []
 
@@ -27,6 +45,18 @@ def reset():
     kept = json.loads(CFG.read_text())
     kept.update({"assign": {}, "names": {}, "lines": {}, "pinned": []})
     CFG.write_text(json.dumps(kept, indent=2, ensure_ascii=False) + "\n")
+
+
+def open_editor(page, locator):
+    """Click a cell and wait until its field is really there.
+
+    Only one field may be open at a time, so the previous one has to be gone
+    before the next click -- otherwise the click is swallowed and the wait
+    times out somewhere far from the cause.
+    """
+    page.wait_for_function("() => !document.querySelector('input.inline')")
+    locator.click()
+    page.wait_for_selector("input.inline", timeout=5000)
 
 
 def check(label, ok, detail=""):
@@ -50,7 +80,7 @@ with sync_playwright() as pw:
     # --- renaming and relabelling -------------------------------------
     target = page.locator(".block:not(.orphan)").first
     project = target.get_attribute("data-project")
-    target.locator('[data-edit="name"]').click()
+    open_editor(page, target.locator('[data-edit="name"]'))
     page.locator("input.inline").fill("RINOMINATO")
     page.locator("input.inline").press("Enter")
     page.wait_for_timeout(900)
@@ -61,7 +91,7 @@ with sync_playwright() as pw:
 
     row = page.locator('.block:not(.orphan) [data-edit="line"]').first
     sid = row.get_attribute("data-sid")
-    row.click()
+    open_editor(page, row)
     page.locator("input.inline").fill("RIGA")
     page.locator("input.inline").press("Enter")
     page.wait_for_timeout(900)
@@ -72,7 +102,7 @@ with sync_playwright() as pw:
     check("modificare non fa il jump", not jumps, jumps)
 
     # An open field must survive the poll.
-    page.locator('.block:not(.orphan) [data-edit="line"]').first.click()
+    open_editor(page, page.locator('.block:not(.orphan) [data-edit="line"]').first)
     for ch in "lento":
         page.locator("input.inline").type(ch, delay=0)
         page.wait_for_timeout(700)
@@ -113,7 +143,7 @@ with sync_playwright() as pw:
 
     cell = page.locator(".assign-edit").first
     sid2 = cell.get_attribute("data-sid")
-    cell.click()
+    open_editor(page, cell)
     page.locator("input.inline").fill("progetto-scritto")
     page.locator("input.inline").press("Enter")
     page.wait_for_timeout(900)
@@ -131,6 +161,26 @@ with sync_playwright() as pw:
     page.wait_for_timeout(1000)
     check("trascinare assegna la sessione",
           cfg("assign").get(sid3) == dproj, cfg("assign"))
+
+    # --- stuck and waiting --------------------------------------------
+    # Nothing is stuck most of the time, so the rendering is checked against
+    # a crafted payload rather than waiting for a session to hang.
+    page.route("**/api/roster", lambda route: route.fulfill(
+        status=200, content_type="application/json", body=json.dumps(STUCK_PAYLOAD)))
+    page.reload(wait_until="networkidle")
+    page.wait_for_selector(".row")
+    check("la riga in attesa è marcata",
+          page.locator(".row.waiting .flag.waiting").count() == 1)
+    check("la riga ferma è marcata",
+          page.locator(".row.stuck .flag.stuck").count() == 1)
+    check("dice da quanto è ferma",
+          "17m" in page.locator(".flag.stuck").inner_text().lower())
+    check("chi lavora resta pulito",
+          page.locator(".row:not(.stuck):not(.waiting)").count() == 1)
+    head = page.locator("#count").inner_text()
+    check("la testata avvisa", "waiting for you" in head and "stuck" in head, head)
+    check("il titolo della scheda conta", page.title().startswith("(2)"), page.title())
+    page.unroute("**/api/roster")
 
     check("nessun errore JS", not errors, errors)
     reset()

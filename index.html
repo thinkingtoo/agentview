@@ -8,12 +8,12 @@
   :root {
     --bg:#0e1013; --card:#171a1f; --line:#262b33; --ink:#e7eaee; --dim:#9aa3ae;
     --faint:#6b7480; --busy:#3ddc84; --wait:#f5c451; --idle:#5c6570; --accent:#7aa2f7;
-    --claude:#d97757;
+    --claude:#d97757; --bad:#e5534b;
   }
   @media (prefers-color-scheme: light) {
     :root { --bg:#f6f7f9; --card:#fff; --line:#e2e5ea; --ink:#14171c; --dim:#5b6472;
             --faint:#8a929e; --busy:#1a9e5c; --wait:#b8860b; --idle:#a2aab5; --accent:#3b5bdb;
-            --claude:#c2410c; }
+            --claude:#c2410c; --bad:#c0392b; }
   }
   html { zoom: {{ZOOM}}; }
   * { box-sizing:border-box; }
@@ -43,6 +43,21 @@
   .edit { cursor:text; border-bottom:1px dashed transparent; }
   .edit:hover { border-bottom-color:var(--faint); }
   .own { color:var(--claude); }
+  /* Two problems, two colours: amber wants you, red is not moving. */
+  .row.waiting { background:color-mix(in srgb,var(--wait) 9%,transparent);
+                 box-shadow:inset 3px 0 0 var(--wait); }
+  .row.stuck   { background:color-mix(in srgb,var(--bad) 10%,transparent);
+                 box-shadow:inset 3px 0 0 var(--bad); }
+  .row.waiting .dot { animation:beat 1.25s ease-in-out infinite; background:var(--wait); }
+  .row.stuck .dot   { animation:beat 1.25s ease-in-out infinite; background:var(--bad); }
+  @keyframes beat { 0%,100% { transform:scale(1); opacity:1; }
+                    50% { transform:scale(1.55); opacity:.45; } }
+  .flag { font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
+          border-radius:5px; padding:1px 6px; }
+  .flag.waiting { color:var(--wait); border:1px solid color-mix(in srgb,var(--wait) 45%,transparent); }
+  .flag.stuck { color:var(--bad); border:1px solid color-mix(in srgb,var(--bad) 45%,transparent); }
+  .alarm { color:var(--bad); font-weight:650; }
+  .alarm.wait { color:var(--wait); }
   .assign { margin-top:7px; display:flex; gap:9px; align-items:center; font-size:11.5px; }
   .guess, .assign-edit, .clear { cursor:pointer; color:var(--faint); }
   .guess { color:var(--claude); border:1px solid color-mix(in srgb,var(--claude) 40%,transparent);
@@ -133,11 +148,15 @@ function row(m) {
   const tag = m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "";
   const go = m.canJump ? `<span class="go">open ↗</span>` : "";
   const title = m.title || (m.prompt ? "" : "<span style='color:var(--faint)'>no title yet</span>");
-  return `<div class="row ${m.canJump ? "can" : ""}" data-pid="${esc(m.pid)}"
+  const flag = m.stuck === "waiting"
+    ? `<span class="flag waiting">waiting for you</span>`
+    : m.stuck === "stuck"
+      ? `<span class="flag stuck">stuck ${Math.round(m.quietFor)}m</span>` : "";
+  return `<div class="row ${m.canJump ? "can" : ""} ${esc(m.stuck || "")}" data-pid="${esc(m.pid)}"
         data-sid="${esc(m.sessionId)}" draggable="true">
     <div class="rhead">
       <span class="dot ${esc(m.status)}"></span>
-      <span class="nm">${esc(m.name)}</span>${tag}${go}
+      <span class="nm">${esc(m.name)}</span>${tag}${flag}${go}
       <span class="ago">${esc(m.status)} · ${ago(m.updatedAt)}</span>
     </div>
     <div class="title edit ${m.overridden ? "own" : ""}" data-edit="line"
@@ -150,15 +169,15 @@ function row(m) {
 
 function assignBar(m) {
   if (m.assigned) {
-    return `<div class="assign"><span class="own">assegnata</span>
-      <span class="clear" data-sid="${esc(m.sessionId)}">togli</span></div>`;
+    return `<div class="assign"><span class="own">assigned</span>
+      <span class="clear" data-sid="${esc(m.sessionId)}">clear</span></div>`;
   }
   if (!m.orphan) return "";
   const guess = m.suggestion
     ? `<span class="guess" data-sid="${esc(m.sessionId)}" data-project="${esc(m.suggestion)}">
          ${esc(m.suggestion)}?</span>` : "";
   return `<div class="assign">${guess}
-    <span class="edit assign-edit" data-edit="assign" data-sid="${esc(m.sessionId)}">assegna…</span>
+    <span class="edit assign-edit" data-edit="assign" data-sid="${esc(m.sessionId)}">assign…</span>
   </div>`;
 }
 
@@ -170,7 +189,7 @@ function block(b) {
            data-project="${esc(b.project)}">
     <div class="bhead">
       ${b.orphan ? "" : `<span class="pin" draggable="true"
-             title="${pinned ? "fissato — trascina per spostare, clic per liberare" : "trascina per fissare in cima"}">✳</span>`}
+             title="${pinned ? "pinned — drag to move, click to release" : "drag to pin at the top"}">✳</span>`}
       <span class="pname edit ${b.renamed ? "own" : ""}" data-edit="name">${esc(b.label)}</span>${br}
       <span class="who">${n} ${n === 1 ? "session" : "sessions"}${b.busy ? ` · ${b.busy} busy` : ""}</span>
     </div>
@@ -185,8 +204,18 @@ async function load() {
     PINNED = blocks.filter(b => b.pinned).map(b => b.project);
     const total = blocks.reduce((a, b) => a + b.members.length, 0);
     const busy = blocks.reduce((a, b) => a + b.busy, 0);
-    document.getElementById("count").textContent =
-      `${total} sessions · ${busy} busy · ${blocks.length} projects`;
+    const waiting = blocks.reduce((a, b) =>
+      a + b.members.filter(m => m.stuck === "waiting").length, 0);
+    const stuck = blocks.reduce((a, b) =>
+      a + b.members.filter(m => m.stuck === "stuck").length, 0);
+    const alarms = [
+      waiting ? `<span class="alarm wait">${waiting} waiting for you</span>` : "",
+      stuck ? `<span class="alarm">${stuck} stuck</span>` : "",
+    ].filter(Boolean).join(" · ");
+    document.getElementById("count").innerHTML =
+      `${total} sessions · ${busy} busy · ${blocks.length} projects`
+      + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "");
+    document.title = (waiting + stuck) ? `(${waiting + stuck}) Claude Team` : "Claude Team";
     document.getElementById("main").innerHTML =
       blocks.length ? blocks.map(block).join("") : `<div class="empty">No Claude sessions running.</div>`;
     document.getElementById("stamp").textContent =
@@ -224,7 +253,10 @@ document.getElementById("main").addEventListener("click", async ev => {
 // refresh would tear the input out from under the cursor.
 document.getElementById("main").addEventListener("click", ev => {
   const cell = ev.target.closest(".edit");
-  if (!cell || editing) return;
+  // `editing` can survive a field that never got closed -- a blur that
+  // arrived while the window was in the background, say -- so the DOM is the
+  // authority on whether one is already open. Never two at once.
+  if (!cell || editing || document.querySelector("input.inline")) return;
   ev.stopPropagation();
   ev.preventDefault();
   const kind = cell.dataset.edit;
