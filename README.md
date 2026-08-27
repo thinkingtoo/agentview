@@ -87,6 +87,12 @@ sits at the bottom.
 That is right until it isn't — the two or three projects you check every day
 should be where you left them, not where today's activity puts them. So:
 
+- **`auto-arrange`** in the header stops the shuffling altogether. Held, the
+  content still updates — status, titles, flags — and only the positions
+  freeze, so a card cannot walk out from under the sentence you are reading.
+  Anything that arrives while it is held joins the end rather than pushing into
+  the middle. It replaced a Refresh button, which solved nothing: the page
+  polls anyway.
 - **Drag a block** to place it. Everything down to where you dropped it becomes
   **pinned** and stops moving; the rest keeps sorting itself underneath.
 - **Click the ✳** on a pinned block to let it go again.

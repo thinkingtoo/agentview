@@ -66,6 +66,17 @@ FOLD_PAYLOAD = {"blocks": [{
         _member("Mei", "idle", None, 3.0, "f2"),
         _member("Leila", "idle", None, 9.0, "f3"),
         _member("Aziz", "idle", None, 40.0, "f4")]}]}
+def _block(project, sid, busy=1):
+    return {"project": project, "label": project, "orphan": False, "routines": False,
+            "renamed": False, "pinned": False, "branches": [], "busy": busy, "stuck": 0,
+            "updatedAt": 1787830000000,
+            "members": [_member(sid.upper(), "busy", None, 0.1, sid)]}
+
+
+# The same two projects, and then the other way round: held, the page must
+# ignore the second one's order and keep showing the first one's.
+HOLD_BEFORE = {"blocks": [_block("alpha", "h1"), _block("beta", "h2")], "hold": False}
+HOLD_AFTER = {"blocks": [_block("beta", "h2"), _block("alpha", "h1")], "hold": True}
 URL = "http://127.0.0.1:8765/"
 failures = []
 
@@ -381,6 +392,32 @@ with sync_playwright() as pw:
               and page.locator(".row.waiting, .row.stuck").count() == 2)
         check("una chiamata lunga resta leggibile anche piegata",
               page.locator(".row.stub .flag.tool").count() == 1)
+        page.unroute("**/api/roster")
+
+        # --- holding the order --------------------------------------------
+        served = {"body": HOLD_BEFORE}
+        page.route("**/api/roster", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=json.dumps(served["body"])))
+        page.reload(wait_until="load")
+        page.wait_for_selector(".block")
+        order = lambda: [b.get_attribute("data-project")
+                         for b in page.locator(".block").all()]
+        check("di default si riordina da solo", order() == ["alpha", "beta"], order())
+        page.locator("#hold").click()
+        page.wait_for_timeout(900)
+        check("il pulsante dice che è fermo",
+              page.locator("#hold").inner_text() == "order held"
+              and cfg("hold") is True, page.locator("#hold").inner_text())
+        served["body"] = HOLD_AFTER
+        page.wait_for_timeout(4000)          # a poll lands with the new order
+        check("fermo, le carte non si muovono", order() == ["alpha", "beta"], order())
+        served["body"] = {**HOLD_AFTER, "hold": False}
+        page.locator("#hold").click()
+        page.wait_for_timeout(4000)
+        check("riacceso, si riordina subito", order() == ["beta", "alpha"], order())
+        check("e il pulsante torna normale",
+              page.locator("#hold").inner_text() == "auto-arrange" and not cfg("hold"))
         page.unroute("**/api/roster")
 
         # --- uptime and the filter box ------------------------------------

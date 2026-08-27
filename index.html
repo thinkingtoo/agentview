@@ -35,6 +35,9 @@
   button { font:inherit; font-size:13px; color:var(--ink); background:var(--card);
            border:1px solid var(--line); border-radius:7px; padding:5px 12px; cursor:pointer; }
   button:hover { border-color:var(--accent); color:var(--accent); }
+  /* Held is a state you are in, not a button you pressed: it stays lit. */
+  button.held { color:var(--claude); border-color:color-mix(in srgb,var(--claude) 55%,transparent);
+                background:color-mix(in srgb,var(--claude) 10%,transparent); }
   main { padding:18px 20px 40px; display:grid; gap:14px;
          grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); align-items:start; }
   .block { background:var(--card); border:1px solid var(--line); border-radius:11px; overflow:hidden; }
@@ -129,12 +132,14 @@
   <input id="q" class="q" type="search" placeholder="filter…  (/)" autocomplete="off">
   <span class="spacer"></span>
   <span class="stamp" id="stamp"></span>
-  <button id="refresh">Refresh</button>
+  <button id="hold" title="stop the cards moving while you read them"></button>
 </header>
 <main id="main"><div class="empty">loading…</div></main>
 <script>
 let PINNED = [];
 let LATEST = [];            // the last roster the server sent, to repaint from
+let HOLD = false;           // is the order frozen where you last saw it?
+let ORDER = { blocks: [], members: {} };   // and where that was
 const OPEN = new Set();     // sessions you unfolded by hand
 let query = "";
 let editing = false;
@@ -325,6 +330,37 @@ window.addEventListener("error", e => report("window", e.message, e.error?.stack
 window.addEventListener("unhandledrejection",
   e => report("promise", e.reason?.message ?? e.reason, e.reason?.stack));
 
+function ordered(blocks) {
+  // The page re-sorts itself every three seconds, which is right until you
+  // are reading one card and it moves because something else woke up. Held,
+  // the content still updates -- status, titles, flags -- and only the
+  // positions stop. Anything arriving while held goes to the end in the order
+  // the server sent it, rather than pushing into the middle of what you read.
+  if (!HOLD) {
+    ORDER = {
+      blocks: blocks.map(b => b.project),
+      members: Object.fromEntries(
+        blocks.map(b => [b.project, b.members.map(m => m.sessionId)])),
+    };
+    return blocks;
+  }
+  const rank = (list, key) => {
+    const i = (list || []).indexOf(key);
+    return i < 0 ? 1e9 : i;      // a number, not Infinity: two ties must not
+  };                             // subtract to NaN and unsort the whole list
+  return [...blocks]
+    .sort((a, b) => rank(ORDER.blocks, a.project) - rank(ORDER.blocks, b.project))
+    .map(b => ({ ...b, members: [...b.members].sort((x, y) =>
+      rank(ORDER.members[b.project], x.sessionId)
+      - rank(ORDER.members[b.project], y.sessionId)) }));
+}
+
+function drawHold() {
+  const button = document.getElementById("hold");
+  button.textContent = HOLD ? "order held" : "auto-arrange";
+  button.classList.toggle("held", HOLD);
+}
+
 function busyWithUser() {
   return editing || dragging || !!document.querySelector("input.inline");
 }
@@ -340,8 +376,11 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { blocks: all } = await r.json();
+    const { blocks: all, hold } = await r.json();
     if (busyWithUser()) return;
+    // Read back on every poll, so editing config.json by hand still works.
+    HOLD = !!hold;
+    drawHold();
     LATEST = all;
     paint();
   } catch (e) {
@@ -353,7 +392,7 @@ async function load() {
 // Folding repaints from the roster already in hand: waiting for the next
 // poll would make the click feel like it missed.
 function paint() {
-  const all = LATEST;
+  const all = ordered(LATEST);
   PINNED = all.filter(b => b.pinned).map(b => b.project);
   const blocks = filtered(all);
   const total = blocks.reduce((a, b) => a + b.members.length, 0);
@@ -606,7 +645,17 @@ document.addEventListener("keydown", e => {
   }
 });
 
-document.getElementById("refresh").addEventListener("click", load);
+document.getElementById("hold").addEventListener("click", async () => {
+  HOLD = !HOLD;
+  drawHold();
+  paint();               // freeze what is on screen now, not what lands next
+  await fetch("/api/hold", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify({ hold: HOLD }),
+  }).catch(() => {});
+});
+drawHold();
 load();
 setInterval(() => { if (!editing && !dragging) load(); }, 3000);
 </script>

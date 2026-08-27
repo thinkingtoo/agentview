@@ -8,13 +8,16 @@
   "port": 8765,
   "_zoom": "Base scale of the page. Set this instead of zooming in the browser every time; keep the browser itself at 100% or the two multiply.",
   "zoom": 1.5,
-  "names": {},
+  "names": {
+    "No project": "Security investigation"
+  },
   "pinned": [],
   "lines": {},
   "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by sessionId — it also retitles that terminal tab. pinned: projects held at the top, in this order.",
   "assign": {
     "ab28760d-b524-4931-abe2-44e1e2a27f02": "claude-team",
-    "72231ce0-e324-41c3-b0a3-223d5db37277": "drawer › v"
+    "72231ce0-e324-41c3-b0a3-223d5db37277": "drawer › v",
+    "91944bc6-ade6-4d20-9d68-58555a61d527": "music-db"
   },
   "_stuck": "A busy session whose transcript has been silent this many minutes is stuck. A `waiting` session is flagged at once, whatever this says.",
   "stuck_after_minutes": 5,

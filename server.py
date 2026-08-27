@@ -59,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "order", "name", "line", "assign")
+    ROUTES = ("jump", "order", "name", "line", "assign", "hold")
 
     def do_POST(self):
         if not self._local():
@@ -104,6 +104,19 @@ class Handler(BaseHTTPRequestHandler):
         done = jump.jump(pid, rec.get("tmux") or "")
         log.event("jumped", pid=pid, name=rec.get("name"), **done)
         self._send(json.dumps(done), "application/json")
+
+    def _hold(self, body):
+        """Freeze the order of the cards, or let them sort themselves again.
+
+        Lives in config.json with the pins and the labels: it is a decision
+        about how you want to read the page, and it should still be true
+        tomorrow.
+        """
+        hold = body.get("hold")
+        if not isinstance(hold, bool):
+            return self.send_error(400, "expected {hold: true|false}")
+        fleet.write_config({"hold": hold})
+        self._send(json.dumps({"ok": True, "hold": hold}), "application/json")
 
     def _order(self, body):
         pinned = body.get("pinned")
@@ -161,7 +174,9 @@ class Handler(BaseHTTPRequestHandler):
             with log.timed("roster", 1.5):
                 blocks = fleet.roster()
             log.note_roster(blocks)
-            self._send(json.dumps({"blocks": blocks}), "application/json")
+            self._send(json.dumps({"blocks": blocks,
+                                   "hold": fleet.config_value("hold", False)}),
+                       "application/json")
         elif self.path in ("/", "/index.html"):
             self._send(page(), "text/html; charset=utf-8")
         else:
