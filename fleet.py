@@ -384,9 +384,15 @@ def _head(path):
         return b""
 
 
+# How many outstanding calls to remember. Only the newest matters, but a
+# message can carry several in parallel and each one deserves its place.
+MAX_USES = 64
+
+
 def _blank_state():
     return {"offset": 0, "ino": None, "head": b"", "title": "", "prompt": "", "branch": "",
-            "uses": {}, "done": set(), "paths": collections.deque(maxlen=400)}
+            "uses": {}, "done": set(), "said": "", "spoke": "",
+            "paths": collections.deque(maxlen=400)}
 
 
 def _absorb(state, text):
@@ -408,6 +414,11 @@ def _absorb(state, text):
         content = (rec.get("message") or {}).get("content")
         if not isinstance(content, list):
             continue
+        # When the session last said anything at all. A tool call is only in
+        # flight while it is the newest thing in the file: after this moves
+        # past it, the result is never coming and nothing is running.
+        if kind in ("user", "assistant") and rec.get("timestamp"):
+            state["spoke"] = max(state["spoke"], rec["timestamp"])
         for part in content:
             if not isinstance(part, dict):
                 continue
@@ -430,12 +441,22 @@ def _absorb(state, text):
     for tid in [t for t in state["uses"] if t in state["done"]][:-8]:
         state["uses"].pop(tid, None)
         state["done"].discard(tid)
+    # Unanswered ones need a bound of their own: a result that never arrives
+    # would otherwise be remembered for the life of the session. Dicts keep
+    # insertion order, so this drops the oldest.
+    for tid in list(state["uses"])[:-MAX_USES]:
+        state["uses"].pop(tid, None)
+        state["done"].discard(tid)
     return state
 
 
 def _view(state):
+    # Only calls in the session's newest message. An unanswered call the
+    # session has since talked past is not running -- and because this file
+    # is read incrementally, it would otherwise be remembered forever and
+    # flag the session `tool 40m` on every busy poll for the rest of the day.
     stamps = [t for tid, t in state["uses"].items()
-              if tid not in state["done"] and t]
+              if tid not in state["done"] and t and t >= state["spoke"]]
     pending = None
     if stamps:
         try:

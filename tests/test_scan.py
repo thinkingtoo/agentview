@@ -70,3 +70,77 @@ class IncrementalScan(unittest.TestCase):
         with open(self.path, "a", encoding="utf-8") as fh:
             fh.write('tle": "Two"}\n')                  # the rest lands
         self.assertEqual(fleet.scan_cached(self.path)["title"], "Two")
+
+
+def stamped(minutes_ago):
+    import datetime
+    when = (datetime.datetime.now(datetime.timezone.utc)
+            - datetime.timedelta(minutes=minutes_ago))
+    return when.isoformat().replace("+00:00", "Z")
+
+
+def call(tool_id, minutes_ago):
+    return {"type": "assistant", "timestamp": stamped(minutes_ago),
+            "message": {"content": [{"type": "tool_use", "id": tool_id,
+                                     "name": "Bash", "input": {"command": "ls"}}]}}
+
+
+def answer(tool_id, minutes_ago):
+    return {"type": "user", "timestamp": stamped(minutes_ago),
+            "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id,
+                                     "content": "ok"}]}}
+
+
+def said(text, minutes_ago):
+    return {"type": "assistant", "timestamp": stamped(minutes_ago),
+            "message": {"content": [{"type": "text", "text": text}]}}
+
+
+class InFlight(unittest.TestCase):
+    """What counts as a tool call still running.
+
+    The page reads transcripts incrementally, so unlike a full read it never
+    forgets. A call whose result never arrives -- an interrupted turn, a
+    compaction, a subagent whose result lands in another file -- used to sit
+    in that memory for the rest of the session, and once it was 20 minutes
+    old every busy poll flagged the session `tool 20m`. It blinked off
+    whenever the session stopped being busy, which is what a real long call
+    never does.
+    """
+
+    def setUp(self):
+        self.path = Path(tempfile.mkdtemp()) / "t.jsonl"
+        fleet._cache.clear()
+
+    def test_a_call_with_no_result_yet_is_in_flight(self):
+        write(self.path, [call("t1", 25)], "w")
+        self.assertAlmostEqual(fleet.scan_cached(self.path)["pending"], 25, delta=1)
+
+    def test_an_answered_call_is_not(self):
+        write(self.path, [call("t1", 25), answer("t1", 24)], "w")
+        self.assertIsNone(fleet.scan_cached(self.path)["pending"])
+
+    def test_a_call_the_session_moved_on_from_is_not_in_flight(self):
+        # The result never came, and then the session said something else.
+        # Nothing is running: the transcript moved on without it.
+        write(self.path, [call("t1", 40)], "w")
+        fleet.scan_cached(self.path)
+        write(self.path, [said("carrying on", 5)])
+        self.assertIsNone(fleet.scan_cached(self.path)["pending"])
+
+    def test_the_newest_call_is_the_one_reported(self):
+        write(self.path, [call("t1", 40), answer("t1", 39), call("t2", 3)], "w")
+        self.assertAlmostEqual(fleet.scan_cached(self.path)["pending"], 3, delta=1)
+
+    def test_two_calls_in_one_message_are_both_in_flight(self):
+        # Parallel tool calls share a message, and a timestamp.
+        write(self.path, [{"type": "assistant", "timestamp": stamped(7), "message": {
+            "content": [{"type": "tool_use", "id": "a", "name": "Bash", "input": {}},
+                        {"type": "tool_use", "id": "b", "name": "Read", "input": {}}]}}], "w")
+        self.assertAlmostEqual(fleet.scan_cached(self.path)["pending"], 7, delta=1)
+
+    def test_the_memory_of_calls_does_not_grow_without_end(self):
+        write(self.path, [call(f"t{i}", 60 - i) for i in range(200)], "w")
+        fleet.scan_cached(self.path)
+        state = fleet._cache[("state", str(self.path))]
+        self.assertLessEqual(len(state["uses"]), 64)
