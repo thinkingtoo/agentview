@@ -182,7 +182,46 @@ with sync_playwright() as pw:
     check("il titolo della scheda conta", page.title().startswith("(2)"), page.title())
     page.unroute("**/api/roster")
 
+    # --- uptime and the filter box ------------------------------------
+    page.unroute("**/api/roster")
+    page.reload(wait_until="networkidle")
+    page.wait_for_selector(".row")
+    check("mostra da quanto è in piedi",
+          "up " in page.locator(".where").first.inner_text(),
+          page.locator(".where").first.inner_text())
+
+    box = page.locator("#q")
+    total = page.locator(".row").count()
+    box.fill("ab")            # under three characters: nothing happens yet
+    page.wait_for_timeout(400)
+    check("due lettere non filtrano", page.locator(".row").count() == total)
+
+    name = page.locator(".nm").first.inner_text().strip()
+    box.fill(name[:4].lower())
+    page.wait_for_timeout(500)
+    shown = [n.strip().lower() for n in page.locator(".nm").all_inner_texts()]
+    check(f"filtra su “{name[:4].lower()}”",
+          shown and all(name[:4].lower() in s for s in shown) or
+          page.locator(".block").count() > 0, shown)
+
+    box.fill("zzzznothing")
+    page.wait_for_timeout(500)
+    check("dice quando non trova nulla", "Nothing matches" in page.locator(".empty").inner_text())
+
+    box.press("Escape")
+    page.wait_for_timeout(500)
+    check("Escape ripulisce", page.locator(".row").count() == total)
+
+    page.keyboard.press("/")
+    page.wait_for_timeout(200)
+    check("“/” porta al filtro", page.evaluate("document.activeElement.id") == "q")
+    box.fill("")
+
     check("nessun errore JS", not errors, errors)
+    # A commit fires an async POST; the server merges and rewrites config.json
+    # on its own clock. Resetting without waiting lets that write land after
+    # the reset and leave test data behind.
+    page.wait_for_timeout(1200)
     reset()
     browser.close()
 

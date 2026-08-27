@@ -50,7 +50,9 @@ of these in the right order — selecting the tmux pane achieves nothing while t
 WezTerm tab stays hidden.
 
 Sessions Claude Code spawned itself have a pty but no window, and are not
-clickable.
+clickable. They are also the ones that **survive closing their view** — a
+background worker belongs to the daemon, not to a terminal, so exiting detaches
+you without stopping it. The uptime is what gives that away.
 
 **Requires X11.** Window raising uses `wmctrl`; under Wayland a client cannot
 raise another client's window, and the in-emulator half would still work while
@@ -85,6 +87,20 @@ by hand.
 **An override on a session dies with the session.** It is keyed by `sessionId`,
 which is gone once you close that Claude. A project rename is keyed by the
 project and lives forever.
+
+## Finding one
+
+Type in the box (or press **`/`**) to filter. It matches a project's name, a
+session's name, its title, its last prompt, the branch and the path — from
+**three characters** on, because fewer than that matches nearly everything and
+only makes the page flicker while you type.
+
+Sessions needing you are counted across *everyone*, not just what survived the
+filter: a filter must never hide something that is stuck.
+
+Each session also shows **how long it has been up**. A background worker two
+days old reads very differently from a tab opened a minute ago — and it is the
+usual explanation for a session that will not go away.
 
 ## Stuck and waiting
 

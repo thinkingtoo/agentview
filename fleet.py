@@ -265,6 +265,7 @@ def sessions(cfg=None):
             "pid": rec.get("pid"),
             "sessionId": sid,
             "updatedAt": rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0,
+            "startedAt": rec.get("startedAt") or 0,
             "project": project,
             "assigned": sid in assigned,
             "suggestion": guess,

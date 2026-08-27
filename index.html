@@ -26,6 +26,11 @@
   .logo { flex:none; }
   .count { color:var(--dim); font-size:13px; }
   .spacer { flex:1; }
+  .q { font:inherit; font-size:13px; color:var(--ink); background:var(--card);
+       border:1px solid var(--line); border-radius:7px; padding:5px 11px; width:190px; }
+  .q:focus { outline:none; border-color:var(--accent); width:260px; }
+  .q::placeholder { color:var(--faint); }
+  .hidden-note { color:var(--faint); font-size:12px; }
   .stamp { color:var(--faint); font-size:12px; font-variant-numeric:tabular-nums; }
   button { font:inherit; font-size:13px; color:var(--ink); background:var(--card);
            border:1px solid var(--line); border-radius:7px; padding:5px 12px; cursor:pointer; }
@@ -113,6 +118,7 @@
     </g>
   </svg><span>Claude Team</span></h1>
   <span class="count" id="count"></span>
+  <input id="q" class="q" type="search" placeholder="filter…  (/)" autocomplete="off">
   <span class="spacer"></span>
   <span class="stamp" id="stamp"></span>
   <button id="refresh">Refresh</button>
@@ -120,10 +126,22 @@
 <main id="main"><div class="empty">loading…</div></main>
 <script>
 let PINNED = [];
+let query = "";
 let editing = false;
 let dragging = false;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const home = "/home/alice";
+
+function since(ms) {
+  // How long this session has been up. A background worker two days old reads
+  // very differently from a tab you opened a minute ago.
+  if (!ms) return "";
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
 
 function ago(ms) {
   if (!ms) return "";
@@ -140,6 +158,9 @@ function where(m) {
   const bits = [];
   if (m.tmux) bits.push("tmux " + esc(String(m.tmux).split(".").pop()));
   bits.push("pid " + esc(m.pid));
+  if (m.startedAt) bits.push(`up ${since(m.startedAt)}`);
+  // The path goes last because it is the part that may be ellipsised: the
+  // project name above already said where this is.
   bits.push(esc((m.cwd || "").replace(home, "~")));
   return bits.join("  ·  ");
 }
@@ -197,16 +218,32 @@ function block(b) {
   </section>`;
 }
 
+function filtered(blocks) {
+  // Below three characters nearly everything matches, so filtering would just
+  // make the page flicker while you type the first letters.
+  const q = query.trim().toLowerCase();
+  if (q.length < 3) return blocks;
+  const hit = s => String(s || "").toLowerCase().includes(q);
+  return blocks.map(b => {
+    if (hit(b.label) || hit(b.project)) return b;   // the whole project matched
+    const members = b.members.filter(m =>
+      hit(m.name) || hit(m.title) || hit(m.prompt) || hit(m.cwd) || hit(m.branch));
+    return members.length ? { ...b, members } : null;
+  }).filter(Boolean);
+}
+
 async function load() {
   try {
     const r = await fetch("/api/roster", { cache: "no-store" });
-    const { blocks } = await r.json();
-    PINNED = blocks.filter(b => b.pinned).map(b => b.project);
+    const { blocks: all } = await r.json();
+    PINNED = all.filter(b => b.pinned).map(b => b.project);
+    const blocks = filtered(all);
     const total = blocks.reduce((a, b) => a + b.members.length, 0);
+    const everyone = all.reduce((a, b) => a + b.members.length, 0);
     const busy = blocks.reduce((a, b) => a + b.busy, 0);
-    const waiting = blocks.reduce((a, b) =>
+    const waiting = all.reduce((a, b) =>
       a + b.members.filter(m => m.stuck === "waiting").length, 0);
-    const stuck = blocks.reduce((a, b) =>
+    const stuck = all.reduce((a, b) =>
       a + b.members.filter(m => m.stuck === "stuck").length, 0);
     const alarms = [
       waiting ? `<span class="alarm wait">${waiting} waiting for you</span>` : "",
@@ -214,10 +251,13 @@ async function load() {
     ].filter(Boolean).join(" · ");
     document.getElementById("count").innerHTML =
       `${total} sessions · ${busy} busy · ${blocks.length} projects`
+      + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
       + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "");
     document.title = (waiting + stuck) ? `(${waiting + stuck}) Claude Team` : "Claude Team";
     document.getElementById("main").innerHTML =
-      blocks.length ? blocks.map(block).join("") : `<div class="empty">No Claude sessions running.</div>`;
+      blocks.length ? blocks.map(block).join("")
+        : `<div class="empty">${query.trim().length >= 3
+             ? `Nothing matches “${esc(query.trim())}”.` : "No Claude sessions running."}</div>`;
     document.getElementById("stamp").textContent =
       "updated " + new Date().toLocaleTimeString();
   } catch (e) {
@@ -405,6 +445,19 @@ main.addEventListener("click", async ev => {
     body: JSON.stringify({ pinned: PINNED.filter(p => p !== project) }),
   });
   load();
+});
+
+const box = document.getElementById("q");
+box.addEventListener("input", () => { query = box.value; load(); });
+box.addEventListener("keydown", e => {
+  if (e.key === "Escape") { box.value = ""; query = ""; load(); box.blur(); }
+});
+// `/` reaches the box from anywhere, the way it does everywhere else.
+document.addEventListener("keydown", e => {
+  if (e.key === "/" && document.activeElement !== box && !editing) {
+    e.preventDefault();
+    box.focus();
+  }
 });
 
 document.getElementById("refresh").addEventListener("click", load);
