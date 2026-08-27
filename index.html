@@ -174,6 +174,7 @@ async function load() {
 // Click a row and its terminal comes to the front. The page never guesses
 // how: the server works out whether that means WezTerm, tmux or Konsole.
 document.getElementById("main").addEventListener("click", async ev => {
+  if (ev.target.closest(".edit")) return;   // that click is an edit, not a jump
   const row = ev.target.closest(".row.can");
   if (!row) return;
   row.classList.remove("jumped", "failed");
@@ -193,10 +194,11 @@ document.getElementById("main").addEventListener("click", async ev => {
 
 // Inline editing. The poll is paused while a field is open, otherwise a
 // refresh would tear the input out from under the cursor.
-document.getElementById("main").addEventListener("dblclick", ev => {
+document.getElementById("main").addEventListener("click", ev => {
   const cell = ev.target.closest(".edit");
   if (!cell || editing) return;
   ev.stopPropagation();
+  ev.preventDefault();
   const kind = cell.dataset.edit;
   const before = cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
   const input = document.createElement("input");
@@ -226,7 +228,13 @@ document.getElementById("main").addEventListener("dblclick", ev => {
     if (e.key === "Enter") finish(true);
     if (e.key === "Escape") finish(false);
   });
-  input.addEventListener("blur", () => finish(true));
+  input.addEventListener("blur", () => {
+    // Alt-tabbing away, or a terminal coming to the front, must not commit
+    // and re-render behind your back -- come back and the field is as you
+    // left it.
+    if (!document.hasFocus()) return;
+    finish(true);
+  });
 });
 
 // Drag a block to pin it; the order you drop them in is the order they keep.

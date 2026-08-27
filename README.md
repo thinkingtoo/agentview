@@ -69,11 +69,15 @@ should be where you left them, not where today's activity puts them. So:
 - **Drag a block** to place it. Everything down to where you dropped it becomes
   **pinned** and stops moving; the rest keeps sorting itself underneath.
 - **Click the ✳** on a pinned block to let it go again.
-- **Double-click a project name** to rename it. The name you type is a label —
+- **Click a project name** to rename it. The name you type is a label —
   the real key underneath does not change, so a rename never orphans its pin.
-- **Double-click the line under a session** to write your own. It replaces
+- **Click the line under a session** to write your own. It replaces
   Claude's generated title *and retitles that terminal tab*, so the page and
   the tab never disagree.
+
+Clicking anywhere *else* in a session still raises its terminal — the two
+never overlap, because a terminal arriving in front steals the focus and would
+close the field you are typing in.
 
 All of it lands in `config.json`, so it survives restarts and you can edit it
 by hand.
