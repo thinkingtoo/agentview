@@ -1,4 +1,4 @@
-# claude-fleet
+# Claude Team
 
 A local page showing what every Claude Code session on this machine is working
 on, grouped by project.
