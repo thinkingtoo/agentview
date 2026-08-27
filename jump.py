@@ -71,6 +71,40 @@ def _konsole(ancestry, konsole):
                     }
     return None
 
+def title_steps(*, text, tty, ancestry, tmux, panes, clients, konsole):
+    """How to label this session's tab with `text`. Empty text clears it.
+
+    Deliberately not the same shape as a jump: a session inside tmux is
+    labelled by *tmux*, not by the WezTerm tab hosting the client, because
+    that tab only ever shows what tmux draws into it.
+    """
+    if tmux and any(comm.startswith("tmux") for comm, _ in ancestry):
+        window = tmux.partition(":")[2].partition(".")[0]
+        if not window:
+            return []
+        if text:
+            return [["tmux", "rename-window", "-t", window, text]]
+        # Handing the name back to tmux is what "no override" means here.
+        return [["tmux", "set-window-option", "-t", window,
+                 "automatic-rename", "on"]]
+
+    for pane in panes:
+        if pane.get("tty_name") and pane["tty_name"] == tty:
+            return [["wezterm", "cli", "set-tab-title",
+                     "--pane-id", str(pane["pane_id"]), text]]
+
+    pids = {pid for _, pid in ancestry}
+    for app in konsole:
+        if app.get("term_pid") not in pids:
+            continue
+        for window in app.get("windows", []):
+            for sid, shell_pid in window.get("sessions", {}).items():
+                if shell_pid in pids:
+                    return [["qdbus", app["service"], f"/Sessions/{sid}",
+                             "org.kde.konsole.Session.setTitle", "1", text]]
+    return []
+
+
 # ---------------------------------------------------------------- adapters
 
 import json
@@ -227,3 +261,13 @@ def jump(pid, tmux=""):
                 ran.append(f"wmctrl -ia {wid}")
                 break
     return {"ok": True, "ran": ran}
+
+
+def set_title(pid, tmux, text):
+    """Label a session's terminal tab, so the page and the tab agree."""
+    steps = title_steps(
+        text=text, tty=tty_of(pid), ancestry=ancestry_of(pid), tmux=tmux,
+        panes=wezterm_panes(), clients=tmux_clients(), konsole=konsole_apps())
+    for step in steps:
+        _run(step)
+    return [" ".join(s) for s in steps]

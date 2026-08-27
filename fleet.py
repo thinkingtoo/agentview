@@ -73,16 +73,42 @@ DEFAULT_SHELVES = [
 _cache = {}
 
 
-def config(cfg_dir=None):
-    """Shelves, from config.json next to this file, or the defaults."""
-    here = Path(__file__).resolve().parent
-    shelves = DEFAULT_SHELVES
+CONFIG = Path(__file__).resolve().parent / "config.json"
+
+
+def read_config():
     try:
-        with (here / "config.json").open(encoding="utf-8") as fh:
-            shelves = json.load(fh).get("shelves") or DEFAULT_SHELVES
+        with CONFIG.open(encoding="utf-8") as fh:
+            got = json.load(fh)
+        return got if isinstance(got, dict) else {}
     except (OSError, ValueError):
-        pass
-    return [os.path.expanduser(s) for s in shelves]
+        return {}
+
+
+def config_value(key, default):
+    got = read_config().get(key, default)
+    return got if isinstance(got, type(default)) else default
+
+
+def write_config(patch):
+    """Merge a patch into config.json, atomically.
+
+    The file is hand-editable and holds comments as `_`-prefixed keys, so it is
+    read, merged and rewritten rather than regenerated.
+    """
+    merged = read_config()
+    merged.update(patch)
+    tmp = CONFIG.with_suffix(".json.tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        json.dump(merged, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    tmp.replace(CONFIG)
+    return merged
+
+
+def config(cfg_dir=None):
+    """The shelves, expanded."""
+    return [os.path.expanduser(s) for s in config_value("shelves", DEFAULT_SHELVES)]
 
 
 def claude_dir():
@@ -197,6 +223,44 @@ def roster(cfg=None):
             "updatedAt": max(s["updatedAt"] for s in members),
             "members": members,
         })
-    # Liveliest first; the orphan block always sinks to the bottom.
-    blocks.sort(key=lambda b: (b["orphan"], -b["busy"], -b["updatedAt"]))
-    return blocks
+    names = config_value("names", {})
+    lines = config_value("lines", {})
+    blocks = [apply_overrides(b, names, lines) for b in blocks]
+    pinned = config_value("pinned", [])
+    for b in blocks:
+        b["pinned"] = b["project"] in pinned
+    return order_blocks(blocks, pinned)
+
+
+def apply_overrides(block, names, lines):
+    """Lay your own labels over the generated ones.
+
+    `project` stays the key everything else is stored against -- pins, names,
+    the lot -- so renaming a project never orphans its own pin. `label` is the
+    only thing the page reads.
+    """
+    block["label"] = names.get(block["project"], block["project"])
+    block["renamed"] = block["project"] in names
+    for m in block["members"]:
+        own = lines.get(m.get("sessionId"))
+        m["overridden"] = bool(own)
+        if own:
+            m["title"] = own
+    return block
+
+
+def order_blocks(blocks, pinned):
+    """Pinned projects in the order you put them; the rest sort themselves.
+
+    A pin is muscle memory -- the two or three projects you look at every day
+    should not move because something else woke up. Everything unpinned still
+    floats liveliest-first underneath, and `No project` stays at the bottom
+    whatever happens.
+    """
+    rank = {name: i for i, name in enumerate(pinned)}
+    return sorted(blocks, key=lambda b: (
+        b["orphan"],
+        rank.get(b["project"], len(rank)),
+        -b["busy"],
+        -b["updatedAt"],
+    ))

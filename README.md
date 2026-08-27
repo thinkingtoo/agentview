@@ -27,8 +27,8 @@ python3 server.py          # http://127.0.0.1:8765
 Or as a service that survives reboot:
 
 ```bash
-cp claude-fleet.service ~/.config/systemd/user/
-systemctl --user enable --now claude-fleet
+cp claude-team.service ~/.config/systemd/user/
+systemctl --user enable --now claude-team
 ```
 
 Bound to `127.0.0.1` deliberately: the page shows your prompts verbatim, which
@@ -56,6 +56,31 @@ clickable.
 raise another client's window, and the in-emulator half would still work while
 the window stayed where it was. Also needs whichever of `wezterm`, `tmux` and
 `qdbus` you actually use — each route is skipped if its tool is missing.
+
+## Arranging it yourself
+
+The order is recomputed every few seconds: whichever project has someone
+**busy** leads, ties broken by most recent activity, and `No project` always
+sits at the bottom.
+
+That is right until it isn't — the two or three projects you check every day
+should be where you left them, not where today's activity puts them. So:
+
+- **Drag a block** to place it. Everything down to where you dropped it becomes
+  **pinned** and stops moving; the rest keeps sorting itself underneath.
+- **Click the ✳** on a pinned block to let it go again.
+- **Double-click a project name** to rename it. The name you type is a label —
+  the real key underneath does not change, so a rename never orphans its pin.
+- **Double-click the line under a session** to write your own. It replaces
+  Claude's generated title *and retitles that terminal tab*, so the page and
+  the tab never disagree.
+
+All of it lands in `config.json`, so it survives restarts and you can edit it
+by hand.
+
+**An override on a session dies with the session.** It is keyed by `sessionId`,
+which is gone once you close that Claude. A project rename is keyed by the
+project and lives forever.
 
 ## Size
 
@@ -100,7 +125,11 @@ Add a shelf whenever a directory starts holding projects instead of being one.
 python3 -m unittest discover -s tests
 ```
 
-They cover the three things worth covering: route selection for each terminal
+`tests/ui_smoke.py` is separate: it drives the real page with Playwright
+against a running server — rename, line override, drag-to-pin, unpin — and is
+not part of `unittest discover`. Run it with `python3 tests/ui_smoke.py`.
+
+The unit tests cover the three things worth covering: route selection for each terminal
 (including tmux-inside-WezTerm and a headless session with nowhere to go),
 project resolution (including the
 `acme › site` and on-a-shelf cases) and reading the summary records out of

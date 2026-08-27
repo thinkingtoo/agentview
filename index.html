@@ -33,6 +33,19 @@
   main { padding:18px 20px 40px; display:grid; gap:14px;
          grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); align-items:start; }
   .block { background:var(--card); border:1px solid var(--line); border-radius:11px; overflow:hidden; }
+  .block.pinned { border-color:color-mix(in srgb,var(--claude) 45%,var(--line)); }
+  .block.dragging { opacity:.4; }
+  .block.over { border-color:var(--claude); }
+  .pin { cursor:grab; color:var(--faint); font-size:13px; line-height:1; flex:none;
+         padding:2px 3px; border-radius:5px; }
+  .pin:hover { color:var(--claude); background:color-mix(in srgb,var(--claude) 14%,transparent); }
+  .block.pinned .pin { color:var(--claude); }
+  .edit { cursor:text; border-bottom:1px dashed transparent; }
+  .edit:hover { border-bottom-color:var(--faint); }
+  .own { color:var(--claude); }
+  input.inline { font:inherit; color:var(--ink); background:var(--bg);
+                 border:1px solid var(--claude); border-radius:6px; padding:2px 7px;
+                 min-width:220px; }
   .block.orphan { opacity:.82; }
   .bhead { display:flex; align-items:baseline; gap:9px; padding:11px 15px;
            border-bottom:1px solid var(--line); }
@@ -84,6 +97,8 @@
 </header>
 <main id="main"><div class="empty">loading…</div></main>
 <script>
+let PINNED = [];
+let editing = false;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const home = "/home/alice";
 
@@ -116,7 +131,8 @@ function row(m) {
       <span class="nm">${esc(m.name)}</span>${tag}${go}
       <span class="ago">${esc(m.status)} · ${ago(m.updatedAt)}</span>
     </div>
-    ${title ? `<div class="title">${esc(m.title) || title}</div>` : ""}
+    <div class="title edit ${m.overridden ? "own" : ""}" data-edit="line"
+         data-sid="${esc(m.sessionId)}">${esc(m.title) || "<span style='color:var(--faint)'>—</span>"}</div>
     ${m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : ""}
     <div class="where">${where(m)}</div>
   </div>`;
@@ -125,9 +141,12 @@ function row(m) {
 function block(b) {
   const br = b.branches.length ? `<span class="branch">${esc(b.branches.join(" · "))}</span>` : "";
   const n = b.members.length;
-  return `<section class="block ${b.orphan ? "orphan" : ""}">
+  const pinned = PINNED.includes(b.project);
+  return `<section class="block ${b.orphan ? "orphan" : ""} ${pinned ? "pinned" : ""}"
+           data-project="${esc(b.project)}" ${b.orphan ? "" : 'draggable="true"'}>
     <div class="bhead">
-      <span class="pname">${esc(b.project)}</span>${br}
+      ${b.orphan ? "" : `<span class="pin" title="${pinned ? "fissato — trascina per riordinare" : "trascina per fissare in cima"}">✳</span>`}
+      <span class="pname edit ${b.renamed ? "own" : ""}" data-edit="name">${esc(b.label)}</span>${br}
       <span class="who">${n} ${n === 1 ? "session" : "sessions"}${b.busy ? ` · ${b.busy} busy` : ""}</span>
     </div>
     ${b.members.map(row).join("")}
@@ -138,6 +157,7 @@ async function load() {
   try {
     const r = await fetch("/api/roster", { cache: "no-store" });
     const { blocks } = await r.json();
+    PINNED = blocks.filter(b => b.pinned).map(b => b.project);
     const total = blocks.reduce((a, b) => a + b.members.length, 0);
     const busy = blocks.reduce((a, b) => a + b.busy, 0);
     document.getElementById("count").textContent =
@@ -171,9 +191,107 @@ document.getElementById("main").addEventListener("click", async ev => {
   }
 });
 
+// Inline editing. The poll is paused while a field is open, otherwise a
+// refresh would tear the input out from under the cursor.
+document.getElementById("main").addEventListener("dblclick", ev => {
+  const cell = ev.target.closest(".edit");
+  if (!cell || editing) return;
+  ev.stopPropagation();
+  const kind = cell.dataset.edit;
+  const before = cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
+  const input = document.createElement("input");
+  input.className = "inline";
+  input.value = before;
+  editing = true;
+  cell.replaceWith(input);
+  input.focus();
+  input.select();
+
+  const finish = async commit => {
+    if (!editing) return;
+    editing = false;
+    if (commit && input.value.trim() !== before) {
+      const body = kind === "name"
+        ? { project: input.closest("section").dataset.project, label: input.value }
+        : { sessionId: cell.dataset.sid, text: input.value };
+      await fetch(kind === "name" ? "/api/name" : "/api/line", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+        body: JSON.stringify(body),
+      });
+    }
+    load();
+  };
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") finish(true);
+    if (e.key === "Escape") finish(false);
+  });
+  input.addEventListener("blur", () => finish(true));
+});
+
+// Drag a block to pin it; the order you drop them in is the order they keep.
+let dragged = null;
+const main = document.getElementById("main");
+main.addEventListener("dragstart", ev => {
+  const b = ev.target.closest(".block");
+  if (!b) return;
+  dragged = b;
+  b.classList.add("dragging");
+  ev.dataTransfer.effectAllowed = "move";
+});
+main.addEventListener("dragend", () => {
+  if (dragged) dragged.classList.remove("dragging");
+  dragged = null;
+  [...main.querySelectorAll(".over")].forEach(e => e.classList.remove("over"));
+});
+main.addEventListener("dragover", ev => {
+  const over = ev.target.closest(".block");
+  if (!over || !dragged || over === dragged || over.classList.contains("orphan")) return;
+  ev.preventDefault();
+  over.classList.add("over");
+});
+main.addEventListener("dragleave", ev => {
+  const over = ev.target.closest(".block");
+  if (over) over.classList.remove("over");
+});
+main.addEventListener("drop", async ev => {
+  const over = ev.target.closest(".block");
+  if (!over || !dragged || over === dragged) return;
+  ev.preventDefault();
+  over.classList.remove("over");
+  const blocks = [...main.querySelectorAll(".block:not(.orphan)")];
+  const from = blocks.indexOf(dragged);
+  const to = blocks.indexOf(over);
+  blocks.splice(to, 0, blocks.splice(from, 1)[0]);
+  // Dropping pins everything above and including the drop point: the ones
+  // you have deliberately placed are exactly the ones that should stop moving.
+  const pinned = blocks.slice(0, Math.max(to, from) + 1).map(b => b.dataset.project);
+  await fetch("/api/order", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify({ pinned }),
+  });
+  load();
+});
+
+// Unpin: click the mark.
+main.addEventListener("click", async ev => {
+  const pin = ev.target.closest(".pin");
+  if (!pin) return;
+  ev.stopPropagation();
+  const project = pin.closest(".block").dataset.project;
+  if (!PINNED.includes(project)) return;
+  await fetch("/api/order", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify({ pinned: PINNED.filter(p => p !== project) }),
+  });
+  load();
+});
+
 document.getElementById("refresh").addEventListener("click", load);
 load();
-setInterval(load, 3000);
+setInterval(() => { if (!editing) load(); }, 3000);
 </script>
 </body>
 </html>

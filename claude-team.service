@@ -1,0 +1,13 @@
+[Unit]
+Description=claude-team — local dashboard of running Claude sessions
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/claude-team
+ExecStart=/usr/bin/python3 %h/Projects/claude-team/server.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
