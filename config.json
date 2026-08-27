@@ -12,9 +12,9 @@
   "pinned": [],
   "lines": {},
   "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by sessionId — it also retitles that terminal tab. pinned: projects held at the top, in this order.",
-  "assign": {
-    "ab28760d-b524-4931-abe2-44e1e2a27f02": "claude-team"
-  },
+  "assign": {},
   "_stuck": "A busy session whose transcript has been silent this many minutes is stuck. A `waiting` session is flagged at once, whatever this says.",
-  "stuck_after_minutes": 5
+  "stuck_after_minutes": 5,
+  "_long_tool": "While a tool call is running the transcript is silent, so silence proves nothing. Only a call outstanding this many minutes is worth mentioning, and it is shown as news, not as an alarm.",
+  "long_tool_minutes": 20
 }

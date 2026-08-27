@@ -7,6 +7,7 @@ answer to "what is this session about" -- and a `last-prompt` record. Nothing
 here generates a summary; it collects the ones already on disk.
 """
 import collections
+import datetime
 import json
 import os
 import re
@@ -211,6 +212,44 @@ def touched_paths(path):
     return [os.path.normpath(p.replace("~", home, 1)) for p in out]
 
 
+def pending_tool(path):
+    """Minutes the current tool call has been outstanding, or None if none.
+
+    A `tool_use` with no matching `tool_result` after it is a call still
+    running -- or still waiting for you to approve it.
+    """
+    try:
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return None
+    uses, done = {}, set()
+    for line in lines[-TAIL_LINES:]:
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        content = (rec.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "tool_use" and part.get("id"):
+                uses[part["id"]] = rec.get("timestamp")
+            elif part.get("type") == "tool_result" and part.get("tool_use_id"):
+                done.add(part["tool_use_id"])
+    stamps = [t for tid, t in uses.items() if tid not in done and t]
+    if not stamps:
+        return None
+    try:
+        started = max(
+            datetime.datetime.fromisoformat(s.replace("Z", "+00:00")) for s in stamps)
+    except ValueError:
+        return None
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return max(0.0, (now - started).total_seconds() / 60)
+
+
 def suggestion_cached(path, shelves):
     key = ("suggest", str(path))
     try:
@@ -270,8 +309,12 @@ def sessions(cfg=None):
             "assigned": sid in assigned,
             "suggestion": guess,
             "quietFor": round(quiet, 1) if quiet is not None else None,
-            "stuck": classify(rec.get("status") or "", quiet,
-                              config_value("stuck_after_minutes", 5)),
+            "stuck": classify(
+                rec.get("status") or "", quiet,
+                config_value("stuck_after_minutes", 5),
+                in_flight=(pending_tool(transcript)
+                           if transcript and rec.get("status") == "busy" else None),
+                tool_after=config_value("long_tool_minutes", 20)),
             # Cheap: a session on a pty is hosted by some emulator, so a route
             # exists. Working out which one costs subprocesses, so that waits
             # until you actually click.
@@ -344,23 +387,29 @@ def suggest_project(paths, shelves):
     return top
 
 
-def classify(status, quiet, after):
-    """Is this session stuck, waiting on you, or simply working?
-
-    Two different problems with two different answers:
+def classify(status, quiet, after, in_flight=None, tool_after=20):
+    """Is this session stuck, waiting on you, running long, or just working?
 
     - `waiting` -- Claude Code has asked something and nobody replied. It
-      needs *you*, and it needs you now.
-    - `busy` with a silent transcript -- it thinks it is working and it is
-      not. The transcript's mtime is the only honest heartbeat here:
-      `updatedAt` in the peer file does not move while a session works.
+      needs *you*, and there is no grace period.
+    - a tool call in flight -- the transcript is silent for the whole of a
+      tool call, so silence proves nothing while one is running. Only when it
+      has run absurdly long is it worth saying, and even then it is news, not
+      an alarm.
+    - `busy`, silent, nothing running -- it thinks it is working and it is
+      not. The transcript's mtime is the only honest heartbeat: `updatedAt`
+      in the peer file does not move while a session works.
 
     Idle is not stuck. A session idle for two days is finished or abandoned,
     and flashing it forever would only teach you to ignore the flashing.
     """
     if status == "waiting":
         return "waiting"
-    if status == "busy" and quiet is not None and quiet >= after:
+    if status != "busy":
+        return None
+    if in_flight is not None:
+        return "tool" if in_flight >= tool_after else None
+    if quiet is not None and quiet >= after:
         return "stuck"
     return None
 

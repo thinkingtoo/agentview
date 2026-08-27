@@ -61,6 +61,8 @@
           border-radius:5px; padding:1px 6px; }
   .flag.waiting { color:var(--wait); border:1px solid color-mix(in srgb,var(--wait) 45%,transparent); }
   .flag.stuck { color:var(--bad); border:1px solid color-mix(in srgb,var(--bad) 45%,transparent); }
+  /* A long tool call is news, not an alarm: no tint, no beat. */
+  .flag.tool { color:var(--faint); border:1px solid var(--line); }
   .alarm { color:var(--bad); font-weight:650; }
   .alarm.wait { color:var(--wait); }
   .assign { margin-top:7px; display:flex; gap:9px; align-items:center; font-size:11.5px; }
@@ -169,11 +171,16 @@ function row(m) {
   const tag = m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "";
   const go = m.canJump ? `<span class="go">open ↗</span>` : "";
   const title = m.title || (m.prompt ? "" : "<span style='color:var(--faint)'>no title yet</span>");
+  // Three different things, and only two of them are alarms.
   const flag = m.stuck === "waiting"
     ? `<span class="flag waiting">waiting for you</span>`
     : m.stuck === "stuck"
-      ? `<span class="flag stuck">stuck ${Math.round(m.quietFor)}m</span>` : "";
-  return `<div class="row ${m.canJump ? "can" : ""} ${esc(m.stuck || "")}" data-pid="${esc(m.pid)}"
+      ? `<span class="flag stuck">stuck ${Math.round(m.quietFor)}m</span>`
+      : m.stuck === "tool"
+        ? `<span class="flag tool">tool ${Math.round(m.quietFor)}m</span>` : "";
+  // Only the alarms tint their row; a long tool call gets a badge and no more.
+  const alarm = m.stuck === "waiting" || m.stuck === "stuck" ? m.stuck : "";
+  return `<div class="row ${m.canJump ? "can" : ""} ${alarm}" data-pid="${esc(m.pid)}"
         data-sid="${esc(m.sessionId)}" draggable="true">
     <div class="rhead">
       <span class="dot ${esc(m.status)}"></span>
@@ -232,10 +239,23 @@ function filtered(blocks) {
   }).filter(Boolean);
 }
 
+function busyWithUser() {
+  return editing || dragging || !!document.querySelector("input.inline");
+}
+
 async function load() {
+  // A save can take seconds -- retitling a Konsole tab means walking D-Bus --
+  // and its `load()` lands long after. By then you may be typing in another
+  // field, and re-rendering would rip it out. Whoever asked, the answer is
+  // the same: not while a field is open.
+  if (busyWithUser()) return;
   try {
     const r = await fetch("/api/roster", { cache: "no-store" });
+    // Checked again on the far side of the await: a poll that set off a
+    // moment before you clicked would otherwise land now and wipe the field
+    // you have already started typing in.
     const { blocks: all } = await r.json();
+    if (busyWithUser()) return;
     PINNED = all.filter(b => b.pinned).map(b => b.project);
     const blocks = filtered(all);
     const total = blocks.reduce((a, b) => a + b.members.length, 0);
@@ -300,6 +320,10 @@ document.getElementById("main").addEventListener("click", ev => {
   ev.stopPropagation();
   ev.preventDefault();
   const kind = cell.dataset.edit;
+  // Read everything off the cell now: the field replaces it, and by the time
+  // the edit is committed neither is still in the document.
+  const project = cell.closest("section")?.dataset.project;
+  const sid = cell.dataset.sid;
   const before = cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
   const input = document.createElement("input");
   input.className = "inline";
@@ -312,13 +336,16 @@ document.getElementById("main").addEventListener("click", ev => {
   const finish = async commit => {
     if (!editing) return;
     editing = false;
+    // Take the field out first: `load()` refuses to redraw while one is open,
+    // and this one is the reason it was asked to redraw.
+    input.remove();
     if (commit && input.value.trim() !== before) {
       const endpoint = { name: "/api/name", line: "/api/line", assign: "/api/assign" }[kind];
       const body = kind === "name"
-        ? { project: input.closest("section").dataset.project, label: input.value }
+        ? { project, label: input.value }
         : kind === "assign"
-          ? { sessionId: cell.dataset.sid, project: input.value }
-          : { sessionId: cell.dataset.sid, text: input.value };
+          ? { sessionId: sid, project: input.value }
+          : { sessionId: sid, text: input.value };
       await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Fleet": "1" },
@@ -437,12 +464,15 @@ main.addEventListener("click", async ev => {
   const pin = ev.target.closest(".pin");
   if (!pin) return;
   ev.stopPropagation();
-  const project = pin.closest(".block").dataset.project;
-  if (!PINNED.includes(project)) return;
+  const holder = pin.closest(".block");
+  if (!holder.classList.contains("pinned")) return;
+  // Read the pinned set off the page rather than off a variable the last
+  // refresh happened to fill: clicking straight after a drop must still work.
+  const current = [...main.querySelectorAll(".block.pinned")].map(b => b.dataset.project);
   await fetch("/api/order", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ pinned: PINNED.filter(p => p !== project) }),
+    body: JSON.stringify({ pinned: current.filter(p => p !== holder.dataset.project) }),
   });
   load();
 });

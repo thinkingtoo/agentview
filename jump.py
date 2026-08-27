@@ -264,10 +264,18 @@ def jump(pid, tmux=""):
 
 
 def set_title(pid, tmux, text):
-    """Label a session's terminal tab, so the page and the tab agree."""
-    steps = title_steps(
-        text=text, tty=tty_of(pid), ancestry=ancestry_of(pid), tmux=tmux,
-        panes=wezterm_panes(), clients=tmux_clients(), konsole=konsole_apps())
+    """Label a session's terminal tab, so the page and the tab agree.
+
+    Konsole is asked for last and only if nothing else claimed the session:
+    enumerating its sessions costs one `qdbus` call each, which is seconds of
+    latency on a path the page waits for.
+    """
+    tty, ancestry = tty_of(pid), ancestry_of(pid)
+    args = dict(text=text, tty=tty, ancestry=ancestry, tmux=tmux,
+                panes=wezterm_panes(), clients=tmux_clients())
+    steps = title_steps(konsole=[], **args)
+    if not steps:
+        steps = title_steps(konsole=konsole_apps(), **args)
     for step in steps:
         _run(step)
     return [" ".join(s) for s in steps]

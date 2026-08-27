@@ -110,7 +110,15 @@ beats, the tab title carries a count, and the project it belongs to rises.
 | Mark | What it means | Where it comes from |
 |---|---|---|
 | **waiting for you** (amber) | It asked something and nobody answered | status `waiting`, flagged at once |
-| **stuck Nm** (red) | It thinks it is working and it is not | status `busy` while its transcript has been silent |
+| **stuck Nm** (red) | It thinks it is working and it is not | `busy`, transcript silent, **and nothing running** |
+| **tool Nm** (grey) | A tool call has been going a very long time | a `tool_use` with no `tool_result` yet |
+
+**A running tool call is not a stuck session.** The transcript is silent for the
+whole of a tool call, so silence alone proves nothing — a session six minutes
+into `timeout 580 ...` looks exactly like a hung one from outside. What tells
+them apart is a `tool_use` with no `tool_result` answering it yet. Only when
+that has been outstanding absurdly long is it worth mentioning, and then it is
+news, not an alarm: no tint, no beat, just a grey badge.
 
 The transcript's mtime is the heartbeat here, and it has to be: `updatedAt` in
 the peer file **does not move while a session works** — a session busy for ten
@@ -119,7 +127,9 @@ minutes looks identical to one hung for ten minutes if you only read that.
 **Idle is never stuck.** A session idle for two days is finished or abandoned;
 flashing it forever would only teach you to ignore the flashing.
 
-`"stuck_after_minutes": 5` in `config.json` sets how long silence is allowed.
+`"stuck_after_minutes": 5` sets how long silence with nothing running is
+allowed; `"long_tool_minutes": 20` sets when a running tool call is worth
+mentioning.
 
 ## Size
 

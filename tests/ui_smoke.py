@@ -32,7 +32,8 @@ STUCK_PAYLOAD = {"blocks": [{
     "updatedAt": 1787830000000, "members": [
         _member("Vera", "waiting", "waiting", 0.3, "s1"),
         _member("Mei", "busy", "stuck", 17.0, "s2"),
-        _member("Leila", "busy", None, 0.1, "s3")]}]}
+        _member("Leila", "busy", None, 0.1, "s3"),
+        _member("Aziz", "busy", "tool", 34.0, "s4")]}]}
 URL = "http://127.0.0.1:8765/"
 failures = []
 
@@ -73,9 +74,19 @@ with sync_playwright() as pw:
     page.on("request",
             lambda r: jumps.append(r.url) if "/api/jump" in r.url else None)
 
+    removals = []
+    page.expose_function("noteRemoval", lambda s: removals.append(s))
     reset()
     page.goto(URL, wait_until="networkidle")
     page.wait_for_selector(".block")
+    page.evaluate("""() => {
+      const orig = Element.prototype.remove;
+      Element.prototype.remove = function () {
+        if (this.classList?.contains('inline'))
+          window.noteRemoval(new Error().stack.split(String.fromCharCode(10)).slice(1, 3).join(' | '));
+        return orig.call(this);
+      };
+    }""")
 
     # --- renaming and relabelling -------------------------------------
     target = page.locator(".block:not(.orphan)").first
@@ -101,14 +112,18 @@ with sync_playwright() as pw:
     # front steals focus, and the field being typed into commits itself.
     check("modificare non fa il jump", not jumps, jumps)
 
-    # An open field must survive the poll.
+    # An open field must survive the poll: two full cycles, untouched, with
+    # what was typed still in it and the cursor still there.
     open_editor(page, page.locator('.block:not(.orphan) [data-edit="line"]').first)
-    for ch in "lento":
-        page.locator("input.inline").type(ch, delay=0)
-        page.wait_for_timeout(700)
-    check("il campo regge il poll", page.locator("input.inline").count() == 1)
-    page.locator("input.inline").press("Escape")
-    page.wait_for_timeout(400)
+    page.keyboard.type("mezzo scritto")
+    page.wait_for_timeout(7000)
+    check("il campo regge due poll",
+          page.locator("input.inline").count() == 1
+          and page.evaluate("document.activeElement?.classList.contains('inline')")
+          and page.locator("input.inline").input_value() == "mezzo scritto",
+          f"input={page.locator('input.inline').count()} rimozioni={removals[-2:]}")
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(500)
 
     # --- pinning ------------------------------------------------------
     reset()
@@ -116,13 +131,24 @@ with sync_playwright() as pw:
     page.wait_for_selector(".block")
     blocks = page.locator(".block:not(.orphan)")
     third = blocks.nth(2).get_attribute("data-project")
+    print(f"   (fisso {third!r} trascinandolo in cima)")
     # The ✳ is the handle -- a block is mostly rows, and grabbing its middle
     # used to pick up a session instead of the block.
     blocks.nth(2).locator(".pin").drag_to(blocks.nth(0))
-    page.wait_for_timeout(900)
+    page.wait_for_timeout(1200)
     check("trascinare fissa il blocco", third in cfg("pinned"), cfg("pinned"))
+    # Wait for the pin to actually show as pinned before clicking it: a click
+    # on a block the page has not yet drawn as pinned is correctly ignored.
+    page.wait_for_function(
+        """p => document.querySelector(`.block[data-project="${p}"]`)?.classList.contains('pinned')""",
+        arg=third, timeout=5000)
     page.locator(f'.block[data-project="{third}"] .pin').click()
-    page.wait_for_timeout(900)
+    try:
+        page.wait_for_function(
+            """p => !document.querySelector(`.block[data-project="${p}"]`)?.classList.contains('pinned')""",
+            arg=third, timeout=5000)
+    except Exception:
+        pass
     check("la ✳ lo libera", third not in cfg("pinned"), cfg("pinned"))
 
     # --- assigning a session to a project -----------------------------
@@ -176,7 +202,12 @@ with sync_playwright() as pw:
     check("dice da quanto è ferma",
           "17m" in page.locator(".flag.stuck").inner_text().lower())
     check("chi lavora resta pulito",
-          page.locator(".row:not(.stuck):not(.waiting)").count() == 1)
+          page.locator(".row:not(.stuck):not(.waiting)").count() == 2)
+    # A long tool call is reported, but never tinted or beating: it is news.
+    check("la chiamata lunga è notizia, non allarme",
+          page.locator(".flag.tool").count() == 1
+          and "34m" in page.locator(".flag.tool").inner_text().lower()
+          and page.locator(".row.tool").count() == 0)
     head = page.locator("#count").inner_text()
     check("la testata avvisa", "waiting for you" in head and "stuck" in head, head)
     check("il titolo della scheda conta", page.title().startswith("(2)"), page.title())
@@ -209,8 +240,12 @@ with sync_playwright() as pw:
     check("dice quando non trova nulla", "Nothing matches" in page.locator(".empty").inner_text())
 
     box.press("Escape")
-    page.wait_for_timeout(500)
-    check("Escape ripulisce", page.locator(".row").count() == total)
+    page.wait_for_timeout(600)
+    # Not a row count: sessions come and go between snapshots, and that is
+    # not what clearing a filter is about.
+    check("Escape ripulisce",
+          box.input_value() == "" and page.locator(".block").count() > 1,
+          box.input_value())
 
     page.keyboard.press("/")
     page.wait_for_timeout(200)
