@@ -173,11 +173,11 @@ function row(m) {
   const title = m.title || (m.prompt ? "" : "<span style='color:var(--faint)'>no title yet</span>");
   // Three different things, and only two of them are alarms.
   const flag = m.stuck === "waiting"
-    ? `<span class="flag waiting">waiting for you</span>`
+    ? `<span class="flag waiting">waiting</span>`
     : m.stuck === "stuck"
       ? `<span class="flag stuck">stuck ${Math.round(m.quietFor)}m</span>`
       : m.stuck === "tool"
-        ? `<span class="flag tool">tool ${Math.round(m.quietFor)}m</span>` : "";
+        ? `<span class="flag tool">tool ${Math.round(m.toolFor ?? m.quietFor)}m</span>` : "";
   // Only the alarms tint their row; a long tool call gets a badge and no more.
   const alarm = m.stuck === "waiting" || m.stuck === "stuck" ? m.stuck : "";
   return `<div class="row ${m.canJump ? "can" : ""} ${alarm}" data-pid="${esc(m.pid)}"
@@ -187,8 +187,9 @@ function row(m) {
       <span class="nm">${esc(m.name)}</span>${tag}${flag}${go}
       <span class="ago">${esc(m.status)} · ${ago(m.updatedAt)}</span>
     </div>
+    ${m.title && m.title.trim() === (m.name || "").trim() ? "" : `
     <div class="title edit ${m.overridden ? "own" : ""}" data-edit="line"
-         data-sid="${esc(m.sessionId)}">${esc(m.title) || "<span style='color:var(--faint)'>—</span>"}</div>
+         data-sid="${esc(m.sessionId)}">${esc(m.title) || "<span style='color:var(--faint)'>—</span>"}</div>`}
     ${m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : ""}
     <div class="where">${where(m)}</div>
     ${assignBar(m)}
@@ -266,7 +267,7 @@ async function load() {
     const stuck = all.reduce((a, b) =>
       a + b.members.filter(m => m.stuck === "stuck").length, 0);
     const alarms = [
-      waiting ? `<span class="alarm wait">${waiting} waiting for you</span>` : "",
+      waiting ? `<span class="alarm wait">${waiting} waiting</span>` : "",
       stuck ? `<span class="alarm">${stuck} stuck</span>` : "",
     ].filter(Boolean).join(" · ");
     document.getElementById("count").innerHTML =

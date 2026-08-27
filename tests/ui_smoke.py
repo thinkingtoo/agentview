@@ -23,7 +23,8 @@ def _member(name, status, stuck, quiet, sid):
             "sessionId": sid, "updatedAt": 1787830000000, "project": "maple",
             "title": f"{name} at work", "prompt": "carry on", "branch": "main",
             "canJump": True, "assigned": False, "suggestion": None,
-            "quietFor": quiet, "stuck": stuck}
+            "quietFor": quiet, "toolFor": quiet if stuck == "tool" else None,
+            "stuck": stuck, "startedAt": 1787830000000}
 
 
 STUCK_PAYLOAD = {"blocks": [{
@@ -33,7 +34,11 @@ STUCK_PAYLOAD = {"blocks": [{
         _member("Vera", "waiting", "waiting", 0.3, "s1"),
         _member("Mei", "busy", "stuck", 17.0, "s2"),
         _member("Leila", "busy", None, 0.1, "s3"),
-        _member("Aziz", "busy", "tool", 34.0, "s4")]}]}
+        _member("Aziz", "busy", "tool", 34.0, "s4"),
+        # A `/btw` helper: Claude Code never named it, so its name IS its
+        # title. Printing both would say the same thing twice.
+        {**_member("Handoff review", "idle", None, 1.0, "s5"),
+         "title": "Handoff review", "kind": "bg"}]}]}
 URL = "http://127.0.0.1:8765/"
 failures = []
 
@@ -202,14 +207,19 @@ with sync_playwright() as pw:
     check("dice da quanto è ferma",
           "17m" in page.locator(".flag.stuck").inner_text().lower())
     check("chi lavora resta pulito",
-          page.locator(".row:not(.stuck):not(.waiting)").count() == 2)
+          page.locator(".row:not(.stuck):not(.waiting)").count() == 3)
     # A long tool call is reported, but never tinted or beating: it is news.
+    check("il badge conta la chiamata, non il silenzio",
+          "34m" in page.locator(".flag.tool").inner_text().lower(),
+          page.locator(".flag.tool").inner_text())
+    check("non ripete il titolo uguale al nome",
+          page.locator('.row[data-sid="s5"] .title').count() == 0)
     check("la chiamata lunga è notizia, non allarme",
           page.locator(".flag.tool").count() == 1
           and "34m" in page.locator(".flag.tool").inner_text().lower()
           and page.locator(".row.tool").count() == 0)
     head = page.locator("#count").inner_text()
-    check("la testata avvisa", "waiting for you" in head and "stuck" in head, head)
+    check("la testata avvisa", "waiting" in head and "stuck" in head, head)
     check("il titolo della scheda conta", page.title().startswith("(2)"), page.title())
     page.unroute("**/api/roster")
 

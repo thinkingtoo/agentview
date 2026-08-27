@@ -109,9 +109,15 @@ beats, the tab title carries a count, and the project it belongs to rises.
 
 | Mark | What it means | Where it comes from |
 |---|---|---|
-| **waiting for you** (amber) | It asked something and nobody answered | status `waiting`, flagged at once |
+| **waiting** (amber) | Blocked on something outside itself | status `waiting`, after a short grace |
 | **stuck Nm** (red) | It thinks it is working and it is not | `busy`, transcript silent, **and nothing running** |
 | **tool Nm** (grey) | A tool call has been going a very long time | a `tool_use` with no `tool_result` yet |
+
+**`waiting` does not always mean waiting for *you*.** Often it does — a
+permission prompt, a question. But a session that runs `/btw` also sits in
+`waiting` while the helper it spawned answers, and nobody needs to do anything.
+So the label says `waiting` and no more than that; `"waiting_after_seconds": 20`
+keeps the two-second flickers out.
 
 **A running tool call is not a stuck session.** The transcript is silent for the
 whole of a tool call, so silence alone proves nothing — a session six minutes
@@ -123,6 +129,12 @@ news, not an alarm: no tint, no beat, just a grey badge.
 The transcript's mtime is the heartbeat here, and it has to be: `updatedAt` in
 the peer file **does not move while a session works** — a session busy for ten
 minutes looks identical to one hung for ten minutes if you only read that.
+
+**A background session may show its own title as its name.** Claude Code names
+a `bg` session a moment after starting it, and until then its name is the
+conversation title — which is why a `/btw` helper can appear twice over. The
+page prints the title once when the two are identical, and the real name
+arrives on the next refresh.
 
 **Idle is never stuck.** A session idle for two days is finished or abandoned;
 flashing it forever would only teach you to ignore the flashing.

@@ -290,6 +290,9 @@ def sessions(cfg=None):
                 quiet = (time.time() - transcript.stat().st_mtime) / 60
             except OSError:
                 quiet = None
+        in_flight = (pending_tool(transcript)
+                     if transcript and rec.get("status") == "busy" else None)
+        status_since = rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0
         project = assigned.get(sid) or resolve_project(cwd, shelves)
         # Only guess for the ones that have nothing better -- the guess costs
         # a transcript scan, and a session with a real cwd does not need it.
@@ -309,12 +312,14 @@ def sessions(cfg=None):
             "assigned": sid in assigned,
             "suggestion": guess,
             "quietFor": round(quiet, 1) if quiet is not None else None,
+            "toolFor": round(in_flight, 1) if in_flight is not None else None,
             "stuck": classify(
                 rec.get("status") or "", quiet,
                 config_value("stuck_after_minutes", 5),
-                in_flight=(pending_tool(transcript)
-                           if transcript and rec.get("status") == "busy" else None),
-                tool_after=config_value("long_tool_minutes", 20)),
+                in_flight=in_flight,
+                tool_after=config_value("long_tool_minutes", 20),
+                waiting_for=(time.time() * 1000 - status_since) / 60000,
+                waiting_after=config_value("waiting_after_seconds", 20) / 60),
             # Cheap: a session on a pty is hosted by some emulator, so a route
             # exists. Working out which one costs subprocesses, so that waits
             # until you actually click.
@@ -387,7 +392,8 @@ def suggest_project(paths, shelves):
     return top
 
 
-def classify(status, quiet, after, in_flight=None, tool_after=20):
+def classify(status, quiet, after, in_flight=None, tool_after=20,
+             waiting_for=None, waiting_after=0):
     """Is this session stuck, waiting on you, running long, or just working?
 
     - `waiting` -- Claude Code has asked something and nobody replied. It
@@ -404,6 +410,10 @@ def classify(status, quiet, after, in_flight=None, tool_after=20):
     and flashing it forever would only teach you to ignore the flashing.
     """
     if status == "waiting":
+        # `/btw` and friends spawn helpers that sit in `waiting` for a few
+        # seconds. A flag that fires on those is a flag you learn to ignore.
+        if waiting_for is not None and waiting_for < waiting_after:
+            return None
         return "waiting"
     if status != "busy":
         return None

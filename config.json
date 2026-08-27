@@ -16,5 +16,7 @@
   "_stuck": "A busy session whose transcript has been silent this many minutes is stuck. A `waiting` session is flagged at once, whatever this says.",
   "stuck_after_minutes": 5,
   "_long_tool": "While a tool call is running the transcript is silent, so silence proves nothing. Only a call outstanding this many minutes is worth mentioning, and it is shown as news, not as an alarm.",
-  "long_tool_minutes": 20
+  "long_tool_minutes": 20,
+  "_waiting": "A helper spawned by /btw sits in `waiting` for a few seconds. Only a question left unanswered this long is worth flagging.",
+  "waiting_after_seconds": 20
 }
