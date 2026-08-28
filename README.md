@@ -123,6 +123,12 @@ the shape of the team instead of being a flat list of eight equals. A worker
 whose boss sits in another block cannot be nested there, so it says `↳ Lennart`
 in words instead.
 
+**A worker's `ready` stays folded.** It keeps the blue tick, so the boss's
+block shows at a glance which of his team have reported back, but it does not
+open a card: that ✓ is his to act on, not yours. `waiting` and `stuck` still
+open on a worker — a permission prompt is answered by you, whoever dispatched
+the work.
+
 Both facts come from the transcript and neither is a guess:
 
 - **Boss**: a `tool_use` of the `Skill` tool with `{"skill": "boss"}` — the

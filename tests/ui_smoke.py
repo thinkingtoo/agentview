@@ -102,7 +102,9 @@ TEAM_PAYLOAD = {"blocks": [
                 team=["Rosalie", "Kasper"], reportsTo=""),
          _state("Rosalie", "idle", "ready", "b2", reportsTo="Lennart",
                 said="Schema migration is green, want me to merge?"),
-         _state("Kasper", "busy", None, "b3", reportsTo="Lennart")]},
+         _state("Kasper", "busy", None, "b3", reportsTo="Lennart"),
+         _state("Nour", "waiting", "waiting", "b5", reportsTo="Lennart",
+                waitingFor="input needed")]},
     {"project": "maple", "label": "maple", "orphan": False, "routines": False,
      "renamed": False, "pinned": False, "branches": [], "busy": 0,
      "alarms": 0, "ready": 0, "updatedAt": 1787830000000, "members": [
@@ -498,6 +500,18 @@ with sync_playwright() as pw:
               and page.locator('.row[data-sid="b1"].under').count() == 0)
         check("annidato non ripete a chi risponde",
               page.locator('.row[data-sid="b2"] .reports').count() == 0)
+        # A worker's `ready` belongs to its boss: marked, but not a whole card.
+        check("il ready di un worker resta piegato",
+              page.locator('.row.stub[data-sid="b2"]').count() == 1
+              and page.locator('.row.stub[data-sid="b2"] .tick').count() == 1
+              and page.locator('.row.stub[data-sid="b2"].ready').count() == 1)
+        check("ma il suo said non occupa una scheda",
+              page.locator('.row[data-sid="b2"] .said').count() == 0)
+        # A permission prompt on a worker is answered by the user, not by the
+        # boss, so that one still opens.
+        check("un worker che aspetta si apre lo stesso",
+              page.locator('.row[data-sid="b5"]:not(.stub)').count() == 1
+              and page.locator('.row[data-sid="b5"] .wf').inner_text() == "input needed")
         check("chi è in un altro progetto lo dice a parole",
               page.locator('.row[data-sid="b4"] .reports').inner_text().strip() == "↳ Lennart"
               and page.locator('.row[data-sid="b4"].under').count() == 0)

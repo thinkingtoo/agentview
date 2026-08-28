@@ -215,7 +215,8 @@ function where(m) {
 function stub(m) {
   // Folded: the mark, the name, and any flag -- an alarm must be visible
   // whether or not you have opened the row it belongs to.
-  return `<div class="row stub ${m.status === "busy" ? "working" : ""}
+  const alarm = ["waiting", "stuck", "ready"].includes(m.flag) ? m.flag : "";
+  return `<div class="row stub ${alarm} ${m.status === "busy" ? "working" : ""}
         ${m.nested ? "under" : ""}"
         data-sid="${esc(m.sessionId)}" data-pid="${esc(m.pid)}"
         draggable="true" title="click to open">
@@ -338,7 +339,12 @@ function unfolded(b, m) {
   // stays open until you fold it again.
   if (b.members.length < 2) return true;
   if (m.sessionId === b.members[0].sessionId) return true;
-  if (["waiting", "stuck", "ready"].includes(m.flag)) return true;
+  if (["waiting", "stuck"].includes(m.flag)) return true;
+  // A worker's `ready` is its boss's business, not yours: it keeps the tick
+  // so he can see it at a glance, and stays folded so it does not cost you
+  // a card you were never going to act on. `waiting` and `stuck` still open
+  // -- a permission prompt on a worker is answered by you, not by him.
+  if (m.flag === "ready" && !m.reportsTo) return true;
   if (query.trim().length >= 3) return true;
   return OPEN.has(m.sessionId);
 }
