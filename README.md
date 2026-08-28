@@ -92,7 +92,8 @@ should be where you left them, not where today's activity puts them. So:
   freeze, so a card cannot walk out from under the sentence you are reading.
   Anything that arrives while it is held joins the end rather than pushing into
   the middle. It replaced a Refresh button, which solved nothing: the page
-  polls anyway.
+  polls anyway. *Held* is remembered in `config.json`, but the order it froze
+  is not — so a reload adopts whatever it paints first and holds **that**.
 - **Drag a block** to place it. Everything down to where you dropped it becomes
   **pinned** and stops moving; the rest keeps sorting itself underneath.
 - **Click the ✳** on a pinned block to let it go again.
@@ -278,6 +279,19 @@ projects without being one.
 ```json
 { "shelves": ["~", "~/Projects", "~/Projects/clients"] }
 ```
+
+## Filling the columns
+
+Blocks are packed, not flowed: each one is measured at the width it will have
+and handed to whichever column is currently shortest. A CSS grid gave every
+block in a row the height of the tallest one in it; CSS columns balanced by
+their own rules and left slack that a block could not break into. Packing
+keeps the bottom edges roughly level, and a project that appears while you are
+watching lands in the gap rather than at the foot of the last column.
+
+The DOM order is therefore a layout detail, not the order you read — so
+dragging a block to pin it works off the painted order the page kept, never
+off `querySelectorAll`.
 
 A project is the first directory below the deepest shelf containing the cwd.
 Anything deeper becomes a breadcrumb, which is exactly the client/project

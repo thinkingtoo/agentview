@@ -29,5 +29,5 @@
   "long_tool_minutes": 20,
   "_waiting": "A helper spawned by /btw sits in `waiting` for a few seconds. Only a question left unanswered this long is worth flagging.",
   "waiting_after_seconds": 20,
-  "hold": true
+  "hold": false
 }

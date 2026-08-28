@@ -450,6 +450,18 @@ with sync_playwright() as pw:
         check("riacceso, si riordina subito", order() == ["beta", "alpha"], order())
         check("e il pulsante torna normale",
               page.locator("#hold").inner_text() == "auto-arrange" and not cfg("hold"))
+
+        # Reloading while held. `hold` lives in config.json; the order it
+        # froze lived only in the page, so a reload used to come back held
+        # with nothing to hold on to -- every card tied, and the server's
+        # order won. The button said held while the cards moved.
+        served["body"] = {"blocks": HOLD_BEFORE["blocks"], "hold": True}
+        page.reload(wait_until="load")
+        page.wait_for_selector(".block")
+        check("ricaricando resta fermo", order() == ["alpha", "beta"], order())
+        served["body"] = {"blocks": HOLD_AFTER["blocks"], "hold": True}
+        page.wait_for_timeout(4000)
+        check("e non si muove al poll dopo", order() == ["alpha", "beta"], order())
         page.unroute("**/api/roster")
 
         # --- the five states ----------------------------------------------

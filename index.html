@@ -38,13 +38,15 @@
   /* Held is a state you are in, not a button you pressed: it stays lit. */
   button.held { color:var(--claude); border-color:color-mix(in srgb,var(--claude) 55%,transparent);
                 background:color-mix(in srgb,var(--claude) 10%,transparent); }
-  /* Columns, not a grid. A grid gives every block in a row the height of the
-     tallest one in it, so a six-session project left a hole the size of five
-     sessions under every short block beside it. Columns let each block take
-     the height it needs and the next one start right underneath. */
-  main { padding:18px 20px 40px; column-width:360px; column-gap:14px; }
+  /* Neither a grid nor CSS columns. A grid gives every block in a row the
+     height of the tallest one in it; CSS columns balance by their own rules
+     and leave slack a block cannot break into. The columns are filled here
+     instead -- each block goes to whichever one is shortest -- so a new
+     project lands in the gap rather than at the bottom of the last column. */
+  main { padding:18px 20px 40px; display:flex; gap:14px; align-items:flex-start; }
+  .col { flex:1 1 0; min-width:0; }
   .block { background:var(--card); border:1px solid var(--line); border-radius:11px;
-           overflow:hidden; break-inside:avoid; margin-bottom:14px; }
+           overflow:hidden; margin-bottom:14px; }
   .block.pinned { border-color:color-mix(in srgb,var(--claude) 45%,var(--line)); }
   .block.dragging { opacity:.4; }
   .block.over { border-color:var(--claude); }
@@ -172,6 +174,7 @@ let PINNED = [];
 let LATEST = [];            // the last roster the server sent, to repaint from
 let HOLD = false;           // is the order frozen where you last saw it?
 let ORDER = { blocks: [], members: {} };   // and where that was
+let PAINTED = [];           // the order you see, which the DOM no longer is
 const OPEN = new Set();     // sessions you unfolded by hand
 let query = "";
 let editing = false;
@@ -426,7 +429,12 @@ function ordered(blocks) {
   // the content still updates -- status, titles, flags -- and only the
   // positions stop. Anything arriving while held goes to the end in the order
   // the server sent it, rather than pushing into the middle of what you read.
-  if (!HOLD) {
+  // Held is remembered in config.json; the order it froze was only ever in
+  // this page's memory. So a reload came back held with nothing to hold on
+  // to, every card tied for last place, and the server's order won -- the
+  // button said held while the cards moved. The first painted order after a
+  // reload is what held now means.
+  if (!HOLD || !ORDER.blocks.length) {
     ORDER = {
       blocks: blocks.map(b => b.project),
       members: Object.fromEntries(
@@ -443,6 +451,36 @@ function ordered(blocks) {
     .map(b => ({ ...b, members: [...b.members].sort((x, y) =>
       rank(ORDER.members[b.project], x.sessionId)
       - rank(ORDER.members[b.project], y.sessionId)) }));
+}
+
+const GAP = 14;
+const MIN_COL = 360;
+
+function place(html) {
+  // Greedy packing: measure every block at the width it will really have,
+  // then give each one to the column that is currently shortest. That is
+  // what keeps the bottom edges level and puts a new project in the hole
+  // instead of after the last card.
+  const main = document.getElementById("main");
+  const n = Math.max(1, Math.floor((main.clientWidth + GAP) / (MIN_COL + GAP)));
+  main.innerHTML = "";
+  const cols = [];
+  for (let i = 0; i < n; i++) {
+    const col = document.createElement("div");
+    col.className = "col";
+    main.appendChild(col);
+    cols.push(col);
+  }
+  cols[0].innerHTML = html;            // staged at the real column width
+  const items = [...cols[0].children];
+  const heights = items.map(el => el.offsetHeight);   // one reflow, then no more
+  const filled = new Array(n).fill(0);
+  items.forEach((el, i) => {
+    let shortest = 0;
+    for (let j = 1; j < n; j++) if (filled[j] < filled[shortest]) shortest = j;
+    cols[shortest].appendChild(el);
+    filled[shortest] += heights[i] + GAP;
+  });
 }
 
 function drawHold() {
@@ -506,10 +544,12 @@ function paint() {
     + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
     + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "");
   document.title = (waiting + stuck) ? `(${waiting + stuck}) Claude Team` : "Claude Team";
-  document.getElementById("main").innerHTML =
-    blocks.length ? blocks.map(block).join("")
-      : `<div class="empty">${query.trim().length >= 3
-           ? `Nothing matches “${esc(query.trim())}”.` : "No Claude sessions running."}</div>`;
+  // Kept for the drag handlers: the DOM is now packed by height, so its
+  // order is a layout detail and no longer the order you see.
+  PAINTED = blocks.filter(b => !b.orphan && !b.routines).map(b => b.project);
+  place(blocks.length ? blocks.map(block).join("")
+    : `<div class="empty">${query.trim().length >= 3
+         ? `Nothing matches “${esc(query.trim())}”.` : "No Claude sessions running."}</div>`);
   document.getElementById("stamp").textContent =
     "updated " + new Date().toLocaleTimeString();
 }
@@ -678,13 +718,14 @@ main.addEventListener("drop", async ev => {
   if (!dragged || over === dragged) return;
   ev.preventDefault();
   over.classList.remove("over");
-  const blocks = [...main.querySelectorAll(".block:not(.orphan):not(.routines)")];
-  const from = blocks.indexOf(dragged);
-  const to = blocks.indexOf(over);
-  blocks.splice(to, 0, blocks.splice(from, 1)[0]);
+  const order = [...PAINTED];
+  const from = order.indexOf(dragged.dataset.project);
+  const to = order.indexOf(over.dataset.project);
+  if (from < 0 || to < 0) return;
+  order.splice(to, 0, order.splice(from, 1)[0]);
   // Dropping pins everything above and including the drop point: the ones
   // you have deliberately placed are exactly the ones that should stop moving.
-  const pinned = blocks.slice(0, Math.max(to, from) + 1).map(b => b.dataset.project);
+  const pinned = order.slice(0, Math.max(to, from) + 1);
   await fetch("/api/order", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
@@ -753,6 +794,11 @@ document.getElementById("hold").addEventListener("click", async () => {
 drawHold();
 load();
 setInterval(() => { if (!editing && !dragging) load(); }, 3000);
+let resizing;
+addEventListener("resize", () => {
+  clearTimeout(resizing);
+  resizing = setTimeout(() => { if (!busyWithUser()) paint(); }, 150);
+});
 </script>
 </body>
 </html>
