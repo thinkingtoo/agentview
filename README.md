@@ -227,6 +227,18 @@ soft highlight travels through the name. Waiting and stuck nudge, barely — the
 colour is the alarm; anything stronger is a thing you learn to stop seeing. A
 still page means nothing is running.
 
+**A session that starts waiting rings.** Two soft bell tones, high then low,
+with a long decay — the cabin chime when the seatbelt sign comes on, not a
+doorbell. It rings **once**, for whoever has just started waiting: never for
+the ones already on screen when you open the page, and never again while that
+same session goes on waiting. `chime` in the header turns it off (it says
+*muted* then), and the setting lives in `config.json` with the pins.
+
+A browser makes no sound at all until you have interacted with the page, so
+the first click anywhere arms it. If a chime is due before that has happened,
+the button turns red and says **allow sound** — clicking it is both the
+gesture the browser wanted and the switch.
+
 **A running tool call is not a stuck session.** The transcript is silent for the
 whole of a tool call, so silence alone proves nothing — a session six minutes
 into `timeout 580 ...` looks exactly like a hung one from outside. What tells

@@ -12,9 +12,9 @@
     "No project": "Investigation"
   },
   "pinned": [
-    "music-db",
     "maple",
-    "claude-team"
+    "claude-team",
+    "music-db"
   ],
   "lines": {},
   "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by sessionId — it also retitles that terminal tab. pinned: projects held at the top, in this order.",
@@ -29,5 +29,7 @@
   "long_tool_minutes": 20,
   "_waiting": "A helper spawned by /btw sits in `waiting` for a few seconds. Only a question left unanswered this long is worth flagging.",
   "waiting_after_seconds": 20,
-  "hold": false
+  "hold": false,
+  "_chime": "A soft two-tone chime when a session starts waiting on you. It rings once, for whoever has just started waiting -- never for the ones already on screen when the page opens.",
+  "chime": true
 }

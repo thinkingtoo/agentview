@@ -60,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "order", "name", "line", "assign", "hold")
+    ROUTES = ("jump", "order", "name", "line", "assign", "hold", "chime")
 
     def do_POST(self):
         if not self._local():
@@ -121,6 +121,18 @@ class Handler(BaseHTTPRequestHandler):
         fleet.write_config({"hold": hold})
         self._send(json.dumps({"ok": True, "hold": hold}), "application/json")
 
+    def _chime(self, body):
+        """Ring, or stay quiet, when a session starts waiting on you.
+
+        Next to `hold` for the same reason: it is how you want the page to
+        behave, and it should still be true tomorrow.
+        """
+        chime = body.get("chime")
+        if not isinstance(chime, bool):
+            return self.send_error(400, "expected {chime: true|false}")
+        fleet.write_config({"chime": chime})
+        self._send(json.dumps({"ok": True, "chime": chime}), "application/json")
+
     def _order(self, body):
         pinned = body.get("pinned")
         if not isinstance(pinned, list) or not all(isinstance(p, str) for p in pinned):
@@ -179,7 +191,8 @@ class Handler(BaseHTTPRequestHandler):
             log.note_roster(blocks)
             seen.forget({m["sessionId"] for b in blocks for m in b["members"]})
             self._send(json.dumps({"blocks": blocks,
-                                   "hold": fleet.config_value("hold", False)}),
+                                   "hold": fleet.config_value("hold", False),
+                                   "chime": fleet.config_value("chime", True)}),
                        "application/json")
         elif self.path in ("/", "/index.html"):
             self._send(page(), "text/html; charset=utf-8")

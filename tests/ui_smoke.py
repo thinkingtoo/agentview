@@ -77,6 +77,18 @@ def _block(project, sid, busy=1):
 # ignore the second one's order and keep showing the first one's.
 HOLD_BEFORE = {"blocks": [_block("alpha", "h1"), _block("beta", "h2")], "hold": False}
 HOLD_AFTER = {"blocks": [_block("beta", "h2"), _block("alpha", "h1")], "hold": True}
+# The chime. A quiet project, then somebody newly waiting on it, then a
+# second one: only a name that was not waiting a moment ago may ring.
+CHIME_QUIET = {"blocks": [_block("alpha", "c1")], "hold": False, "chime": True}
+
+
+def _waiting(*names):
+    members = [_member("ALPHA", "busy", None, 0.1, "c1")]
+    members += [_member(n.upper(), "waiting", "waiting", 0.3, n) for n in names]
+    return {"blocks": [{**_block("alpha", "c1"), "members": members}],
+            "hold": False, "chime": True}
+
+
 def _state(name, status, flag, sid, **kw):
     return {**_member(name, status, flag, 0.2, sid), **kw}
 
@@ -462,6 +474,64 @@ with sync_playwright() as pw:
         served["body"] = {"blocks": HOLD_AFTER["blocks"], "hold": True}
         page.wait_for_timeout(4000)
         check("e non si muove al poll dopo", order() == ["alpha", "beta"], order())
+        page.unroute("**/api/roster")
+
+        # --- the chime ----------------------------------------------------
+        served = {"body": CHIME_QUIET}
+        page.route("**/api/roster", lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=json.dumps(served["body"])))
+        page.reload(wait_until="load")
+        page.wait_for_selector(".block")
+        # Making a real sound needs a real gesture and a real speaker. What
+        # is checked here is *when* it rings, which is the part that can be
+        # wrong -- a chime on every poll would be unbearable.
+        page.evaluate("() => { window.__rings = 0;"
+                      " window.ring = () => { window.__rings++; return true; }; }")
+        rings = lambda: page.evaluate("window.__rings")
+
+        # Rendered offline, because a graph that connects nothing sounds
+        # exactly like a graph that works, and neither is audible from here.
+        sound = page.evaluate("""async () => {
+          const off = new OfflineAudioContext(1, 44100 * 3, 44100);
+          tone(off);
+          const data = (await off.startRendering()).getChannelData(0);
+          let first = 0, second = 0;
+          for (let i = 0; i < data.length; i++) {
+            const v = Math.abs(data[i]);
+            if (i < 44100 * 0.4) first = Math.max(first, v);
+            else if (i > 44100 * 0.45) second = Math.max(second, v);
+          }
+          return { first, second };
+        }""")
+        check("i due tocchi ci sono davvero, e non spaccano le orecchie",
+              0.05 < sound["first"] < 0.4 and 0.05 < sound["second"] < 0.4
+              and sound["second"] < sound["first"], sound)
+        check("il suono è armato di default",
+              page.locator("#sound").inner_text() == "chime",
+              page.locator("#sound").inner_text())
+        served["body"] = _waiting("c2")
+        page.wait_for_timeout(4000)
+        check("suona quando qualcuno si mette in attesa", rings() == 1, rings())
+        page.wait_for_timeout(4000)
+        check("ma non risuona finché aspetta", rings() == 1, rings())
+
+        # Muted, and the mute has to survive the trip through config.json.
+        # The served roster has to agree, or the next poll turns it back on.
+        served["body"] = {**_waiting("c2"), "chime": False}
+        page.locator("#sound").click()
+        page.wait_for_timeout(900)
+        check("si può zittire",
+              page.locator("#sound").inner_text() == "muted" and cfg("chime") is False,
+              page.locator("#sound").inner_text())
+        served["body"] = {**_waiting("c2", "c3"), "chime": False}
+        page.wait_for_timeout(4000)
+        check("e zitto resta zitto anche se ne arriva un altro", rings() == 1, rings())
+        served["body"] = {**_waiting("c2", "c3"), "chime": True}
+        page.locator("#sound").click()
+        page.wait_for_timeout(900)
+        check("riacceso, si sente subito com'è fatto",
+              page.locator("#sound").inner_text() == "chime" and rings() == 2, rings())
         page.unroute("**/api/roster")
 
         # --- the five states ----------------------------------------------
