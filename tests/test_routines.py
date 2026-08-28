@@ -37,7 +37,8 @@ class RoutineOf(unittest.TestCase):
 
 def session(name, routine="", project=None, **kw):
     base = {"name": name, "routine": routine, "project": project, "status": "idle",
-            "flag": None, "updatedAt": 0, "branch": "", "sessionId": name}
+            "flag": None, "updatedAt": 0, "branch": "", "sessionId": name,
+            "boss": False, "team": []}
     base.update(kw)
     return base
 
@@ -90,3 +91,54 @@ class Grouping(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Teams(unittest.TestCase):
+    """A boss leads its block, and the team it dispatches to follows."""
+
+    def roster(self, members):
+        real = fleet.sessions
+        fleet.sessions = lambda cfg=None: members
+        try:
+            return fleet.roster()
+        finally:
+            fleet.sessions = real
+
+    def test_the_boss_leads_whatever_the_activity(self):
+        # Everyone else is busier and more recent; he still goes first.
+        blocks = self.roster([
+            session("Rosalie", project="pmd", status="busy", updatedAt=99),
+            session("Lennart", project="pmd", boss=True,
+                    team=["Rosalie", "Kasper"]),
+            session("Kasper", project="pmd", status="busy", updatedAt=98),
+        ])
+        self.assertEqual([m["name"] for m in blocks[0]["members"]],
+                         ["Lennart", "Rosalie", "Kasper"])
+
+    def test_a_worker_knows_who_it_reports_to(self):
+        blocks = self.roster([
+            session("Lennart", project="pmd", boss=True, team=["Rosalie"]),
+            session("Rosalie", project="pmd"),
+            session("Vera", project="maple"),
+        ])
+        by_name = {m["name"]: m for b in blocks for m in b["members"]}
+        self.assertEqual(by_name["Rosalie"]["reportsTo"], "Lennart")
+        self.assertEqual(by_name["Vera"]["reportsTo"], "")
+
+    def test_a_worker_in_another_project_still_knows(self):
+        # Workers are meant to sit in their own projects. It cannot be nested
+        # under a block it is not in, but it can still say who sent it.
+        blocks = self.roster([
+            session("Lennart", project="pmd", boss=True, team=["Vera"]),
+            session("Vera", project="maple"),
+        ])
+        by_name = {m["name"]: m for b in blocks for m in b["members"]}
+        self.assertEqual(by_name["Vera"]["reportsTo"], "Lennart")
+
+    def test_someone_the_boss_never_messaged_is_not_on_the_team(self):
+        blocks = self.roster([
+            session("Lennart", project="pmd", boss=True, team=["Rosalie"]),
+            session("Kasper", project="pmd", status="busy"),
+        ])
+        by_name = {m["name"]: m for b in blocks for m in b["members"]}
+        self.assertEqual(by_name["Kasper"]["reportsTo"], "")

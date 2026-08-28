@@ -130,6 +130,11 @@
   @keyframes shimmer { from { background-position:150% 0; } to { background-position:-50% 0; } }
   .bg-tag { font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint);
             border:1px solid var(--line); border-radius:5px; padding:1px 5px; }
+  .bg-tag.boss { color:var(--claude); border-color:color-mix(in srgb,var(--claude) 45%,transparent); }
+  /* The team, under the one who dispatches to it. */
+  .row.under { margin-left:16px; border-left:2px solid var(--line); }
+  .team { margin-top:5px; color:var(--faint); font-size:11.5px; }
+  .reports { color:var(--faint); font-size:11px; }
   .ago { margin-left:auto; color:var(--faint); font-size:12px; font-variant-numeric:tabular-nums; }
   .title { margin-top:5px; }
   .prompt { margin-top:2px; color:var(--dim); font-size:13px;
@@ -206,7 +211,8 @@ function where(m) {
 function stub(m) {
   // Folded: the mark, the name, and any flag -- an alarm must be visible
   // whether or not you have opened the row it belongs to.
-  return `<div class="row stub ${m.status === "busy" ? "working" : ""}"
+  return `<div class="row stub ${m.status === "busy" ? "working" : ""}
+        ${m.nested ? "under" : ""}"
         data-sid="${esc(m.sessionId)}" data-pid="${esc(m.pid)}"
         draggable="true" title="click to open">
     <div class="rhead">
@@ -238,8 +244,16 @@ function badge(m) {
   // stopped while a job it started keeps running -- Claude Code calls that
   // status `shell`, which sounds like something else entirely.
   const job = m.bg ? `<span class="bg-tag" title="a background job is still running">bg</span>` : "";
+  // A boss coordinates the others and does no implementation work itself,
+  // which is worth knowing before you read anything else on the row.
+  const boss = m.boss ? `<span class="bg-tag boss" title="running the boss skill">boss</span>` : "";
+  // A worker nested under its boss is already placed; one whose boss is in
+  // another block has to say so in words.
+  const to = m.reportsTo && !m.nested
+    ? `<span class="reports">↳ ${esc(m.reportsTo)}</span>` : "";
   return (m.routine ? `<span class="bg-tag">${esc(m.routine)}</span>`
-    : m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "") + job;
+    : m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "")
+    + boss + job + to;
 }
 
 function flagOf(m) {
@@ -275,7 +289,8 @@ function row(m) {
     ? `<div class="said">“${esc(m.said)}”</div>`
     : m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : "";
   return `<div class="row ${m.canJump ? "can" : ""} ${alarm}
-        ${m.status === "busy" ? "working" : ""}" data-pid="${esc(m.pid)}"
+        ${m.status === "busy" ? "working" : ""} ${m.nested ? "under" : ""}"
+        data-pid="${esc(m.pid)}"
         data-sid="${esc(m.sessionId)}" draggable="true">
     <div class="rhead">
       ${mark(m)}
@@ -286,6 +301,8 @@ function row(m) {
     <div class="title edit ${m.overridden ? "own" : ""}" data-edit="line"
          data-sid="${esc(m.sessionId)}">${esc(m.title) || "<span style='color:var(--faint)'>—</span>"}</div>`}
     ${line}
+    ${m.boss && m.team?.length
+      ? `<div class="team">↳ ${m.team.map(esc).join(" · ")}</div>` : ""}
     <div class="where">${where(m)}</div>
     ${assignBar(m)}
   </div>`;
@@ -323,6 +340,8 @@ function unfolded(b, m) {
 }
 
 function block(b) {
+  // Who leads here: a worker is nested only under a boss in its own block.
+  const leads = new Set(b.members.filter(m => m.boss).map(m => m.name));
   // Routines have no branch to show and nothing you can open: they run
   // unattended on a timer, which is what the header says instead.
   const br = b.routines
@@ -346,9 +365,13 @@ function block(b) {
       ${name}${br}
       <span class="who">${n} ${n === 1 ? "session" : "sessions"}${b.busy ? ` · ${b.busy} busy` : ""}</span>
     </div>
-    ${b.members.map(m => unfolded(b, m)
-      ? row({ ...m, orphan: b.orphan, foldable: m.sessionId !== b.members[0].sessionId })
-      : stub(m)).join("")}
+    ${b.members.map(m => {
+      const nested = leads.has(m.reportsTo);
+      return unfolded(b, m)
+        ? row({ ...m, nested, orphan: b.orphan,
+                foldable: m.sessionId !== b.members[0].sessionId })
+        : stub({ ...m, nested });
+    }).join("")}
   </section>`;
 }
 

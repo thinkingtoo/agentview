@@ -113,6 +113,32 @@ by hand.
 which is gone once you close that Claude. A project rename is keyed by the
 project and lives forever.
 
+## A boss and its team
+
+A session that invokes the `boss` skill (`~/.claude/skills/boss/`) coordinates other
+sessions and does no implementation work itself. On the page it **leads its
+project block** whatever the activity, carries a `boss` badge, and names the
+team it dispatches to; that team renders indented beneath it, so the block has
+the shape of the team instead of being a flat list of eight equals. A worker
+whose boss sits in another block cannot be nested there, so it says `↳ Lennart`
+in words instead.
+
+Both facts come from the transcript and neither is a guess:
+
+- **Boss**: a `tool_use` of the `Skill` tool with `{"skill": "boss"}` — the
+  invocation itself. A session that merely *reads* the skill's files (which is
+  how this feature got written) is not running it, and is not marked.
+- **Team**: the `to` of every `SendMessage` that session has made, liveliest
+  correspondent first.
+
+The message graph alone would not do: workers message **each other** as much as
+they message the boss, so the hub of the graph is not the boss. Only the
+invocation says who is running the team.
+
+A skill is invoked once, at the start of a session, so on a transcript long
+enough to need a cold read the tail cannot see it. The first 512 KB is read
+too — the one thing worth going back to the beginning of a file for.
+
 ## Routines keep to themselves
 
 A systemd timer firing `claude -p` is a session like any other, and there are

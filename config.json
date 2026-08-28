@@ -11,7 +11,11 @@
   "names": {
     "No project": "Security investigation"
   },
-  "pinned": [],
+  "pinned": [
+    "music-db",
+    "maple",
+    "claude-team"
+  ],
   "lines": {},
   "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by sessionId — it also retitles that terminal tab. pinned: projects held at the top, in this order.",
   "assign": {
@@ -24,5 +28,6 @@
   "_long_tool": "While a tool call is running the transcript is silent, so silence proves nothing. Only a call outstanding this many minutes is worth mentioning, and it is shown as news, not as an alarm.",
   "long_tool_minutes": 20,
   "_waiting": "A helper spawned by /btw sits in `waiting` for a few seconds. Only a question left unanswered this long is worth flagging.",
-  "waiting_after_seconds": 20
+  "waiting_after_seconds": 20,
+  "hold": true
 }

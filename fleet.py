@@ -375,6 +375,38 @@ def _read_from(path, offset):
 
 HEAD_BYTES = 256
 COLD_BYTES = 2_000_000   # enough tail to answer 'what is it doing now'
+HEAD_SCAN = 512_000      # and enough beginning to answer 'what is it'
+
+
+def _first(path, size):
+    """The opening bytes of a file, as text."""
+    try:
+        with path.open("rb") as fh:
+            return fh.read(size).decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _boss_in(text):
+    """Was the `boss` skill invoked in these lines?
+
+    A session is a boss from the moment it invokes the skill, which happens
+    once, at the start. So on a transcript long enough that the tail cannot
+    see the beginning, the beginning has to be read -- this is the one thing
+    worth going back for.
+    """
+    for line in text.splitlines():
+        if '"Skill"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        for part in ((rec.get("message") or {}).get("content") or []):
+            if (isinstance(part, dict) and part.get("name") == "Skill"
+                    and (part.get("input") or {}).get("skill") == "boss"):
+                return True
+    return False
 
 
 def _head(path):
@@ -393,7 +425,8 @@ MAX_USES = 64
 
 def _blank_state():
     return {"offset": 0, "ino": None, "head": b"", "title": "", "prompt": "", "branch": "",
-            "uses": {}, "done": set(), "said": "", "spoke": "",
+            "uses": {}, "done": set(), "said": "", "spoke": "", "boss": False,
+            "sent": collections.Counter(),
             "paths": collections.deque(maxlen=400)}
 
 
@@ -433,6 +466,19 @@ def _absorb(state, text):
             if part.get("type") == "tool_use":
                 if part.get("id"):
                     state["uses"][part["id"]] = rec.get("timestamp")
+                # Who this session is: the `boss` skill makes it a coordinator
+                # for the rest of a team, and it never stops being one. The
+                # invocation itself is the evidence -- a session that merely
+                # reads the skill's files is not running it.
+                if part.get("name") == "Skill":
+                    if (part.get("input") or {}).get("skill") == "boss":
+                        state["boss"] = True
+                # And who it works with: every peer it has messaged. `to` is
+                # the address -- a name, sometimes with a disambiguating ref.
+                if part.get("name") == "SendMessage":
+                    peer = (part.get("input") or {}).get("to")
+                    if isinstance(peer, str) and not peer.startswith("uds:"):
+                        state["sent"][peer.split(" [")[0].strip()] += 1
                 inp = part.get("input") or {}
                 for key in ("file_path", "path", "notebook_path"):
                     if isinstance(inp.get(key), str):
@@ -502,7 +548,11 @@ def _view(state):
             pending = None
     return {"title": state["title"], "prompt": state["prompt"],
             "branch": state["branch"], "paths": list(state["paths"]),
-            "said": last_words(state["said"]), "pending": pending}
+            "said": last_words(state["said"]), "boss": state["boss"],
+            # Liveliest correspondent first: a boss's team, in the order it
+            # actually deals with them.
+            "sent": [name for name, _ in state["sent"].most_common()],
+            "pending": pending}
 
 
 def scan_cached(path):
@@ -540,6 +590,8 @@ def scan_cached(path):
         text, offset = _read_from(path, stat.st_size - COLD_BYTES)
         state = _absorb(state, text)
         state["offset"] = offset
+        if not state["boss"]:
+            state["boss"] = _boss_in(_first(path, HEAD_SCAN))
         if not state["title"]:
             head_text, _ = _read_from(path, 0)
             for line in head_text.splitlines():
@@ -611,7 +663,7 @@ def sessions(cfg=None):
         transcript = transcript_for(sid, cwd, cfg) if sid else None
         summary = scan_cached(transcript) if transcript else {
             "title": "", "prompt": "", "branch": "", "paths": [], "said": "",
-            "pending": None}
+            "boss": False, "sent": [], "pending": None}
         quiet = None
         if transcript:
             try:
@@ -652,6 +704,8 @@ def sessions(cfg=None):
             # thing it said to you. Neither is generated here.
             "waitingFor": rec.get("waitingFor") or "",
             "said": summary["said"],
+            "boss": summary["boss"],
+            "team": summary["sent"] if summary["boss"] else [],
             "bg": status == "shell",
             "flag": classify(
                 status, quiet,
@@ -677,6 +731,11 @@ def sessions(cfg=None):
 ROUTINES = "Routines"
 
 
+def sessions_in(groups):
+    """Every session across every group, flattened."""
+    return [s for members in groups.values() for s in members]
+
+
 def roster(cfg=None):
     """Sessions grouped into project blocks, liveliest project first.
 
@@ -694,6 +753,9 @@ def roster(cfg=None):
         key = (True, ROUTINES) if s["routine"] else (False, s["project"] or "")
         groups.setdefault(key, []).append(s)
 
+    bosses = {name: s["name"]
+              for s in sessions_in(groups) if s["boss"]
+              for name in s["team"]}
     blocks = []
     for (routines, project), members in groups.items():
         # What wants you, then what is ready for you, then what is working.
@@ -701,6 +763,14 @@ def roster(cfg=None):
                                     s["flag"] != "ready",
                                     s["status"] != "busy",
                                     -s["updatedAt"]))
+        # A boss leads its own block whatever the activity, and the team it
+        # dispatches to follows underneath: the block then has the shape of
+        # the team rather than being a flat list of eight equals.
+        for s in members:
+            s["reportsTo"] = bosses.get(s["name"], "")
+        leads = {s["name"] for s in members if s["boss"]}
+        members.sort(key=lambda s: (not s["boss"],
+                                    s["reportsTo"] not in leads))
         branches = sorted({s["branch"] for s in members if s["branch"]})
         blocks.append({
             "alarms": sum(1 for s in members if s["flag"] in ("waiting", "stuck")),

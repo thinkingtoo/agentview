@@ -92,6 +92,21 @@ STATES_PAYLOAD = {"blocks": [{
                said="Two had no composer — guess or skip?"),
         _state("Halima", "busy", None, "p4"),
         _state("Dmitri", "shell", None, "p5", bg=True)]}]}
+# A boss and the team it dispatches to, plus one worker of the same boss
+# sitting in another project -- it cannot be nested there, only labelled.
+TEAM_PAYLOAD = {"blocks": [
+    {"project": "pmd", "label": "pmd", "orphan": False, "routines": False,
+     "renamed": False, "pinned": False, "branches": [], "busy": 1,
+     "alarms": 0, "ready": 1, "updatedAt": 1787830000000, "members": [
+         _state("Lennart", "idle", None, "b1", boss=True,
+                team=["Rosalie", "Kasper"], reportsTo=""),
+         _state("Rosalie", "idle", "ready", "b2", reportsTo="Lennart",
+                said="Schema migration is green, want me to merge?"),
+         _state("Kasper", "busy", None, "b3", reportsTo="Lennart")]},
+    {"project": "maple", "label": "maple", "orphan": False, "routines": False,
+     "renamed": False, "pinned": False, "branches": [], "busy": 0,
+     "alarms": 0, "ready": 0, "updatedAt": 1787830000000, "members": [
+         _state("Vera", "idle", None, "b4", reportsTo="Lennart")]}]}
 URL = "http://127.0.0.1:8765/"
 failures = []
 
@@ -462,6 +477,30 @@ with sync_playwright() as pw:
         check("la testata conta anche i pronti", "1 ready" in head, head)
         check("il titolo della scheda no",
               page.title().startswith("(2)"), page.title())
+        page.unroute("**/api/roster")
+
+        # --- a boss and its team ------------------------------------------
+        page.route("**/api/roster", lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(TEAM_PAYLOAD)))
+        page.reload(wait_until="load")
+        page.wait_for_selector(".bg-tag.boss")
+        check("il boss è marcato", page.locator(".bg-tag.boss").count() == 1
+              and page.locator('.row[data-sid="b1"] .bg-tag.boss').count() == 1)
+        check("dice chi è la sua squadra",
+              page.locator('.row[data-sid="b1"] .team').inner_text().strip()
+              == "↳ Rosalie · Kasper",
+              page.locator('.row[data-sid="b1"] .team').inner_text())
+        check("il boss guida il blocco",
+              page.locator("#main .row").first.get_attribute("data-sid") == "b1")
+        check("la squadra è annidata sotto di lui",
+              page.locator('.row[data-sid="b2"].under').count() == 1
+              and page.locator('.row[data-sid="b3"].under').count() == 1
+              and page.locator('.row[data-sid="b1"].under').count() == 0)
+        check("annidato non ripete a chi risponde",
+              page.locator('.row[data-sid="b2"] .reports').count() == 0)
+        check("chi è in un altro progetto lo dice a parole",
+              page.locator('.row[data-sid="b4"] .reports').inner_text().strip() == "↳ Lennart"
+              and page.locator('.row[data-sid="b4"].under').count() == 0)
         page.unroute("**/api/roster")
 
         # --- uptime and the filter box ------------------------------------
