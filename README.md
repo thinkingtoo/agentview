@@ -317,6 +317,12 @@ The unit tests cover the things worth covering: route selection for each
 terminal (including tmux-inside-WezTerm and a headless session with nowhere to
 go), project resolution (including the `acme › site` and on-a-shelf
 cases), reading the summary records out of a transcript, telling a routine
-from a hand-run `claude -p`, and the log — that a heartbeat alone says
-nothing, that a repeated error is written once, and that a fast operation
-writes no line at all.
+from a hand-run `claude -p`, a boss from a session that has merely read the
+skill, and the log — that a heartbeat alone says nothing, that a repeated
+error is written once, and that a fast operation writes no line at all.
+
+**Every test points at the code the page actually calls.** There used to be a
+second, full-file scanner that nothing called, and the summary tests ran
+against *that* — so they stayed green while the live one carried a badge bug
+for the whole of its life. If a test can only be written against a function
+the page does not use, the function is the problem.

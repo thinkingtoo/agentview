@@ -51,35 +51,6 @@ def resolve_project(cwd, shelves):
     return " \u203a ".join(parts[:2])
 
 
-def read_summary(path):
-    """Pull the summary records Claude Code already wrote to a transcript.
-
-    Returns `title` (the `ai-title` record -- Claude's own line about what the
-    session is doing), `prompt` (the last thing it was asked) and `branch`.
-    Later records win: a title is rewritten as the session's subject drifts.
-    """
-    out = {"title": "", "prompt": "", "branch": ""}
-    try:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                if rec.get("type") == "ai-title" and rec.get("aiTitle"):
-                    out["title"] = rec["aiTitle"]
-                elif rec.get("type") == "last-prompt" and rec.get("lastPrompt"):
-                    out["prompt"] = rec["lastPrompt"]
-                branch = rec.get("gitBranch")
-                if branch and branch != "HEAD":
-                    out["branch"] = branch
-    except OSError:
-        pass
-    return out
-
-
 DEFAULT_SHELVES = [
     "~",
     "~/Projects",
@@ -155,22 +126,6 @@ def transcript_for(session_id, cwd, cfg=None):
     return None
 
 
-def summary_cached(path):
-    """read_summary, reparsing only when the transcript actually changed."""
-    try:
-        stat = path.stat()
-    except OSError:
-        return {"title": "", "prompt": "", "branch": ""}
-    key = str(path)
-    stamp = (stat.st_mtime_ns, stat.st_size)
-    hit = _cache.get(key)
-    if hit and hit[0] == stamp:
-        return hit[1]
-    summary = read_summary(path)
-    _cache[key] = (stamp, summary)
-    return summary
-
-
 def _on_a_terminal(pid):
     try:
         return os.readlink(f"/proc/{pid}/fd/0").startswith("/dev/pts/")
@@ -222,142 +177,6 @@ def routine_of(rec, cfg=None, ancestry=None):
 
 
 PATH_IN_TEXT = re.compile(r"(?:~|/home/[\w.-]+)/[\w./@-]+")
-TAIL_LINES = 400
-
-
-def touched_paths(path):
-    """Filesystem paths a session's recent tool calls mention.
-
-    Only the tail: what it is doing now, not what it did on Tuesday.
-    """
-    out = []
-    try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
-        return out
-    for line in lines[-TAIL_LINES:]:
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        content = (rec.get("message") or {}).get("content")
-        if not isinstance(content, list):
-            continue
-        for part in content:
-            if not isinstance(part, dict) or part.get("type") != "tool_use":
-                continue
-            inp = part.get("input") or {}
-            for key in ("file_path", "path", "notebook_path"):
-                if isinstance(inp.get(key), str):
-                    out.append(inp[key])
-            for key in ("command", "pattern", "prompt"):
-                if isinstance(inp.get(key), str):
-                    out += PATH_IN_TEXT.findall(inp[key])
-    home = str(Path.home())
-    return [os.path.normpath(p.replace("~", home, 1)) for p in out]
-
-
-def pending_tool(path):
-    """Minutes the current tool call has been outstanding, or None if none.
-
-    A `tool_use` with no matching `tool_result` after it is a call still
-    running -- or still waiting for you to approve it.
-    """
-    try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
-        return None
-    uses, done = {}, set()
-    for line in lines[-TAIL_LINES:]:
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        content = (rec.get("message") or {}).get("content")
-        if not isinstance(content, list):
-            continue
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if part.get("type") == "tool_use" and part.get("id"):
-                uses[part["id"]] = rec.get("timestamp")
-            elif part.get("type") == "tool_result" and part.get("tool_use_id"):
-                done.add(part["tool_use_id"])
-    stamps = [t for tid, t in uses.items() if tid not in done and t]
-    if not stamps:
-        return None
-    try:
-        started = max(
-            datetime.datetime.fromisoformat(s.replace("Z", "+00:00")) for s in stamps)
-    except ValueError:
-        return None
-    now = datetime.datetime.now(datetime.timezone.utc)
-    return max(0.0, (now - started).total_seconds() / 60)
-
-
-def scan(path):
-    """Everything the page needs from a transcript, in one pass.
-
-    Title, last prompt, branch, the paths it has been touching and whether a
-    tool call is outstanding used to be three separate full reads of a file
-    that runs to hundreds of kilobytes -- per session, per poll. The page
-    polls every three seconds; that cost is what made a click feel broken.
-    """
-    out = {"title": "", "prompt": "", "branch": "", "paths": [], "pending": None}
-    try:
-        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except OSError:
-        return out
-
-    home = str(Path.home())
-    uses, done = {}, set()
-    tail_from = max(0, len(lines) - TAIL_LINES)
-    for i, line in enumerate(lines):
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        kind = rec.get("type")
-        if kind == "ai-title" and rec.get("aiTitle"):
-            out["title"] = rec["aiTitle"]
-            continue
-        if kind == "last-prompt" and rec.get("lastPrompt"):
-            out["prompt"] = rec["lastPrompt"]
-        branch = rec.get("gitBranch")
-        if branch and branch != "HEAD":
-            out["branch"] = branch
-        if i < tail_from:
-            continue                       # the rest is about recent activity
-        content = (rec.get("message") or {}).get("content")
-        if not isinstance(content, list):
-            continue
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if part.get("type") == "tool_use":
-                if part.get("id"):
-                    uses[part["id"]] = rec.get("timestamp")
-                inp = part.get("input") or {}
-                for key in ("file_path", "path", "notebook_path"):
-                    if isinstance(inp.get(key), str):
-                        out["paths"].append(inp[key])
-                for key in ("command", "pattern", "prompt"):
-                    if isinstance(inp.get(key), str):
-                        out["paths"] += PATH_IN_TEXT.findall(inp[key])
-            elif part.get("type") == "tool_result" and part.get("tool_use_id"):
-                done.add(part["tool_use_id"])
-
-    out["paths"] = [os.path.normpath(p.replace("~", home, 1)) for p in out["paths"]]
-    stamps = [t for tid, t in uses.items() if tid not in done and t]
-    if stamps:
-        try:
-            started = max(datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
-                          for s in stamps)
-            now = datetime.datetime.now(datetime.timezone.utc)
-            out["pending"] = max(0.0, (now - started).total_seconds() / 60)
-        except ValueError:
-            pass
-    return out
 
 
 def _read_from(path, offset):
@@ -607,21 +426,6 @@ def scan_cached(path):
         state["offset"] = offset
     _cache[key] = state
     return _view(state)
-
-
-def suggestion_cached(path, shelves):
-    key = ("suggest", str(path))
-    try:
-        stat = path.stat()
-    except OSError:
-        return None
-    stamp = (stat.st_mtime_ns, stat.st_size)
-    hit = _cache.get(key)
-    if hit and hit[0] == stamp:
-        return hit[1]
-    guess = suggest_project(touched_paths(path), shelves)
-    _cache[key] = (stamp, guess)
-    return guess
 
 
 def live_session(pid, cfg=None):

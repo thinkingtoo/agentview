@@ -47,14 +47,23 @@ class ResolveProject(unittest.TestCase):
                          "central-app")
 
 
-class ReadSummary(unittest.TestCase):
+class Summary(unittest.TestCase):
+    """What the page pulls out of a transcript.
+
+    Pointed at `scan_cached`, which is what the page calls. These assertions
+    used to run against a second, full-file scanner that nothing called -- so
+    they passed while the live one carried a bug for the whole of its life.
+    """
+
     def write(self, records):
         import json, tempfile
-        fh = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
-        for r in records:
-            fh.write(json.dumps(r) + "\n")
-        fh.close()
-        return fh.name
+        from pathlib import Path as P
+        path = P(tempfile.mkdtemp()) / "t.jsonl"
+        with path.open("w", encoding="utf-8") as fh:
+            for r in records:
+                fh.write(json.dumps(r) + "\n")
+        fleet._cache.clear()
+        return path
 
     def test_the_last_ai_title_wins(self):
         # Claude retitles a session as it learns what it is about.
@@ -63,7 +72,7 @@ class ReadSummary(unittest.TestCase):
             {"type": "user", "message": {}},
             {"type": "ai-title", "aiTitle": "Cloud instance naming plugin"},
         ])
-        self.assertEqual(fleet.read_summary(path)["title"],
+        self.assertEqual(fleet.scan_cached(path)["title"],
                          "Cloud instance naming plugin")
 
     def test_last_prompt_and_branch_come_back_too(self):
@@ -73,7 +82,7 @@ class ReadSummary(unittest.TestCase):
             {"type": "user", "message": {}, "gitBranch": "dev"},
             {"type": "last-prompt", "lastPrompt": "now ship it"},
         ])
-        summary = fleet.read_summary(path)
+        summary = fleet.scan_cached(path)
         self.assertEqual(summary["prompt"], "now ship it")
         self.assertEqual(summary["branch"], "dev")
 
@@ -83,10 +92,16 @@ class ReadSummary(unittest.TestCase):
         path = self.write([
             {"type": "last-prompt", "lastPrompt": "# Nightly report routine\n\nYou are..."},
         ])
-        summary = fleet.read_summary(path)
+        summary = fleet.scan_cached(path)
         self.assertEqual(summary["title"], "")
         self.assertTrue(summary["prompt"].startswith("# Nightly report"))
 
+    def test_a_detached_head_is_not_a_branch(self):
+        path = self.write([{"type": "user", "message": {}, "gitBranch": "HEAD"}])
+        self.assertEqual(fleet.scan_cached(path)["branch"], "")
+
+
+class Paths(unittest.TestCase):
     def test_hidden_directories_are_not_projects(self):
         # ~/.claude/plans is under the ~ shelf, so it used to resolve as a
         # project called ".claude" and outvote the real answer when guessing.

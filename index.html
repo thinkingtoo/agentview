@@ -38,9 +38,13 @@
   /* Held is a state you are in, not a button you pressed: it stays lit. */
   button.held { color:var(--claude); border-color:color-mix(in srgb,var(--claude) 55%,transparent);
                 background:color-mix(in srgb,var(--claude) 10%,transparent); }
-  main { padding:18px 20px 40px; display:grid; gap:14px;
-         grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); align-items:start; }
-  .block { background:var(--card); border:1px solid var(--line); border-radius:11px; overflow:hidden; }
+  /* Columns, not a grid. A grid gives every block in a row the height of the
+     tallest one in it, so a six-session project left a hole the size of five
+     sessions under every short block beside it. Columns let each block take
+     the height it needs and the next one start right underneath. */
+  main { padding:18px 20px 40px; column-width:360px; column-gap:14px; }
+  .block { background:var(--card); border:1px solid var(--line); border-radius:11px;
+           overflow:hidden; break-inside:avoid; margin-bottom:14px; }
   .block.pinned { border-color:color-mix(in srgb,var(--claude) 45%,var(--line)); }
   .block.dragging { opacity:.4; }
   .block.over { border-color:var(--claude); }
