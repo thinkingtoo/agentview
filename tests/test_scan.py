@@ -144,3 +144,55 @@ class InFlight(unittest.TestCase):
         fleet.scan_cached(self.path)
         state = fleet._cache[("state", str(self.path))]
         self.assertLessEqual(len(state["uses"]), 64)
+
+
+class StartingASkill(unittest.TestCase):
+    """A skill starts in two ways, and they look nothing alike on disk."""
+
+    def test_the_model_calling_the_skill_tool(self):
+        self.assertTrue(fleet.boss_line({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Skill", "input": {"skill": "boss"}}]}}))
+
+    def test_you_typing_the_slash_command(self):
+        # This is how the second boss was started, and matching only the
+        # tool call missed him for a morning.
+        self.assertTrue(fleet.boss_line({"type": "user", "message": {"content":
+            "<command-message>boss</command-message>\n"
+            "<command-name>/boss</command-name>\n"
+            "<command-args>you'll overview lumen, your team is Kian and Basil</command-args>"}}))
+
+    def test_another_skill_is_not_the_boss_skill(self):
+        self.assertFalse(fleet.boss_line({"type": "user", "message": {"content":
+            "<command-name>/deploy</command-name>"}}))
+        self.assertFalse(fleet.boss_line({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Skill", "input": {"skill": "brainstorming"}}]}}))
+
+    def test_reading_the_skill_is_not_running_it(self):
+        # How this feature was written: a session that greps the boss files
+        # carries every one of these words in a tool result.
+        self.assertFalse(fleet.boss_line({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "<command-name>/boss</command-name> ... skill: boss"}]}}))
+        self.assertFalse(fleet.boss_line({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Bash",
+             "input": {"command": "grep -c 'skill\":\"boss\"' transcript.jsonl"}}]}}))
+
+    def test_a_boss_is_found_wherever_in_the_file_it_was_started(self):
+        # `/boss` was typed a third of the way into a 1.8 MB transcript --
+        # well past any head worth reading, which is why the whole file is
+        # scanned once rather than a bounded slice of it.
+        path = Path(tempfile.mkdtemp()) / "t.jsonl"
+        filler = {"type": "assistant", "timestamp": stamped(9),
+                  "message": {"content": [{"type": "text", "text": "x" * 400}]}}
+        write(path, [filler] * 300 +
+                    [{"type": "user", "message": {"content":
+                      "<command-name>/boss</command-name>"}}] +
+                    [filler] * 300, "w")
+        fleet._cache.clear()
+        self.assertTrue(fleet.scan_cached(path)["boss"])
+
+    def test_a_transcript_that_never_mentions_it_is_not_parsed_twice(self):
+        path = Path(tempfile.mkdtemp()) / "t.jsonl"
+        write(path, [{"type": "ai-title", "aiTitle": "Ordinary work"}], "w")
+        fleet._cache.clear()
+        self.assertFalse(fleet.scan_cached(path)["boss"])

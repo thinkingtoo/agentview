@@ -194,37 +194,56 @@ def _read_from(path, offset):
 
 HEAD_BYTES = 256
 COLD_BYTES = 2_000_000   # enough tail to answer 'what is it doing now'
-HEAD_SCAN = 512_000      # and enough beginning to answer 'what is it'
+
+# A skill starts in one of two ways, and they look nothing alike on disk:
+# the model calls the `Skill` tool, or you type `/boss` and Claude Code
+# writes a `<command-name>` line. Matching only the first missed a boss for
+# a whole morning.
+TYPED_SKILL = re.compile(r"<command-name>/([\w:-]+)</command-name>")
+BOSS_MARKS = (b'"skill":"boss"', b'"skill": "boss"',
+              b"<command-name>/boss</command-name>")
 
 
-def _first(path, size):
-    """The opening bytes of a file, as text."""
-    try:
-        with path.open("rb") as fh:
-            return fh.read(size).decode("utf-8", "replace")
-    except OSError:
-        return ""
+def boss_line(rec):
+    """Is this record a session starting the `boss` skill?
 
-
-def _boss_in(text):
-    """Was the `boss` skill invoked in these lines?
-
-    A session is a boss from the moment it invokes the skill, which happens
-    once, at the start. So on a transcript long enough that the tail cannot
-    see the beginning, the beginning has to be read -- this is the one thing
-    worth going back for.
+    Deliberately strict about *where* the marker sits. A session that reads
+    the skill's files, or prints them, carries the same words in a tool
+    result -- and that session is not running a team.
     """
-    for line in text.splitlines():
-        if '"Skill"' not in line:
-            continue
+    content = (rec.get("message") or {}).get("content")
+    if isinstance(content, str):
+        hit = TYPED_SKILL.search(content)
+        return bool(hit) and hit.group(1) == "boss"
+    for part in content or []:
+        if (isinstance(part, dict) and part.get("type") == "tool_use"
+                and part.get("name") == "Skill"
+                and (part.get("input") or {}).get("skill") == "boss"):
+            return True
+    return False
+
+
+def _boss_file(path):
+    """Did this session ever start the boss skill? One read, once.
+
+    Bounded scanning was tried and was wrong: `/boss` was typed a third of
+    the way into a 1.8 MB transcript, well past any sensible head. The
+    substring pass over the raw bytes is what makes reading it all cheap --
+    only a file that mentions the skill at all is ever parsed.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return False
+    if not any(mark in raw for mark in BOSS_MARKS):
+        return False
+    for line in raw.decode("utf-8", "replace").splitlines():
         try:
             rec = json.loads(line)
         except ValueError:
             continue
-        for part in ((rec.get("message") or {}).get("content") or []):
-            if (isinstance(part, dict) and part.get("name") == "Skill"
-                    and (part.get("input") or {}).get("skill") == "boss"):
-                return True
+        if isinstance(rec, dict) and boss_line(rec):
+            return True
     return False
 
 
@@ -266,6 +285,8 @@ def _absorb(state, text):
         if branch and branch != "HEAD":
             state["branch"] = branch
         content = (rec.get("message") or {}).get("content")
+        if not state["boss"] and boss_line(rec):
+            state["boss"] = True
         if not isinstance(content, list):
             continue
         # When the session last said anything at all. A tool call is only in
@@ -285,14 +306,7 @@ def _absorb(state, text):
             if part.get("type") == "tool_use":
                 if part.get("id"):
                     state["uses"][part["id"]] = rec.get("timestamp")
-                # Who this session is: the `boss` skill makes it a coordinator
-                # for the rest of a team, and it never stops being one. The
-                # invocation itself is the evidence -- a session that merely
-                # reads the skill's files is not running it.
-                if part.get("name") == "Skill":
-                    if (part.get("input") or {}).get("skill") == "boss":
-                        state["boss"] = True
-                # And who it works with: every peer it has messaged. `to` is
+                # Who it works with: every peer it has messaged. `to` is
                 # the address -- a name, sometimes with a disambiguating ref.
                 if part.get("name") == "SendMessage":
                     peer = (part.get("input") or {}).get("to")
@@ -410,7 +424,7 @@ def scan_cached(path):
         state = _absorb(state, text)
         state["offset"] = offset
         if not state["boss"]:
-            state["boss"] = _boss_in(_first(path, HEAD_SCAN))
+            state["boss"] = _boss_file(path)
         if not state["title"]:
             head_text, _ = _read_from(path, 0)
             for line in head_text.splitlines():
@@ -557,8 +571,18 @@ def roster(cfg=None):
         key = (True, ROUTINES) if s["routine"] else (False, s["project"] or "")
         groups.setdefault(key, []).append(s)
 
+    # Two bosses talk to each other, and one message between them is not a
+    # chain of command: a boss reports to nobody. A name in a team with no
+    # session behind it is someone who has since been retired, and the page
+    # is about who is running now.
+    everyone = sessions_in(groups)
+    live = {s["name"] for s in everyone}
+    leaders = {s["name"] for s in everyone if s["boss"]}
+    for s in everyone:
+        s["team"] = [name for name in s["team"]
+                     if name in live and name not in leaders]
     bosses = {name: s["name"]
-              for s in sessions_in(groups) if s["boss"]
+              for s in everyone if s["boss"]
               for name in s["team"]}
     blocks = []
     for (routines, project), members in groups.items():

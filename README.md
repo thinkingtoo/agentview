@@ -131,19 +131,25 @@ the work.
 
 Both facts come from the transcript and neither is a guess:
 
-- **Boss**: a `tool_use` of the `Skill` tool with `{"skill": "boss"}` — the
-  invocation itself. A session that merely *reads* the skill's files (which is
-  how this feature got written) is not running it, and is not marked.
+- **Boss**: the skill being *started*, in either of the two ways that happens
+  — the model calling the `Skill` tool with `{"skill": "boss"}`, or you typing
+  `/boss`, which Claude Code writes as a `<command-name>` line in a plain-text
+  user record. They look nothing alike on disk, and matching only the first
+  missed a second boss for a morning. A session that merely *reads* the
+  skill's files (which is how this feature got written) carries every one of
+  those words in a tool result, and is not marked.
 - **Team**: the `to` of every `SendMessage` that session has made, liveliest
-  correspondent first.
+  correspondent first, minus anyone no longer running and minus other bosses —
+  two bosses exchanging a message is not a chain of command.
+
+A skill can be started well into a session: `/boss` was typed a third of the
+way into a 1.8 MB transcript. So a bounded head scan is not enough; the file
+is read once, in full, guarded by a substring pass over the raw bytes so only
+a transcript that mentions the skill at all is ever parsed.
 
 The message graph alone would not do: workers message **each other** as much as
 they message the boss, so the hub of the graph is not the boss. Only the
 invocation says who is running the team.
-
-A skill is invoked once, at the start of a session, so on a transcript long
-enough to need a cold read the tail cannot see it. The first 512 KB is read
-too — the one thing worth going back to the beginning of a file for.
 
 ## Routines keep to themselves
 

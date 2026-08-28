@@ -9,7 +9,7 @@
   "_zoom": "Base scale of the page. Set this instead of zooming in the browser every time; keep the browser itself at 100% or the two multiply.",
   "zoom": 1.5,
   "names": {
-    "No project": "Security investigation"
+    "No project": "Investigation"
   },
   "pinned": [
     "music-db",

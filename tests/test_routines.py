@@ -142,3 +142,41 @@ class Teams(unittest.TestCase):
         ])
         by_name = {m["name"]: m for b in blocks for m in b["members"]}
         self.assertEqual(by_name["Kasper"]["reportsTo"], "")
+
+
+class TwoBosses(unittest.TestCase):
+    """Teams read from real message traffic, which is noisier than a chart."""
+
+    def roster(self, members):
+        real = fleet.sessions
+        fleet.sessions = lambda cfg=None: members
+        try:
+            return fleet.roster()
+        finally:
+            fleet.sessions = real
+
+    def by_name(self, blocks):
+        return {m["name"]: m for b in blocks for m in b["members"]}
+
+    def test_a_boss_reports_to_nobody(self):
+        # Two bosses message each other. One message is not a chain of
+        # command, and marking one of them as the other's worker inverts
+        # what the page is for.
+        got = self.by_name(self.roster([
+            session("Anton", project="lumen", boss=True, team=["Kian", "Lennart"]),
+            session("Lennart", project="pmd", boss=True, team=["Rosalie"]),
+            session("Kian", project="lumen"),
+            session("Rosalie", project="pmd"),
+        ]))
+        self.assertEqual(got["Lennart"]["reportsTo"], "")
+        self.assertEqual(got["Kian"]["reportsTo"], "Anton")
+        self.assertEqual(got["Anton"]["team"], ["Kian"])
+
+    def test_a_worker_that_has_been_retired_leaves_the_team(self):
+        # A boss retires workers as the work finishes. The page is about who
+        # is running now, so a name with no session behind it is dropped.
+        got = self.by_name(self.roster([
+            session("Anton", project="lumen", boss=True, team=["Kian", "Ines"]),
+            session("Kian", project="lumen"),
+        ]))
+        self.assertEqual(got["Anton"]["team"], ["Kian"])
