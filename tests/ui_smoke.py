@@ -82,9 +82,10 @@ HOLD_AFTER = {"blocks": [_block("beta", "h2"), _block("alpha", "h1")], "hold": T
 CHIME_QUIET = {"blocks": [_block("alpha", "c1")], "hold": False, "chime": True}
 
 
-def _waiting(*names):
+def _waiting(*names, ready=()):
     members = [_member("ALPHA", "busy", None, 0.1, "c1")]
     members += [_member(n.upper(), "waiting", "waiting", 0.3, n) for n in names]
+    members += [_member(n.upper(), "idle", "ready", 1.0, n) for n in ready]
     return {"blocks": [{**_block("alpha", "c1"), "members": members}],
             "hold": False, "chime": True}
 
@@ -486,27 +487,35 @@ with sync_playwright() as pw:
         # Making a real sound needs a real gesture and a real speaker. What
         # is checked here is *when* it rings, which is the part that can be
         # wrong -- a chime on every poll would be unbearable.
-        page.evaluate("() => { window.__rings = 0;"
-                      " window.ring = () => { window.__rings++; return true; }; }")
+        page.evaluate("() => { window.__rings = 0; window.__ticks = 0;"
+                      " window.ring = () => { window.__rings++; return true; };"
+                      " window.tick = () => { window.__ticks++; return true; }; }")
         rings = lambda: page.evaluate("window.__rings")
+        ticks = lambda: page.evaluate("window.__ticks")
 
         # Rendered offline, because a graph that connects nothing sounds
         # exactly like a graph that works, and neither is audible from here.
         sound = page.evaluate("""async () => {
-          const off = new OfflineAudioContext(1, 44100 * 3, 44100);
-          tone(off);
-          const data = (await off.startRendering()).getChannelData(0);
-          let first = 0, second = 0;
-          for (let i = 0; i < data.length; i++) {
-            const v = Math.abs(data[i]);
-            if (i < 44100 * 0.4) first = Math.max(first, v);
-            else if (i > 44100 * 0.45) second = Math.max(second, v);
-          }
-          return { first, second };
+          const peaks = async (shape, cuts) => {
+            const off = new OfflineAudioContext(1, 44100 * 3, 44100);
+            shape(off);
+            const data = (await off.startRendering()).getChannelData(0);
+            return cuts.map(([from, to]) => {
+              let peak = 0;
+              for (let i = from * 44100; i < Math.min(to * 44100, data.length); i++)
+                peak = Math.max(peak, Math.abs(data[i]));
+              return peak;
+            });
+          };
+          const [first, second] = await peaks(tone, [[0, 0.4], [0.45, 3]]);
+          const [head, tail] = await peaks(blip, [[0, 0.3], [0.6, 3]]);
+          return { first, second, head, tail };
         }""")
         check("i due tocchi ci sono davvero, e non spaccano le orecchie",
               0.05 < sound["first"] < 0.4 and 0.05 < sound["second"] < 0.4
               and sound["second"] < sound["first"], sound)
+        check("il tocco di chi ha finito si sente, ed è finito subito",
+              0.05 < sound["head"] < 0.4 and sound["tail"] < 0.005, sound)
         check("il suono è armato di default",
               page.locator("#sound").inner_text() == "chime",
               page.locator("#sound").inner_text())
@@ -532,6 +541,20 @@ with sync_playwright() as pw:
         page.wait_for_timeout(900)
         check("riacceso, si sente subito com'è fatto",
               page.locator("#sound").inner_text() == "chime" and rings() == 2, rings())
+
+        # Finishing gets the short one, and it is not the chime.
+        served["body"] = {**_waiting("c2", "c3", ready=["c4"]), "chime": True}
+        page.wait_for_timeout(4000)
+        check("chi finisce fa un tocco, non il campanello",
+              ticks() == 1 and rings() == 2, (rings(), ticks()))
+        page.wait_for_timeout(4000)
+        check("e il tocco non si ripete finché resta lì", ticks() == 1, ticks())
+        # Both in the same poll: the one that wants something from you wins.
+        served["body"] = {**_waiting("c2", "c3", "c5", ready=["c4", "c6"]),
+                          "chime": True}
+        page.wait_for_timeout(4000)
+        check("se arrivano insieme si sente la domanda",
+              rings() == 3 and ticks() == 1, (rings(), ticks()))
         page.unroute("**/api/roster")
 
         # --- the five states ----------------------------------------------

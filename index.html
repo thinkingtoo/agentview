@@ -183,6 +183,7 @@ let LATEST = [];            // the last roster the server sent, to repaint from
 let HOLD = false;           // is the order frozen where you last saw it?
 let CHIME = true;           // does a session that starts waiting ring?
 let WAITING = null;         // who was waiting last poll -- null before the first
+let READY = null;           // and who had already finished, for the same reason
 let SPEAKER = null;         // the audio context, built on your first click
 let MUZZLED = false;        // wanted to ring, and the browser would not have it
 let ORDER = { blocks: [], members: {} };   // and where that was
@@ -506,45 +507,59 @@ function speaker() {
   return SPEAKER;
 }
 
-// The cabin chime: two bell tones, high then low, with a long decay. It is
-// the seatbelt sign, not a doorbell -- it should say there is something for
-// you without ever making you jump.
+// One bell stroke. Everything else about the two sounds is how long it
+// rings and how loud, so they are the same instrument either way.
 //
 // The graph takes its context so the sound can be rendered offline and
 // measured. Nothing else can tell a working chime from a silent one.
-function tone(ctx) {
-  const start = ctx.currentTime + 0.02;
-  for (const [hz, delay, peak] of [[1174.7, 0, 0.15], [880, 0.42, 0.12]]) {
-    const t = start + delay;
-    const note = ctx.createGain();
-    // Exponential, and never to zero: a linear fade to silence clicks, and
-    // exponentialRamp refuses 0 outright.
-    note.gain.setValueAtTime(0.0001, t);
-    note.gain.exponentialRampToValueAtTime(peak, t + 0.014);
-    note.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
-    note.connect(ctx.destination);
-    // The octave above, kept quiet. A bare sine reads as a test tone; a
-    // little of its own harmonic reads as a bell.
-    for (const [f, share] of [[hz, 1], [hz * 2, 0.14]]) {
-      const osc = ctx.createOscillator();
-      osc.type = "sine";
-      osc.frequency.value = f;
-      const part = ctx.createGain();
-      part.gain.value = share;
-      osc.connect(part).connect(note);
-      osc.start(t);
-      osc.stop(t + 1.9);
-    }
+function stroke(ctx, at, hz, peak, decay) {
+  const note = ctx.createGain();
+  // Exponential, and never to zero: a linear fade to silence clicks, and
+  // exponentialRamp refuses 0 outright.
+  note.gain.setValueAtTime(0.0001, at);
+  note.gain.exponentialRampToValueAtTime(peak, at + 0.014);
+  note.gain.exponentialRampToValueAtTime(0.0001, at + decay);
+  note.connect(ctx.destination);
+  // The octave above, kept quiet. A bare sine reads as a test tone; a
+  // little of its own harmonic reads as a bell.
+  for (const [f, share] of [[hz, 1], [hz * 2, 0.14]]) {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = f;
+    const part = ctx.createGain();
+    part.gain.value = share;
+    osc.connect(part).connect(note);
+    osc.start(at);
+    osc.stop(at + decay + 0.1);
   }
 }
 
-function ring() {
+// The cabin chime: two strokes, high then low, with a long decay. It is the
+// seatbelt sign, not a doorbell -- it should say there is something for you
+// without ever making you jump.
+function tone(ctx) {
+  const t = ctx.currentTime + 0.02;
+  stroke(ctx, t, 1174.7, 0.15, 1.8);
+  stroke(ctx, t + 0.42, 880, 0.12, 1.8);
+}
+
+// A tick: the same bell, struck once and quickly gone. Something finished,
+// which is good news and not a summons -- it should be over before you have
+// finished turning your head.
+function blip(ctx) {
+  stroke(ctx, ctx.currentTime + 0.02, 1174.7, 0.13, 0.3);
+}
+
+function play(shape) {
   const ctx = speaker();
   if (!ctx || ctx.state !== "running") { muzzled(true); return false; }
   muzzled(false);
-  tone(ctx);
+  shape(ctx);
   return true;
 }
+
+function ring() { return play(tone); }
+function tick() { return play(blip); }
 
 function muzzled(state) {
   if (MUZZLED === state) return;
@@ -552,16 +567,32 @@ function muzzled(state) {
   drawSound();
 }
 
-// Ring once, when someone *starts* waiting. WAITING is null until the first
-// roster lands, so opening the page is silent even with three questions
-// already on it: the chime is for what happens while you are looking away.
+// Both sets are null until the first roster lands, so opening the page is
+// silent even with three questions and five ticks already on it: the sound
+// is for what happens while you are looking away.
+function arrived(now, before) {
+  return before && [...now].some(sid => !before.has(sid));
+}
+
+// Sound once per poll, for whoever *started* waiting or finishing. Five
+// sessions landing together is one chime, not five -- and a session goes on
+// waiting without ever ringing twice.
 function announce(blocks) {
-  const now = new Set();
+  const waiting = new Set(), ready = new Set();
   for (const b of blocks)
-    for (const m of b.members) if (m.flag === "waiting") now.add(m.sessionId);
-  const fresh = WAITING && [...now].some(sid => !WAITING.has(sid));
-  WAITING = now;
-  if (fresh && CHIME) ring();
+    for (const m of b.members) {
+      if (m.flag === "waiting") waiting.add(m.sessionId);
+      else if (m.flag === "ready") ready.add(m.sessionId);
+    }
+  const asks = arrived(waiting, WAITING);
+  const done = arrived(ready, READY);
+  WAITING = waiting;
+  READY = ready;
+  // A question outranks a finished turn. If both land in the same poll you
+  // hear the one that wants something from you.
+  if (!CHIME) return;
+  if (asks) ring();
+  else if (done) tick();
 }
 
 function drawSound() {
@@ -571,8 +602,8 @@ function drawSound() {
   button.classList.toggle("blocked", MUZZLED);
   button.title = MUZZLED
     ? "the browser holds back sound until you have clicked the page — click here"
-    : CHIME ? "a soft chime when a session starts waiting on you"
-            : "silent when a session starts waiting on you";
+    : CHIME ? "a chime when a session starts waiting, a tick when one finishes"
+            : "silent whether a session starts waiting or finishes";
 }
 
 function drawHold() {

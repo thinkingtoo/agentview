@@ -227,12 +227,20 @@ soft highlight travels through the name. Waiting and stuck nudge, barely — the
 colour is the alarm; anything stronger is a thing you learn to stop seeing. A
 still page means nothing is running.
 
-**A session that starts waiting rings.** Two soft bell tones, high then low,
-with a long decay — the cabin chime when the seatbelt sign comes on, not a
-doorbell. It rings **once**, for whoever has just started waiting: never for
-the ones already on screen when you open the page, and never again while that
-same session goes on waiting. `chime` in the header turns it off (it says
-*muted* then), and the setting lives in `config.json` with the pins.
+**The page has two sounds, and they are the same bell.**
+
+- **A session that starts waiting rings**: two strokes, high then low, with a
+  long decay — the cabin chime when the seatbelt sign comes on, not a
+  doorbell.
+- **A session that finishes ticks**: one stroke, gone in a third of a second.
+  Something arrived, and it is not asking you for anything.
+
+Either sounds **once**, for whoever has just started waiting or finishing:
+never for the ones already on screen when you open the page, and never again
+while that same session sits there. Five landing in one poll is one sound, not
+five, and when a question and a finished turn arrive together you hear the
+question. `chime` in the header turns both off (it says *muted* then), and the
+setting lives in `config.json` with the pins.
 
 A browser makes no sound at all until you have interacted with the page, so
 the first click anywhere arms it. If a chime is due before that has happened,

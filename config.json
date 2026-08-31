@@ -30,6 +30,6 @@
   "_waiting": "A helper spawned by /btw sits in `waiting` for a few seconds. Only a question left unanswered this long is worth flagging.",
   "waiting_after_seconds": 20,
   "hold": false,
-  "_chime": "A soft two-tone chime when a session starts waiting on you. It rings once, for whoever has just started waiting -- never for the ones already on screen when the page opens.",
+  "_chime": "Sound: a two-stroke chime when a session starts waiting on you, a single short tick when one finishes. Either sounds once, for whoever has just changed -- never for the ones already on screen when the page opens.",
   "chime": true
 }
