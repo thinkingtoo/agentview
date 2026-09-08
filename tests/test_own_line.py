@@ -68,6 +68,40 @@ class OwnLine(unittest.TestCase):
         self.assertEqual(lines.read("s1", self.root), {})
 
 
+class TheHooksOwnTurn(unittest.TestCase):
+    """A line written while the session is busy is the hook's, not a stale one.
+
+    Blocking a stop puts the session back to work to write its line, so for a
+    few seconds it is busy *and* holding the freshest line there is. Dropping
+    on status alone deleted both lines the fleet wrote the first time this
+    ran.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        self.addCleanup(self.dir.cleanup)
+
+    def test_a_line_written_after_it_went_busy_is_kept(self):
+        lines.write("s1", did="Fatto.", ask="", n=0, root=self.root, at=2000)
+        got = fleet.own_line("s1", "busy", asked=("", 0), root=self.root,
+                             since=1000_000)          # went busy at t=1000s
+        self.assertEqual(got["did"], "Fatto.")
+
+    def test_a_line_from_the_last_stop_is_dropped(self):
+        # The prompt that restarted it is the answer to what it asked.
+        lines.write("s1", did="x", ask="y", n=1, root=self.root, at=500)
+        got = fleet.own_line("s1", "busy", asked=("", 0), root=self.root,
+                             since=1000_000)
+        self.assertEqual(got["n"], 0)
+        self.assertEqual(lines.read("s1", self.root), {})
+
+    def test_with_no_moment_to_compare_a_busy_session_keeps_nothing(self):
+        lines.write("s1", did="x", ask="", n=0, root=self.root, at=500)
+        self.assertEqual(fleet.own_line("s1", "busy", asked=("", 0),
+                                        root=self.root)["did"], "")
+
+
 class WhileWorking(unittest.TestCase):
     """A busy row, mid-turn, with no call in flight."""
 

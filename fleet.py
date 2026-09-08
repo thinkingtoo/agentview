@@ -501,7 +501,7 @@ def _fit(text):
     return text if len(text) <= ASK_LIMIT else text[:ASK_LIMIT - 1].rstrip() + "\u2026"
 
 
-def own_line(session_id, status, asked, root=None, said="", doing=""):
+def own_line(session_id, status, asked, root=None, said="", doing="", since=0):
     """The two lines a card shows, and whether the session is stopped on you.
 
     The session writes its own when it finishes -- it is the only thing that
@@ -512,15 +512,23 @@ def own_line(session_id, status, asked, root=None, said="", doing=""):
     see a question; it cannot tell one that stops the session from one that
     offers to do more, and a tab that says (6) has to mean six.
     """
+    working = {"doing": doing or last_words(said)}
     if status == "busy":
-        # The prompt that restarted it is the answer to what it asked. A
-        # need kept past that point makes the page lie at the next stop.
+        # A line written *since* it went busy is the hook's own: blocking a
+        # stop puts the session back to work to write it, so for a few
+        # seconds it is busy and holding the freshest line there is.
+        got = lines.read(session_id, root)
+        if got and since and got["at"] * 1000 >= since:
+            return {"did": got["did"], "ask": got["ask"], "n": got["n"],
+                    "blocked": got["n"] > 0, **working}
+        # Otherwise it predates this working stretch, and the prompt that
+        # restarted the session is the answer to whatever it asked. A need
+        # kept past that point makes the page lie at the next stop.
         lines.drop(session_id, root)
         # Between calls there is nothing in flight and the model is writing.
         # The page used to print your own last prompt back at you there --
         # words you wrote and already know.
-        return {"did": "", "ask": "", "n": 0, "blocked": False,
-                "doing": doing or last_words(said)}
+        return {"did": "", "ask": "", "n": 0, "blocked": False, **working}
     got = lines.read(session_id, root)
     if got:
         return {"did": got["did"], "ask": got["ask"], "n": got["n"],
@@ -716,8 +724,8 @@ def sessions(cfg=None):
             "branch": summary["branch"],
             # What it is doing while it works, and what it left you with when
             # it stopped. Never both: a busy session has no line of its own.
-            **own_line(sid, status, summary["asked"],
-                       said=summary["said"], doing=summary["doing"]),
+            **own_line(sid, status, summary["asked"], said=summary["said"],
+                       doing=summary["doing"], since=status_since),
         })
     return out
 
