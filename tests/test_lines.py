@@ -131,3 +131,63 @@ class WhoWroteIt(unittest.TestCase):
             lines._tmp_for = real
         self.assertEqual(len(seen), 2, seen)
         self.assertEqual(lines.read("f", self.root)["did"], "2")
+
+
+class Turns(unittest.TestCase):
+    """Which turn a line belongs to.
+
+    Freshness used to be a timestamp compared against the peer file's last
+    status change, which only proved the line was written somewhere inside a
+    working stretch. A session that went idle, busy and idle again between
+    two polls kept a line from the stretch before. A turn has an identity;
+    a moment does not.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        self.addCleanup(self.dir.cleanup)
+
+    def test_a_session_with_no_turn_yet_has_none(self):
+        self.assertEqual(lines.current_turn("s1", self.root), "")
+
+    def test_each_prompt_starts_a_turn_of_its_own(self):
+        first = lines.begin_turn("s1", self.root)
+        second = lines.begin_turn("s1", self.root)
+        self.assertTrue(first and second)
+        self.assertNotEqual(first, second)
+        self.assertEqual(lines.current_turn("s1", self.root), second)
+
+    def test_a_new_turn_forgets_the_last_line(self):
+        # The prompt that restarted the session is the answer to what it
+        # asked. This is the deterministic clear that the busy-poll
+        # heuristic was standing in for.
+        lines.begin_turn("s1", self.root)
+        lines.write("s1", did="x", ask="y", n=1, root=self.root)
+        lines.begin_turn("s1", self.root)
+        self.assertEqual(lines.read("s1", self.root), {})
+
+    def test_a_line_is_stamped_with_the_turn_it_was_written_in(self):
+        turn = lines.begin_turn("s1", self.root)
+        lines.write("s1", did="x", root=self.root)
+        self.assertEqual(lines.read("s1", self.root)["turn"], turn)
+
+    def test_only_this_turn_s_line_is_fresh(self):
+        lines.begin_turn("s1", self.root)
+        lines.write("s1", did="from the last turn", root=self.root)
+        # A prompt whose clear never ran -- the hook was not installed, or
+        # the write lost the race with it.
+        lines._turn_file("s1", self.root).write_text("newturn", encoding="utf-8")
+        self.assertEqual(lines.fresh("s1", self.root), {})
+        self.assertNotEqual(lines.read("s1", self.root), {})
+
+    def test_with_no_turns_tracked_at_all_a_line_still_shows(self):
+        # Sessions older than the hook. Degrading to "any line is current"
+        # is what the page did before, and it heals at their next prompt.
+        lines.write("s1", did="x", root=self.root)
+        self.assertEqual(lines.fresh("s1", self.root)["did"], "x")
+
+    def test_turns_of_dead_sessions_are_forgotten(self):
+        lines.begin_turn("gone", self.root)
+        lines.forget({"alive"}, self.root)
+        self.assertEqual(lines.current_turn("gone", self.root), "")

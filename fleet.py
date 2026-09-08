@@ -519,38 +519,29 @@ def _shown(got):
             "blocked": got["n"] > 0 and got["by"] == "session"}
 
 
-def own_line(session_id, status, asked, root=None, said="", doing="", since=0):
+def own_line(session_id, status, asked, root=None, said="", doing=""):
     """The two lines a card shows, and whether the session is stopped on you.
 
-    The session writes its own when it finishes -- it is the only thing that
-    knows where the work stands. Everything else here is what to show until
-    it has: the ask read out of the last thing it said.
+    The session writes its own inside the turn it was already having -- it is
+    the only thing that knows where the work stands. A line belongs to that
+    turn: the next prompt forgets it, and one that survives that is caught by
+    its turn rather than by its age. Comparing ages could not do it. A moment
+    only proves a line was written somewhere inside a working stretch, and a
+    session can go idle, busy and idle again between two polls of this page.
 
-    A read ask fills the words and does not raise the count. Extraction can
-    see a question; it cannot tell one that stops the session from one that
-    offers to do more, and a tab that says (6) has to mean six.
+    Everything else here is what to show until the session has written one:
+    the ask read out of the last thing it said. That fills the words and does
+    not raise the count.
     """
-    working = {"doing": doing or last_words(said)}
-    if status == "busy":
-        # A line written *since* it went busy is the hook's own: blocking a
-        # stop puts the session back to work to write it, so for a few
-        # seconds it is busy and holding the freshest line there is.
-        got = lines.read(session_id, root)
-        if got and since and got["at"] * 1000 >= since:
-            return {**_shown(got), **working}
-        # Otherwise it predates this working stretch, and the prompt that
-        # restarted the session is the answer to whatever it asked. A need
-        # kept past that point makes the page lie at the next stop.
-        lines.drop(session_id, root)
-        # Between calls there is nothing in flight and the model is writing.
-        # The page used to print your own last prompt back at you there --
-        # words you wrote and already know.
-        return {"did": "", "ask": "", "n": 0, "blocked": False, **working}
-    got = lines.read(session_id, root)
+    # Between calls there is nothing in flight and the model is writing. The
+    # page used to print your own last prompt back at you there -- words you
+    # wrote and already know.
+    working = {"doing": (doing or last_words(said)) if status == "busy" else ""}
+    got = lines.fresh(session_id, root)
     if got:
-        return {**_shown(got), "doing": ""}
+        return {**_shown(got), **working}
     ask, n = asked
-    return {"did": "", "ask": ask, "n": n, "blocked": False, "doing": ""}
+    return {"did": "", "ask": ask, "n": n, "blocked": False, **working}
 
 
 def _view(state):
@@ -741,7 +732,7 @@ def sessions(cfg=None):
             # What it is doing while it works, and what it left you with when
             # it stopped. Never both: a busy session has no line of its own.
             **own_line(sid, status, summary["asked"], said=summary["said"],
-                       doing=summary["doing"], since=status_since),
+                       doing=summary["doing"]),
         })
     return out
 

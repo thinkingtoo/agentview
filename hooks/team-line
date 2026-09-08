@@ -27,6 +27,11 @@ def main(argv=None):
     # Words only when there is one thing to say. Anything else is a count.
     ask = args.ask if args.n == 1 else ""
     rec = lines.write(args.session, did=args.did, ask=ask, n=args.n)
+    if rec is None:
+        # Failing open is right for the dashboard. Reporting a success that
+        # did not happen is not.
+        print(f"no line written for {args.session!r}", file=sys.stderr)
+        return 1
     print(f"line written: {rec['did']!r} n={rec['n']}")
     return 0
 

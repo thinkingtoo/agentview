@@ -20,6 +20,7 @@ hand-edit, and this one is rewritten by a hook every time a session stops.
 import json
 import os
 import re
+import secrets
 import tempfile
 import time
 from pathlib import Path
@@ -42,6 +43,53 @@ def _file(session_id, root=None):
     if not isinstance(session_id, str) or not SAFE.fullmatch(session_id):
         return None
     return (Path(root) if root else store()) / f"{session_id}.json"
+
+
+def _turn_file(session_id, root=None):
+    path = _file(session_id, root)
+    return None if path is None else path.with_suffix(".turn")
+
+
+def current_turn(session_id, root=None):
+    """Which turn this session is in, or `""` when nothing is tracking it."""
+    path = _turn_file(session_id, root)
+    if path is None:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8").strip()[:64]
+    except (OSError, ValueError):
+        return ""
+
+
+def begin_turn(session_id, root=None):
+    """A new turn: forget the last line and mint an identity for this one.
+
+    The prompt that restarted a session is the answer to whatever it asked,
+    so the line goes at the same moment. The identity is what lets a line
+    that outlives its turn be recognised -- a moment in time could not,
+    because a session can go idle, busy and idle again between two polls.
+    """
+    path = _turn_file(session_id, root)
+    if path is None:
+        return ""
+    drop(session_id, root)
+    turn = secrets.token_hex(4)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _tmp_for(path)
+        tmp.write_text(turn, encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, ValueError):
+        return ""
+    return turn
+
+
+def fresh(session_id, root=None):
+    """This session's line, but only if it belongs to the turn it is in."""
+    got = read(session_id, root)
+    if got and got["turn"] != current_turn(session_id, root):
+        return {}
+    return got
 
 
 def read(session_id, root=None):
@@ -74,6 +122,7 @@ def read(session_id, root=None):
         # Who put it there. A line read out of a transcript is a guess with
         # words in it; only a session speaking for itself is believed.
         "by": "session" if got.get("by") == "session" else "read",
+        "turn": got.get("turn") if isinstance(got.get("turn"), str) else "",
     }
 
 
@@ -105,7 +154,8 @@ def _tmp_for(path):
     return Path(name)
 
 
-def write(session_id, did="", ask="", n=0, root=None, at=None, by="session"):
+def write(session_id, did="", ask="", n=0, root=None, at=None, by="session",
+          turn=None):
     """Record what a session says about itself, atomically.
 
     Returns the record, or `None` when nothing was written. Failing open is
@@ -116,9 +166,12 @@ def write(session_id, did="", ask="", n=0, root=None, at=None, by="session"):
     path = _file(session_id, root)
     if path is None:
         return None
+    # Stamped at the moment of writing, which is the whole proof: whatever
+    # turn is current now is the turn this line belongs to.
     rec = {"did": _clip(did), "ask": _clip(ask), "n": _count(n),
            "at": at if at is not None else time.time(),
-           "by": "session" if by == "session" else "read"}
+           "by": "session" if by == "session" else "read",
+           "turn": current_turn(session_id, root) if turn is None else str(turn)}
     tmp = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -151,7 +204,7 @@ def forget(live, root=None):
     """Drop the lines of sessions that are gone, so the directory is bounded."""
     root = Path(root) if root else store()
     try:
-        found = list(root.glob("*.json"))
+        found = list(root.glob("*.json")) + list(root.glob("*.turn"))
     except OSError:
         return
     # A crashed write leaves `<id>.<random>.tmp` behind, whose stem is not a

@@ -65,8 +65,13 @@ deploying something else. The second line was worse: a finished session printed
 the *last line* of its last message, which is a sign-off as often as an ask, and
 a working session printed **your own last prompt back at you**.
 
-So the session is asked. A Stop hook (`hooks/stop_line.py`) gives it two fields
-as it finishes:
+So the session is asked. Two hooks, and neither of them interrupts anything.
+
+**`UserPromptSubmit` starts the turn** (`hooks/turn_line.py`). It forgets the
+previous line — the prompt you just typed is the answer to whatever the session
+was blocked on — and injects one short paragraph asking for the next one. The
+session then writes its line as an ordinary action inside the turn it was
+already having.
 
 | Field | What it is |
 |---|---|
@@ -88,21 +93,32 @@ Design settled through Q16, nothing written yet.
 stays short, so the taller cards are the ones asking. That is the alarm, done
 with height rather than colour.
 
-**The hook asks only when it has to.** If the session is already ending on a
-question, `ask_from()` reads it straight out of the transcript and the hook
-writes that line itself, silently. Paying an extra model turn to rewrite a line
-that is already right is the wrong half of the cost. Only when nothing readable
-is there does it block, and `stop_hook_active` — Claude Code's guard against a
-hook holding a session open forever — makes sure it blocks once and no more.
-Claude Code also *discards* a Stop-hook block on turns that end without
-re-invoking the model, so a line will occasionally be missing; extraction is the
-fallback, and it is deliberately conservative.
+**`Stop` only checks** (`hooks/stop_line.py`). If the session wrote its line,
+nothing happens. If it did not, the last thing it said is read for a question
+and stored as an **unverified** fallback; if there is not even that, the miss is
+recorded, so `python3 log.py -k line` says how often the instruction is actually
+followed. Nothing here blocks.
+
+**It used to block, and that is the whole reason for this shape.** A blocking
+Stop hook works: Claude Code re-invokes the model, which writes the line. It
+costs an extra turn at every stop — and Claude Code renders any Stop-hook block
+to the user under the heading **`Stop hook error:`**, in every session on the
+machine, with no setting that changes it. The instruction now rides along with
+the turn instead, so the line costs no extra turn and nothing looks broken.
+
+**A line belongs to a turn, not to a moment.** Every line carries the id of the
+turn it was written in, and the page shows it only while that turn is current.
+The first version compared the line's age against the peer file's last status
+change, which proves only that it was written *somewhere* inside a working
+stretch: a session that went idle, busy and idle again between two polls kept
+the line from the stretch before, and `waiting` never cleared at all. An
+identity settles what an age could only estimate.
 
 **A read ask fills the words and does not raise the count.** Extraction can see
 a question. It cannot tell one that stops the session from one that offers to do
-more, and a tab that says `(6)` has to mean six. Only a session that wrote `n`
-itself joins `waiting` and `stuck` in the header and the tab title, and leads
-its block.
+more, and a tab that says `(6)` has to mean six. Every line records who wrote
+it; only a session speaking for itself joins `waiting` and `stuck` in the header
+and the tab title, and leads its block.
 
 **While it works, the line is the call in flight** — *Editing fleet.py*,
 *Reading 3 files*, or, for a Bash call, the description the caller already
@@ -110,13 +126,9 @@ wrote. Between calls it falls back to the session's own running commentary. An
 MCP tool is addressed `mcp__<server>__<tool>`, which is a wire address; the page
 says *Gmail users drafts create*.
 
-**A need dies when the work resumes.** The prompt that restarted a session is
-the answer to what it asked, so the line is dropped the moment the session goes
-busy. A stale need is worse than none: it makes the page lie at the next stop.
-
 The lines live in `~/.local/state/claude-team/lines/`, beside `seen.json` and
-out of `config.json` — that file is yours to hand-edit, this one is rewritten by
-a hook. Sessions that are gone are forgotten on the next poll.
+out of `config.json` — that file is yours to hand-edit, this one is written by a
+hook. Sessions that are gone are forgotten on the next poll.
 
 ## Click a card, get the terminal
 
