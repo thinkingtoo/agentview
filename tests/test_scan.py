@@ -246,3 +246,36 @@ class WhatItIsDoing(unittest.TestCase):
         self.assertEqual(fleet.scan_cached(self.path)["doing"], "Writing big.txt")
         state = fleet._cache[("state", str(self.path))]
         self.assertLess(len(json.dumps(state["uses"], default=str)), 2000)
+
+
+class WhatItSaidLast(unittest.TestCase):
+    def setUp(self):
+        self.path = Path(tempfile.mkdtemp()) / "t.jsonl"
+        fleet._cache.clear()
+
+    def test_a_new_prompt_clears_the_last_thing_it_said(self):
+        # A busy row shows the session's running commentary. Kept across a
+        # new prompt, the previous turn's closing sentence reads as what it
+        # is doing now.
+        write(self.path, [{"type": "assistant", "timestamp": "2026-09-08T10:00:00.000Z",
+                           "message": {"content": [{"type": "text", "text": "All done."}]}}], "w")
+        self.assertEqual(fleet.scan_cached(self.path)["said"], "All done.")
+        write(self.path, [{"type": "user", "timestamp": "2026-09-08T10:01:00.000Z",
+                           "message": {"content": "now do the other thing"}}])
+        self.assertEqual(fleet.scan_cached(self.path)["said"], "")
+
+    def test_a_tool_result_is_not_a_new_prompt(self):
+        write(self.path, [{"type": "assistant", "timestamp": "2026-09-08T10:00:00.000Z",
+                           "message": {"content": [{"type": "text", "text": "Checking."}]}}], "w")
+        write(self.path, [{"type": "user", "timestamp": "2026-09-08T10:00:01.000Z",
+                           "message": {"content": [
+                               {"type": "tool_result", "tool_use_id": "t1"}]}}])
+        self.assertEqual(fleet.scan_cached(self.path)["said"], "Checking.")
+
+    def test_a_meta_record_is_not_a_new_prompt(self):
+        # The hook's own block reaches the transcript as a meta user record.
+        write(self.path, [{"type": "assistant", "timestamp": "2026-09-08T10:00:00.000Z",
+                           "message": {"content": [{"type": "text", "text": "Checking."}]}}], "w")
+        write(self.path, [{"type": "user", "isMeta": True,
+                           "message": {"content": "Stop hook feedback: ..."}}])
+        self.assertEqual(fleet.scan_cached(self.path)["said"], "Checking.")

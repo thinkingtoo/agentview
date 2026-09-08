@@ -288,6 +288,13 @@ def _absorb(state, text):
         content = (rec.get("message") or {}).get("content")
         if not state["boss"] and boss_line(rec):
             state["boss"] = True
+        # A typed prompt ends the turn that said something. Kept past it, the
+        # previous turn's closing sentence reads on a busy row as what the
+        # session is doing now. A tool result is a list, and the hook's own
+        # block arrives as a meta record -- neither is you speaking.
+        if (kind == "user" and not rec.get("isMeta")
+                and isinstance(content, str) and content.strip()):
+            state["said"] = ""
         if not isinstance(content, list):
             continue
         # When the session last said anything at all. A tool call is only in
@@ -501,6 +508,17 @@ def _fit(text):
     return text if len(text) <= ASK_LIMIT else text[:ASK_LIMIT - 1].rstrip() + "\u2026"
 
 
+def _shown(got):
+    """A stored line, and whether it counts as stopped on you.
+
+    Only a session speaking for itself is believed. The hook writes what it
+    read out of the transcript into the same file, and extraction cannot tell
+    a question that stopped the session from one that offered to do more.
+    """
+    return {"did": got["did"], "ask": got["ask"], "n": got["n"],
+            "blocked": got["n"] > 0 and got["by"] == "session"}
+
+
 def own_line(session_id, status, asked, root=None, said="", doing="", since=0):
     """The two lines a card shows, and whether the session is stopped on you.
 
@@ -519,8 +537,7 @@ def own_line(session_id, status, asked, root=None, said="", doing="", since=0):
         # seconds it is busy and holding the freshest line there is.
         got = lines.read(session_id, root)
         if got and since and got["at"] * 1000 >= since:
-            return {"did": got["did"], "ask": got["ask"], "n": got["n"],
-                    "blocked": got["n"] > 0, **working}
+            return {**_shown(got), **working}
         # Otherwise it predates this working stretch, and the prompt that
         # restarted the session is the answer to whatever it asked. A need
         # kept past that point makes the page lie at the next stop.
@@ -531,8 +548,7 @@ def own_line(session_id, status, asked, root=None, said="", doing="", since=0):
         return {"did": "", "ask": "", "n": 0, "blocked": False, **working}
     got = lines.read(session_id, root)
     if got:
-        return {"did": got["did"], "ask": got["ask"], "n": got["n"],
-                "blocked": got["n"] > 0, "doing": ""}
+        return {**_shown(got), "doing": ""}
     ask, n = asked
     return {"did": "", "ask": ask, "n": n, "blocked": False, "doing": ""}
 

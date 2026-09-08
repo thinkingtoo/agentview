@@ -20,6 +20,8 @@ hand-edit, and this one is rewritten by a hook every time a session stops.
 import json
 import os
 import re
+import tempfile
+import time
 from pathlib import Path
 
 # A line, not a paragraph. A model handed the field an essay would push every
@@ -59,11 +61,19 @@ def read(session_id, root=None):
         return {}
     if not isinstance(got, dict):
         return {}
+    at = got.get("at") if isinstance(got.get("at"), (int, float)) else 0
+    if not at:
+        # `{}` parses and says nothing. Treating it as a line suppresses the
+        # fallback and tells the hook the session already answered.
+        return {}
     return {
         "did": _clip(got.get("did")),
         "ask": _clip(got.get("ask")),
         "n": _count(got.get("n")),
-        "at": got.get("at") if isinstance(got.get("at"), (int, float)) else 0,
+        "at": at,
+        # Who put it there. A line read out of a transcript is a guess with
+        # words in it; only a session speaking for itself is believed.
+        "by": "session" if got.get("by") == "session" else "read",
     }
 
 
@@ -82,22 +92,47 @@ def _count(value):
     return max(0, value)
 
 
-def write(session_id, did="", ask="", n=0, root=None, at=None):
-    """Record what a session says about itself, atomically."""
-    import time
+def _tmp_for(path):
+    """A temporary name of this write's own.
+
+    One shared `<id>.json.tmp` is not atomic across writers: the second one
+    truncates the first's file mid-write, and the loser reports success over
+    a record that never landed.
+    """
+    fd, name = tempfile.mkstemp(dir=str(path.parent), prefix=path.stem + ".",
+                                suffix=".tmp")
+    os.close(fd)
+    return Path(name)
+
+
+def write(session_id, did="", ask="", n=0, root=None, at=None, by="session"):
+    """Record what a session says about itself, atomically.
+
+    Returns the record, or `None` when nothing was written. Failing open is
+    right -- a dashboard that does not know is a small problem. Reporting a
+    success that did not happen is not: `team-line` printed "line written"
+    over a write that never landed.
+    """
     path = _file(session_id, root)
     if path is None:
-        return {}
+        return None
     rec = {"did": _clip(did), "ask": _clip(ask), "n": _count(n),
-           "at": at if at is not None else time.time()}
+           "at": at if at is not None else time.time(),
+           "by": "session" if by == "session" else "read"}
+    tmp = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
+        tmp = _tmp_for(path)
         with tmp.open("w", encoding="utf-8") as fh:
             json.dump(rec, fh)
         tmp.replace(path)
-    except OSError:
-        pass
+    except (OSError, ValueError):
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return None
     return rec
 
 
@@ -119,8 +154,14 @@ def forget(live, root=None):
         found = list(root.glob("*.json"))
     except OSError:
         return
+    # A crashed write leaves `<id>.<random>.tmp` behind, whose stem is not a
+    # session id and so never matched a live one -- it would sit forever.
+    try:
+        found += list(root.glob("*.tmp"))
+    except OSError:
+        pass
     for path in found:
-        if path.stem not in live:
+        if path.suffix == ".tmp" or path.stem not in live:
             try:
                 path.unlink()
             except OSError:

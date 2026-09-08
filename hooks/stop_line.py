@@ -83,12 +83,15 @@ def decide(payload, said, root=None):
             return {"action": "pass"}
         ask, n = fleet.ask_from(said)
         if n:
-            lines.write(sid, did="", ask=ask, n=n, root=root)
+            lines.write(sid, did="", ask=ask, n=n, by="read", root=root)
             return {"action": "write", "n": n}
         return {"action": "pass"}
     ask, n = fleet.ask_from(said)
     if n:
-        lines.write(sid, did="", ask=ask, n=n, root=root)
+        # `by="read"`: this is a guess with words in it. It fills the line and
+        # never reaches the count -- only the session itself can say that
+        # something stopped it.
+        lines.write(sid, did="", ask=ask, n=n, by="read", root=root)
         return {"action": "write", "n": n}
     return {"action": "block",
             "reason": INSTRUCTION.format(writer=WRITER, sid=sid)}

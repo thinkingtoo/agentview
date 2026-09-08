@@ -127,3 +127,30 @@ class WhileWorking(unittest.TestCase):
         got = fleet.own_line("s1", "idle", asked=("", 0), root=self.root,
                              said="All done.", doing="Editing fleet.py")
         self.assertEqual(got["doing"], "")
+
+
+class WhoIsBelieved(unittest.TestCase):
+    """Only a session speaking for itself raises the count.
+
+    The hook writes what it read out of the transcript into the same file.
+    Without provenance the two are indistinguishable, and "Want me to update
+    the README too?" lands in the tab title as something that stopped a
+    session.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        self.addCleanup(self.dir.cleanup)
+
+    def test_a_line_the_session_declared_is_blocked(self):
+        lines.write("s1", did="x", ask="Which first?", n=1, by="session", root=self.root)
+        self.assertTrue(fleet.own_line("s1", "idle", ("", 0), root=self.root)["blocked"])
+
+    def test_a_line_read_out_of_the_transcript_is_not(self):
+        lines.write("s1", ask="Want me to update the README too?", n=1,
+                    by="read", root=self.root)
+        got = fleet.own_line("s1", "idle", ("", 0), root=self.root)
+        self.assertEqual(got["ask"], "Want me to update the README too?")
+        self.assertEqual(got["n"], 1)
+        self.assertFalse(got["blocked"])

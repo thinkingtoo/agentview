@@ -82,5 +82,52 @@ class WhatIsKept(unittest.TestCase):
 
     def test_a_count_that_is_not_a_number_reads_as_none_wanted(self):
         (self.root / "abc.json").write_text(
-            json.dumps({"did": "x", "ask": "", "n": "four"}), encoding="utf-8")
+            json.dumps({"did": "x", "ask": "", "n": "four", "at": 1}), encoding="utf-8")
         self.assertEqual(lines.read("abc", self.root)["n"], 0)
+
+
+class WhoWroteIt(unittest.TestCase):
+    """A line read out of a transcript is not a line the session declared.
+
+    Extraction can see a question. It cannot tell one that stops the session
+    from one that offers to do more, so it must never reach the count.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        self.addCleanup(self.dir.cleanup)
+
+    def test_a_line_remembers_who_wrote_it(self):
+        lines.write("a", did="x", n=1, by="session", root=self.root)
+        lines.write("b", ask="y", n=1, by="read", root=self.root)
+        self.assertEqual(lines.read("a", self.root)["by"], "session")
+        self.assertEqual(lines.read("b", self.root)["by"], "read")
+
+    def test_an_unknown_writer_is_not_trusted(self):
+        (self.root / "c.json").write_text(
+            json.dumps({"did": "x", "n": 3, "at": 1, "by": "whoever"}), encoding="utf-8")
+        self.assertEqual(lines.read("c", self.root)["by"], "read")
+
+    def test_an_empty_object_is_not_a_line(self):
+        # `{}` parses. It says nothing, and treating it as a line suppresses
+        # the fallback and makes the hook think the session answered.
+        (self.root / "d.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(lines.read("d", self.root), {})
+
+    def test_a_failed_write_says_so(self):
+        # Fail-open is right. Reporting success for a write that did not
+        # happen is not: `team-line` printed "line written" over nothing.
+        self.assertIsNone(lines.write("e", did="x", root=self.root / "nope" / "deeper" / "\0bad"))
+
+    def test_two_writers_do_not_share_a_temporary_file(self):
+        seen = set()
+        real = lines._tmp_for
+        lines._tmp_for = lambda p: seen.add(str(real(p))) or real(p)
+        try:
+            lines.write("f", did="1", root=self.root)
+            lines.write("f", did="2", root=self.root)
+        finally:
+            lines._tmp_for = real
+        self.assertEqual(len(seen), 2, seen)
+        self.assertEqual(lines.read("f", self.root)["did"], "2")
