@@ -14,6 +14,7 @@ import re
 import time
 from pathlib import Path
 
+import lines
 import seen
 
 
@@ -305,7 +306,9 @@ def _absorb(state, text):
                 continue
             if part.get("type") == "tool_use":
                 if part.get("id"):
-                    state["uses"][part["id"]] = rec.get("timestamp")
+                    state["uses"][part["id"]] = (
+                        rec.get("timestamp"), part.get("name") or "",
+                        _kept(part.get("input")))
                 # Who it works with: every peer it has messaged. `to` is
                 # the address -- a name, sometimes with a disambiguating ref.
                 if part.get("name") == "SendMessage":
@@ -363,13 +366,177 @@ def last_words(text, limit=140):
     return line
 
 
+ASK_LIMIT = lines.LIMIT
+FENCE = re.compile(r"```.*?```", re.S)
+INLINE_CODE = re.compile(r"`[^`]*`")
+PARA = re.compile(r"\n\s*\n")
+LEADING = re.compile(r"^[^\w(\u00ab\"']+")
+
+
+def ask_from(text):
+    """What the last thing a session said wants from you: the ask, and how many.
+
+    Counted by paragraph, not by question mark. A question that spells its
+    own options out carries two marks and is still one question -- the round
+    of this conversation that asked Q1, Q2 and Q3 has four marks in it.
+
+    Conservative on purpose. It finds a question and nothing else: an
+    imperative that plainly wants an answer ("Dis-moi : A, B, ou C.") reads
+    here as no ask at all. That is the miss the Stop hook exists to cover --
+    it blocks when nothing was found and lets the session say what it wants
+    in its own words. Guessing instead would flag every message with a colon
+    in it, and a card that claims to want you and does not is the one failure
+    that teaches you to stop believing the page.
+    """
+    if not text:
+        return ("", 0)
+    asking = []
+    for para in PARA.split(FENCE.sub(" ", text)):
+        # A quoted line is someone else talking, and a table row is data.
+        keep = [ln for ln in para.splitlines()
+                if ln.strip() and not ln.lstrip().startswith((">", "|"))]
+        if not keep:
+            continue
+        # `grep -c "?"` is code, not a question.
+        clean = INLINE_CODE.sub(" ", " ".join(keep))
+        if "?" in clean:
+            asking.append(clean)
+    if not asking:
+        return ("", 0)
+    if len(asking) > 1:
+        return ("", len(asking))
+    one = asking[0]
+    sentence = SENTENCE_END.split(one[:one.rindex("?") + 1])[-1].strip()
+    sentence = re.sub(r"^[-*+]\s+", "", sentence)
+    sentence = re.sub(r"[*_`#]+", "", sentence)
+    sentence = LEADING.sub("", sentence).strip()
+    if len(sentence) > ASK_LIMIT:
+        sentence = sentence[:ASK_LIMIT - 1].rstrip() + "\u2026"
+    return (sentence, 1)
+
+
+# What each tool is, said the way you would say it. Anything not here says
+# its own name -- vague beats wrong, and an unknown tool is still news.
+VERBS = {
+    "Edit": "Editing", "Write": "Writing", "NotebookEdit": "Editing",
+    "Read": "Reading", "Glob": "Looking for", "Grep": "Searching for",
+    "WebFetch": "Fetching", "Skill": "Running", "Task": "Running",
+    "Agent": "Running", "SendMessage": "Messaging",
+}
+# Which input field names the thing being worked on, per tool.
+TARGET = {
+    "Edit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path",
+    "Read": "file_path", "Glob": "pattern", "Grep": "pattern",
+    "WebFetch": "url", "Skill": "skill", "Task": "description",
+    "Agent": "description", "SendMessage": "to",
+}
+PLURAL = {"Read": "files", "Edit": "files", "Write": "files",
+          "Grep": "searches", "WebFetch": "pages"}
+
+
+# A Write carries a whole file in its input and a Task a whole prompt. Only
+# the fields that name the work are kept, and only their first words: this
+# state lives for the life of the session, times every session on the page.
+KEEP = ("description", "command", "file_path", "notebook_path", "path",
+        "pattern", "url", "skill", "to", "query")
+
+
+def _kept(inp):
+    if not isinstance(inp, dict):
+        return {}
+    return {k: v[:200] for k, v in inp.items()
+            if k in KEEP and isinstance(v, str)}
+
+
+def activity(calls):
+    """What a session is doing, from the calls that have not come back.
+
+    A busy row printed your own last prompt back at you, which you wrote and
+    already know. This is the one thing on the card that moves while it works.
+    """
+    if not calls:
+        return ""
+    # Parallel reads are the common case and three filenames do not fit.
+    names = {name for name, _ in calls}
+    if len(calls) > 1 and len(names) == 1:
+        name = calls[0][0]
+        if name in PLURAL:
+            return f"{VERBS[name]} {len(calls)} {PLURAL[name]}"
+    name, inp = calls[-1]
+    inp = inp if isinstance(inp, dict) else {}
+    if name == "Bash":
+        # Every Bash call carries a description already; nothing here needs
+        # to invent a phrase when the caller wrote one.
+        said = inp.get("description")
+        return _fit(said if isinstance(said, str) and said.strip()
+                    else f"Running {inp.get('command', '')}".strip())
+    verb = VERBS.get(name)
+    if not verb:
+        return _plain(name)
+    target = inp.get(TARGET.get(name, ""), "")
+    if not isinstance(target, str) or not target.strip():
+        return _plain(name)
+    if TARGET[name].endswith("path"):
+        target = os.path.basename(target.rstrip("/")) or target
+    if name == "Skill":
+        target = "/" + target
+    return _fit(f"{verb} {target}")
+
+
+def _plain(name):
+    """A tool's own name, said out loud.
+
+    An MCP tool is addressed `mcp__<server>__<tool>`, which is a wire address
+    and reads like one on a card.
+    """
+    parts = name.split("__")
+    if len(parts) < 3 or parts[0] != "mcp":
+        return name
+    words = " ".join(parts[2].split("_"))
+    return words[:1].upper() + words[1:]
+
+
+def _fit(text):
+    text = " ".join(str(text).split())
+    return text if len(text) <= ASK_LIMIT else text[:ASK_LIMIT - 1].rstrip() + "\u2026"
+
+
+def own_line(session_id, status, asked, root=None, said="", doing=""):
+    """The two lines a card shows, and whether the session is stopped on you.
+
+    The session writes its own when it finishes -- it is the only thing that
+    knows where the work stands. Everything else here is what to show until
+    it has: the ask read out of the last thing it said.
+
+    A read ask fills the words and does not raise the count. Extraction can
+    see a question; it cannot tell one that stops the session from one that
+    offers to do more, and a tab that says (6) has to mean six.
+    """
+    if status == "busy":
+        # The prompt that restarted it is the answer to what it asked. A
+        # need kept past that point makes the page lie at the next stop.
+        lines.drop(session_id, root)
+        # Between calls there is nothing in flight and the model is writing.
+        # The page used to print your own last prompt back at you there --
+        # words you wrote and already know.
+        return {"did": "", "ask": "", "n": 0, "blocked": False,
+                "doing": doing or last_words(said)}
+    got = lines.read(session_id, root)
+    if got:
+        return {"did": got["did"], "ask": got["ask"], "n": got["n"],
+                "blocked": got["n"] > 0, "doing": ""}
+    ask, n = asked
+    return {"did": "", "ask": ask, "n": n, "blocked": False, "doing": ""}
+
+
 def _view(state):
     # Only calls in the session's newest message. An unanswered call the
     # session has since talked past is not running -- and because this file
     # is read incrementally, it would otherwise be remembered forever and
     # flag the session `tool 40m` on every busy poll for the rest of the day.
-    stamps = [t for tid, t in state["uses"].items()
-              if tid not in state["done"] and t and t >= state["spoke"]]
+    running = [call for tid, call in state["uses"].items()
+               if tid not in state["done"] and call[0] and call[0] >= state["spoke"]]
+    stamps = [call[0] for call in running]
     pending = None
     if stamps:
         try:
@@ -382,6 +549,10 @@ def _view(state):
     return {"title": state["title"], "prompt": state["prompt"],
             "branch": state["branch"], "paths": list(state["paths"]),
             "said": last_words(state["said"]), "boss": state["boss"],
+            "doing": activity([(name, inp) for _, name, inp in running]),
+            # Read once here, where the whole of the last message is: `said`
+            # above is only its closing line.
+            "asked": ask_from(state["said"]),
             # Liveliest correspondent first: a boss's team, in the order it
             # actually deals with them.
             "sent": [name for name, _ in state["sent"].most_common()],
@@ -481,7 +652,8 @@ def sessions(cfg=None):
         transcript = transcript_for(sid, cwd, cfg) if sid else None
         summary = scan_cached(transcript) if transcript else {
             "title": "", "prompt": "", "branch": "", "paths": [], "said": "",
-            "boss": False, "sent": [], "pending": None}
+            "boss": False, "sent": [], "pending": None, "doing": "",
+            "asked": ("", 0)}
         quiet = None
         if transcript:
             try:
@@ -542,6 +714,10 @@ def sessions(cfg=None):
             "title": summary["title"],
             "prompt": summary["prompt"],
             "branch": summary["branch"],
+            # What it is doing while it works, and what it left you with when
+            # it stopped. Never both: a busy session has no line of its own.
+            **own_line(sid, status, summary["asked"],
+                       said=summary["said"], doing=summary["doing"]),
         })
     return out
 
@@ -586,11 +762,7 @@ def roster(cfg=None):
               for name in s["team"]}
     blocks = []
     for (routines, project), members in groups.items():
-        # What wants you, then what is ready for you, then what is working.
-        members.sort(key=lambda s: (s["flag"] not in ("waiting", "stuck"),
-                                    s["flag"] != "ready",
-                                    s["status"] != "busy",
-                                    -s["updatedAt"]))
+        order_members(members)
         # A boss leads its own block whatever the activity, and the team it
         # dispatches to follows underneath: the block then has the shape of
         # the team rather than being a flat list of eight equals.
@@ -601,7 +773,9 @@ def roster(cfg=None):
                                     s["reportsTo"] not in leads))
         branches = sorted({s["branch"] for s in members if s["branch"]})
         blocks.append({
-            "alarms": sum(1 for s in members if s["flag"] in ("waiting", "stuck")),
+            "alarms": sum(1 for s in members
+                          if s["flag"] in ("waiting", "stuck") or s["blocked"]),
+            "blocked": sum(1 for s in members if s["blocked"]),
             "ready": sum(1 for s in members if s["flag"] == "ready"),
             "project": project or "No project",
             "orphan": not project,
@@ -622,6 +796,24 @@ def roster(cfg=None):
 
 MIN_VOTES = 3          # below this it is noise, not a habit
 LEAD = 1.5             # the winner has to be clearly ahead of the runner-up
+
+
+def order_members(members):
+    """What wants you, then what is ready for you, then what is working.
+
+    A session that wrote down what it is blocked on leads with the ones that
+    have a dialog open: both are stopped until you speak, and which of them
+    you see first is a question of recency, not of what they are called.
+    """
+    def rank(s):
+        if s.get("blocked") or s["flag"] in ("waiting", "stuck"):
+            return 0
+        if s["flag"] == "ready":
+            return 1
+        return 2 if s["status"] == "busy" else 3
+
+    members.sort(key=lambda s: (rank(s), -s["updatedAt"]))
+    return members
 
 
 def suggest_project(paths, shelves):

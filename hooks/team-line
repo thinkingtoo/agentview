@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Write this session's line for the dashboard. Run by the session itself.
+
+    team-line <session-id> --did "..." --n 0
+    team-line <session-id> --did "..." --n 1 --ask "..."
+
+`did` is where the work stands. `n` is how many things the session needs from
+you before it can go further, and `ask` carries the words only when that is 1
+-- one blocked question is short enough to answer from the page, and quoting
+the first of four would misrepresent the size of the job.
+"""
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import lines
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("session")
+    p.add_argument("--did", default="")
+    p.add_argument("--ask", default="")
+    p.add_argument("--n", type=int, default=0)
+    args = p.parse_args(argv)
+    # Words only when there is one thing to say. Anything else is a count.
+    ask = args.ask if args.n == 1 else ""
+    rec = lines.write(args.session, did=args.did, ask=ask, n=args.n)
+    print(f"line written: {rec['did']!r} n={rec['n']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

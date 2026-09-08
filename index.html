@@ -86,6 +86,7 @@
   .flag.tool { color:var(--faint); border:1px solid var(--line); }
   .flag.ready { color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 45%,transparent); }
   .alarm.ready { color:var(--accent); }
+  .alarm.asking { color:var(--accent); }
   /* What it is blocked on, in Claude Code's own words. */
   .wf { color:var(--wait); font-size:11.5px; }
   .said { margin-top:3px; color:var(--dim); font-size:13px;
@@ -152,6 +153,13 @@
   .title { margin-top:5px; }
   .prompt { margin-top:2px; color:var(--dim); font-size:13px;
             display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  /* What it wants from you. The one line on the card that is an instruction
+     rather than a report, so it is the one line that carries weight. */
+  .need { margin-top:3px; color:var(--accent); font-weight:600; font-size:13px;
+          display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  /* What it is doing this second. Dim: it will be different in a minute. */
+  .doing { margin-top:3px; color:var(--dim); font-size:13px; font-style:italic;
+           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .where { margin-top:6px; color:var(--faint); font-size:11.5px;
            font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -295,7 +303,10 @@ function flagOf(m) {
 function row(m) {
   const tag = badge(m);
   const go = m.canJump ? `<span class="go">open ↗</span>` : "";
-  const title = m.title || (m.prompt ? "" : "<span style='color:var(--faint)'>no title yet</span>");
+  // Your own words first, then the session's, then Claude Code's title.
+  // `did` is rewritten at every stop; `ai-title` is written once and rarely
+  // revisited, which is how a card comes to describe last week's work.
+  const subject = m.overridden ? m.title : (m.did || m.title);
   const flag = flagOf(m);
   // Only a row you opened yourself offers to fold again: the liveliest one
   // is the answer to "what is happening here" and always stays open.
@@ -303,12 +314,24 @@ function row(m) {
   // The three that claim you tint their row; a long tool call gets a badge
   // and no more, because it is news rather than a claim.
   const alarm = ["waiting", "stuck", "ready"].includes(m.flag) ? m.flag : "";
-  // What it said last, rather than what you said last: on a finished session
-  // the newer of the two is the handover, and it is the whole point of the
-  // row. Everywhere else the prompt is still the better line.
-  const line = m.flag === "ready" && m.said
-    ? `<div class="said">“${esc(m.said)}”</div>`
-    : m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : "";
+  // The second line answers "where is this now", and what that means
+  // depends on what the session is doing.
+  //
+  //   working  -- the call it is inside. Printing your own last prompt back
+  //               at you told you something you wrote and already knew.
+  //   wanting  -- the thing it needs from you. One ask carries its own
+  //               words; four of them are a count, because quoting the first
+  //               of four misrepresents the size of the job.
+  //   finished -- the last thing it said to you, which is the handover.
+  //   otherwise-- your last prompt, as before.
+  const need = m.n > 0
+    ? (m.n === 1 && m.ask ? esc(m.ask) : `${m.n} answers needed`) : "";
+  const line = m.doing
+    ? `<div class="doing">${esc(m.doing)}</div>`
+    : need ? `<div class="need">${need}</div>`
+    : m.flag === "ready" && m.said
+      ? `<div class="said">“${esc(m.said)}”</div>`
+      : m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : "";
   return `<div class="row ${m.canJump ? "can" : ""} ${alarm}
         ${m.status === "busy" ? "working" : ""} ${m.nested ? "under" : ""}"
         data-pid="${esc(m.pid)}"
@@ -318,9 +341,9 @@ function row(m) {
       ${fold}<span class="nm">${esc(m.name)}</span>${tag}${flag}${go}
       <span class="ago">${says(m)} · ${ago(m.updatedAt)}</span>
     </div>
-    ${m.title && m.title.trim() === (m.name || "").trim() ? "" : `
+    ${subject && subject.trim() === (m.name || "").trim() ? "" : `
     <div class="title edit ${m.overridden ? "own" : ""}" data-edit="line"
-         data-sid="${esc(m.sessionId)}">${esc(m.title) || "<span style='color:var(--faint)'>—</span>"}</div>`}
+         data-sid="${esc(m.sessionId)}">${esc(subject) || "<span style='color:var(--faint)'>—</span>"}</div>`}
     ${line}
     ${m.boss && m.team?.length
       ? `<div class="team">↳ ${m.team.map(esc).join(" · ")}</div>` : ""}
@@ -410,7 +433,8 @@ function filtered(blocks) {
   return blocks.map(b => {
     if (hit(b.label) || hit(b.project)) return b;   // the whole project matched
     const members = b.members.filter(m =>
-      hit(m.name) || hit(m.title) || hit(m.prompt) || hit(m.cwd) || hit(m.branch)
+      hit(m.name) || hit(m.title) || hit(m.did) || hit(m.ask)
+      || hit(m.prompt) || hit(m.cwd) || hit(m.branch)
       || hit(m.routine));
     return members.length ? { ...b, members } : null;
   }).filter(Boolean);
@@ -656,20 +680,28 @@ function paint() {
     a + b.members.filter(m => m.flag === "waiting").length, 0);
   const stuck = all.reduce((a, b) =>
     a + b.members.filter(m => m.flag === "stuck").length, 0);
+  // A session that wrote down what it is blocked on is asking, whether or
+  // not you have looked at it since it stopped -- so it is counted apart
+  // from `ready` rather than inside it, and never in both.
+  const asking = all.reduce((a, b) => a + b.members.filter(m => m.blocked).length, 0);
   const ready = all.reduce((a, b) =>
-    a + b.members.filter(m => m.flag === "ready").length, 0);
+    a + b.members.filter(m => m.flag === "ready" && !m.blocked).length, 0);
   // The tab title deliberately leaves `ready` out: that count is an alarm,
-  // and a finished session is not one -- it would read (5) all evening.
+  // and a finished session is not one -- it would read (5) all evening. A
+  // session that says it is blocked is a different animal: it stays stopped
+  // until you speak, so it belongs with waiting and stuck.
   const alarms = [
     waiting ? `<span class="alarm wait">${waiting} waiting</span>` : "",
     stuck ? `<span class="alarm">${stuck} stuck</span>` : "",
+    asking ? `<span class="alarm asking">${asking} asking</span>` : "",
     ready ? `<span class="alarm ready">${ready} ready</span>` : "",
   ].filter(Boolean).join(" · ");
   document.getElementById("count").innerHTML =
     `${total} sessions · ${busy} busy · ${blocks.filter(b => !b.routines).length} projects`
     + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
     + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "");
-  document.title = (waiting + stuck) ? `(${waiting + stuck}) Claude Team` : "Claude Team";
+  const wants = waiting + stuck + asking;
+  document.title = wants ? `(${wants}) Claude Team` : "Claude Team";
   // Kept for the drag handlers: the DOM is now packed by height, so its
   // order is a layout detail and no longer the order you see.
   PAINTED = blocks.filter(b => !b.orphan && !b.routines).map(b => b.project);

@@ -1,0 +1,37 @@
+Facts first, from the live page.
+
+The thing the code calls "line" (`/api/line`, the `.title` div) is Claude's `ai-title`. Underneath it sits a second line: your last prompt, swapped for what the session last said once it goes `ready`.
+
+Of the 13 cards up right now, 5 title lines say nothing about the work:
+
+| Session | Title line | Second line |
+|---|---|---|
+| Hassan, Nuno | *(empty — "no title yet")* | empty |
+| Tiago | *(empty)* | empty |
+| Ingrid | `clear-conversation` | "there are old sessions still open…" |
+| Alonso | `copy-review-before-publish` | empty |
+| Dmitri | `Blog 404 error` | `deploy acme` |
+
+Three of those have a cause I can name. Pid 241068's peer file still points at the transcript from before its `/clear` (`parkedJobId: 371afc38`); the live conversation is in `371afc38`, which the same block already prints under a second name, Ingrid. One conversation, two cards, one of them blank. Hassan and Nuno were 20 seconds old — blank was correct.
+
+One more fact that constrains the options: `ai-title` records carry **no timestamp** (checked across the four largest transcripts). Nothing can tell a fresh title from a stale one by clock. Byte position in the transcript can, and `scan_cached` already tracks offsets.
+
+---
+
+❓ **Q1** — **Which line do you mean?** The title line (`ai-title`, the one you can click and overwrite), or the whole two-line stack including the prompt/said line underneath?
+
+➡️ The title line. The second line does its job already — the `ready` → *said* swap is the best thing on the card.
+
+❓ **Q2** — **What should the line say?** Three shapes:
+
+**(a) Fallback chain.** Keep the ai-title, but reject the junk (a slash-command name, a title identical to the name, an empty one) and fall back to something derived — the basenames it has been editing, which `state["paths"]` already collects: *fleet.py · index.html*. Stable, changes rarely.
+
+**(b) Live activity.** Print what the session is doing this second: the newest unanswered `tool_use` and its target — *Edit index.html*, *Bash: python3 -m unittest*. Most informative for a busy session, useless for an idle one, and it churns every few seconds.
+
+**(c) Both, split by state** — the same trick the second line already plays. Title line = (a). Second line = the tool in flight while `busy`, what it said while `ready`, your prompt otherwise.
+
+➡️ (c). The two lines then answer two different questions: *what is this about* and *where is it now*. And it costs one new field in `_absorb` — the newest tool call's name and target, next to the `uses` dict that already records its id.
+
+❓ **Q3** — **Is the `/clear` split in scope?** Following `continued-in` / `parkedJobId` to the live transcript would fix Tiago's blank line and collapse the duplicate card. It is a separate bug from the line's content, and it is the reason 3 of today's 5 bad lines are bad.
+
+➡️ In scope, and first. No wording change helps a card that is reading a dead file.

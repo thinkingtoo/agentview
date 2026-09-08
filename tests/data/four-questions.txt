@@ -1,0 +1,28 @@
+All four settled. Remaining frontier — four decisions, then one that depends on the first.
+
+❓ **Q13** — **What is the bar for `need` being non-empty?** This decides whether the field means anything. Almost every finished turn ends with some polite question; if they all fill `need`, the field is noise by tomorrow.
+
+**(a) Any question it asked you.**
+**(b) Only a decision it cannot proceed without** — a real block. Halima's *"Aspetto solo la tua riga sul corpus"* qualifies; Camille's closing note does not.
+**(c) Any question, with a separate `blocked: true` flag for the real ones.**
+
+➡️ (b). One meaning per field. A session that can carry on without you is not asking you for anything, whatever it wrote in its last paragraph.
+
+❓ **Q14** — **What happens to a `need` when the session starts working again?** It was written at a stop; the next prompt usually answers it. The busy row shows activity now (Q11), so a stale `need` is hidden while it works — the gap is the stop *after* that, if the block gets discarded and no new line is written.
+
+➡️ Clear the file when the session goes busy. A missing line falls back to extraction (Q12); a stale one lies.
+
+❓ **Q15** — **Which language?** These sessions run in Italian, French, Dutch and English, and the person reading is the one who set that language.
+
+➡️ The language of the conversation. The hook says so in one clause, and the line then matches the prompt line under it instead of switching to English halfway down the card.
+
+❓ **Q16** — **Does the title line survive?** With `did` and `need` the card would carry three text lines under the name: `ai-title`, `did`, `need`. That is a tall card times thirteen. Two ways out:
+
+**(a) Keep all three.** The title is the stable subject, `did` the state.
+**(b) `did` replaces the title line.** The title becomes its fallback, used only until the session writes one. Click-to-edit stays exactly where it is — same line, same `/api/line`, same terminal-tab retitle — and the stale-title problem from the first round disappears on its own, since `did` is rewritten at every stop.
+
+➡️ (b). Of the 13 title lines up when we started, 5 said nothing about the work and one described different work than its own prompt. Something rewritten every turn beats something written once and never revisited.
+
+---
+
+Waiting on Q13 before I can put this one properly: whether a blocked `need` joins the header count and the tab title. Today the tab counts `waiting + stuck` and deliberately leaves `ready` out, because a finished session is not an alarm and it would read `(5)` all evening. A `ready` session that is blocked on your answer is a different animal from a `ready` session that is simply done — but only if Q13 lands on (b).

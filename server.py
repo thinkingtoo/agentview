@@ -11,6 +11,7 @@ from pathlib import Path
 
 import fleet
 import jump
+import lines
 import log
 import seen
 
@@ -189,7 +190,9 @@ class Handler(BaseHTTPRequestHandler):
             with log.timed("roster", 1.5):
                 blocks = fleet.roster()
             log.note_roster(blocks)
-            seen.forget({m["sessionId"] for b in blocks for m in b["members"]})
+            live = {m["sessionId"] for b in blocks for m in b["members"]}
+            seen.forget(live)
+            lines.forget(live)
             self._send(json.dumps({"blocks": blocks,
                                    "hold": fleet.config_value("hold", False),
                                    "chime": fleet.config_value("chime", True)}),

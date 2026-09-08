@@ -12,6 +12,7 @@ It generates nothing. Claude Code already writes everything the page shows:
 | Who is running, and how busy | `~/.claude/sessions/*.json` — the peer files |
 | What the session is about | the `ai-title` record in its transcript — Claude's own title, rewritten as it learns |
 | What it was last asked | the `last-prompt` record |
+| Where it left things, and what it wants | the session itself, asked as it stops (see below) |
 | Which branch | `gitBranch` on the transcript's user records |
 
 Names come from [claude-agent-names](https://github.com/sweatshop-ai/cc-agent-names),
@@ -52,6 +53,70 @@ rather than building the whole page. The click is also acknowledged before the
 request goes out — raising a terminal takes the focus off the page, and a
 browser throttles a page it is not showing, so feedback that waits for the
 response is feedback you never see.
+
+## What a session says about itself
+
+The two lines under a name answer two questions: **what is this**, and **where
+is it now**. Claude Code writes neither. Its `ai-title` is written once and
+rarely revisited — of thirteen title lines on this page one morning, five said
+nothing about the work (three empty, one `clear-conversation`, one the name of
+a slash command) and a sixth described a Dutch 404 while the session was
+deploying something else. The second line was worse: a finished session printed
+the *last line* of its last message, which is a sign-off as often as an ask, and
+a working session printed **your own last prompt back at you**.
+
+So the session is asked. A Stop hook (`hooks/stop_line.py`) gives it two fields
+as it finishes:
+
+| Field | What it is |
+|---|---|
+| `did` | Where the work stands. One sentence, in the language of the conversation. It **replaces** the `ai-title` line, which becomes its fallback. |
+| `ask` | The one thing it is blocked on, in its own words. |
+| `n` | How many things it needs from you before it can go further. `0` when it can carry on without you. |
+
+**Words when there is one, a count when there are more.** A single blocked
+question is short enough to answer from the page. Four of them are a trip to the
+terminal, and quoting the first of four misrepresents the size of the job — so
+the card says `4 answers needed`. It reads as a pair:
+
+```
+Design settled through Q16, nothing written yet.
+4 answers needed
+```
+
+**`n: 0` is the important half.** A card that wants nothing renders one line and
+stays short, so the taller cards are the ones asking. That is the alarm, done
+with height rather than colour.
+
+**The hook asks only when it has to.** If the session is already ending on a
+question, `ask_from()` reads it straight out of the transcript and the hook
+writes that line itself, silently. Paying an extra model turn to rewrite a line
+that is already right is the wrong half of the cost. Only when nothing readable
+is there does it block, and `stop_hook_active` — Claude Code's guard against a
+hook holding a session open forever — makes sure it blocks once and no more.
+Claude Code also *discards* a Stop-hook block on turns that end without
+re-invoking the model, so a line will occasionally be missing; extraction is the
+fallback, and it is deliberately conservative.
+
+**A read ask fills the words and does not raise the count.** Extraction can see
+a question. It cannot tell one that stops the session from one that offers to do
+more, and a tab that says `(6)` has to mean six. Only a session that wrote `n`
+itself joins `waiting` and `stuck` in the header and the tab title, and leads
+its block.
+
+**While it works, the line is the call in flight** — *Editing fleet.py*,
+*Reading 3 files*, or, for a Bash call, the description the caller already
+wrote. Between calls it falls back to the session's own running commentary. An
+MCP tool is addressed `mcp__<server>__<tool>`, which is a wire address; the page
+says *Gmail users drafts create*.
+
+**A need dies when the work resumes.** The prompt that restarted a session is
+the answer to what it asked, so the line is dropped the moment the session goes
+busy. A stale need is worse than none: it makes the page lie at the next stop.
+
+The lines live in `~/.local/state/claude-team/lines/`, beside `seen.json` and
+out of `config.json` — that file is yours to hand-edit, this one is rewritten by
+a hook. Sessions that are gone are forgotten on the next poll.
 
 ## Click a card, get the terminal
 
@@ -209,7 +274,8 @@ again carries a new `statusUpdatedAt`, so it comes back as ready by itself —
 nothing has to be cleared and nothing can go stale. Clicking a card marks it
 seen, whether or not the jump lands. A ready row prints **the last thing the
 session said to you** rather than the last thing you said to it: on a finished
-session, the newer of the two is the handover.
+session, the newer of the two is the handover — unless the session wrote its
+own line, which is better than either.
 
 **`waiting` does not always mean waiting for *you*.** Claude Code writes a
 `waitingFor` string — `input needed`, `sandbox request`, the dialog's own

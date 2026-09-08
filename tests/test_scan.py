@@ -196,3 +196,53 @@ class StartingASkill(unittest.TestCase):
         write(path, [{"type": "ai-title", "aiTitle": "Ordinary work"}], "w")
         fleet._cache.clear()
         self.assertFalse(fleet.scan_cached(path)["boss"])
+
+
+class WhatItIsDoing(unittest.TestCase):
+    """The call in flight, which is the busy row's whole content."""
+
+    def setUp(self):
+        self.path = Path(tempfile.mkdtemp()) / "t.jsonl"
+        fleet._cache.clear()
+
+    def test_the_call_in_flight_names_the_work(self):
+        write(self.path, [{"type": "assistant", "timestamp": "2026-09-08T10:00:00.000Z",
+                           "message": {"content": [
+                               {"type": "tool_use", "id": "t1", "name": "Edit",
+                                "input": {"file_path": "/x/fleet.py",
+                                          "old_string": "a", "new_string": "b"}}]}}], "w")
+        self.assertEqual(fleet.scan_cached(self.path)["doing"], "Editing fleet.py")
+
+    def test_an_answered_call_is_not_what_it_is_doing(self):
+        write(self.path, [{"type": "assistant", "timestamp": "2026-09-08T10:00:00.000Z",
+                           "message": {"content": [
+                               {"type": "tool_use", "id": "t1", "name": "Edit",
+                                "input": {"file_path": "/x/fleet.py"}}]}}], "w")
+        write(self.path, [{"type": "user", "timestamp": "2026-09-08T10:00:01.000Z",
+                           "message": {"content": [
+                               {"type": "tool_result", "tool_use_id": "t1"}]}}])
+        self.assertEqual(fleet.scan_cached(self.path)["doing"], "")
+
+    def test_a_call_the_session_has_talked_past_is_not_running(self):
+        # The same rule `pending` uses: an unanswered call that is no longer
+        # the newest thing said is a result that is never coming.
+        write(self.path, [{"type": "assistant", "timestamp": "2026-09-08T10:00:00.000Z",
+                           "message": {"content": [
+                               {"type": "tool_use", "id": "t1", "name": "Edit",
+                                "input": {"file_path": "/x/fleet.py"}}]}}], "w")
+        write(self.path, [{"type": "assistant", "timestamp": "2026-09-08T10:05:00.000Z",
+                           "message": {"content": [{"type": "text", "text": "Done."}]}}])
+        self.assertEqual(fleet.scan_cached(self.path)["doing"], "")
+
+    def test_a_written_file_is_not_kept_in_memory(self):
+        # A Write carries the whole file in its input. Ten sessions holding
+        # their last write is how a page that reads incrementally to stay
+        # cheap gets expensive again.
+        big = "x" * 200_000
+        write(self.path, [{"type": "assistant", "timestamp": "2026-09-08T10:00:00.000Z",
+                           "message": {"content": [
+                               {"type": "tool_use", "id": "t1", "name": "Write",
+                                "input": {"file_path": "/x/big.txt", "content": big}}]}}], "w")
+        self.assertEqual(fleet.scan_cached(self.path)["doing"], "Writing big.txt")
+        state = fleet._cache[("state", str(self.path))]
+        self.assertLess(len(json.dumps(state["uses"], default=str)), 2000)
