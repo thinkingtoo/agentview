@@ -523,12 +523,21 @@ function place(html) {
 function speaker() {
   // A browser makes no sound until you have interacted with the page, and a
   // context built before that stays suspended for good. So it is created on
-  // demand and asked to resume every time.
+  // demand, and `awake` asks it to resume every time.
   const Ctx = window.AudioContext || window.webkitAudioContext;
   if (!Ctx) return null;
   if (!SPEAKER) SPEAKER = new Ctx();
-  if (SPEAKER.state === "suspended") SPEAKER.resume();
   return SPEAKER;
+}
+
+// resume() lands a moment after the call, and the state reads `suspended`
+// until it does, so it is waited for. Without a click behind it the browser
+// never settles the promise at all, hence the time limit.
+async function awake(ctx) {
+  if (ctx.state === "suspended")
+    await Promise.race([ctx.resume().catch(() => {}),
+                        new Promise(done => setTimeout(done, 300))]);
+  return ctx.state === "running";
 }
 
 // One bell stroke. Everything else about the two sounds is how long it
@@ -574,9 +583,9 @@ function blip(ctx) {
   stroke(ctx, ctx.currentTime + 0.02, 1174.7, 0.13, 0.3);
 }
 
-function play(shape) {
+async function play(shape) {
   const ctx = speaker();
-  if (!ctx || ctx.state !== "running") { muzzled(true); return false; }
+  if (!ctx || !await awake(ctx)) { muzzled(true); return false; }
   muzzled(false);
   shape(ctx);
   return true;
@@ -965,8 +974,9 @@ document.getElementById("sound").addEventListener("click", async () => {
 // Any click at all counts as that gesture, so the first one anywhere on the
 // page arms the speaker -- you should not have to press the button to be
 // told about the first question of the day.
-const unmuzzle = () => {
-  if (CHIME && speaker()?.state === "running") {
+const unmuzzle = async () => {
+  const ctx = CHIME && speaker();
+  if (ctx && await awake(ctx)) {
     muzzled(false);
     removeEventListener("pointerdown", unmuzzle);
   }

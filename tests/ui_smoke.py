@@ -484,6 +484,24 @@ with sync_playwright() as pw:
             body=json.dumps(served["body"])))
         page.reload(wait_until="load")
         page.wait_for_selector(".block")
+        # A speaker that went quiet is woken by resume(), and resume() only
+        # lands a moment later: the state still reads `suspended` on the line
+        # after the call. Reading it there dropped the sound every time and
+        # called the browser guilty.
+        woke = page.evaluate("""async () => {
+          const ctx = speaker();
+          await ctx.suspend();
+          let notes = 0;
+          const make = ctx.createOscillator;
+          ctx.createOscillator = function () { notes++; return make.call(this); };
+          const rang = await ring();
+          ctx.createOscillator = make;
+          return { rang, notes, state: ctx.state,
+                   button: document.getElementById("sound").textContent };
+        }""")
+        check("uno speaker sospeso si risveglia e suona",
+              woke["rang"] is True and woke["notes"] > 0 and woke["state"] == "running"
+              and woke["button"] == "chime", woke)
         # Making a real sound needs a real gesture and a real speaker. What
         # is checked here is *when* it rings, which is the part that can be
         # wrong -- a chime on every poll would be unbearable.
