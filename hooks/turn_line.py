@@ -19,6 +19,7 @@ machine, at every stop.
 FAIL-OPEN. Every path exits 0 and none of them blocks a prompt.
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -53,6 +54,10 @@ def begin(payload, root=None):
 
 
 def main():
+    # A headless `claude -p` run (routines, SDK) has no page line worth keeping, and the
+    # instruction below would only cost it a denied tool call under its allowlist. Skip.
+    if os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").startswith("sdk"):
+        return
     try:
         payload = json.load(sys.stdin)
         if isinstance(payload, dict):
