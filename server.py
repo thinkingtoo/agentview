@@ -21,9 +21,8 @@ HERE = Path(__file__).resolve().parent
 
 def setting(key, default):
     try:
-        with (HERE / "config.json").open(encoding="utf-8") as fh:
-            return type(default)(json.load(fh).get(key, default))
-    except (OSError, ValueError, TypeError):
+        return type(default)(fleet.read_config().get(key, default))
+    except (ValueError, TypeError):
         return default
 
 

@@ -64,15 +64,20 @@ DEFAULT_SHELVES = [
 ]
 
 CONFIG = Path(__file__).resolve().parent / "config.json"
+# What ships with the repo. `config.json` is the user's own -- pins, labels,
+# assignments, the shelves of one machine -- and is never committed.
+EXAMPLE = CONFIG.with_name("config.example.json")
 
 
 def read_config():
-    try:
-        with CONFIG.open(encoding="utf-8") as fh:
-            got = json.load(fh)
+    for path in (CONFIG, EXAMPLE):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                got = json.load(fh)
+        except (OSError, ValueError):
+            continue
         return got if isinstance(got, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    return {}
 
 
 def config_value(key, default):

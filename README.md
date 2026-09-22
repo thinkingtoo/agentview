@@ -17,7 +17,7 @@ It generates nothing. Claude Code already writes everything the page shows:
 | Where it left things, and what it wants | the session itself, asked as it stops (see below) |
 | Which branch | `gitBranch` on the transcript's user records |
 
-Names come from [claude-agent-names](https://github.com/sweatshop-ai/cc-agent-names),
+Names come from [cc-agent-names](https://github.com/sweatshop-ai/cc-agent-names),
 but nothing here requires it — an unnamed session shows whatever Claude Code
 called it.
 
@@ -93,6 +93,10 @@ the words and never raises the count.
 ```bash
 python3 server.py          # http://127.0.0.1:8765
 ```
+
+Settings live in `config.json`, which is yours and not in the repo:
+`config.example.json` is read until you copy it there, and the page writes
+its own changes -- pins, labels, assignments -- into `config.json` alone.
 
 Or as a service that survives reboot:
 
@@ -435,10 +439,10 @@ at the wrong size first and then jumps.
 
 The hard part is that a working directory is not a project name.
 
-`~/Projects/clients/harbor` is the **harbor** project, but its
-git root is `clients` — which would collapse every client into one block.
-Its basename works, until `~/Projects/clients/acme/site` shows
-up as `tiroir` and collides with the unrelated site project.
+`~/Projects/clients/harbor` is the **harbor** project, but its git root is
+`clients` — which would collapse every client into one block. Its basename
+works, until `~/Projects/clients/acme/site` shows up as `site` and collides
+with the unrelated site project.
 
 So `config.json` declares which directories are **shelves**: places that hold
 projects without being one.
