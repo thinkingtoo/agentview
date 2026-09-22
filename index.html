@@ -614,7 +614,13 @@ function announce(blocks) {
   const waiting = new Set(), ready = new Set();
   for (const b of blocks)
     for (const m of b.members) {
-      if (m.flag === "waiting") waiting.add(m.sessionId);
+      // `blocked` rings with `waiting`, exactly as the header counts it: a
+      // session that wrote down what it is blocked on is asking, and its turn
+      // being over does not make it ready. Without this a session that reports
+      // a blocker through `team-line --n 1` plays the tick -- the sound that
+      // means nothing is wanted from you (2026-09-22: a real blocker went
+      // unheard that way).
+      if (m.flag === "waiting" || m.blocked) waiting.add(m.sessionId);
       else if (m.flag === "ready") ready.add(m.sessionId);
     }
   const asks = arrived(waiting, WAITING);
