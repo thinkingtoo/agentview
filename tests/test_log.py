@@ -129,7 +129,7 @@ class Flags(unittest.TestCase):
         log.LOG = self.old
 
     def roster(self, **flags):
-        return [{"members": [{"sessionId": sid, "name": sid.upper(), "flag": f}
+        return [{"members": [{"key": sid, "name": sid.upper(), "flag": f}
                              for sid, f in flags.items()]}]
 
     def test_the_first_sight_of_a_session_is_not_a_transition(self):

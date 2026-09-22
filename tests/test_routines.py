@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
+from providers import claude
 
 CFG = Path("/home/alice/.claude")
 SCRIPT = "bash /home/alice/.claude/routines/nightly-report.sh"
@@ -10,34 +11,34 @@ SCRIPT = "bash /home/alice/.claude/routines/nightly-report.sh"
 
 class RoutineOf(unittest.TestCase):
     def test_a_timer_run_is_named_after_its_script(self):
-        got = fleet.routine_of({"entrypoint": "sdk-cli", "pid": 1}, CFG,
+        got = claude.routine_of({"entrypoint": "sdk-cli", "pid": 1}, CFG,
                                ancestry=[SCRIPT])
         self.assertEqual(got, "nightly-report")
 
     def test_the_script_may_be_further_up_the_tree(self):
         # A routine that pipes its output runs under a shell of its own.
-        got = fleet.routine_of({"entrypoint": "sdk-cli", "pid": 1}, CFG,
+        got = claude.routine_of({"entrypoint": "sdk-cli", "pid": 1}, CFG,
                                ancestry=["/bin/sh -c claude -p ... | tee log", SCRIPT])
         self.assertEqual(got, "nightly-report")
 
     def test_a_terminal_session_is_never_a_routine(self):
         # `cli` settles it, whatever the ancestry says -- a routine's own
         # shell could well be the thing you started this terminal from.
-        got = fleet.routine_of({"entrypoint": "cli", "pid": 1}, CFG,
+        got = claude.routine_of({"entrypoint": "cli", "pid": 1}, CFG,
                                ancestry=[SCRIPT])
         self.assertEqual(got, "")
 
     def test_headless_without_a_routine_script_is_not_claimed(self):
         # `claude -p` typed by hand is headless too. Calling it a routine
         # would be a guess, and it would go missing from its own project.
-        got = fleet.routine_of({"entrypoint": "sdk-cli", "pid": 1}, CFG,
+        got = claude.routine_of({"entrypoint": "sdk-cli", "pid": 1}, CFG,
                                ancestry=["bash /home/alice/bin/something.sh"])
         self.assertEqual(got, "")
 
 
 def session(name, routine="", project=None, **kw):
     base = {"name": name, "routine": routine, "project": project, "status": "idle",
-            "flag": None, "updatedAt": 0, "branch": "", "sessionId": name,
+            "flag": None, "updatedAt": 0, "branch": "", "key": name,
             "boss": False, "team": [], "blocked": False}
     base.update(kw)
     return base
@@ -46,7 +47,7 @@ def session(name, routine="", project=None, **kw):
 class Grouping(unittest.TestCase):
     def roster(self, members):
         real = fleet.sessions
-        fleet.sessions = lambda cfg=None: members
+        fleet.sessions = lambda providers=None: members
         try:
             return fleet.roster()
         finally:
@@ -98,7 +99,7 @@ class Teams(unittest.TestCase):
 
     def roster(self, members):
         real = fleet.sessions
-        fleet.sessions = lambda cfg=None: members
+        fleet.sessions = lambda providers=None: members
         try:
             return fleet.roster()
         finally:
@@ -149,7 +150,7 @@ class TwoBosses(unittest.TestCase):
 
     def roster(self, members):
         real = fleet.sessions
-        fleet.sessions = lambda cfg=None: members
+        fleet.sessions = lambda providers=None: members
         try:
             return fleet.roster()
         finally:

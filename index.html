@@ -144,6 +144,7 @@
   @keyframes shimmer { from { background-position:150% 0; } to { background-position:-50% 0; } }
   .bg-tag { font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint);
             border:1px solid var(--line); border-radius:5px; padding:1px 5px; }
+  .bg-tag.extra { text-transform:none; letter-spacing:0; white-space:nowrap; }   /* a model name is not a label */
   .bg-tag.boss { color:var(--claude); border-color:color-mix(in srgb,var(--claude) 45%,transparent); }
   /* The team, under the one who dispatches to it. */
   .row.under { margin-left:16px; border-left:2px solid var(--line); }
@@ -196,6 +197,7 @@ let SPEAKER = null;         // the audio context, built on your first click
 let MUZZLED = false;        // wanted to ring, and the browser would not have it
 let ORDER = { blocks: [], members: {} };   // and where that was
 let PAINTED = [];           // the order you see, which the DOM no longer is
+let PROVIDERS = {};         // who answered the last poll, and who did not
 const OPEN = new Set();     // sessions you unfolded by hand
 let query = "";
 let editing = false;
@@ -228,7 +230,7 @@ function where(m) {
   // that may be ellipsised, because the project name already said it.
   const bits = [];
   if (m.tmux) bits.push("tmux " + esc(String(m.tmux).split(".").pop()));
-  bits.push("pid " + esc(m.pid));
+  if (m.pid) bits.push("pid " + esc(m.pid));
   if (m.startedAt) bits.push(`up ${since(m.startedAt)}`);
   // The path goes last because it is the part that may be ellipsised: the
   // project name above already said where this is.
@@ -242,12 +244,12 @@ function stub(m) {
   const alarm = ["waiting", "stuck", "ready"].includes(m.flag) ? m.flag : "";
   return `<div class="row stub ${alarm} ${m.status === "busy" ? "working" : ""}
         ${m.nested ? "under" : ""}"
-        data-sid="${esc(m.sessionId)}" data-pid="${esc(m.pid)}"
+        data-sid="${esc(m.key)}"
         draggable="true" title="click to open">
     <div class="rhead">
       <span class="fold">▸</span>
       ${mark(m)}
-      <span class="nm">${esc(m.name)}</span>${badge(m)}${flagOf(m)}
+      <span class="nm">${esc(m.name || named(m))}</span>${badge(m)}${flagOf(m)}
       <span class="ago">${says(m)} · ${ago(m.updatedAt)}</span>
     </div>
   </div>`;
@@ -257,6 +259,13 @@ function mark(m) {
   // A tick reads as done in a way no colour of dot does.
   return m.flag === "ready" ? `<span class="tick">✓</span>`
     : `<span class="dot ${esc(m.status)}"></span>`;
+}
+
+function named(m) {
+  // A provider that has no names for its sessions -- Codex has none -- puts
+  // its own name where one would go; the title underneath says the rest.
+  const p = String(m.provider || "");
+  return p ? p[0].toUpperCase() + p.slice(1) : "(unnamed)";
 }
 
 function says(m) {
@@ -280,9 +289,13 @@ function badge(m) {
   // another block has to say so in words.
   const to = m.reportsTo && !m.nested
     ? `<span class="reports">↳ ${esc(m.reportsTo)}</span>` : "";
+  // A provider may attach facts of its own -- a model, a cost -- that the
+  // page shows as badges without knowing what they mean.
+  const extras = Object.entries(m.extras || {}).map(([k, v]) =>
+    `<span class="bg-tag extra" title="${esc(k)}">${esc(v)}</span>`).join("");
   return (m.routine ? `<span class="bg-tag">${esc(m.routine)}</span>`
     : m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "")
-    + boss + job + to;
+    + boss + job + to + extras;
 }
 
 function flagOf(m) {
@@ -334,16 +347,15 @@ function row(m) {
       : m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : "";
   return `<div class="row ${m.canJump ? "can" : ""} ${alarm}
         ${m.status === "busy" ? "working" : ""} ${m.nested ? "under" : ""}"
-        data-pid="${esc(m.pid)}"
-        data-sid="${esc(m.sessionId)}" draggable="true">
+        data-sid="${esc(m.key)}" draggable="true">
     <div class="rhead">
       ${mark(m)}
-      ${fold}<span class="nm">${esc(m.name)}</span>${tag}${flag}${go}
+      ${fold}<span class="nm">${esc(m.name || named(m))}</span>${tag}${flag}${go}
       <span class="ago">${says(m)} · ${ago(m.updatedAt)}</span>
     </div>
     ${subject && subject.trim() === (m.name || "").trim() ? "" : `
     <div class="title edit ${m.overridden ? "own" : ""}" data-edit="line"
-         data-sid="${esc(m.sessionId)}">${esc(subject) || "<span style='color:var(--faint)'>—</span>"}</div>`}
+         data-sid="${esc(m.key)}">${esc(subject) || "<span style='color:var(--faint)'>—</span>"}</div>`}
     ${line}
     ${m.boss && m.team?.length
       ? `<div class="team">↳ ${m.team.map(esc).join(" · ")}</div>` : ""}
@@ -355,14 +367,14 @@ function row(m) {
 function assignBar(m) {
   if (m.assigned) {
     return `<div class="assign"><span class="own">assigned</span>
-      <span class="clear" data-sid="${esc(m.sessionId)}">clear</span></div>`;
+      <span class="clear" data-sid="${esc(m.key)}">clear</span></div>`;
   }
   if (!m.orphan) return "";
   const guess = m.suggestion
-    ? `<span class="guess" data-sid="${esc(m.sessionId)}" data-project="${esc(m.suggestion)}">
+    ? `<span class="guess" data-sid="${esc(m.key)}" data-project="${esc(m.suggestion)}">
          ${esc(m.suggestion)}?</span>` : "";
   return `<div class="assign">${guess}
-    <span class="edit assign-edit" data-edit="assign" data-sid="${esc(m.sessionId)}">assign…</span>
+    <span class="edit assign-edit" data-edit="assign" data-sid="${esc(m.key)}">assign…</span>
   </div>`;
 }
 
@@ -377,7 +389,7 @@ function unfolded(b, m) {
   // you clicked; a search shows every row it matched; and a row you opened
   // stays open until you fold it again.
   if (b.members.length < 2) return true;
-  if (m.sessionId === b.members[0].sessionId) return true;
+  if (m.key === b.members[0].key) return true;
   if (["waiting", "stuck"].includes(m.flag)) return true;
   // A worker's `ready` is its boss's business, not yours: it keeps the tick
   // so he can see it at a glance, and stays folded so it does not cost you
@@ -385,7 +397,7 @@ function unfolded(b, m) {
   // -- a permission prompt on a worker is answered by you, not by him.
   if (m.flag === "ready" && !m.reportsTo) return true;
   if (query.trim().length >= 3) return true;
-  return OPEN.has(m.sessionId);
+  return OPEN.has(m.key);
 }
 
 function block(b) {
@@ -418,7 +430,7 @@ function block(b) {
       const nested = leads.has(m.reportsTo);
       return unfolded(b, m)
         ? row({ ...m, nested, orphan: b.orphan,
-                foldable: m.sessionId !== b.members[0].sessionId })
+                foldable: m.key !== b.members[0].key })
         : stub({ ...m, nested });
     }).join("")}
   </section>`;
@@ -475,7 +487,7 @@ function ordered(blocks) {
     ORDER = {
       blocks: blocks.map(b => b.project),
       members: Object.fromEntries(
-        blocks.map(b => [b.project, b.members.map(m => m.sessionId)])),
+        blocks.map(b => [b.project, b.members.map(m => m.key)])),
     };
     return blocks;
   }
@@ -486,8 +498,8 @@ function ordered(blocks) {
   return [...blocks]
     .sort((a, b) => rank(ORDER.blocks, a.project) - rank(ORDER.blocks, b.project))
     .map(b => ({ ...b, members: [...b.members].sort((x, y) =>
-      rank(ORDER.members[b.project], x.sessionId)
-      - rank(ORDER.members[b.project], y.sessionId)) }));
+      rank(ORDER.members[b.project], x.key)
+      - rank(ORDER.members[b.project], y.key)) }));
 }
 
 const GAP = 14;
@@ -614,8 +626,8 @@ function announce(blocks) {
   const waiting = new Set(), ready = new Set();
   for (const b of blocks)
     for (const m of b.members) {
-      if (m.flag === "waiting") waiting.add(m.sessionId);
-      else if (m.flag === "ready") ready.add(m.sessionId);
+      if (m.flag === "waiting") waiting.add(m.key);
+      else if (m.flag === "ready") ready.add(m.key);
     }
   const asks = arrived(waiting, WAITING);
   const done = arrived(ready, READY);
@@ -660,7 +672,8 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { blocks: all, hold, chime } = await r.json();
+    const { blocks: all, hold, chime, providers } = await r.json();
+    PROVIDERS = providers || {};
     if (busyWithUser()) return;
     // Read back on every poll, so editing config.json by hand still works.
     HOLD = !!hold;
@@ -708,7 +721,10 @@ function paint() {
   document.getElementById("count").innerHTML =
     `${total} sessions · ${busy} busy · ${blocks.filter(b => !b.routines).length} projects`
     + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
-    + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "");
+    + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "")
+    // One provider down is that provider's badge, not a blank page.
+    + Object.entries(PROVIDERS).filter(([, p]) => !p.ok).map(([name, p]) =>
+        ` &nbsp;·&nbsp; <span class="alarm" title="${esc(p.error)}">${esc(name)} down</span>`).join("");
   const wants = waiting + stuck + asking;
   document.title = wants ? `(${wants}) Claude Team` : "Claude Team";
   // Kept for the drag handlers: the DOM is now packed by height, so its
@@ -737,8 +753,19 @@ document.getElementById("main").addEventListener("click", async ev => {
     OPEN.delete(chevron.closest(".row").dataset.sid);
     return paint();
   }
-  const row = ev.target.closest(".row.can");
+  const row = ev.target.closest(".row");
   if (!row) return;
+  // Looking is looking. A row with no terminal to raise -- a routine, a
+  // provider that cannot say where its session runs -- is still marked
+  // read by the click, so the tick goes and the count comes down.
+  if (!row.classList.contains("can")) {
+    fetch("/api/seen", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+      body: JSON.stringify({ key: row.dataset.sid }),
+    }).then(load).catch(() => {});
+    return;
+  }
   // Acknowledge the click *now*. Raising the terminal takes the focus off
   // this page, and a browser throttles a page it is not showing -- feedback
   // that waits for the response is feedback you never see.
@@ -749,7 +776,7 @@ document.getElementById("main").addEventListener("click", async ev => {
     const r = await fetch("/api/jump", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-      body: JSON.stringify({ pid: Number(row.dataset.pid) }),
+      body: JSON.stringify({ key: row.dataset.sid }),
     });
     const out = await r.json();
     if (!out.ok) {
@@ -797,8 +824,8 @@ document.getElementById("main").addEventListener("click", ev => {
       const body = kind === "name"
         ? { project, label: input.value }
         : kind === "assign"
-          ? { sessionId: sid, project: input.value }
-          : { sessionId: sid, text: input.value };
+          ? { key: sid, project: input.value }
+          : { key: sid, text: input.value };
       await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Fleet": "1" },
@@ -905,7 +932,7 @@ async function assign(sid, project) {
   await fetch("/api/assign", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ sessionId: sid, project }),
+    body: JSON.stringify({ key: sid, project }),
   });
   load();
 }

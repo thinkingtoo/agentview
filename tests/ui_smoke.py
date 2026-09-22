@@ -21,7 +21,7 @@ CFG = pathlib.Path(__file__).resolve().parent.parent / "config.json"
 def _member(name, status, stuck, quiet, sid):
     return {"name": name, "status": status, "kind": "interactive",
             "cwd": "/home/alice/Projects/maple", "tmux": "", "pid": 111,
-            "sessionId": sid, "updatedAt": 1787830000000, "project": "maple",
+            "key": sid, "updatedAt": 1787830000000, "project": "maple",
             "title": f"{name} at work", "prompt": "carry on", "branch": "main",
             "canJump": True, "assigned": False, "suggestion": None,
             "quietFor": quiet, "toolFor": quiet if stuck == "tool" else None,
@@ -151,7 +151,7 @@ def untitle(sid):
     """
     req = urllib.request.Request(
         "http://127.0.0.1:8765/api/line",
-        data=json.dumps({"sessionId": sid, "text": ""}).encode(),
+        data=json.dumps({"key": sid, "text": ""}).encode(),
         headers={"Content-Type": "application/json", "X-Fleet": "1"})
     try:
         urllib.request.urlopen(req, timeout=10).read()

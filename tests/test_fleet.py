@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
+from providers import claude
 
 SHELVES = [
     "/home/alice",
@@ -62,7 +63,7 @@ class Summary(unittest.TestCase):
         with path.open("w", encoding="utf-8") as fh:
             for r in records:
                 fh.write(json.dumps(r) + "\n")
-        fleet._cache.clear()
+        claude._cache.clear()
         return path
 
     def test_the_last_ai_title_wins(self):
@@ -72,7 +73,7 @@ class Summary(unittest.TestCase):
             {"type": "user", "message": {}},
             {"type": "ai-title", "aiTitle": "Cloud instance naming plugin"},
         ])
-        self.assertEqual(fleet.scan_cached(path)["title"],
+        self.assertEqual(claude.scan_cached(path)["title"],
                          "Cloud instance naming plugin")
 
     def test_last_prompt_and_branch_come_back_too(self):
@@ -82,7 +83,7 @@ class Summary(unittest.TestCase):
             {"type": "user", "message": {}, "gitBranch": "dev"},
             {"type": "last-prompt", "lastPrompt": "now ship it"},
         ])
-        summary = fleet.scan_cached(path)
+        summary = claude.scan_cached(path)
         self.assertEqual(summary["prompt"], "now ship it")
         self.assertEqual(summary["branch"], "dev")
 
@@ -92,13 +93,13 @@ class Summary(unittest.TestCase):
         path = self.write([
             {"type": "last-prompt", "lastPrompt": "# Nightly report routine\n\nYou are..."},
         ])
-        summary = fleet.scan_cached(path)
+        summary = claude.scan_cached(path)
         self.assertEqual(summary["title"], "")
         self.assertTrue(summary["prompt"].startswith("# Nightly report"))
 
     def test_a_detached_head_is_not_a_branch(self):
         path = self.write([{"type": "user", "message": {}, "gitBranch": "HEAD"}])
-        self.assertEqual(fleet.scan_cached(path)["branch"], "")
+        self.assertEqual(claude.scan_cached(path)["branch"], "")
 
 
 class Paths(unittest.TestCase):

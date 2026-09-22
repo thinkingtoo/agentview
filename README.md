@@ -1,7 +1,9 @@
 # Claude Team
 
 A local page showing what every Claude Code session on this machine is working
-on, grouped by project.
+on, grouped by project — and, since the provider layer, every Codex session
+too. Linux only: it reads `/proc`, and a jump talks to WezTerm, tmux or
+Konsole.
 
 ![fleet](docs/screenshot.jpg)
 
@@ -18,6 +20,73 @@ It generates nothing. Claude Code already writes everything the page shows:
 Names come from [claude-agent-names](https://github.com/sweatshop-ai/cc-agent-names),
 but nothing here requires it — an unnamed session shows whatever Claude Code
 called it.
+
+## Providers
+
+The page does not know Claude Code. It knows *providers*: one module each
+under `providers/`, and each answers one question — which of its sessions are
+alive right now, and how is each one doing. The core (`fleet.py`) turns those
+facts into rows: the project, the flag, the two lines, the order.
+
+```python
+class Provider:
+    name: str                    # "claude", "codex" -- no colon
+    capabilities: set[str]       # jump, branch, waiting, name, status
+
+    def live(self) -> list[dict]: ...     # the sessions alive now
+    def jump(self, session): ...          # optional; None = use the pid
+```
+
+A session needs five things: `id` (stable within the provider), `cwd`,
+`status` (`busy` | `idle` | `waiting`) and `updatedAt` — milliseconds epoch
+of the moment the status changed, not the last activity, because that is the
+moment the *ready* tick is keyed to. Everything else is optional and the core
+fills in what a provider leaves out; nothing a conforming provider sends can
+make the page throw. `extras` is a small dict of strings the page shows as
+badges without knowing what they mean — a model, a cost.
+
+Two capabilities change what the core does. Without `waiting` the chime never
+rings for that provider, because it cannot tell a question from work. Without
+`jump` no row of its can raise a terminal. The others say whether a missing
+field is absent or will never exist: a Claude row without a branch is a
+session outside a repo, a Codex row without a name is a provider that has no
+names.
+
+Every store is keyed `provider:id` — `assign` and `lines` in `config.json`,
+`seen.json` — and a bare id left over from before is migrated to `claude:` at
+start-up. Each `live()` runs under a time budget and inside a `try`: a
+provider that fails a poll gets a *down* badge next to the count and the
+others carry on, and its read-marks are left alone until it is back, so a
+missed round cannot bring everything you had read back as ready.
+
+### Claude Code
+
+Peer files, transcripts, the `team-line` hook: everything above. It is the
+complete case, which is why the contract was designed on the other one.
+
+### Codex
+
+Codex gives the disk and withholds the state. `~/.codex/state_5.sqlite` has a
+row per thread — cwd, branch, the first prompt as a title, model, tokens, and
+no name on any of the 552 rows here. `~/.codex/sessions/*/rollout-*.jsonl` is
+the transcript, written from the moment the session starts; `task_started`
+means busy, `task_complete` and `turn_aborted` idle, `agent_message` is what
+it said. And `~/.codex/thread-writer-locks/<id>.lock` appears when a session
+starts — and **stays behind after a SIGKILL**, so the directory alone lies.
+
+A Codex session is live when its lock exists *and* some process holds its
+rollout open. A running `codex` keeps the file in `/proc/<pid>/fd`, and the
+file name carries the thread id, so pid and session match exactly. That pid
+is what a click jumps with. Where `/proc` cannot be read — hidepid, a
+container, another user's process — the row shows without a jump; no pid is
+invented. The `/proc` walk costs ~26 ms on this machine and happens once per
+new lock, not once per poll: a holder is remembered and re-checked with one
+`readlink`, and an orphaned lock is remembered too.
+
+Codex knows busy from idle and nothing about waiting, so it declares neither
+`waiting` nor `status`, and a Codex row never rings. It has no hook either,
+so its two lines come from the last thing it said — the fallback that fills
+the words and never raises the count.
 
 ## Run it
 
@@ -442,7 +511,9 @@ terminal (including tmux-inside-WezTerm and a headless session with nowhere to
 go), project resolution (including the `acme › site` and on-a-shelf
 cases), reading the summary records out of a transcript, telling a routine
 from a hand-run `claude -p`, a boss from a session that has merely read the
-skill, and the log — that a heartbeat alone says nothing, that a repeated
+skill, the provider contract (a minimal session fills every field the page
+reads, a provider that raises or stalls is a badge and not a blank page, a
+Codex lock with nobody behind it is an orphan), and the log — that a heartbeat alone says nothing, that a repeated
 error is written once, and that a fast operation writes no line at all.
 
 **Every test points at the code the page actually calls.** There used to be a

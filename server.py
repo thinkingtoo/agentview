@@ -5,7 +5,6 @@ Bound to 127.0.0.1 on purpose: the page shows your prompts verbatim, which is
 client work, and occasionally a credential someone pasted into an error.
 """
 import json
-import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -13,7 +12,9 @@ import fleet
 import jump
 import lines
 import log
+import providers
 import seen
+from providers import claude
 
 HERE = Path(__file__).resolve().parent
 
@@ -61,7 +62,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "order", "name", "line", "assign", "hold", "chime")
+    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime")
 
     def do_POST(self):
         if not self._local():
@@ -94,19 +95,29 @@ class Handler(BaseHTTPRequestHandler):
                                    if k in ("message", "stack", "source", "where")})
         self._send(json.dumps({"ok": True}), "application/json")
 
-    def _jump(self, body):
-        try:
-            pid = int(body["pid"])
-        except (ValueError, KeyError, TypeError):
-            return self.send_error(400, "expected {pid}")
-        # Only ever act on a pid Claude Code itself registered as a session.
-        rec = fleet.live_session(pid)
-        if not rec:
+    def _seen(self, body):
+        """You looked. That is all a click on a row without a terminal means,
+        and it is enough: the tick goes, the count comes down."""
+        key = body.get("key")
+        if not isinstance(key, str):
+            return self.send_error(400, "expected {key}")
+        if not fleet.look(key):
             return self.send_error(404, "no such live session")
-        # Looking is looking, whether or not the terminal comes to the front.
-        seen.mark(rec.get("sessionId"), rec.get("statusUpdatedAt"))
-        done = jump.jump(pid, rec.get("tmux") or "")
-        log.event("jumped", pid=pid, name=rec.get("name"), **done)
+        self._send(json.dumps({"ok": True}), "application/json")
+
+    def _jump(self, body):
+        key = body.get("key")
+        if not isinstance(key, str):
+            return self.send_error(400, "expected {key}")
+        # The key names a provider and a session; the provider says whether
+        # it is still alive. Only ever act on one that is.
+        hit = fleet.look(key)          # looking is looking, whatever comes next
+        if not hit:
+            return self.send_error(404, "no such live session")
+        provider, session = hit
+        done = fleet.jump_to(provider, session)
+        log.event("jumped", key=key, pid=session.get("pid"),
+                  name=session.get("name"), **done)
         self._send(json.dumps(done), "application/json")
 
     def _hold(self, body):
@@ -152,48 +163,58 @@ class Handler(BaseHTTPRequestHandler):
         self._send(json.dumps({"ok": True}), "application/json")
 
     def _assign(self, body):
-        sid, project = body.get("sessionId"), body.get("project")
-        if not isinstance(sid, str) or not isinstance(project, str):
-            return self.send_error(400, "expected {sessionId, project}")
+        key, project = body.get("key"), body.get("project")
+        if not isinstance(key, str) or not isinstance(project, str):
+            return self.send_error(400, "expected {key, project}")
         project = project.strip()
         assign = fleet.config_value("assign", {})
         # Empty puts the session back where its directory says it belongs.
-        assign.pop(sid, None) if not project else assign.update({sid: project})
+        assign.pop(key, None) if not project else assign.update({key: project})
         fleet.write_config({"assign": assign})
         self._send(json.dumps({"ok": True, "project": project}), "application/json")
 
     def _line(self, body):
-        sid, text = body.get("sessionId"), body.get("text")
-        if not isinstance(sid, str) or not isinstance(text, str):
-            return self.send_error(400, "expected {sessionId, text}")
+        key, text = body.get("key"), body.get("text")
+        if not isinstance(key, str) or not isinstance(text, str):
+            return self.send_error(400, "expected {key, text}")
         text = text.strip()
-        lines = fleet.config_value("lines", {})
-        lines.pop(sid, None) if not text else lines.update({sid: text})
-        fleet.write_config({"lines": lines})
+        own = fleet.config_value("lines", {})
+        own.pop(key, None) if not text else own.update({key: text})
+        fleet.write_config({"lines": own})
 
         # The tab in the terminal has to say the same thing, or you end up
-        # hunting for a session whose tab still carries the old title.
+        # hunting for a session whose tab still carries the old title. A
+        # session with no pid has no tab: the line in config.json is all.
         ran = []
-        for s in fleet.sessions():
-            if s["sessionId"] == sid:
-                ran = jump.set_title(s["pid"], s["tmux"], text)
-                break
+        hit = fleet.find(key)
+        if hit and isinstance(hit[1].get("pid"), int):
+            ran = jump.set_title(hit[1]["pid"], hit[1].get("tmux") or "", text)
         # What was actually run on the terminal, not just what was intended:
         # an empty list here is a rename that silently did nothing.
-        log.event("retitle", sessionId=sid, text=text, ran=ran)
+        log.event("retitle", key=key, text=text, ran=ran)
         self._send(json.dumps({"ok": True, "ran": ran}), "application/json")
 
     def do_GET(self):
         if self.path.startswith("/api/roster"):
             # A poll is expected to be fast. The 9-second round that made
             # clicking feel broken would have written a line every time.
-            with log.timed("roster", 1.5):
-                blocks = fleet.roster()
+            with fleet.POLL:
+                with log.timed("roster", 1.5):
+                    blocks = fleet.roster()
+                failed = {**providers.broken(), **fleet.ROUND["failed"]}
+                answered = set(fleet.ROUND["answered"])
             log.note_roster(blocks)
-            live = {m["sessionId"] for b in blocks for m in b["members"]}
-            seen.forget(live)
-            lines.forget(live)
+            live = {m["key"] for b in blocks for m in b["members"]}
+            # Only the providers that answered get their dead sessions
+            # forgotten: a missed round must not bring back as `ready`
+            # everything you had already read.
+            seen.forget(live, answered=answered)
+            if not fleet.ROUND["failed"]:
+                lines.forget({m["id"] for b in blocks for m in b["members"]})
+            status = {name: {"ok": True} for name in answered}
+            status.update({name: {"ok": False, "error": why} for name, why in failed.items()})
             self._send(json.dumps({"blocks": blocks,
+                                   "providers": status,
                                    "hold": fleet.config_value("hold", False),
                                    "chime": fleet.config_value("chime", True)}),
                        "application/json")
@@ -209,7 +230,11 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     p = setting("port", 8765)
     server = ThreadingHTTPServer(("127.0.0.1", p), Handler)
-    log.start(fleet.claude_dir())
+    # Stores written before providers existed are keyed by bare session id.
+    migrated = fleet.migrate_keys()
+    log.start(claude.claude_dir())
+    if migrated:
+        log.event("migrated", fields=migrated)
     print(f"fleet on http://127.0.0.1:{p}", flush=True)
     print(f"log      {log.LOG}", flush=True)
     server.serve_forever()

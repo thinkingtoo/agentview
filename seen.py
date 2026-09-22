@@ -63,10 +63,26 @@ def ready(session_id, stamp, marks):
     return marks.get(session_id) != stamp
 
 
-def forget(live, path=None):
-    """Drop sessions that no longer exist, so the file cannot grow forever."""
+def forget(live, path=None, *, answered=None):
+    """Drop sessions that no longer exist, so the file cannot grow forever.
+
+    Only for the providers that answered this round. A provider that failed
+    a poll has no sessions in `live`, and forgetting its marks would bring
+    everything you had already read back as `ready` when it returns.
+    """
     marks = load(path)
-    kept = {sid: at for sid, at in marks.items() if sid in live}
+    kept = {key: at for key, at in marks.items()
+            if key in live or (answered is not None
+                               and key.partition(":")[0] not in answered)}
     if len(kept) != len(marks):
         save(kept, path)
     return kept
+
+
+def migrate(default="claude", path=None):
+    """Once: a bare session id becomes `default:id`. Idempotent."""
+    marks = load(path)
+    new = {(k if ":" in k else f"{default}:{k}"): v for k, v in marks.items()}
+    if new != marks:
+        save(new, path)
+    return new

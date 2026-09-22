@@ -1,21 +1,24 @@
-"""Read Claude Code's own session files and answer: who is on what, right now.
+"""Who is on what, right now: every provider's live sessions, made into rows.
 
-Claude Code already writes everything this needs. Peer files under
-`~/.claude/sessions/` say who is alive and how busy; transcripts under
-`~/.claude/projects/` carry an `ai-title` record -- Claude's own one-line
-answer to "what is this session about" -- and a `last-prompt` record. Nothing
-here generates a summary; it collects the ones already on disk.
+A provider (`providers/`) hands over facts about its sessions. This module
+turns them into what the page draws: the project each one belongs to, the
+flag it deserves, the two lines under its name, and the order they come in.
+The provider gives the facts; the core gives the voice.
 """
 import collections
-import datetime
+import concurrent.futures
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
+import jump
 import lines
+import providers
 import seen
+from providers.base import CAPABILITIES, STATUSES, on_a_terminal
 
 
 def resolve_project(cwd, shelves):
@@ -25,6 +28,8 @@ def resolve_project(cwd, shelves):
     `~/Projects`, or `~/Projects/clients`. The project is the
     first directory below the deepest shelf that contains `cwd`.
     """
+    if not cwd:
+        return None
     cwd = os.path.normpath(cwd)
     # Scratch space is where work passes through, never where it lives.
     if cwd.startswith(("/tmp/", "/var/tmp/")):
@@ -49,7 +54,7 @@ def resolve_project(cwd, shelves):
         return None
     # At most client › project. Deeper is a path inside a project, and a file
     # buried in a repo must land on the same label as the repo itself.
-    return " \u203a ".join(parts[:2])
+    return " › ".join(parts[:2])
 
 
 DEFAULT_SHELVES = [
@@ -57,9 +62,6 @@ DEFAULT_SHELVES = [
     "~/Projects",
     "~/Projects/clients",
 ]
-
-_cache = {}
-
 
 CONFIG = Path(__file__).resolve().parent / "config.json"
 
@@ -99,253 +101,33 @@ def config(cfg_dir=None):
     return [os.path.expanduser(s) for s in config_value("shelves", DEFAULT_SHELVES)]
 
 
-def claude_dir():
-    return Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
+# ------------------------------------------------------------------ keys
+
+def qualified(key, default="claude"):
+    """A store key as `provider:id`. A bare id is one from before providers
+    existed, when everything was Claude."""
+    return key if ":" in key else f"{default}:{key}"
 
 
-def alive(pid):
-    try:
-        os.kill(int(pid), 0)
-    except (OSError, TypeError, ValueError):
-        return False
-    return True
+def migrate_keys(default="claude"):
+    """Once: bare session ids in config.json and seen.json become `provider:id`.
 
-
-def transcript_for(session_id, cwd, cfg=None):
-    """Locate a session's transcript.
-
-    Claude Code files transcripts by encoded cwd, so the direct path is one
-    stat away; a session that moved is found by looking wider.
+    Idempotent, so it runs at every start. The hand-written `assign` lines
+    and `lines` overrides are what would otherwise silently stop matching.
     """
-    projects = (cfg or claude_dir()) / "projects"
-    encoded = cwd.replace(os.sep, "-")
-    direct = projects / encoded / f"{session_id}.jsonl"
-    if direct.is_file():
-        return direct
-    for hit in projects.glob(f"*/{session_id}.jsonl"):
-        return hit
-    return None
+    patch = {}
+    for field in ("assign", "lines"):
+        got = config_value(field, {})
+        new = {qualified(k, default): v for k, v in got.items()}
+        if new != got:
+            patch[field] = new
+    if patch:
+        write_config(patch)
+    seen.migrate(default)
+    return sorted(patch)
 
 
-def _on_a_terminal(pid):
-    try:
-        return os.readlink(f"/proc/{pid}/fd/0").startswith("/dev/pts/")
-    except OSError:
-        return False
-
-
-def _ancestry(pid, depth=6):
-    """The command lines above a pid, closest parent first.
-
-    Six is generous: a routine is `timer -> script -> claude`, and the extra
-    room covers the shells and pipes those scripts wrap themselves in.
-    """
-    for _ in range(depth):
-        try:
-            with open(f"/proc/{pid}/status", encoding="utf-8") as fh:
-                pid = next(int(line.split()[1]) for line in fh
-                           if line.startswith("PPid:"))
-            if pid <= 1:
-                return
-            with open(f"/proc/{pid}/cmdline", "rb") as fh:
-                yield fh.read().decode("utf-8", "replace").replace("\0", " ")
-        except (OSError, ValueError, StopIteration):
-            return
-
-
-def routine_of(rec, cfg=None, ancestry=None):
-    """Which routine started this session, if a routine did.
-
-    A routine is `claude -p` fired by a systemd timer, so its peer file says
-    `entrypoint: sdk-cli` where a terminal says `cli`. That alone only proves
-    it is headless -- the *name* comes from the script above it in the
-    process tree, `~/.claude/routines/nightly-report.sh` -> `nightly-report`.
-
-    Both halves are required. Headless with no routine script above it is
-    somebody running `claude -p` by hand, and calling that a routine would be
-    a guess.
-    """
-    if rec.get("entrypoint") == "cli":
-        return ""
-    root = str((cfg or claude_dir()) / "routines") + os.sep
-    if ancestry is None:
-        ancestry = _ancestry(rec.get("pid"))
-    for cmd in ancestry:
-        for token in cmd.split():
-            if token.startswith(root):
-                return os.path.splitext(os.path.basename(token))[0]
-    return ""
-
-
-PATH_IN_TEXT = re.compile(r"(?:~|/home/[\w.-]+)/[\w./@-]+")
-
-
-def _read_from(path, offset):
-    """Bytes appended since `offset`, up to the last complete line.
-
-    A session may be mid-write, so the final fragment is left for next time
-    rather than parsed as a broken record.
-    """
-    with path.open("rb") as fh:
-        fh.seek(offset)
-        data = fh.read()
-    cut = data.rfind(b"\n") + 1
-    return data[:cut].decode("utf-8", errors="ignore"), offset + cut
-
-
-HEAD_BYTES = 256
-COLD_BYTES = 2_000_000   # enough tail to answer 'what is it doing now'
-
-# A skill starts in one of two ways, and they look nothing alike on disk:
-# the model calls the `Skill` tool, or you type `/boss` and Claude Code
-# writes a `<command-name>` line. Matching only the first missed a boss for
-# a whole morning.
-TYPED_SKILL = re.compile(r"<command-name>/([\w:-]+)</command-name>")
-BOSS_MARKS = (b'"skill":"boss"', b'"skill": "boss"',
-              b"<command-name>/boss</command-name>")
-
-
-def boss_line(rec):
-    """Is this record a session starting the `boss` skill?
-
-    Deliberately strict about *where* the marker sits. A session that reads
-    the skill's files, or prints them, carries the same words in a tool
-    result -- and that session is not running a team.
-    """
-    content = (rec.get("message") or {}).get("content")
-    if isinstance(content, str):
-        hit = TYPED_SKILL.search(content)
-        return bool(hit) and hit.group(1) == "boss"
-    for part in content or []:
-        if (isinstance(part, dict) and part.get("type") == "tool_use"
-                and part.get("name") == "Skill"
-                and (part.get("input") or {}).get("skill") == "boss"):
-            return True
-    return False
-
-
-def _boss_file(path):
-    """Did this session ever start the boss skill? One read, once.
-
-    Bounded scanning was tried and was wrong: `/boss` was typed a third of
-    the way into a 1.8 MB transcript, well past any sensible head. The
-    substring pass over the raw bytes is what makes reading it all cheap --
-    only a file that mentions the skill at all is ever parsed.
-    """
-    try:
-        raw = path.read_bytes()
-    except OSError:
-        return False
-    if not any(mark in raw for mark in BOSS_MARKS):
-        return False
-    for line in raw.decode("utf-8", "replace").splitlines():
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(rec, dict) and boss_line(rec):
-            return True
-    return False
-
-
-def _head(path):
-    """The first bytes of the file, as a cheap identity for its contents."""
-    try:
-        with path.open("rb") as fh:
-            return fh.read(HEAD_BYTES)
-    except OSError:
-        return b""
-
-
-# How many outstanding calls to remember. Only the newest matters, but a
-# message can carry several in parallel and each one deserves its place.
-MAX_USES = 64
-
-
-def _blank_state():
-    return {"offset": 0, "ino": None, "head": b"", "title": "", "prompt": "", "branch": "",
-            "uses": {}, "done": set(), "said": "", "spoke": "", "boss": False,
-            "sent": collections.Counter(),
-            "paths": collections.deque(maxlen=400)}
-
-
-def _absorb(state, text):
-    """Fold newly written lines into what we already know."""
-    home = str(Path.home())
-    for line in text.splitlines():
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        kind = rec.get("type")
-        if kind == "ai-title" and rec.get("aiTitle"):
-            state["title"] = rec["aiTitle"]
-        elif kind == "last-prompt" and rec.get("lastPrompt"):
-            state["prompt"] = rec["lastPrompt"]
-        branch = rec.get("gitBranch")
-        if branch and branch != "HEAD":
-            state["branch"] = branch
-        content = (rec.get("message") or {}).get("content")
-        if not state["boss"] and boss_line(rec):
-            state["boss"] = True
-        # A typed prompt ends the turn that said something. Kept past it, the
-        # previous turn's closing sentence reads on a busy row as what the
-        # session is doing now. A tool result is a list, and the hook's own
-        # block arrives as a meta record -- neither is you speaking.
-        if (kind == "user" and not rec.get("isMeta")
-                and isinstance(content, str) and content.strip()):
-            state["said"] = ""
-        if not isinstance(content, list):
-            continue
-        # When the session last said anything at all. A tool call is only in
-        # flight while it is the newest thing in the file: after this moves
-        # past it, the result is never coming and nothing is running.
-        if kind in ("user", "assistant") and rec.get("timestamp"):
-            state["spoke"] = max(state["spoke"], rec["timestamp"])
-        # A subagent must never speak for the session it works for.
-        if kind == "assistant" and not rec.get("isSidechain"):
-            for part in content:
-                if (isinstance(part, dict) and part.get("type") == "text"
-                        and isinstance(part.get("text"), str) and part["text"].strip()):
-                    state["said"] = part["text"].strip()
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if part.get("type") == "tool_use":
-                if part.get("id"):
-                    state["uses"][part["id"]] = (
-                        rec.get("timestamp"), part.get("name") or "",
-                        _kept(part.get("input")))
-                # Who it works with: every peer it has messaged. `to` is
-                # the address -- a name, sometimes with a disambiguating ref.
-                if part.get("name") == "SendMessage":
-                    peer = (part.get("input") or {}).get("to")
-                    if isinstance(peer, str) and not peer.startswith("uds:"):
-                        state["sent"][peer.split(" [")[0].strip()] += 1
-                inp = part.get("input") or {}
-                for key in ("file_path", "path", "notebook_path"):
-                    if isinstance(inp.get(key), str):
-                        state["paths"].append(
-                            os.path.normpath(inp[key].replace("~", home, 1)))
-                for key in ("command", "pattern", "prompt"):
-                    if isinstance(inp.get(key), str):
-                        for hit in PATH_IN_TEXT.findall(inp[key]):
-                            state["paths"].append(
-                                os.path.normpath(hit.replace("~", home, 1)))
-            elif part.get("type") == "tool_result" and part.get("tool_use_id"):
-                state["done"].add(part["tool_use_id"])
-    # Answered calls stop mattering, and neither set may grow without end.
-    for tid in [t for t in state["uses"] if t in state["done"]][:-8]:
-        state["uses"].pop(tid, None)
-        state["done"].discard(tid)
-    # Unanswered ones need a bound of their own: a result that never arrives
-    # would otherwise be remembered for the life of the session. Dicts keep
-    # insertion order, so this drops the oldest.
-    for tid in list(state["uses"])[:-MAX_USES]:
-        state["uses"].pop(tid, None)
-        state["done"].discard(tid)
-    return state
-
+# ------------------------------------------------------------- the voice
 
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 NOT_PROSE = ("|", "#", ">", "```", "---")
@@ -369,7 +151,7 @@ def last_words(text, limit=140):
     line = re.sub(r"[*_`]+", "", line)
     if len(line) > limit:
         tail = SENTENCE_END.split(line)[-1]
-        line = tail if len(tail) <= limit else line[:limit - 1].rstrip() + "\u2026"
+        line = tail if len(tail) <= limit else line[:limit - 1].rstrip() + "…"
     return line
 
 
@@ -377,7 +159,7 @@ ASK_LIMIT = lines.LIMIT
 FENCE = re.compile(r"```.*?```", re.S)
 INLINE_CODE = re.compile(r"`[^`]*`")
 PARA = re.compile(r"\n\s*\n")
-LEADING = re.compile(r"^[^\w(\u00ab\"']+")
+LEADING = re.compile(r"^[^\w(«\"']+")
 
 
 def ask_from(text):
@@ -418,94 +200,8 @@ def ask_from(text):
     sentence = re.sub(r"[*_`#]+", "", sentence)
     sentence = LEADING.sub("", sentence).strip()
     if len(sentence) > ASK_LIMIT:
-        sentence = sentence[:ASK_LIMIT - 1].rstrip() + "\u2026"
+        sentence = sentence[:ASK_LIMIT - 1].rstrip() + "…"
     return (sentence, 1)
-
-
-# What each tool is, said the way you would say it. Anything not here says
-# its own name -- vague beats wrong, and an unknown tool is still news.
-VERBS = {
-    "Edit": "Editing", "Write": "Writing", "NotebookEdit": "Editing",
-    "Read": "Reading", "Glob": "Looking for", "Grep": "Searching for",
-    "WebFetch": "Fetching", "Skill": "Running", "Task": "Running",
-    "Agent": "Running", "SendMessage": "Messaging",
-}
-# Which input field names the thing being worked on, per tool.
-TARGET = {
-    "Edit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path",
-    "Read": "file_path", "Glob": "pattern", "Grep": "pattern",
-    "WebFetch": "url", "Skill": "skill", "Task": "description",
-    "Agent": "description", "SendMessage": "to",
-}
-PLURAL = {"Read": "files", "Edit": "files", "Write": "files",
-          "Grep": "searches", "WebFetch": "pages"}
-
-
-# A Write carries a whole file in its input and a Task a whole prompt. Only
-# the fields that name the work are kept, and only their first words: this
-# state lives for the life of the session, times every session on the page.
-KEEP = ("description", "command", "file_path", "notebook_path", "path",
-        "pattern", "url", "skill", "to", "query")
-
-
-def _kept(inp):
-    if not isinstance(inp, dict):
-        return {}
-    return {k: v[:200] for k, v in inp.items()
-            if k in KEEP and isinstance(v, str)}
-
-
-def activity(calls):
-    """What a session is doing, from the calls that have not come back.
-
-    A busy row printed your own last prompt back at you, which you wrote and
-    already know. This is the one thing on the card that moves while it works.
-    """
-    if not calls:
-        return ""
-    # Parallel reads are the common case and three filenames do not fit.
-    names = {name for name, _ in calls}
-    if len(calls) > 1 and len(names) == 1:
-        name = calls[0][0]
-        if name in PLURAL:
-            return f"{VERBS[name]} {len(calls)} {PLURAL[name]}"
-    name, inp = calls[-1]
-    inp = inp if isinstance(inp, dict) else {}
-    if name == "Bash":
-        # Every Bash call carries a description already; nothing here needs
-        # to invent a phrase when the caller wrote one.
-        said = inp.get("description")
-        return _fit(said if isinstance(said, str) and said.strip()
-                    else f"Running {inp.get('command', '')}".strip())
-    verb = VERBS.get(name)
-    if not verb:
-        return _plain(name)
-    target = inp.get(TARGET.get(name, ""), "")
-    if not isinstance(target, str) or not target.strip():
-        return _plain(name)
-    if TARGET[name].endswith("path"):
-        target = os.path.basename(target.rstrip("/")) or target
-    if name == "Skill":
-        target = "/" + target
-    return _fit(f"{verb} {target}")
-
-
-def _plain(name):
-    """A tool's own name, said out loud.
-
-    An MCP tool is addressed `mcp__<server>__<tool>`, which is a wire address
-    and reads like one on a card.
-    """
-    parts = name.split("__")
-    if len(parts) < 3 or parts[0] != "mcp":
-        return name
-    words = " ".join(parts[2].split("_"))
-    return words[:1].upper() + words[1:]
-
-
-def _fit(text):
-    text = " ".join(str(text).split())
-    return text if len(text) <= ASK_LIMIT else text[:ASK_LIMIT - 1].rstrip() + "\u2026"
 
 
 def _shown(got):
@@ -531,7 +227,8 @@ def own_line(session_id, status, asked, root=None, said="", doing=""):
 
     Everything else here is what to show until the session has written one:
     the ask read out of the last thing it said. That fills the words and does
-    not raise the count.
+    not raise the count. A provider without a hook lives on this fallback --
+    it shows the right words and never rings.
     """
     # Between calls there is nothing in flight and the model is writing. The
     # page used to print your own last prompt back at you there -- words you
@@ -544,198 +241,257 @@ def own_line(session_id, status, asked, root=None, said="", doing=""):
     return {"did": "", "ask": ask, "n": n, "blocked": False, **working}
 
 
-def _view(state):
-    # Only calls in the session's newest message. An unanswered call the
-    # session has since talked past is not running -- and because this file
-    # is read incrementally, it would otherwise be remembered forever and
-    # flag the session `tool 40m` on every busy poll for the rest of the day.
-    running = [call for tid, call in state["uses"].items()
-               if tid not in state["done"] and call[0] and call[0] >= state["spoke"]]
-    stamps = [call[0] for call in running]
-    pending = None
-    if stamps:
-        try:
-            started = max(datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
-                          for s in stamps)
-            now = datetime.datetime.now(datetime.timezone.utc)
-            pending = max(0.0, (now - started).total_seconds() / 60)
-        except ValueError:
-            pending = None
-    return {"title": state["title"], "prompt": state["prompt"],
-            "branch": state["branch"], "paths": list(state["paths"]),
-            "said": last_words(state["said"]), "boss": state["boss"],
-            "doing": activity([(name, inp) for _, name, inp in running]),
-            # Read once here, where the whole of the last message is: `said`
-            # above is only its closing line.
-            "asked": ask_from(state["said"]),
-            # Liveliest correspondent first: a boss's team, in the order it
-            # actually deals with them.
-            "sent": [name for name, _ in state["sent"].most_common()],
-            "pending": pending}
+# ------------------------------------------------------------ the round
+
+# A poll is due every 3 seconds; a provider that has not answered in this
+# long is reported, and the others are shown without it.
+LIVE_BUDGET = 2.0
+
+# Two polls can overlap -- the server is threaded -- and the providers keep
+# caches. One lock serialises the round.
+POLL = threading.RLock()
+
+# What the last round found out, for the server to report beside the rows.
+ROUND = {"failed": {}, "answered": set()}
+
+_pools = {}
+_pending = {}
 
 
-def scan_cached(path):
-    """What the page needs from a transcript, reading only what is new.
-
-    These files reach tens of megabytes and the busy ones change every few
-    seconds. Re-reading them whole on every poll cost ~9 seconds a round and
-    made clicking feel broken.
-    """
+def _ask(p):
+    """`p.live()`, bounded in time. Returns (sessions, error)."""
+    fut = _pending.get(p.name)
+    if fut is None or fut.done():
+        pool = _pools.get(p.name)
+        if pool is None:
+            pool = _pools[p.name] = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix=f"live-{p.name}")
+        fut = _pending[p.name] = pool.submit(p.live)
     try:
-        stat = path.stat()
-    except OSError:
-        return _view(_blank_state())
-    key = ("state", str(path))
-    state = _cache.get(key)
-    head = _head(path)
-    # Same inode and a file that only grew is the normal case. A shrunken file
-    # or a changed opening means it was rewritten, and what we remember about
-    # it is about a file that no longer exists.
-    # A file shorter than HEAD_BYTES grows its own head as it is appended to,
-    # so one being a prefix of the other still means the same file.
-    same_file = (state is not None
-                 and state["ino"] == stat.st_ino
-                 and stat.st_size >= state["offset"]
-                 and (head.startswith(state["head"])
-                      or state["head"].startswith(head)))
-    if not same_file:
-        state = _blank_state()          # new file, or rewritten from the top
-        state["ino"] = stat.st_ino
-    state["head"] = head
-    if state["offset"] == 0 and stat.st_size > COLD_BYTES:
-        # First sight of a large transcript. Every value here is a *latest*
-        # one, so the tail answers them; only a title that was set early and
-        # never again needs the whole file, and that is one read, once.
-        text, offset = _read_from(path, stat.st_size - COLD_BYTES)
-        state = _absorb(state, text)
-        state["offset"] = offset
-        if not state["boss"]:
-            state["boss"] = _boss_file(path)
-        if not state["title"]:
-            head_text, _ = _read_from(path, 0)
-            for line in head_text.splitlines():
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if rec.get("type") == "ai-title" and rec.get("aiTitle"):
-                    state["title"] = rec["aiTitle"]
-    elif stat.st_size > state["offset"]:
-        text, offset = _read_from(path, state["offset"])
-        state = _absorb(state, text)
-        state["offset"] = offset
-    _cache[key] = state
-    return _view(state)
+        got = fut.result(timeout=LIVE_BUDGET)
+    except concurrent.futures.TimeoutError:
+        # Left pending: the next round asks the same call again rather than
+        # piling a second one behind it.
+        return None, f"no answer in {LIVE_BUDGET:g}s"
+    except Exception as exc:                # a provider's bug is its own
+        _pending.pop(p.name, None)
+        return None, f"{type(exc).__name__}: {exc}"[:200]
+    _pending.pop(p.name, None)
+    if not isinstance(got, list):
+        return None, "live() did not return a list"
+    return got, None
 
 
-def live_session(pid, cfg=None):
-    """The peer record for a live pid, reading nothing else.
+def sessions(providers=None):
+    """Every live session from every provider, normalised into rows.
 
-    `sessions()` reads every transcript to build the page; a jump only needs
-    to know this pid is really a session Claude Code registered, and paying
-    1.5s for that makes the click feel broken.
+    A provider that fails or stalls is reported in `ROUND["failed"]` and the
+    page goes on without it; the ones that answered are in `ROUND["answered"]`.
     """
-    cfg = cfg or claude_dir()
-    for path in (cfg / "sessions").glob("*.json"):
-        try:
-            with path.open(encoding="utf-8") as fh:
-                rec = json.load(fh)
-        except (OSError, ValueError):
-            continue
-        if isinstance(rec, dict) and rec.get("pid") == pid and alive(pid):
-            return rec
+    with POLL:
+        shelves = config()
+        assigned = config_value("assign", {})
+        marks = seen.load()
+        thresholds = {
+            "after": config_value("stuck_after_minutes", 5),
+            "tool_after": config_value("long_tool_minutes", 20),
+            "waiting_after": config_value("waiting_after_seconds", 20) / 60,
+        }
+        now = time.time()
+        out, failed, answered = [], {}, set()
+        for p in (providers if providers is not None else _providers()):
+            got, err = _ask(p)
+            if err:
+                failed[p.name] = err
+                continue
+            answered.add(p.name)
+            for raw in got:
+                row = normalize(p, raw, shelves, assigned, marks, thresholds, now)
+                if row:
+                    out.append(row)
+        ROUND["failed"], ROUND["answered"] = failed, answered
+        return out
+
+
+def _providers():
+    return providers.all()
+
+
+def find(key):
+    """The provider and live session behind a `provider:id` key, or None."""
+    if not isinstance(key, str) or ":" not in key:
+        return None
+    name, _, sid = key.partition(":")
+    for p in _providers():
+        if p.name == name:
+            with POLL:
+                try:
+                    got = p.find(sid)
+                except Exception:
+                    return None
+            return (p, got) if isinstance(got, dict) and got.get("id") == sid else None
     return None
 
 
-def sessions(cfg=None):
-    """Every live Claude session on this machine, with its summary attached."""
-    cfg = cfg or claude_dir()
-    shelves = config()
-    assigned = config_value("assign", {})
-    marks = seen.load()
-    out = []
-    for path in (cfg / "sessions").glob("*.json"):
-        try:
-            with path.open(encoding="utf-8") as fh:
-                rec = json.load(fh)
-        except (OSError, ValueError):
-            continue
-        if not isinstance(rec, dict) or not alive(rec.get("pid")):
-            continue
-        cwd = rec.get("cwd") or ""
-        sid = rec.get("sessionId") or ""
-        transcript = transcript_for(sid, cwd, cfg) if sid else None
-        summary = scan_cached(transcript) if transcript else {
-            "title": "", "prompt": "", "branch": "", "paths": [], "said": "",
-            "boss": False, "sent": [], "pending": None, "doing": "",
-            "asked": ("", 0)}
-        quiet = None
-        if transcript:
-            try:
-                quiet = (time.time() - transcript.stat().st_mtime) / 60
-            except OSError:
-                quiet = None
-        in_flight = summary["pending"] if rec.get("status") == "busy" else None
-        status_since = rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0
-        status = rec.get("status") or "?"
-        # Keyed to the moment it stopped, so a session that works and stops
-        # again is ready once more without anything having to clear it.
-        unseen = seen.ready(sid, rec.get("statusUpdatedAt"), marks)
-        project = assigned.get(sid) or resolve_project(cwd, shelves)
-        routine = routine_of(rec, cfg)
-        # Only guess for the ones that have nothing better -- the guess costs
-        # a transcript scan, and a session with a real cwd does not need it.
-        # A routine is never guessed for: it belongs to the routine that
-        # started it, whatever files it happens to touch on the way.
-        guess = (suggest_project(summary["paths"], shelves)
-                 if not project and transcript and not routine else None)
-        out.append({
-            "name": rec.get("name") or "(unnamed)",
-            "status": status,
-            "kind": rec.get("kind") or "?",
-            "cwd": cwd,
-            "tmux": rec.get("tmux") or "",
-            "pid": rec.get("pid"),
-            "sessionId": sid,
-            "updatedAt": rec.get("statusUpdatedAt") or rec.get("updatedAt") or 0,
-            "startedAt": rec.get("startedAt") or 0,
-            "project": project,
-            "routine": routine,
-            "assigned": sid in assigned,
-            "suggestion": guess,
-            "quietFor": round(quiet, 1) if quiet is not None else None,
-            "toolFor": round(in_flight, 1) if in_flight is not None else None,
-            # Claude Code's own words for what it is blocked on, and the last
-            # thing it said to you. Neither is generated here.
-            "waitingFor": rec.get("waitingFor") or "",
-            "said": summary["said"],
-            "boss": summary["boss"],
-            "team": summary["sent"] if summary["boss"] else [],
-            "bg": status == "shell",
-            "flag": classify(
-                status, quiet,
-                config_value("stuck_after_minutes", 5),
-                in_flight=in_flight,
-                tool_after=config_value("long_tool_minutes", 20),
-                waiting_for=(time.time() * 1000 - status_since) / 60000,
-                waiting_after=config_value("waiting_after_seconds", 20) / 60,
-                named=bool(rec.get("waitingFor")),
-                unseen=unseen),
-            # Cheap: a session on a pty is hosted by some emulator, so a route
-            # exists. Working out which one costs subprocesses, so that waits
-            # until you actually click.
-            "canJump": (rec.get("kind") == "interactive"
-                        and _on_a_terminal(rec.get("pid"))),
-            "title": summary["title"],
-            "prompt": summary["prompt"],
-            "branch": summary["branch"],
-            # What it is doing while it works, and what it left you with when
-            # it stopped. Never both: a busy session has no line of its own.
-            **own_line(sid, status, summary["asked"], said=summary["said"],
-                       doing=summary["doing"]),
-        })
-    return out
+def look(key):
+    """You looked at this session. Looking is looking, whether or not its
+    terminal comes to the front -- or exists."""
+    hit = find(key)
+    if not hit:
+        return None
+    p, s = hit
+    seen.mark(key, _int(s.get("updatedAt")))
+    return hit
 
+
+def jump_to(p, s):
+    """Put a session's terminal in front of you, the provider's way or the
+    core's. The pane search -- WezTerm, tmux, Konsole -- stays here, so the
+    fourth provider does not have to get it right again."""
+    if "jump" not in p.capabilities:
+        return {"ok": False, "reason": f"{p.name} sessions have no terminal to jump to"}
+    done = p.jump(s)
+    if isinstance(done, dict):
+        return done
+    pid = s.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool):
+        return {"ok": False, "reason": "no pid is known for this session"}
+    return jump.jump(pid, _text(s.get("tmux")))
+
+
+# ------------------------------------------------------- normalisation
+
+# Every field the page reads off a row, with what it means when a provider
+# has nothing to say about it. A conforming session can leave any of these
+# out and the row is still whole.
+DEFAULTS = {
+    "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "",
+    "waitingFor": "", "boss": False, "bg": False, "title": "", "prompt": "",
+    "branch": "",
+}
+
+MAX_EXTRAS = 8
+EXTRA_LEN = 40
+
+
+def _int(value):
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
+def _minutes(value):
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _text(value):
+    return value if isinstance(value, str) else ""
+
+
+def extras_of(value):
+    """Badges the page shows without knowing what they mean.
+
+    Bounded, so a provider that sends a thousand of them can neither slow a
+    poll nor break the layout: eight keys, forty characters, alphabetical.
+    """
+    if not isinstance(value, dict):
+        return {}
+    kept = {}
+    for k in sorted(str(k) for k in value if isinstance(k, str)):
+        v = value[k]
+        if isinstance(v, bool) or v is None:
+            continue
+        if isinstance(v, (int, float)):
+            v = str(v)
+        if not isinstance(v, str) or not v.strip():
+            continue
+        kept[k[:EXTRA_LEN]] = " ".join(v.split())[:EXTRA_LEN]
+        if len(kept) == MAX_EXTRAS:
+            break
+    return kept
+
+
+def normalize(p, raw, shelves, assigned, marks, thresholds, now):
+    """One provider's facts, made into the row the page draws. None if the
+    session is not even minimally conforming."""
+    if not isinstance(raw, dict):
+        return None
+    sid = raw.get("id")
+    if not isinstance(sid, str) or not sid:
+        return None
+    caps = set(p.capabilities) & CAPABILITIES
+    key = f"{p.name}:{sid}"
+    cwd = _text(raw.get("cwd"))
+    status = raw.get("status") if raw.get("status") in STATUSES else "idle"
+    updated = _int(raw.get("updatedAt"))
+    pid = raw.get("pid") if isinstance(raw.get("pid"), int) and not isinstance(raw.get("pid"), bool) else None
+    routine = _text(raw.get("routine"))
+    quiet = _minutes(raw.get("quietFor"))
+    in_flight = _minutes(raw.get("toolFor"))
+    waiting_for = _text(raw.get("waitingFor"))
+    said = _text(raw.get("said"))
+    paths = [x for x in (raw.get("paths") or []) if isinstance(x, str)]
+    # Keyed to the moment it stopped, so a session that works and stops
+    # again is ready once more without anything having to clear it.
+    unseen = seen.ready(key, updated, marks)
+    project = assigned.get(key) or resolve_project(cwd, shelves)
+    # Only guess for the ones that have nothing better -- the guess costs a
+    # vote over every path touched, and a session with a real cwd does not
+    # need it. A routine is never guessed for.
+    guess = (suggest_project(paths, shelves)
+             if not project and paths and not routine else None)
+    if "jump" not in caps:
+        can_jump = False
+    elif "canJump" in raw:
+        can_jump = bool(raw["canJump"])
+    else:
+        can_jump = pid is not None and on_a_terminal(pid)
+    # A provider that cannot tell waiting from busy may still say `waiting`;
+    # without the capability behind it, that is not an alarm.
+    if status == "waiting" and "waiting" not in caps:
+        flag = None
+    else:
+        flag = classify(
+            status, quiet, thresholds["after"],
+            in_flight=in_flight, tool_after=thresholds["tool_after"],
+            waiting_for=(now * 1000 - updated) / 60000,
+            waiting_after=thresholds["waiting_after"],
+            named=bool(waiting_for), unseen=unseen)
+    row = {}
+    for k, default in DEFAULTS.items():
+        got = raw.get(k)
+        if isinstance(default, bool):
+            row[k] = bool(got)
+        elif isinstance(default, int):
+            row[k] = _int(got)
+        else:
+            row[k] = _text(got) or default
+    row.update({
+        "key": key, "provider": p.name, "id": sid,
+        "status": status, "cwd": cwd, "pid": pid,
+        "updatedAt": updated, "startedAt": _int(raw.get("startedAt")),
+        "project": project, "routine": routine,
+        "assigned": key in assigned,
+        "suggestion": guess,
+        "quietFor": round(quiet, 1) if quiet is not None else None,
+        "toolFor": round(in_flight, 1) if in_flight is not None else None,
+        "waitingFor": waiting_for,
+        # What it left you with, and the ask read out of it. The provider
+        # hands over the raw text; the sentence is made here.
+        "said": last_words(said),
+        "boss": bool(raw.get("boss")),
+        "team": [x for x in (raw.get("team") or []) if isinstance(x, str)],
+        "bg": bool(raw.get("bg")),
+        "flag": flag,
+        "canJump": can_jump,
+        "extras": extras_of(raw.get("extras")),
+        # What it is doing while it works, and what it left you with when it
+        # stopped. Never both: a busy session has no line of its own.
+        **own_line(sid, status, ask_from(said), said=said,
+                   doing=_text(raw.get("doing"))),
+    })
+    return row
+
+
+# ---------------------------------------------------------------- roster
 
 ROUTINES = "Routines"
 
@@ -745,7 +501,7 @@ def sessions_in(groups):
     return [s for members in groups.values() for s in members]
 
 
-def roster(cfg=None):
+def roster(providers=None):
     """Sessions grouped into project blocks, liveliest project first.
 
     Project-first: the question is what is happening, and who is on it.
@@ -758,7 +514,7 @@ def roster(cfg=None):
     swallowed into it.
     """
     groups = {}
-    for s in sessions(cfg):
+    for s in sessions(providers):
         key = (True, ROUTINES) if s["routine"] else (False, s["project"] or "")
         groups.setdefault(key, []).append(s)
 
@@ -863,7 +619,7 @@ def classify(status, quiet, after, in_flight=None, tool_after=20,
     - `ready` -- it finished its turn and you have not looked since. This is
       the common case the page used to say nothing about: `idle` covered
       both "your move" and "abandoned on Tuesday" with the same grey dot.
-    - `waiting` -- Claude Code has asked something and nobody replied. It
+    - `waiting` -- the agent has asked something and nobody replied. It
       needs *you*, and there is no grace period.
     - a tool call in flight -- the transcript is silent for the whole of a
       tool call, so silence proves nothing while one is running. Only when it
@@ -873,8 +629,11 @@ def classify(status, quiet, after, in_flight=None, tool_after=20,
       not. The transcript's mtime is the only honest heartbeat: `updatedAt`
       in the peer file does not move while a session works.
 
-    Idle is not stuck. A session idle for two days is finished or abandoned,
-    and flashing it forever would only teach you to ignore the flashing.
+    A signal the provider does not have arrives as None and is simply not
+    consulted: no transcript means no `stuck`, no tool tracking means no
+    `tool`. Idle is not stuck. A session idle for two days is finished or
+    abandoned, and flashing it forever would only teach you to ignore the
+    flashing.
     """
     if status == "waiting":
         # Claude Code writes `waitingFor` when a dialog is genuinely open --
@@ -888,8 +647,8 @@ def classify(status, quiet, after, in_flight=None, tool_after=20,
             return None
         return "waiting"
     if status in ("idle", "shell"):
-        # `shell` is idle with a background job still running -- the turn is
-        # over either way, which is what ready is about.
+        # `shell` was Claude Code's word for idle with a background job still
+        # running -- the turn is over either way, which is what ready is about.
         return "ready" if unseen else None
     if status != "busy":
         return None
@@ -910,7 +669,7 @@ def apply_overrides(block, names, lines):
     block["label"] = names.get(block["project"], block["project"])
     block["renamed"] = block["project"] in names
     for m in block["members"]:
-        own = lines.get(m.get("sessionId"))
+        own = lines.get(m.get("key"))
         m["overridden"] = bool(own)
         if own:
             m["title"] = own

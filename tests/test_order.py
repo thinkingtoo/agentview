@@ -46,7 +46,7 @@ class Overrides(unittest.TestCase):
     def test_an_overridden_line_replaces_the_generated_title(self):
         b = fleet.apply_overrides(
             {"project": "harbor",
-             "members": [{"sessionId": "abc", "title": "AI answers vs SEO ranking"}]},
+             "members": [{"key": "abc", "title": "AI answers vs SEO ranking"}]},
             names={}, lines={"abc": "sta rifacendo la home"})
         m = b["members"][0]
         self.assertEqual(m["title"], "sta rifacendo la home")
@@ -54,7 +54,7 @@ class Overrides(unittest.TestCase):
 
     def test_a_session_with_no_override_is_untouched(self):
         b = fleet.apply_overrides(
-            {"project": "maple", "members": [{"sessionId": "xyz", "title": "Call with Sam"}]},
+            {"project": "maple", "members": [{"key": "xyz", "title": "Call with Sam"}]},
             names={}, lines={"abc": "altro"})
         self.assertEqual(b["members"][0]["title"], "Call with Sam")
         self.assertFalse(b["members"][0]["overridden"])
