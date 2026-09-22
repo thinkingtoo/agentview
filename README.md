@@ -5,7 +5,7 @@ on, grouped by project — and, since the provider layer, every Codex session
 too. Linux only: it reads `/proc`, and a jump talks to WezTerm, tmux or
 Konsole.
 
-![fleet](docs/screenshot.jpg)
+![agentview](docs/agentview.jpg)
 
 It generates nothing. Claude Code already writes everything the page shows:
 
