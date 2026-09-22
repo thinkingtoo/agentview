@@ -1,4 +1,4 @@
-# Claude Team
+# agentview
 
 A local page showing what every Claude Code session on this machine is working
 on, grouped by project — and, since the provider layer, every Codex session
@@ -97,8 +97,8 @@ python3 server.py          # http://127.0.0.1:8765
 Or as a service that survives reboot:
 
 ```bash
-cp claude-team.service ~/.config/systemd/user/
-systemctl --user enable --now claude-team
+cp agentview.service ~/.config/systemd/user/
+systemctl --user enable --now agentview
 ```
 
 Bound to `127.0.0.1` deliberately: the page shows your prompts verbatim, which
@@ -195,7 +195,7 @@ wrote. Between calls it falls back to the session's own running commentary. An
 MCP tool is addressed `mcp__<server>__<tool>`, which is a wire address; the page
 says *Gmail users drafts create*.
 
-The lines live in `~/.local/state/claude-team/lines/`, beside `seen.json` and
+The lines live in `~/.local/state/agentview/lines/`, beside `seen.json` and
 out of `config.json` — that file is yours to hand-edit, this one is written by a
 hook. Sessions that are gone are forgotten on the next poll.
 
@@ -350,7 +350,7 @@ Tuesday* with the same grey dot. So the page works out one flag per session:
 | **green, breathing** | Working | `busy` |
 
 **Ready is keyed to the moment it stopped**, not to the session
-(`~/.local/state/claude-team/seen.json`). A session that works again and stops
+(`~/.local/state/agentview/seen.json`). A session that works again and stops
 again carries a new `statusUpdatedAt`, so it comes back as ready by itself —
 nothing has to be cleared and nothing can go stale. Clicking a card marks it
 seen, whether or not the jump lands. A ready row prints **the last thing the
@@ -481,7 +481,7 @@ python3 log.py -k error -k slow
 python3 log.py -w Vera    # everything mentioning one session
 ```
 
-`~/.local/state/claude-team/events.jsonl`, one JSON object per line, rotated
+`~/.local/state/agentview/events.jsonl`, one JSON object per line, rotated
 at 5 MB. It records four things, and each one is there because it is what you
 go looking for:
 

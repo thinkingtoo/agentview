@@ -34,7 +34,8 @@ def page():
     renders once at the wrong size and then jumps.
     """
     html = (HERE / "index.html").read_text(encoding="utf-8")
-    return html.replace("{{ZOOM}}", str(setting("zoom", 1.5)))
+    return (html.replace("{{ZOOM}}", str(setting("zoom", 1.5)))
+                .replace("{{HOME}}", str(Path.home())))
 
 
 class Handler(BaseHTTPRequestHandler):

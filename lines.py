@@ -36,7 +36,7 @@ SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 
 def store():
     state = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
-    return Path(state) / "claude-team" / "lines"
+    return Path(state) / "agentview" / "lines"
 
 
 def _file(session_id, root=None):

@@ -1,0 +1,13 @@
+[Unit]
+Description=agentview — local dashboard of running agent sessions
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Projects/agentview
+ExecStart=/usr/bin/python3 %h/Projects/agentview/server.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

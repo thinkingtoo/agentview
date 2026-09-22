@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Claude Team</title>
+<title>agentview</title>
 <style>
   :root {
     --bg:#0e1013; --card:#171a1f; --line:#262b33; --ink:#e7eaee; --dim:#9aa3ae;
@@ -177,7 +177,7 @@
       <use href="#ray" transform="rotate(225)"/><use href="#ray" transform="rotate(270)"/>
       <use href="#ray" transform="rotate(315)"/>
     </g>
-  </svg><span>Claude Team</span></h1>
+  </svg><span>agentview</span></h1>
   <span class="count" id="count"></span>
   <input id="q" class="q" type="search" placeholder="filter…  (/)" autocomplete="off">
   <span class="spacer"></span>
@@ -203,7 +203,7 @@ let query = "";
 let editing = false;
 let dragging = false;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const home = "/home/alice";
+const home = "{{HOME}}";        // substituted by the server, like the zoom
 
 function since(ms) {
   // How long this session has been up. A background worker two days old reads
@@ -726,13 +726,13 @@ function paint() {
     + Object.entries(PROVIDERS).filter(([, p]) => !p.ok).map(([name, p]) =>
         ` &nbsp;·&nbsp; <span class="alarm" title="${esc(p.error)}">${esc(name)} down</span>`).join("");
   const wants = waiting + stuck + asking;
-  document.title = wants ? `(${wants}) Claude Team` : "Claude Team";
+  document.title = wants ? `(${wants}) agentview` : "agentview";
   // Kept for the drag handlers: the DOM is now packed by height, so its
   // order is a layout detail and no longer the order you see.
   PAINTED = blocks.filter(b => !b.orphan && !b.routines).map(b => b.project);
   place(blocks.length ? blocks.map(block).join("")
     : `<div class="empty">${query.trim().length >= 3
-         ? `Nothing matches “${esc(query.trim())}”.` : "No Claude sessions running."}</div>`);
+         ? `Nothing matches “${esc(query.trim())}”.` : "No sessions running."}</div>`);
   document.getElementById("stamp").textContent =
     "updated " + new Date().toLocaleTimeString();
 }

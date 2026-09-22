@@ -30,7 +30,7 @@ from pathlib import Path
 
 def log_dir():
     state = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
-    return Path(state) / "claude-team"
+    return Path(state) / "agentview"
 
 
 LOG = log_dir() / "events.jsonl"
@@ -243,7 +243,7 @@ def render(rec):
 
 def main():
     import argparse
-    ap = argparse.ArgumentParser(description="Read the claude-team event log.")
+    ap = argparse.ArgumentParser(description="Read the agentview event log.")
     ap.add_argument("-n", type=int, default=60, help="how many events (default 60)")
     ap.add_argument("-f", "--follow", action="store_true", help="keep printing new ones")
     ap.add_argument("-k", "--kind", action="append", default=[],

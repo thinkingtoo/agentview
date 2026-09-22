@@ -17,7 +17,7 @@ from pathlib import Path
 
 def store():
     state = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
-    return Path(state) / "claude-team" / "seen.json"
+    return Path(state) / "agentview" / "seen.json"
 
 
 def load(path=None):
