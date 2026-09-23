@@ -63,11 +63,38 @@ def alive(pid):
     return True
 
 
-def on_a_terminal(pid):
+# How the kernel numbers a `/dev/pts/*`: this major, plus a minor for the
+# window. The whole field is 0 when a process has no terminal at all.
+PTS_MAJOR = 136
+
+
+def controlling_tty(pid, proc="/proc"):
+    """The process's controlling terminal, as the kernel numbers it.
+
+    0 means it has none. `None` means `/proc` would not say, which is not
+    the same answer and must not be read as one.
+
+    It comes from the seventh field of `/proc/<pid>/stat` rather than from
+    `fd/0`, because stdin lies. A session whose window is gone still holds
+    the `/dev/pts/21` it inherited, and that number has since been handed
+    to somebody else's window.
+    """
     try:
-        return os.readlink(f"/proc/{pid}/fd/0").startswith("/dev/pts/")
-    except OSError:
-        return False
+        with open(os.path.join(proc, str(int(pid)), "stat"), encoding="utf-8") as fh:
+            stat = fh.read()
+    except (OSError, TypeError, ValueError):
+        return None
+    try:
+        # The command sits in parentheses and may itself contain spaces and
+        # parentheses, so the fields are counted from the last one.
+        return int(stat[stat.rindex(")") + 2:].split()[4])
+    except (ValueError, IndexError):
+        return None
+
+
+def on_a_terminal(pid, proc="/proc"):
+    tty = controlling_tty(pid, proc)
+    return bool(tty) and (tty >> 8) & 0xfff == PTS_MAJOR
 
 
 # ------------------------------------------------------ incremental files
