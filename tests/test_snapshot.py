@@ -53,6 +53,10 @@ class Build(unittest.TestCase):
         panes = self.snap["tmux"][0]["windows"][0]["panes"]
         self.assertEqual([p["sessionId"] for p in panes], ["aaa", "bbb", ""])
 
+    def test_it_records_which_terminals_were_running(self):
+        snap = snapshot.build(PEERS, TMUX, WEZ, CLIENTS, 1, "b", terminals=[20, 10])
+        self.assertEqual(snap["terminals"], [10, 20])
+
     def test_wezterm_tabs_say_what_they_showed(self):
         self.assertEqual(self.snap["wezterm"], [
             {"tabs": [{"kind": "claude", "sessionId": "ccc"},
@@ -67,6 +71,21 @@ class Choose(unittest.TestCase):
                  {"taken_at": 9, "boot_id": "now"}]
         self.assertEqual(snapshot.choose(snaps, "now")["taken_at"], 5)
         self.assertIsNone(snapshot.choose(snaps[2:], "now"))
+
+    def test_a_terminal_that_died_this_boot_is_a_reboot_of_its_own(self):
+        # 2026-09-24: WezTerm crashed at 15:38 and took five sessions with it;
+        # the button offered the 14:15 state of the boot before.
+        snaps = [{"taken_at": 1, "boot_id": "a"},
+                 {"taken_at": 5, "boot_id": "now", "terminals": [8993]},
+                 {"taken_at": 7, "boot_id": "now", "terminals": [8993]},
+                 {"taken_at": 9, "boot_id": "now", "terminals": [462900]}]
+        self.assertEqual(snapshot.choose(snaps, "now", [462900])["taken_at"], 7)
+
+    def test_a_terminal_still_running_is_not_a_reason(self):
+        snaps = [{"taken_at": 1, "boot_id": "a"},
+                 {"taken_at": 5, "boot_id": "now", "terminals": [8993]},
+                 {"taken_at": 9, "boot_id": "now", "terminals": [8993, 777]}]
+        self.assertEqual(snapshot.choose(snaps, "now", [8993, 777])["taken_at"], 1)
 
     def test_the_newest_snapshot_of_this_boot_is_what_a_shutdown_keeps(self):
         snaps = [{"taken_at": 1, "boot_id": "now"}, {"taken_at": 9, "boot_id": "a"},

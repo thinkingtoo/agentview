@@ -72,13 +72,14 @@ def parse_flags(argv):
     return " ".join(shlex.quote(t) for t in out)
 
 
-def build(peers, tmux_panes, wez_panes, tmux_clients, now, boot):
+def build(peers, tmux_panes, wez_panes, tmux_clients, now, boot, terminals=()):
     """The snapshot, from facts already gathered. Pure, so tests can reach it.
 
     peers:        [{sessionId, name, cwd, tty, argv, tmux_pane}]
     tmux_panes:   [{pane_id, session, window, window_name, layout, pane, cwd}]
     wez_panes:    [{window_id, tab_id, pane_id, tty, cwd}]  in WezTerm's order
     tmux_clients: [{tty, session}]
+    terminals:    pids of the WezTerm GUIs running, so a crash can be told apart
     """
     by_pane = {p["pane_id"]: p for p in tmux_panes}
     sessions = []
@@ -130,7 +131,8 @@ def build(peers, tmux_panes, wez_panes, tmux_clients, now, boot):
     wezterm = [{"tabs": tabs} for _, tabs in sorted(windows.items())]
 
     return {"version": 2, "taken_at": now, "boot_id": boot,
-            "sessions": sessions, "tmux": tmux, "wezterm": wezterm}
+            "sessions": sessions, "tmux": tmux, "wezterm": wezterm,
+            "terminals": sorted(terminals)}
 
 
 def _natural(name):
@@ -267,6 +269,12 @@ def _wez_sockets():
     return socks
 
 
+def wez_guis():
+    """Pids of the WezTerm GUIs running now."""
+    pids = [s.name.rpartition("-")[2] for s in _wez_sockets() if s.name.startswith("gui-sock-")]
+    return sorted(int(p) for p in pids)
+
+
 def every_wez_pane():
     """The panes of every WezTerm running, for the snapshot. With two open,
     `wezterm cli list` answers from one of them, and the tabs in the other
@@ -284,7 +292,7 @@ def every_wez_pane():
 
 def gather():
     return build(live_peers(), tmux_panes(), every_wez_pane(), tmux_clients(),
-                 int(time.time()), boot_id())
+                 int(time.time()), boot_id(), wez_guis())
 
 
 def _comparable(snap):
@@ -324,9 +332,13 @@ def load_all():
     return out
 
 
-def choose(snaps, boot):
-    """The last snapshot of the previous boot: the state you shut down in."""
-    earlier = [s for s in snaps if s.get("boot_id") != boot]
+def choose(snaps, boot, terminals=()):
+    """The last state before the sessions lost their terminal: the last
+    snapshot of the previous boot, or of a WezTerm that is no longer running.
+    A crashed WezTerm kills the sessions in its tabs as surely as a reboot."""
+    alive = set(terminals)
+    earlier = [s for s in snaps if s.get("boot_id") != boot
+               or set(s.get("terminals") or ()) - alive]
     return max(earlier, key=lambda s: s["taken_at"]) if earlier else None
 
 
@@ -789,7 +801,7 @@ def main(argv):
     if cmd == "tabs":
         name_tabs(log=print)
         return 0
-    snap = choose(load_all(), boot_id())
+    snap = choose(load_all(), boot_id(), wez_guis())
     if cmd == "show":
         if not snap:
             print("no snapshot from an earlier boot")

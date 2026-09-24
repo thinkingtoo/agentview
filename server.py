@@ -49,9 +49,11 @@ def _snapshots():
         files = tuple(sorted(p.name for p in snapshot.store().glob("*.json")))
     except OSError:
         return False
+    # A WezTerm that died changes the choice before any file does.
+    files += tuple(snapshot.wez_guis())
     if files != _SNAP["files"]:
         snaps, boot = snapshot.load_all(), snapshot.boot_id()
-        _SNAP.update(files=files, snap=snapshot.choose(snaps, boot),
+        _SNAP.update(files=files, snap=snapshot.choose(snaps, boot, snapshot.wez_guis()),
                      latest=snapshot.latest(snaps, boot))
     return True
 
