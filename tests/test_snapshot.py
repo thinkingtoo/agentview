@@ -68,6 +68,12 @@ class Choose(unittest.TestCase):
         self.assertEqual(snapshot.choose(snaps, "now")["taken_at"], 5)
         self.assertIsNone(snapshot.choose(snaps[2:], "now"))
 
+    def test_the_newest_snapshot_of_this_boot_is_what_a_shutdown_keeps(self):
+        snaps = [{"taken_at": 1, "boot_id": "now"}, {"taken_at": 9, "boot_id": "a"},
+                 {"taken_at": 5, "boot_id": "now"}]
+        self.assertEqual(snapshot.latest(snaps, "now")["taken_at"], 5)
+        self.assertIsNone(snapshot.latest(snaps[1:2], "now"))
+
 
 class PanePlan(unittest.TestCase):
     SAVED = [{"index": 0, "cwd": "/p", "sessionId": "aaa"},

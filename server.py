@@ -40,17 +40,33 @@ def page():
                 .replace("{{HOME}}", str(Path.home())))
 
 
-_SNAP = {"files": None, "snap": None}
+_SNAP = {"files": None, "snap": None, "latest": None}
+
+
+def _snapshots():
+    """Read the snapshot folder again only when a file came or went."""
+    try:
+        files = tuple(sorted(p.name for p in snapshot.store().glob("*.json")))
+    except OSError:
+        return False
+    if files != _SNAP["files"]:
+        snaps, boot = snapshot.load_all(), snapshot.boot_id()
+        _SNAP.update(files=files, snap=snapshot.choose(snaps, boot),
+                     latest=snapshot.latest(snaps, boot))
+    return True
+
+
+def saved_at():
+    """When this boot last wrote down where every session lives."""
+    if not _snapshots() or not _SNAP["latest"]:
+        return None
+    return _SNAP["latest"]["taken_at"]
 
 
 def restorable(live_ids):
     """What the last boot had running that is not running now, for the button."""
-    try:
-        files = tuple(sorted(p.name for p in snapshot.store().glob("*.json")))
-    except OSError:
+    if not _snapshots():
         return None
-    if files != _SNAP["files"]:
-        _SNAP.update(files=files, snap=snapshot.choose(snapshot.load_all(), snapshot.boot_id()))
     snap = _SNAP["snap"]
     if not snap:
         return None
@@ -83,7 +99,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore")
+    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore", "snapshot")
 
     def do_POST(self):
         if not self._local():
@@ -226,6 +242,14 @@ class Handler(BaseHTTPRequestHandler):
                              start_new_session=True, cwd=str(HERE))
         self._send(json.dumps({"ok": True, "log": str(out)}), "application/json")
 
+    def _snapshot(self, body):
+        """Save now rather than at the next 2-minute tick: the button you press
+        before shutting down. A save that finds nothing moved writes no file,
+        and the last one already describes this minute."""
+        path = snapshot.save()
+        self._send(json.dumps({"ok": True, "changed": bool(path), "taken_at": saved_at()}),
+                   "application/json")
+
     def do_GET(self):
         if self.path.startswith("/api/roster"):
             # A poll is expected to be fast. The 9-second round that made
@@ -249,6 +273,7 @@ class Handler(BaseHTTPRequestHandler):
                         if m["key"].startswith("claude:")}
             self._send(json.dumps({"blocks": blocks,
                                    "restore": restorable(live_ids),
+                                   "saved": saved_at(),
                                    "providers": status,
                                    "hold": fleet.config_value("hold", False),
                                    "chime": fleet.config_value("chime", True)}),

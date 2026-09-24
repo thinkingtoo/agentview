@@ -39,6 +39,13 @@ covers the rest.
   reopens the WezTerm tabs and seeds cc-agent-names so each session gets its
   old name back. Anything already running is skipped.
 - The page shows **↺ reopen N** while sessions from the last boot are missing.
+- **⤓ save now** saves the snapshot on the spot, for the minute before you shut
+  down: a session started since the last 2-minute tick would otherwise not come
+  back. It answers **✓ saved**, or **✓ up to date** when nothing moved since the
+  last save. The tooltip says when that was.
+- A turn cut off by the shutdown is lost; the conversation up to its last
+  finished step is not. Commands and background tasks running at that moment
+  are killed, and a resumed session comes back idle: tell it to carry on.
 - The same timer names every WezTerm tab after what it hosts: `Name · topic`
   for one session, `project · Name, Name +n` for several. A title you set by
   hand is left alone. `snapshot.py tabs` does it on demand.

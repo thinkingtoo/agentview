@@ -281,6 +281,12 @@ def choose(snaps, boot):
     return max(earlier, key=lambda s: s["taken_at"]) if earlier else None
 
 
+def latest(snaps, boot):
+    """The newest snapshot of this boot: what a shutdown now would restore."""
+    mine = [s for s in snaps if s.get("boot_id") == boot]
+    return max(mine, key=lambda s: s["taken_at"]) if mine else None
+
+
 def missing(snap, live_ids):
     return [s for s in (snap or {}).get("sessions", []) if s["sessionId"] not in live_ids]
 

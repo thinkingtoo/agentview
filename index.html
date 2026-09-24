@@ -19,7 +19,7 @@
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif; }
-  header { position:sticky; top:0; z-index:5; display:flex; align-items:baseline; gap:14px;
+  header { position:sticky; top:0; z-index:5; display:flex; align-items:baseline; flex-wrap:wrap; gap:14px;
            padding:14px 20px; background:var(--bg); border-bottom:1px solid var(--line); }
   h1 { margin:0; font-size:15px; letter-spacing:.11em; text-transform:uppercase;
        display:flex; align-items:center; gap:8px; }
@@ -166,6 +166,7 @@
            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .empty { color:var(--dim); padding:30px 20px; }
 #restore[hidden] { display: none; }
+header button { white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -184,6 +185,7 @@
   <span class="spacer"></span>
   <span class="stamp" id="stamp"></span>
   <button id="restore" hidden></button>
+  <button id="save"></button>
   <button id="sound"></button>
   <button id="hold" title="stop the cards moving while you read them"></button>
 </header>
@@ -680,8 +682,9 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { blocks: all, hold, chime, providers, restore } = await r.json();
+    const { blocks: all, hold, chime, providers, restore, saved } = await r.json();
     drawRestore(restore);
+    drawSave(saved);
     PROVIDERS = providers || {};
     if (busyWithUser()) return;
     // Read back on every poll, so editing config.json by hand still works.
@@ -1006,6 +1009,39 @@ document.getElementById("restore").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: "{}",
   }).catch(() => { RESTORING = false; });
+});
+
+// The snapshot a reboot would restore. The timer saves every 2 minutes; this
+// is for the minute before you shut down.
+let SAVING = false, SAVED_NOTE = "", SAVED_UNTIL = 0;
+const hhmm = t => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function drawSave(at) {
+  const b = document.getElementById("save");
+  if (SAVING) { b.textContent = "saving…"; return; }
+  if (Date.now() < SAVED_UNTIL) { b.textContent = SAVED_NOTE; return; }
+  b.textContent = "⤓ save now";
+  b.title = (at ? `last change saved ${hhmm(at)}; ` : "") +
+    "the timer checks every 2 minutes. Save now before shutting down.";
+}
+document.getElementById("save").addEventListener("click", async () => {
+  if (SAVING) return;
+  SAVING = true;
+  drawSave();
+  const b = document.getElementById("save");
+  try {
+    const r = await fetch("/api/snapshot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+      body: "{}",
+    });
+    const { changed, taken_at } = await r.json();
+    SAVED_NOTE = !taken_at ? "nothing to save" : changed ? "✓ saved" : "✓ up to date";
+  } catch (e) {
+    SAVED_NOTE = "save failed";
+  }
+  SAVING = false;
+  SAVED_UNTIL = Date.now() + 4000;
+  b.textContent = SAVED_NOTE;
 });
 
 document.getElementById("hold").addEventListener("click", async () => {
