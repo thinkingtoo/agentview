@@ -1,0 +1,7 @@
+[Unit]
+Description=agentview — remember where every Claude session lives, and name the WezTerm tabs
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/agentview
+ExecStart=/usr/bin/python3 %h/Projects/agentview/snapshot.py save

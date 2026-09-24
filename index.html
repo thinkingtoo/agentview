@@ -165,6 +165,7 @@
            font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .empty { color:var(--dim); padding:30px 20px; }
+#restore[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -182,6 +183,7 @@
   <input id="q" class="q" type="search" placeholder="filter…  (/)" autocomplete="off">
   <span class="spacer"></span>
   <span class="stamp" id="stamp"></span>
+  <button id="restore" hidden></button>
   <button id="sound"></button>
   <button id="hold" title="stop the cards moving while you read them"></button>
 </header>
@@ -678,7 +680,8 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { blocks: all, hold, chime, providers } = await r.json();
+    const { blocks: all, hold, chime, providers, restore } = await r.json();
+    drawRestore(restore);
     PROVIDERS = providers || {};
     if (busyWithUser()) return;
     // Read back on every poll, so editing config.json by hand still works.
@@ -979,6 +982,30 @@ document.addEventListener("keydown", e => {
     e.preventDefault();
     box.focus();
   }
+});
+
+// Sessions the last boot had running that are not running now. The button
+// only exists while there is something to bring back.
+let RESTORING = false;
+function drawRestore(info) {
+  const b = document.getElementById("restore");
+  const n = info && info.names ? info.names.length : 0;
+  b.hidden = !n;
+  if (!n) { RESTORING = false; return; }
+  const at = new Date(info.taken_at * 1000);
+  const when = at.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  b.textContent = RESTORING ? `reopening ${n}…` : `↺ reopen ${n} from ${when}`;
+  b.title = info.names.join(", ");
+}
+document.getElementById("restore").addEventListener("click", async () => {
+  if (RESTORING) return;
+  RESTORING = true;
+  document.getElementById("restore").textContent = "reopening…";
+  await fetch("/api/restore", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: "{}",
+  }).catch(() => { RESTORING = false; });
 });
 
 document.getElementById("hold").addEventListener("click", async () => {

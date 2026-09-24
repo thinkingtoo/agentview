@@ -14,6 +14,9 @@ import lines
 import log
 import providers
 import seen
+import snapshot
+import subprocess
+import sys
 from providers import claude
 
 HERE = Path(__file__).resolve().parent
@@ -35,6 +38,24 @@ def page():
     html = (HERE / "index.html").read_text(encoding="utf-8")
     return (html.replace("{{ZOOM}}", str(setting("zoom", 1.5)))
                 .replace("{{HOME}}", str(Path.home())))
+
+
+_SNAP = {"files": None, "snap": None}
+
+
+def restorable(live_ids):
+    """What the last boot had running that is not running now, for the button."""
+    try:
+        files = tuple(sorted(p.name for p in snapshot.store().glob("*.json")))
+    except OSError:
+        return None
+    if files != _SNAP["files"]:
+        _SNAP.update(files=files, snap=snapshot.choose(snapshot.load_all(), snapshot.boot_id()))
+    snap = _SNAP["snap"]
+    if not snap:
+        return None
+    gone = snapshot.missing(snap, live_ids)
+    return {"taken_at": snap["taken_at"], "names": [s["name"] or s["sessionId"][:8] for s in gone]}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -62,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime")
+    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore")
 
     def do_POST(self):
         if not self._local():
@@ -194,6 +215,17 @@ class Handler(BaseHTTPRequestHandler):
         log.event("retitle", key=key, text=text, ran=ran)
         self._send(json.dumps({"ok": True, "ran": ran}), "application/json")
 
+    def _restore(self, body):
+        """Reopen what the last boot left running. In the background: resuming
+        goes one session at a time and takes a while, and the page keeps polling."""
+        out = snapshot.store().parent / "restore.log"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "a") as fh:
+            subprocess.Popen([sys.executable, str(HERE / "snapshot.py"), "restore"],
+                             stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             start_new_session=True, cwd=str(HERE))
+        self._send(json.dumps({"ok": True, "log": str(out)}), "application/json")
+
     def do_GET(self):
         if self.path.startswith("/api/roster"):
             # A poll is expected to be fast. The 9-second round that made
@@ -213,7 +245,10 @@ class Handler(BaseHTTPRequestHandler):
                 lines.forget({m["id"] for b in blocks for m in b["members"]})
             status = {name: {"ok": True} for name in answered}
             status.update({name: {"ok": False, "error": why} for name, why in failed.items()})
+            live_ids = {m["key"].partition(":")[2] for b in blocks for m in b["members"]
+                        if m["key"].startswith("claude:")}
             self._send(json.dumps({"blocks": blocks,
+                                   "restore": restorable(live_ids),
                                    "providers": status,
                                    "hold": fleet.config_value("hold", False),
                                    "chime": fleet.config_value("chime", True)}),

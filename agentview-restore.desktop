@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=agentview restore
+Comment=Reopen the Claude sessions, tmux panes and WezTerm tabs from before the last shutdown
+Exec=/usr/bin/python3 /home/tiroir/Projects/agentview/snapshot.py restore --login
+X-KDE-autostart-after=panel
+X-GNOME-Autostart-Delay=10
+NoDisplay=true

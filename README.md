@@ -21,6 +21,30 @@ Names come from [cc-agent-names](https://github.com/sweatshop-ai/cc-agent-names)
 but nothing here requires it — an unnamed session shows whatever Claude Code
 called it.
 
+## After a reboot
+
+tmux-resurrect brings tmux back, but every pane that ran Claude comes back as
+a bare shell and the WezTerm windows do not come back at all. `snapshot.py`
+covers the rest.
+
+- `agentview-snapshot.timer` runs `snapshot.py save` every 2 minutes. It records
+  each interactive Claude session (id, launch flags, name, tmux pane), the
+  layout of every tmux session that hosts one, and which WezTerm window and tab
+  showed what. Files go to `~/.claude/agentview/snapshots/`, and a save is
+  skipped when nothing moved.
+- `agentview-restore.desktop` (copied to `~/.config/autostart/`) runs
+  `snapshot.py restore --login` once per boot. It takes the last snapshot of
+  the previous boot, waits for tmux-continuum, runs `claude --resume` in each
+  pane it came from (an idle shell only, never over a running program),
+  reopens the WezTerm tabs and seeds cc-agent-names so each session gets its
+  old name back. Anything already running is skipped.
+- The page shows **↺ reopen N** while sessions from the last boot are missing.
+- The same timer names every WezTerm tab after what it hosts: `Name · topic`
+  for one session, `project · Name, Name +n` for several. A title you set by
+  hand is left alone. `snapshot.py tabs` does it on demand.
+
+`snapshot.py show` lists the last boot's sessions and marks the missing ones.
+
 ## Providers
 
 The page does not know Claude Code. It knows *providers*: one module each
