@@ -71,7 +71,9 @@ def restorable(live_ids):
     if not snap:
         return None
     gone = snapshot.missing(snap, live_ids)
-    return {"taken_at": snap["taken_at"], "names": [s["name"] or s["sessionId"][:8] for s in gone]}
+    tabs = snapshot.missing_tabs(snap, snapshot.tmux_clients())
+    return {"taken_at": snap["taken_at"],
+            "names": [s["name"] or s["sessionId"][:8] for s in gone] + [f"tmux {t}" for t in tabs]}
 
 
 class Handler(BaseHTTPRequestHandler):

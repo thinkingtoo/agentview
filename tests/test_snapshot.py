@@ -92,6 +92,20 @@ class PanePlan(unittest.TestCase):
         self.assertEqual(snapshot.pane_plan(self.SAVED, current, {"bbb"}), [])
 
 
+class MissingTabs(unittest.TestCase):
+    SNAP = {"wezterm": [{"tabs": [{"kind": "shell", "cwd": "/"}]},
+                        {"tabs": [{"kind": "tmux", "session": "23"},
+                                  {"kind": "tmux", "session": "26"},
+                                  {"kind": "claude", "sessionId": "x"}]}]}
+
+    def test_a_tmux_session_nobody_shows_is_missing(self):
+        self.assertEqual(snapshot.missing_tabs(self.SNAP, CLIENTS), ["26"])
+
+    def test_nothing_is_missing_when_every_session_has_a_client(self):
+        clients = CLIENTS + [{"tty": "/dev/pts/91", "session": "26"}]
+        self.assertEqual(snapshot.missing_tabs(self.SNAP, clients), [])
+
+
 class TabTitle(unittest.TestCase):
     def test_one_session_reads_name_then_topic(self):
         self.assertEqual(snapshot.tab_title([{"name": "Hugo", "title": "Rapportje render-doc"}], "tribeloo"),

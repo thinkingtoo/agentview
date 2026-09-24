@@ -215,8 +215,16 @@ def tmux_clients():
             (line.partition("\t") for line in res.stdout.splitlines()) if t]
 
 
+# Without --no-auto-start, `wezterm cli` run while no WezTerm window is open
+# quietly starts a headless wezterm-mux-server and talks to that. A restore at
+# login then put every tab in it, alive and attached, with nothing on screen
+# (2026-09-24). With the flag the call fails instead, and the caller knows the
+# GUI still has to be started.
+WEZ_CLI = ["wezterm", "cli", "--no-auto-start"]
+
+
 def wez_panes():
-    res = _run(["wezterm", "cli", "list", "--format", "json"])
+    res = _run(WEZ_CLI + ["list", "--format", "json"])
     if not res or res.returncode != 0:
         return []
     try:
@@ -289,6 +297,14 @@ def latest(snaps, boot):
 
 def missing(snap, live_ids):
     return [s for s in (snap or {}).get("sessions", []) if s["sessionId"] not in live_ids]
+
+
+def missing_tabs(snap, clients):
+    """tmux sessions a WezTerm tab showed that no terminal shows now. The
+    sessions inside can all be running while you see none of them."""
+    attached = {c["session"] for c in clients}
+    return [t["session"] for w in (snap or {}).get("wezterm", []) for t in w["tabs"]
+            if t["kind"] == "tmux" and t["session"] not in attached]
 
 
 # ------------------------------------------------------------------ restore
@@ -378,8 +394,8 @@ def _claude_cmd(rec):
 def restore(snap, dry=False, log=print):
     live_ids = {p["sessionId"] for p in live_peers()}
     todo = {s["sessionId"]: s for s in missing(snap, live_ids)}
-    if not todo:
-        log("nothing to restore: every session in the snapshot is running")
+    if not todo and not missing_tabs(snap, tmux_clients()):
+        log("nothing to restore: every session and tab in the snapshot is open")
         return 0
     started = 0
 
@@ -458,8 +474,10 @@ def restore(snap, dry=False, log=print):
     # WezTerm: the windows and tabs as they were.
     clients = tmux_clients()
     attached = {c["session"] for c in clients}
-    panes_now = wez_panes()
-    gui = bool(panes_now)
+    # A mux server with no window also answers `wezterm cli`: only a running
+    # wezterm-gui means a spawned tab lands somewhere you can see it.
+    gui = _gui_running()
+    panes_now = wez_panes() if gui else []
     window_of_tty = {p["tty"]: p["window_id"] for p in panes_now}
     window_of_session = {c["session"]: window_of_tty.get(c["tty"]) for c in clients}
     live_tab_window = {}
@@ -497,7 +515,7 @@ def restore(snap, dry=False, log=print):
                 else:
                     log(f"tab     {what} (new WezTerm)")
                 continue
-            spawn = ["wezterm", "cli", "spawn"]
+            spawn = WEZ_CLI + ["spawn"]
             spawn += ["--window-id", str(window_id)] if window_id is not None else ["--new-window"]
             if cwd:
                 spawn += ["--cwd", cwd]
@@ -545,6 +563,11 @@ def _window_of(pane_id):
     return None
 
 
+def _gui_running():
+    res = _run(["pgrep", "-x", "wezterm-gui"])
+    return bool(res and res.returncode == 0)
+
+
 def _start_gui(cwd, argv, rec):
     if rec:
         seed_name(rec["sessionId"], rec["name"])
@@ -553,7 +576,7 @@ def _start_gui(cwd, argv, rec):
                      stderr=subprocess.DEVNULL, start_new_session=True)
     deadline = time.time() + 20
     while time.time() < deadline:
-        panes = wez_panes()
+        panes = wez_panes() if _gui_running() else []
         if panes:
             return panes[-1]["window_id"]
         time.sleep(0.5)
@@ -607,7 +630,7 @@ def name_tabs(log=lambda *_: None):
     best name. A title you typed yourself is never replaced: only a tab still
     carrying the last title set here, or none, is touched."""
     import fleet
-    res = _run(["wezterm", "cli", "list", "--format", "json"])
+    res = _run(WEZ_CLI + ["list", "--format", "json"])
     if not res or res.returncode != 0:
         return
     try:
@@ -670,7 +693,7 @@ def name_tabs(log=lambda *_: None):
         if have and have != ours:
             continue                      # you named this one yourself
         if want and want != have:
-            _run(["wezterm", "cli", "set-tab-title", "--pane-id", str(wp["pane_id"]), want])
+            _run(WEZ_CLI + ["set-tab-title", "--pane-id", str(wp["pane_id"]), want])
             log(f"tab {tab}: {want}")
         state["tabs"][tab] = want
     try:

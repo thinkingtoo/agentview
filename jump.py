@@ -149,7 +149,7 @@ def tty_of(pid):
 def wezterm_panes():
     if not shutil.which("wezterm"):
         return []
-    res = _run(["wezterm", "cli", "list", "--format", "json"])
+    res = _run(["wezterm", "cli", "--no-auto-start", "list", "--format", "json"])
     if not res or res.returncode != 0:
         return []
     try:
