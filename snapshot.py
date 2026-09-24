@@ -87,6 +87,8 @@ def build(peers, tmux_panes, wez_panes, tmux_clients, now, boot, terminals=()):
         rec = {"sessionId": peer["sessionId"], "name": peer.get("name") or "",
                "cwd": peer.get("cwd") or "",
                "flags": parse_flags(peer.get("argv") or ["claude"])}
+        if peer.get("pid"):
+            rec["pid"] = peer["pid"]
         pane = by_pane.get(peer.get("tmux_pane") or "")
         if pane:
             rec["tmux"] = {"session": pane["session"], "window": pane["window"],
@@ -352,6 +354,84 @@ def missing(snap, live_ids):
     return [s for s in (snap or {}).get("sessions", []) if s["sessionId"] not in live_ids]
 
 
+def closed(snaps, boot, live_ids, skip=(), live=()):
+    """Sessions this boot had running that no longer run, newest first.
+
+    Each comes back as it was last seen: its name, directory and flags from
+    the newest snapshot that still had it. The earlier boot's sessions are
+    the reopen button's, so they are not repeated here.
+
+    `live` is what runs now, with each process's start time. A conversation
+    whose own process is still running was replaced in its terminal (/clear,
+    /resume), not closed. Snapshots older than the pid field match on name
+    and directory, and only a process that started before the conversation
+    was last seen counts: names are handed out again during the day.
+    """
+    last = {}
+    for snap in sorted(snaps, key=lambda s: s.get("taken_at", 0)):
+        if snap.get("boot_id") != boot:
+            continue
+        for rec in snap.get("sessions", []):
+            last[rec["sessionId"]] = {**rec, "last_seen": snap["taken_at"]}
+
+    def replaced(rec):
+        for proc in live:
+            if (proc.get("started") or 0) > rec["last_seen"]:
+                continue
+            if rec.get("pid"):
+                if proc.get("pid") == rec["pid"]:
+                    return True
+            elif proc.get("name") and (proc["name"], proc.get("cwd")) == (rec.get("name"), rec.get("cwd")):
+                return True
+        return False
+
+    gone = [r for sid, r in last.items()
+            if sid not in live_ids and sid not in skip and not replaced(r)]
+    return sorted(gone, key=lambda r: -r["last_seen"])
+
+
+def started_at(pid):
+    """When a process started, in epoch seconds, or 0."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+            ticks = int(fh.read().rsplit(")", 1)[1].split()[19])
+        with open("/proc/stat", encoding="utf-8") as fh:
+            btime = next(int(l.split()[1]) for l in fh if l.startswith("btime"))
+        return btime + ticks / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError, StopIteration):
+        return 0
+
+
+def dismissed_path():
+    return store().parent / "dismissed.json"
+
+
+def dismissed():
+    try:
+        return set(json.loads(dismissed_path().read_text()))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def dismiss(session_id):
+    """Take a closed session off the list: you closed that one on purpose."""
+    ids = dismissed() | {session_id}
+    path = dismissed_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(sorted(ids)))
+    os.replace(tmp, path)
+
+
+def revive(rec):
+    """Resume a closed session in a new WezTerm tab, under its old name."""
+    import jump
+    if not os.path.isdir(rec.get("cwd") or ""):
+        return {"ok": False, "reason": f"its directory is gone: {rec.get('cwd')}"}
+    seed_name(rec["sessionId"], rec.get("name") or "")
+    return jump.open_tab(shlex.split(_claude_cmd(rec)), cwd=rec["cwd"])
+
+
 def unseen_tmux(peers, panes, clients):
     """tmux sessions running a Claude session that no terminal is attached to.
     Taken from what runs now, so a snapshot that never saw the tab (or a
@@ -451,7 +531,7 @@ def _wait_tmux_settled(max_wait=90):
 
 
 def _claude_cmd(rec):
-    return f"claude --resume {rec['sessionId']} {rec['flags']}".strip()
+    return f"claude --resume {rec['sessionId']} {rec.get('flags') or ''}".strip()
 
 
 def restore(snap, dry=False, log=print):

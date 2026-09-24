@@ -40,7 +40,7 @@ def page():
                 .replace("{{HOME}}", str(Path.home())))
 
 
-_SNAP = {"files": None, "snap": None, "latest": None}
+_SNAP = {"files": None, "snap": None, "latest": None, "all": []}
 
 
 def _snapshots():
@@ -53,7 +53,7 @@ def _snapshots():
     files += tuple(snapshot.wez_guis())
     if files != _SNAP["files"]:
         snaps, boot = snapshot.load_all(), snapshot.boot_id()
-        _SNAP.update(files=files, snap=snapshot.choose(snaps, boot, snapshot.wez_guis()),
+        _SNAP.update(files=files, all=snaps, snap=snapshot.choose(snaps, boot, snapshot.wez_guis()),
                      latest=snapshot.latest(snaps, boot))
     return True
 
@@ -81,6 +81,56 @@ def restorable(live_ids):
             "names": [s["name"] or s["sessionId"][:8] for s in gone] + [f"tmux {t}" for t in tabs]}
 
 
+_TITLES = {}
+
+
+def _title(rec):
+    """Claude's own title for a closed conversation. Names are handed out
+    again during the day, so the name alone does not say which one it was."""
+    sid = rec["sessionId"]
+    if sid not in _TITLES:
+        _TITLES[sid] = _last_title(claude.transcript_for(sid, rec.get("cwd") or ""))
+    return _TITLES[sid]
+
+
+def _last_title(path):
+    """The newest ai-title record, else the last prompt. Found from the end of
+    the file: parsing a 20 MB transcript whole held the poll for seconds."""
+    if not path:
+        return ""
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return ""
+    for marker, field in ((b'"type":"ai-title"', "aiTitle"), (b'"type":"last-prompt"', "lastPrompt")):
+        at = len(raw)
+        # The newest record can be empty; walk back to one that says something.
+        while (at := raw.rfind(marker, 0, at)) >= 0:
+            start, end = raw.rfind(b"\n", 0, at) + 1, raw.find(b"\n", at)
+            try:
+                text = json.loads(raw[start:end if end >= 0 else None]).get(field) or ""
+            except ValueError:
+                text = ""
+            if isinstance(text, str) and text.strip():
+                return " ".join(text.split())[:120]
+    return ""
+
+
+def _live_procs():
+    return [{**p, "started": snapshot.started_at(p["pid"])} for p in snapshot.live_peers()]
+
+
+def closed_now(live_ids):
+    """What this boot had running and does not any more, for the closed list."""
+    if not _snapshots():
+        return []
+    gone = [r for r in snapshot.closed(_SNAP["all"], snapshot.boot_id(), live_ids,
+                                        skip=snapshot.dismissed(), live=_live_procs())
+            if claude.transcript_for(r["sessionId"], r.get("cwd") or "")]
+    return [{"id": r["sessionId"], "name": r.get("name") or "", "cwd": r.get("cwd") or "",
+             "title": _title(r), "at": r["last_seen"]} for r in gone]
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, body, ctype):
         raw = body.encode("utf-8")
@@ -106,7 +156,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore", "snapshot")
+    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore", "snapshot", "revive", "dismiss")
 
     def do_POST(self):
         if not self._local():
@@ -249,6 +299,31 @@ class Handler(BaseHTTPRequestHandler):
                              start_new_session=True, cwd=str(HERE))
         self._send(json.dumps({"ok": True, "log": str(out)}), "application/json")
 
+    def _revive(self, body):
+        """Bring back one session closed earlier today, in a new WezTerm tab."""
+        sid = body.get("id")
+        if not isinstance(sid, str):
+            return self.send_error(400, "expected {id}")
+        live = {p["sessionId"] for p in snapshot.live_peers()}
+        _snapshots()
+        if sid in live:
+            return self.send_error(409, "that session is already running")
+        rec = next((r for r in snapshot.closed(_SNAP["all"], snapshot.boot_id(), live,
+                                               live=_live_procs())
+                    if r["sessionId"] == sid), None)
+        if not rec:
+            return self.send_error(404, "no closed session with that id")
+        done = snapshot.revive(rec)
+        log.event("revived", id=sid, name=rec.get("name"), **done)
+        self._send(json.dumps(done), "application/json")
+
+    def _dismiss(self, body):
+        sid = body.get("id")
+        if not isinstance(sid, str):
+            return self.send_error(400, "expected {id}")
+        snapshot.dismiss(sid)
+        self._send(json.dumps({"ok": True}), "application/json")
+
     def _snapshot(self, body):
         """Save now rather than at the next 2-minute tick: the button you press
         before shutting down. A save that finds nothing moved writes no file,
@@ -280,6 +355,7 @@ class Handler(BaseHTTPRequestHandler):
                         if m["key"].startswith("claude:")}
             self._send(json.dumps({"blocks": blocks,
                                    "restore": restorable(live_ids),
+                                   "closed": closed_now(live_ids),
                                    "saved": saved_at(),
                                    "providers": status,
                                    "hold": fleet.config_value("hold", False),

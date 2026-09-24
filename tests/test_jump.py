@@ -40,6 +40,16 @@ class ChooseRoute(unittest.TestCase):
         ])
         self.assertEqual(route["window_pid"], 99816)
 
+    def test_a_tmux_session_no_terminal_shows_gets_one_attached(self):
+        # Selecting a pane in a tmux session nobody is attached to shows
+        # nothing, and the page used to report that as a jump that worked.
+        route = jump.choose_route(
+            tty="/dev/pts/90",
+            ancestry=[("claude", 2370863), ("bash", 2370230), ("tmux: server", 115907)],
+            tmux="26:@3.%7", panes=PANES, clients=CLIENTS, konsole=KONSOLE)
+        self.assertEqual(route["attach"], "26")
+        self.assertIsNone(route["window_pid"])
+
     def test_konsole_is_matched_through_the_shell_it_owns(self):
         # Konsole reports the pid of the shell it started, never claude's own,
         # so the match has to run up the ancestry.

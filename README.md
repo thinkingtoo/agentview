@@ -52,6 +52,26 @@ covers the rest.
 
 `snapshot.py show` lists the last boot's sessions and marks the missing ones.
 
+## Closed today
+
+**⟲ closed N** lists every conversation this boot's snapshots saw that no
+longer runs: a tab shut by mistake, a worker nobody went back to. Each line
+shows the name it had, Claude's title for it, its directory and when it was
+last seen. Names are handed out again during the day, so the title is what
+tells two Tareks apart.
+
+- A click resumes it in a new WezTerm tab (`claude --resume <id>` with its old
+  flags, in its old directory) and gives it its name back.
+- **×** takes one off the list for good, for a session you closed on purpose.
+  The ids go to `~/.claude/agentview/dismissed.json`.
+- A conversation replaced inside its own terminal (`/clear`, `/resume`) is not
+  closed: its process still runs, so it is left out.
+- A session that started and ended between two 2-minute saves was never
+  written down, and cannot be listed.
+
+A click on a live row whose tmux session no terminal is attached to opens a
+WezTerm tab on it (`tmux attach`), instead of selecting a pane nobody can see.
+
 ## Providers
 
 The page does not know Claude Code. It knows *providers*: one module each

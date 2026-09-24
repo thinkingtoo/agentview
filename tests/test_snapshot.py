@@ -48,6 +48,11 @@ class Build(unittest.TestCase):
         self.assertEqual(by["Sinead"]["flags"], "--model opus --effort xhigh")
         self.assertNotIn("tmux", by["Tobias"])
 
+    def test_each_session_keeps_its_pid(self):
+        peers = [{**PEERS[0], "pid": 4242}]
+        snap = snapshot.build(peers, TMUX, WEZ, CLIENTS, 100, "boot")
+        self.assertEqual(snap["sessions"][0]["pid"], 4242)
+
     def test_only_tmux_sessions_hosting_claude_are_kept_with_every_pane(self):
         self.assertEqual([t["name"] for t in self.snap["tmux"]], ["23"])
         panes = self.snap["tmux"][0]["windows"][0]["panes"]
@@ -134,6 +139,58 @@ class UnseenTmux(unittest.TestCase):
 
     def test_a_tmux_session_without_claude_is_left_alone(self):
         self.assertNotIn("9", snapshot.unseen_tmux(PEERS, TMUX, []))
+
+
+class Closed(unittest.TestCase):
+    # Two saves this boot and one from the boot before. Cleo left at 200,
+    # Tobias is still running, Old belongs to the reopen button.
+    SNAPS = [
+        {"boot_id": "b0", "taken_at": 50, "sessions": [{"sessionId": "old", "name": "Old", "cwd": "/"}]},
+        {"boot_id": "b1", "taken_at": 100, "sessions": [
+            {"sessionId": "aaa", "name": "Cleo", "cwd": "/p", "flags": ""},
+            {"sessionId": "ccc", "name": "Tobias", "cwd": "/home", "flags": ""}]},
+        {"boot_id": "b1", "taken_at": 200, "sessions": [
+            {"sessionId": "aaa", "name": "Cleo", "cwd": "/p", "flags": "--model opus"},
+            {"sessionId": "ccc", "name": "Tobias", "cwd": "/home", "flags": ""},
+            {"sessionId": "ddd", "name": "Dora", "cwd": "/q", "flags": ""}]},
+        {"boot_id": "b1", "taken_at": 300, "sessions": [
+            {"sessionId": "ccc", "name": "Tobias", "cwd": "/home", "flags": ""}]},
+    ]
+
+    def test_a_session_this_boot_had_and_no_longer_runs_is_closed(self):
+        got = snapshot.closed(self.SNAPS, "b1", {"ccc"})
+        self.assertEqual([r["sessionId"] for r in got], ["aaa", "ddd"])
+
+    def test_the_last_sighting_is_what_it_comes_back_with(self):
+        cleo = snapshot.closed(self.SNAPS, "b1", {"ccc"})[0]
+        self.assertEqual((cleo["flags"], cleo["last_seen"]), ("--model opus", 200))
+
+    def test_one_you_dismissed_stays_gone(self):
+        got = snapshot.closed(self.SNAPS, "b1", {"ccc"}, skip={"aaa"})
+        self.assertEqual([r["sessionId"] for r in got], ["ddd"])
+
+    def test_a_conversation_its_own_terminal_replaced_is_not_closed(self):
+        # /clear, or /resume inside the session: same process, new id.
+        live = [{"sessionId": "new", "name": "Cleo", "cwd": "/p", "pid": 7, "started": 150}]
+        snaps = [dict(s) for s in self.SNAPS]
+        snaps[2] = {**snaps[2], "sessions": [{**snaps[2]["sessions"][0], "pid": 7}]
+                    + snaps[2]["sessions"][1:]}
+        got = snapshot.closed(snaps, "b1", {"ccc", "new"}, live=live)
+        self.assertEqual([r["sessionId"] for r in got], ["ddd"])
+
+    def test_without_a_pid_the_same_name_and_place_started_earlier_is_the_same_terminal(self):
+        live = [{"sessionId": "new", "name": "Cleo", "cwd": "/p", "pid": 7, "started": 150}]
+        got = snapshot.closed(self.SNAPS, "b1", {"ccc", "new"}, live=live)
+        self.assertEqual([r["sessionId"] for r in got], ["ddd"])
+
+    def test_a_name_handed_out_again_later_does_not_hide_the_closed_one(self):
+        live = [{"sessionId": "new", "name": "Cleo", "cwd": "/p", "pid": 7, "started": 250}]
+        got = snapshot.closed(self.SNAPS, "b1", {"ccc", "new"}, live=live)
+        self.assertEqual([r["sessionId"] for r in got], ["aaa", "ddd"])
+
+    def test_the_last_boot_is_left_to_the_reopen_button(self):
+        got = snapshot.closed(self.SNAPS, "b1", set())
+        self.assertNotIn("old", [r["sessionId"] for r in got])
 
 
 class TabTitle(unittest.TestCase):

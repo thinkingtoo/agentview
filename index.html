@@ -165,7 +165,26 @@
            font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .empty { color:var(--dim); padding:30px 20px; }
-#restore[hidden] { display: none; }
+#restore[hidden], #closed[hidden], #closedlist[hidden] { display: none; }
+/* Conversations this boot had that no longer run. A drop-down under the
+   header, so opening it never moves the cards you were reading. */
+#closedlist { position:fixed; right:20px; z-index:6; width:min(560px, calc(100vw - 32px));
+              max-height:70vh; overflow:auto; background:var(--card); border:1px solid var(--line);
+              border-radius:11px; box-shadow:0 8px 28px rgba(0,0,0,.35); padding:6px; }
+#closedlist .none { color:var(--dim); padding:10px 12px; font-size:13px; }
+.gone { display:flex; align-items:flex-start; gap:6px; border-radius:8px; }
+.gone:hover { background:color-mix(in srgb,var(--accent) 8%,transparent); }
+.gone .back { flex:1; min-width:0; text-align:left; background:none; border:0; padding:7px 10px; }
+.gone .back:hover { color:var(--ink); }
+.gone .who { display:flex; gap:8px; align-items:baseline; }
+.gone .nm { font-weight:600; }
+.gone .at { margin-left:auto; color:var(--faint); font-size:12px; font-variant-numeric:tabular-nums; }
+.gone .tt { color:var(--dim); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gone .wd { color:var(--faint); font-size:11.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gone .x { background:none; border:0; color:var(--faint); padding:7px 10px; }
+.gone .x:hover { color:var(--bad); }
+.gone .err { color:var(--bad); font-size:12px; }
 header button { white-space: nowrap; }
 </style>
 </head>
@@ -184,11 +203,13 @@ header button { white-space: nowrap; }
   <input id="q" class="q" type="search" placeholder="filter…  (/)" autocomplete="off">
   <span class="spacer"></span>
   <span class="stamp" id="stamp"></span>
+  <button id="closed" hidden title="conversations closed since the machine started: click one to resume it"></button>
   <button id="restore" hidden></button>
   <button id="save"></button>
   <button id="sound"></button>
   <button id="hold" title="stop the cards moving while you read them"></button>
 </header>
+<div id="closedlist" hidden></div>
 <main id="main"><div class="empty">loading…</div></main>
 <script>
 let PINNED = [];
@@ -682,8 +703,9 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { blocks: all, hold, chime, providers, restore, saved } = await r.json();
+    const { blocks: all, hold, chime, providers, restore, saved, closed } = await r.json();
     drawRestore(restore);
+    drawClosed(closed);
     drawSave(saved);
     PROVIDERS = providers || {};
     if (busyWithUser()) return;
@@ -1009,6 +1031,77 @@ document.getElementById("restore").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: "{}",
   }).catch(() => { RESTORING = false; });
+});
+
+// Conversations this boot had running that have since closed: a tab shut by
+// mistake, a worker nobody went back to. One click resumes it in a new
+// WezTerm tab, under its old name; × takes one you meant to close off the list.
+let CLOSED = [];
+const REVIVING = new Map();          // id -> "opening…" or the error it came back with
+function drawClosed(list) {
+  CLOSED = (list || []).filter(c => REVIVING.get(c.id) !== "gone");
+  const b = document.getElementById("closed");
+  b.hidden = !CLOSED.length;
+  b.textContent = `⟲ closed ${CLOSED.length}`;
+  if (!CLOSED.length) document.getElementById("closedlist").hidden = true;
+  if (!document.getElementById("closedlist").hidden) paintClosed();
+}
+function paintClosed() {
+  const box = document.getElementById("closedlist");
+  box.style.top = document.querySelector("header").getBoundingClientRect().bottom + 6 + "px";
+  if (!CLOSED.length) { box.innerHTML = `<div class="none">nothing closed since the machine started</div>`; return; }
+  box.innerHTML = CLOSED.map(c => {
+    const state = REVIVING.get(c.id);
+    const where = c.cwd.startsWith(home) ? "~" + c.cwd.slice(home.length) : c.cwd;
+    return `<div class="gone" data-id="${esc(c.id)}">
+      <button class="back" title="resume this conversation in a new WezTerm tab">
+        <div class="who"><span class="nm">${esc(c.name || c.id.slice(0, 8))}</span>
+          <span class="at">${state === "opening" ? "opening…" : "last seen " + hhmm(c.at)}</span></div>
+        ${c.title ? `<div class="tt">${esc(c.title)}</div>` : ""}
+        <div class="wd">${esc(where)}</div>
+        ${state && state !== "opening" ? `<div class="err">${esc(state)}</div>` : ""}
+      </button>
+      <button class="x" title="closed on purpose: take it off the list">×</button>
+    </div>`;
+  }).join("");
+}
+async function closedAction(what, id) {
+  const r = await fetch(`/api/${what}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify({ id }),
+  });
+  if (!r.ok) return { ok: false, reason: (await r.text()).match(/<p>Message: (.*?)<\/p>/)?.[1] || `error ${r.status}` };
+  return r.json();
+}
+document.getElementById("closed").addEventListener("click", () => {
+  const box = document.getElementById("closedlist");
+  box.hidden = !box.hidden;
+  if (!box.hidden) paintClosed();
+});
+document.getElementById("closedlist").addEventListener("click", async e => {
+  const row = e.target.closest(".gone");
+  if (!row) return;
+  const id = row.dataset.id;
+  if (e.target.closest(".x")) {
+    REVIVING.set(id, "gone");
+    drawClosed(CLOSED);
+    await closedAction("dismiss", id).catch(() => {});
+    return;
+  }
+  if (REVIVING.get(id) === "opening") return;
+  REVIVING.set(id, "opening");
+  paintClosed();
+  const done = await closedAction("revive", id).catch(err => ({ ok: false, reason: err.message }));
+  // Once it runs again the next poll drops it from the list by itself.
+  REVIVING.set(id, done.ok ? "gone" : (done.reason || "could not open it"));
+  drawClosed(CLOSED);
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") document.getElementById("closedlist").hidden = true;
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest("#closedlist, #closed")) document.getElementById("closedlist").hidden = true;
 });
 
 // The snapshot a reboot would restore. The timer saves every 2 minutes; this

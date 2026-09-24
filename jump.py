@@ -52,7 +52,9 @@ def _through_tmux(tmux, panes, clients, konsole):
         if host:
             return {"steps": steps + host["steps"],
                     "window_pid": host["window_pid"]}
-    return {"steps": steps, "window_pid": None} if steps else None
+    # Nobody is attached: selecting the pane alone shows nothing. The caller
+    # opens a terminal on the session first.
+    return {"steps": steps, "window_pid": None, "attach": target} if steps else None
 
 
 def _konsole(ancestry, konsole):
@@ -254,14 +256,63 @@ def jump(pid, tmux=""):
         ran.append(" ".join(step))
         if res is None or res.returncode != 0:
             return {"ok": False, "reason": f"failed: {' '.join(step)}", "ran": ran}
-    window_pid = route.get("window_pid")
-    if window_pid:
-        for wpid, wid in _x_windows():
-            if wpid == window_pid:
-                _run(["wmctrl", "-ia", wid])
-                ran.append(f"wmctrl -ia {wid}")
-                break
+    if route.get("attach"):
+        opened = open_tab(["tmux", "attach", "-t", f"={route['attach']}"])
+        ran += opened["ran"]
+        return {**opened, "ran": ran}
+    _raise(route.get("window_pid"), ran)
     return {"ok": True, "ran": ran}
+
+
+def _raise(window_pid, ran):
+    if not window_pid:
+        return
+    for wpid, wid in _x_windows():
+        if wpid == window_pid:
+            _run(["wmctrl", "-ia", wid])
+            ran.append(f"wmctrl -ia {wid}")
+            return
+
+
+def open_tab(argv, cwd=None):
+    """Run argv in a new WezTerm tab and put it in front. Returns a report.
+
+    The tab goes into the first window WezTerm lists; with no WezTerm running
+    a new one is started. The command runs in WezTerm's environment, not the
+    caller's, so nothing of the server's leaks into it.
+    """
+    ran = []
+    gui = _pid_of_command("wezterm-gui")
+    if not gui:
+        cmd = ["wezterm", "start"] + (["--cwd", cwd] if cwd else []) + ["--"] + argv
+        try:
+            subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, start_new_session=True)
+        except OSError as e:
+            return {"ok": False, "reason": f"wezterm: {e}", "ran": ran}
+        ran.append(" ".join(cmd))
+        return {"ok": True, "ran": ran}
+    spawn = ["wezterm", "cli", "--no-auto-start", "spawn"]
+    listed = _run(["wezterm", "cli", "--no-auto-start", "list", "--format", "json"])
+    try:
+        windows = [p["window_id"] for p in json.loads(listed.stdout)] if listed else []
+    except (ValueError, KeyError, TypeError):
+        windows = []
+    spawn += ["--window-id", str(windows[0])] if windows else ["--new-window"]
+    if cwd:
+        spawn += ["--cwd", cwd]
+    spawn += ["--"] + argv
+    res = _run(spawn)
+    ran.append(" ".join(spawn))
+    if res is None or res.returncode != 0:
+        why = (res.stderr.strip() if res else "") or "wezterm cli spawn failed"
+        return {"ok": False, "reason": why, "ran": ran}
+    pane = res.stdout.strip()
+    if pane.isdigit():
+        _run(["wezterm", "cli", "--no-auto-start", "activate-pane", "--pane-id", pane])
+        ran.append(f"wezterm cli activate-pane --pane-id {pane}")
+    _raise(gui, ran)
+    return {"ok": True, "ran": ran, "pane": pane}
 
 
 def set_title(pid, tmux, text):
