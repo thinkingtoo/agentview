@@ -223,9 +223,17 @@ def tmux_clients():
 WEZ_CLI = ["wezterm", "cli", "--no-auto-start"]
 
 
-def wez_panes():
-    res = _run(WEZ_CLI + ["list", "--format", "json"])
-    if not res or res.returncode != 0:
+def _wez_list(sock=None):
+    env = None
+    if sock:
+        env = {k: v for k, v in os.environ.items() if k != "WEZTERM_PANE"}
+        env["WEZTERM_UNIX_SOCKET"] = str(sock)
+    try:
+        res = subprocess.run(WEZ_CLI + ["list", "--format", "json"], capture_output=True,
+                             text=True, timeout=5, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if res.returncode != 0:
         return []
     try:
         panes = json.loads(res.stdout)
@@ -241,8 +249,41 @@ def wez_panes():
     return out
 
 
+def wez_panes():
+    """The panes of the WezTerm instance `wezterm cli` talks to by default:
+    the one a spawn lands in."""
+    return _wez_list()
+
+
+def _wez_sockets():
+    run = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "wezterm"
+    socks = []
+    for sock in sorted(run.glob("gui-sock-*")):
+        pid = sock.name.rpartition("-")[2]
+        if pid.isdigit() and Path(f"/proc/{pid}").exists():
+            socks.append(sock)
+    if (run / "sock").exists():
+        socks.append(run / "sock")
+    return socks
+
+
+def every_wez_pane():
+    """The panes of every WezTerm running, for the snapshot. With two open,
+    `wezterm cli list` answers from one of them, and the tabs in the other
+    were missing from every snapshot until the reboot lost them (2026-09-24).
+    Window and tab ids restart at 0 in each instance, so they are prefixed."""
+    out, ttys = [], set()
+    for n, sock in enumerate(_wez_sockets()):
+        for p in _wez_list(sock):
+            if p["tty"] and p["tty"] in ttys:
+                continue
+            ttys.add(p["tty"])
+            out.append({**p, "window_id": f"{n}:{p['window_id']}", "tab_id": f"{n}:{p['tab_id']}"})
+    return out
+
+
 def gather():
-    return build(live_peers(), tmux_panes(), wez_panes(), tmux_clients(),
+    return build(live_peers(), tmux_panes(), every_wez_pane(), tmux_clients(),
                  int(time.time()), boot_id())
 
 
@@ -297,6 +338,16 @@ def latest(snaps, boot):
 
 def missing(snap, live_ids):
     return [s for s in (snap or {}).get("sessions", []) if s["sessionId"] not in live_ids]
+
+
+def unseen_tmux(peers, panes, clients):
+    """tmux sessions running a Claude session that no terminal is attached to.
+    Taken from what runs now, so a snapshot that never saw the tab (or a
+    session resumed into a tmux session of its own) still gets one."""
+    session_of = {p["pane_id"]: p["session"] for p in panes}
+    attached = {c["session"] for c in clients}
+    hosting = {session_of[p["tmux_pane"]] for p in peers if p.get("tmux_pane") in session_of}
+    return sorted(hosting - attached, key=_natural)
 
 
 def missing_tabs(snap, clients):
@@ -394,7 +445,8 @@ def _claude_cmd(rec):
 def restore(snap, dry=False, log=print):
     live_ids = {p["sessionId"] for p in live_peers()}
     todo = {s["sessionId"]: s for s in missing(snap, live_ids)}
-    if not todo and not missing_tabs(snap, tmux_clients()):
+    if not todo and not missing_tabs(snap, tmux_clients()) and not unseen_tmux(
+            live_peers(), tmux_panes(), tmux_clients()):
         log("nothing to restore: every session and tab in the snapshot is open")
         return 0
     started = 0
@@ -539,6 +591,25 @@ def restore(snap, dry=False, log=print):
     for rec in list(todo.values()):
         launch(rec, f"tmux (own session) {rec['cwd']}",
                ["tmux", "new-session", "-d", "-s", _tmux_name(rec), "-c", rec["cwd"], _claude_cmd(rec)])
+
+    # Every tmux session with Claude in it and no terminal gets a tab, in one
+    # window, so nothing is running where you cannot see it.
+    if not dry:
+        time.sleep(1)
+    extra = None
+    for name in unseen_tmux(live_peers(), tmux_panes(), tmux_clients()):
+        argv = ["tmux", "attach", "-t", f"={name}"]
+        log(f"tab     tmux {name}")
+        if dry:
+            continue
+        if not _gui_running():
+            extra = _start_gui(None, argv, None)
+            continue
+        spawn = WEZ_CLI + ["spawn"] + (["--window-id", str(extra)] if extra is not None
+                                      else ["--new-window"]) + ["--"] + argv
+        res = _run(spawn)
+        if res and res.returncode == 0 and extra is None:
+            extra = _window_of(res.stdout.strip())
     log(f"{'would resume' if dry else 'resumed'} {started if not dry else len(missing(snap, live_ids))} session(s)")
     return started
 

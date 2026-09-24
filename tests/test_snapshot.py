@@ -106,6 +106,17 @@ class MissingTabs(unittest.TestCase):
         self.assertEqual(snapshot.missing_tabs(self.SNAP, clients), [])
 
 
+class UnseenTmux(unittest.TestCase):
+    def test_a_session_hosting_claude_with_no_client_is_unseen(self):
+        self.assertEqual(snapshot.unseen_tmux(PEERS, TMUX, []), ["23"])
+
+    def test_an_attached_session_is_seen(self):
+        self.assertEqual(snapshot.unseen_tmux(PEERS, TMUX, CLIENTS), [])
+
+    def test_a_tmux_session_without_claude_is_left_alone(self):
+        self.assertNotIn("9", snapshot.unseen_tmux(PEERS, TMUX, []))
+
+
 class TabTitle(unittest.TestCase):
     def test_one_session_reads_name_then_topic(self):
         self.assertEqual(snapshot.tab_title([{"name": "Hugo", "title": "Rapportje render-doc"}], "tribeloo"),
