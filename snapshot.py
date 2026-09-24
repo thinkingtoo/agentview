@@ -816,6 +816,11 @@ def main(argv):
             print(f" {flag} {s['name'] or '-':28} {where:16} {s['cwd']}")
         return 0
     if cmd == "restore":
+        # Run from inside a Claude session, every resumed session inherited
+        # its CLAUDE_CODE_CHILD_SESSION marker: no transcript was saved and
+        # none of them registered as a peer (2026-09-24).
+        for key in [k for k in os.environ if k == "CLAUDECODE" or k.startswith("CLAUDE_CODE_")]:
+            del os.environ[key]
         if not snap:
             print("no snapshot from an earlier boot")
             return 1
