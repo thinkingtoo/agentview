@@ -201,7 +201,7 @@ already having.
 |---|---|
 | `did` | Where the work stands. One sentence, in the language of the conversation. It **replaces** the `ai-title` line, which becomes its fallback. |
 | `ask` | The one thing it is blocked on, in its own words. |
-| `n` | How many things it needs from you before it can go further. `0` when it can carry on without you. |
+| `n` | How many things are left for you when its turn ends: a decision, a command to run, a mail to send, a sign-in. Counted even when it has other work, since nothing moves on them once it stops. An offer is not one. |
 
 **Words when there is one, a count when there are more.** A single blocked
 question is short enough to answer from the page. Four of them are a trip to the

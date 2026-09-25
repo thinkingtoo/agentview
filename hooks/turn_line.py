@@ -37,9 +37,10 @@ ASK = """Before this turn ends, run this once, as your last action:
 
 It feeds the dashboard that shows every running session. Write both fields in \
 the language of this conversation, in plain text (single quotes, no backticks). \
---n is how many things you need from the user before you can go further: 0 \
-whenever you can carry on without them, since a question you offered to answer \
-yourself is not a blocker. Do not mention having run it."""
+--n is how many things are left for the user when this turn ends: a decision, \
+a command for them to run, a mail for them to send, a sign-in. Count them even \
+when you have other work, since nothing moves on them once you stop. An offer \
+(want me to...?) is none. Do not mention having run it."""
 
 
 def begin(payload, root=None):
