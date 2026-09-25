@@ -32,7 +32,8 @@ from providers import claude  # noqa: E402
 
 SHELLS = {"bash", "zsh", "fish", "sh", "dash"}
 KEEP = 60                       # snapshots on disk; saves are skipped when nothing moved
-OFFER = 24 * 3600               # how long the reopen button keeps offering a lost state
+OFFER = 24 * 3600               # the reopen button's offer after a reboot
+CRASH_OFFER = 3600              # ...and after a WezTerm crash, whose sessions the closed list keeps
 # Arguments that pick *which* conversation to open. A restore supplies its own.
 RESUME_ARGS = {"--resume", "-r", "--session-id"}
 RESUME_FLAGS = {"--continue", "-c", "--fork-session"}
@@ -356,11 +357,17 @@ def boot_time():
 
 
 def still_offered(snap, booted, now):
-    """A lost state is offered for a day from when it was lost: the reboot for
-    an earlier boot's snapshot, the snapshot itself for a crashed WezTerm.
-    Thursday's crash still on the button on Friday morning read as a warning
-    that rebooting now would lose something (2026-09-25)."""
-    return bool(snap) and now - max(snap["taken_at"], booted) < OFFER
+    """How long the reopen button offers a lost state, from when it was lost:
+    the reboot for an earlier boot's snapshot, the snapshot itself for a
+    crashed WezTerm. Thursday's crash still on the button on Friday morning read as a warning
+    that rebooting now would lose something (2026-09-25). A crash gets an hour:
+    its sessions stay on the closed list, one click each, for the rest of the
+    boot. An earlier boot's are on no other list, so they get the day."""
+    if not snap:
+        return False
+    if snap["taken_at"] > booted:
+        return now - snap["taken_at"] < CRASH_OFFER
+    return now - booted < OFFER
 
 
 def latest(snaps, boot):
