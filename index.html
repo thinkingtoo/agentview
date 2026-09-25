@@ -166,6 +166,7 @@
            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .empty { color:var(--dim); padding:30px 20px; }
 #restore[hidden], #closed[hidden], #closedlist[hidden] { display: none; }
+#save.unsafe { color: var(--wait); }
 /* Conversations this boot had that no longer run. A drop-down under the
    header, so opening it never moves the cards you were reading. */
 #closedlist { position:fixed; right:20px; z-index:6; width:min(560px, calc(100vw - 32px));
@@ -1108,13 +1109,21 @@ document.addEventListener("click", e => {
 // is for the minute before you shut down.
 let SAVING = false, SAVED_NOTE = "", SAVED_UNTIL = 0;
 const hhmm = t => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-function drawSave(at) {
+// It says whether a reboot now would bring every session back, so that
+// question never has to be answered by reading the other buttons.
+function drawSave(cov) {
   const b = document.getElementById("save");
   if (SAVING) { b.textContent = "saving…"; return; }
   if (Date.now() < SAVED_UNTIL) { b.textContent = SAVED_NOTE; return; }
-  b.textContent = "⤓ save now";
-  b.title = (at ? `last change saved ${hhmm(at)}; ` : "") +
-    "the timer checks every 2 minutes. Save now before shutting down.";
+  const all = cov && cov.live && cov.kept === cov.live;
+  b.classList.toggle("unsafe", !!cov && !all);
+  b.textContent = !cov ? "⤓ save now"
+    : all ? `✓ ${cov.kept}/${cov.live} saved ${hhmm(cov.taken_at)}`
+    : `⤓ ${cov.kept}/${cov.live} saved · save now`;
+  b.title = (!cov ? "nothing saved this boot yet. "
+    : all ? "a reboot now brings every session back. "
+    : `${cov.live - cov.kept} running session(s) not in the ${hhmm(cov.taken_at)} snapshot yet. `) +
+    "The timer checks every 2 minutes; click to save now.";
 }
 document.getElementById("save").addEventListener("click", async () => {
   if (SAVING) return;

@@ -17,6 +17,7 @@ import seen
 import snapshot
 import subprocess
 import sys
+import time
 from providers import claude
 
 HERE = Path(__file__).resolve().parent
@@ -65,12 +66,22 @@ def saved_at():
     return _SNAP["latest"]["taken_at"]
 
 
+def coverage(live_ids):
+    """What a shutdown now would bring back, against what is running."""
+    if not _snapshots() or not _SNAP["latest"]:
+        return None
+    snap = _SNAP["latest"]
+    kept = {s["sessionId"] for s in snap["sessions"]}
+    return {"taken_at": snap["taken_at"], "live": len(live_ids),
+            "kept": len(live_ids & kept), "unsaved": sorted(live_ids - kept)}
+
+
 def restorable(live_ids):
     """What the last boot had running that is not running now, for the button."""
     if not _snapshots():
         return None
     snap = _SNAP["snap"]
-    if not snap:
+    if not snapshot.still_offered(snap, snapshot.boot_time(), time.time()):
         return None
     gone = snapshot.missing(snap, live_ids)
     clients = snapshot.tmux_clients()
@@ -356,7 +367,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(json.dumps({"blocks": blocks,
                                    "restore": restorable(live_ids),
                                    "closed": closed_now(live_ids),
-                                   "saved": saved_at(),
+                                   "saved": coverage(live_ids),
                                    "providers": status,
                                    "hold": fleet.config_value("hold", False),
                                    "chime": fleet.config_value("chime", True)}),

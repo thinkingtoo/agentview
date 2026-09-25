@@ -32,6 +32,7 @@ from providers import claude  # noqa: E402
 
 SHELLS = {"bash", "zsh", "fish", "sh", "dash"}
 KEEP = 60                       # snapshots on disk; saves are skipped when nothing moved
+OFFER = 24 * 3600               # how long the reopen button keeps offering a lost state
 # Arguments that pick *which* conversation to open. A restore supplies its own.
 RESUME_ARGS = {"--resume", "-r", "--session-id"}
 RESUME_FLAGS = {"--continue", "-c", "--fork-session"}
@@ -342,6 +343,24 @@ def choose(snaps, boot, terminals=()):
     earlier = [s for s in snaps if s.get("boot_id") != boot
                or set(s.get("terminals") or ()) - alive]
     return max(earlier, key=lambda s: s["taken_at"]) if earlier else None
+
+
+def boot_time():
+    try:
+        for line in Path("/proc/stat").read_text().splitlines():
+            if line.startswith("btime "):
+                return int(line.split()[1])
+    except OSError:
+        pass
+    return 0
+
+
+def still_offered(snap, booted, now):
+    """A lost state is offered for a day from when it was lost: the reboot for
+    an earlier boot's snapshot, the snapshot itself for a crashed WezTerm.
+    Thursday's crash still on the button on Friday morning read as a warning
+    that rebooting now would lose something (2026-09-25)."""
+    return bool(snap) and now - max(snap["taken_at"], booted) < OFFER
 
 
 def latest(snaps, boot):

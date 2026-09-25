@@ -92,6 +92,19 @@ class Choose(unittest.TestCase):
                  {"taken_at": 9, "boot_id": "now", "terminals": [8993, 777]}]
         self.assertEqual(snapshot.choose(snaps, "now", [8993, 777])["taken_at"], 1)
 
+    def test_a_crash_is_offered_for_a_day_after_it(self):
+        # 2026-09-25: Thursday 15:38's crash still on the button at 09:10 Friday.
+        day, crash = snapshot.OFFER, {"taken_at": 1000}
+        self.assertTrue(snapshot.still_offered(crash, 10, 1000 + day - 1))
+        self.assertFalse(snapshot.still_offered(crash, 10, 1000 + day))
+
+    def test_an_earlier_boot_is_offered_for_a_day_after_the_reboot(self):
+        # A week switched off does not age out the state it went down with.
+        old = {"taken_at": 1000}
+        self.assertTrue(snapshot.still_offered(old, 900000, 900000 + 60))
+        self.assertFalse(snapshot.still_offered(old, 900000, 900000 + snapshot.OFFER))
+        self.assertFalse(snapshot.still_offered(None, 0, 0))
+
     def test_the_newest_snapshot_of_this_boot_is_what_a_shutdown_keeps(self):
         snaps = [{"taken_at": 1, "boot_id": "now"}, {"taken_at": 9, "boot_id": "a"},
                  {"taken_at": 5, "boot_id": "now"}]
