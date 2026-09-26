@@ -15,6 +15,7 @@ import datetime
 import json
 import os
 import re
+import stat
 import time
 from pathlib import Path
 
@@ -78,56 +79,22 @@ def routine_of(rec, cfg=None, ancestry=None):
 
 PATH_IN_TEXT = re.compile(r"(?:~|/home/[\w.-]+)/[\w./@-]+")
 
-# A skill starts in one of two ways, and they look nothing alike on disk:
-# the model calls the `Skill` tool, or you type `/boss` and Claude Code
-# writes a `<command-name>` line. Matching only the first missed a boss for
-# a whole morning.
-TYPED_SKILL = re.compile(r"<command-name>/([\w:-]+)</command-name>")
-BOSS_MARKS = (b'"skill":"boss"', b'"skill": "boss"',
-              b"<command-name>/boss</command-name>")
+# claude-boss marks a boss with `pm/.boss-sessions/<session id>`, and its
+# hooks act on that file alone. Reading the same file keeps the badge honest:
+# a transcript that typed `/boss` never registered, and a boss that did is
+# one whether its `/boss` sits in the tail or megabytes back.
+SID_RE = re.compile(r"^[\w-]{1,80}$")
 
 
-def boss_line(rec):
-    """Is this record a session starting the `boss` skill?
-
-    Deliberately strict about *where* the marker sits. A session that reads
-    the skill's files, or prints them, carries the same words in a tool
-    result -- and that session is not running a team.
-    """
-    content = (rec.get("message") or {}).get("content")
-    if isinstance(content, str):
-        hit = TYPED_SKILL.search(content)
-        return bool(hit) and hit.group(1) == "boss"
-    for part in content or []:
-        if (isinstance(part, dict) and part.get("type") == "tool_use"
-                and part.get("name") == "Skill"
-                and (part.get("input") or {}).get("skill") == "boss"):
-            return True
-    return False
-
-
-def _boss_file(path):
-    """Did this session ever start the boss skill? One read, once.
-
-    Bounded scanning was tried and was wrong: `/boss` was typed a third of
-    the way into a 1.8 MB transcript, well past any sensible head. The
-    substring pass over the raw bytes is what makes reading it all cheap --
-    only a file that mentions the skill at all is ever parsed.
-    """
+def is_boss(sid, cfg=None):
+    """Has claude-boss registered this session? A regular file of this user."""
+    if not sid or not SID_RE.match(sid):
+        return False
     try:
-        raw = path.read_bytes()
+        st = os.lstat(Path(cfg or claude_dir()) / "pm" / ".boss-sessions" / sid)
     except OSError:
         return False
-    if not any(mark in raw for mark in BOSS_MARKS):
-        return False
-    for line in raw.decode("utf-8", "replace").splitlines():
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(rec, dict) and boss_line(rec):
-            return True
-    return False
+    return stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid()
 
 
 # How many outstanding calls to remember. Only the newest matters, but a
@@ -137,7 +104,7 @@ MAX_USES = 64
 
 def _blank_state():
     return {"offset": 0, "ino": None, "head": b"", "title": "", "prompt": "", "branch": "",
-            "uses": {}, "done": set(), "said": "", "spoke": "", "boss": False,
+            "uses": {}, "done": set(), "said": "", "spoke": "",
             "sent": collections.Counter(),
             "paths": collections.deque(maxlen=400)}
 
@@ -159,8 +126,6 @@ def _absorb(state, text):
         if branch and branch != "HEAD":
             state["branch"] = branch
         content = (rec.get("message") or {}).get("content")
-        if not state["boss"] and boss_line(rec):
-            state["boss"] = True
         # A typed prompt ends the turn that said something. Kept past it, the
         # previous turn's closing sentence reads on a busy row as what the
         # session is doing now. A tool result is a list, and the hook's own
@@ -222,8 +187,6 @@ def _absorb(state, text):
 
 def _cold(state, path):
     """What the tail of a big transcript cannot answer, read once."""
-    if not state["boss"]:
-        state["boss"] = _boss_file(path)
     if not state["title"]:
         # A title set early and never again needs the whole file.
         head_text, _ = _read_from(path, 0)
@@ -348,7 +311,7 @@ def _view(state):
             "branch": state["branch"], "paths": list(state["paths"]),
             # The raw last message: the core shapes it into the one line the
             # card shows, and reads the ask out of the whole of it.
-            "said": state["said"], "boss": state["boss"],
+            "said": state["said"],
             "doing": activity([(name, inp) for _, name, inp in running]),
             # Liveliest correspondent first: a boss's team, in the order it
             # actually deals with them.
@@ -362,7 +325,7 @@ def scan_cached(path):
 
 
 EMPTY = {"title": "", "prompt": "", "branch": "", "paths": [], "said": "",
-         "boss": False, "sent": [], "pending": None, "doing": ""}
+         "sent": [], "pending": None, "doing": ""}
 
 
 def _peers(cfg):
@@ -391,6 +354,7 @@ def session(rec, cfg=None, light=False):
     # over either way. The contract has no such status: it is idle, flagged.
     bg = status == "shell"
     routine = routine_of(rec, cfg)
+    boss = is_boss(sid, cfg)
     return {
         "id": sid,
         "name": rec.get("name") or "(unnamed)",
@@ -411,8 +375,8 @@ def session(rec, cfg=None, light=False):
         # thing it said to you. Neither is generated here.
         "waitingFor": rec.get("waitingFor") or "",
         "said": summary["said"],
-        "boss": summary["boss"],
-        "team": summary["sent"] if summary["boss"] else [],
+        "boss": boss,
+        "team": summary["sent"] if boss else [],
         # A routine is never guessed for: it belongs to the routine that
         # started it, whatever files it happens to touch on the way.
         "paths": [] if routine else summary["paths"],

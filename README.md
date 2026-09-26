@@ -317,7 +317,7 @@ project and lives forever.
 
 ## A boss and its team
 
-A session that invokes the `boss` skill (`~/.claude/skills/boss/`) coordinates other
+A session registered as a boss by the claude-boss plugin coordinates other
 sessions and does no implementation work itself. On the page it **leads its
 project block** whatever the activity, carries a `boss` badge, and names the
 team it dispatches to; that team renders indented beneath it, so the block has
@@ -331,27 +331,21 @@ open a card: that ✓ is his to act on, not yours. `waiting` and `stuck` still
 open on a worker — a permission prompt is answered by you, whoever dispatched
 the work.
 
-Both facts come from the transcript and neither is a guess:
+Neither fact is a guess:
 
-- **Boss**: the skill being *started*, in either of the two ways that happens
-  — the model calling the `Skill` tool with `{"skill": "boss"}`, or you typing
-  `/boss`, which Claude Code writes as a `<command-name>` line in a plain-text
-  user record. They look nothing alike on disk, and matching only the first
-  missed a second boss for a morning. A session that merely *reads* the
-  skill's files (which is how this feature got written) carries every one of
-  those words in a tool result, and is not marked.
-- **Team**: the `to` of every `SendMessage` that session has made, liveliest
-  correspondent first, minus anyone no longer running and minus other bosses —
+- **Boss**: the marker claude-boss writes when a boss registers,
+  `pm/.boss-sessions/<session id>` under the Claude config dir — a regular
+  file of yours, never a symlink or a directory. Every claude-boss hook acts on
+  that file alone, so the badge means what the hooks mean. A session that
+  typed `/boss` but never registered is not marked; neither is one that only
+  reads the skill's files.
+- **Team**, from the transcript: the `to` of every `SendMessage` that session
+  has made, liveliest correspondent first, minus anyone no longer running and minus other bosses —
   two bosses exchanging a message is not a chain of command.
-
-A skill can be started well into a session: `/boss` was typed a third of the
-way into a 1.8 MB transcript. So a bounded head scan is not enough; the file
-is read once, in full, guarded by a substring pass over the raw bytes so only
-a transcript that mentions the skill at all is ever parsed.
 
 The message graph alone would not do: workers message **each other** as much as
 they message the boss, so the hub of the graph is not the boss. Only the
-invocation says who is running the team.
+marker says who is running the team.
 
 ## Routines keep to themselves
 
