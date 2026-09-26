@@ -19,8 +19,9 @@ import time
 from pathlib import Path
 
 import lines
-from providers.base import (Provider, Tailed, alive, controlling_tty,
-                            on_a_terminal, read_from as _read_from)
+from providers import registry
+from providers.base import (Provider, Tailed, on_a_terminal,
+                            read_from as _read_from)
 
 
 def claude_dir():
@@ -28,19 +29,8 @@ def claude_dir():
 
 
 def transcript_for(session_id, cwd, cfg=None):
-    """Locate a session's transcript.
-
-    Claude Code files transcripts by encoded cwd, so the direct path is one
-    stat away; a session that moved is found by looking wider.
-    """
-    projects = (cfg or claude_dir()) / "projects"
-    encoded = cwd.replace(os.sep, "-")
-    direct = projects / encoded / f"{session_id}.jsonl"
-    if direct.is_file():
-        return direct
-    for hit in projects.glob(f"*/{session_id}.jsonl"):
-        return hit
-    return None
+    """Locate a session's transcript: the registry's rule, by id and cwd."""
+    return registry.transcript_of({"sessionId": session_id, "cwd": cwd}, cfg or claude_dir())
 
 
 def _ancestry(pid, depth=6):
@@ -376,47 +366,8 @@ EMPTY = {"title": "", "prompt": "", "branch": "", "paths": [], "said": "",
 
 
 def _peers(cfg):
-    for path in (cfg / "sessions").glob("*.json"):
-        try:
-            with path.open(encoding="utf-8") as fh:
-                rec = json.load(fh)
-        except (OSError, ValueError):
-            continue
-        if isinstance(rec, dict):
-            yield rec
-
-
-def present(rec):
-    """Is this peer record a session you could still reach?
-
-    `alive(pid)` was the whole test, and a pid answering signal 0 is a
-    weaker claim than it looks. Close the window on a running Claude and
-    the process is orphaned rather than reaped: it stops the first time it
-    reads from the terminal that is no longer there, and a stopped process
-    answers exactly like a working one. Petra stayed on the page for
-    sixteen hours that way, frozen in the status her last turn left behind
-    -- `waiting`, with nobody there to be waiting.
-
-    A session started from a terminal is over when that terminal goes.
-    Headless ones never had one, so they are never asked.
-    """
-    pid = rec.get("pid")
-    if not alive(pid):
-        return False
-    return not (rec.get("entrypoint") == "cli" and controlling_tty(pid) == 0)
-
-
-def live_session(pid, cfg=None):
-    """The peer record for a live pid, reading nothing else.
-
-    `live()` reads every transcript to build the page; a jump only needs to
-    know this pid is really a session Claude Code registered, and paying
-    1.5s for that makes the click feel broken.
-    """
-    for rec in _peers(cfg or claude_dir()):
-        if rec.get("pid") == pid and present(rec):
-            return rec
-    return None
+    """Every peer record, live or not. `registry.live()` is the live ones."""
+    return registry.records(cfg)
 
 
 def session(rec, cfg=None, light=False):
@@ -481,16 +432,17 @@ class ClaudeProvider(Provider):
     name = "claude"
     capabilities = frozenset({"jump", "branch", "waiting", "name", "status"})
 
-    def __init__(self, cfg=None):
+    def __init__(self, cfg=None, proc="/proc"):
         self.cfg = cfg
+        self.proc = proc
 
     def live(self):
         cfg = self.cfg or claude_dir()
-        return [session(rec, cfg) for rec in _peers(cfg) if present(rec)]
+        return [session(rec, cfg) for rec in registry.live(cfg, self.proc)]
 
     def find(self, session_id):
         cfg = self.cfg or claude_dir()
-        for rec in _peers(cfg):
-            if rec.get("sessionId") == session_id and present(rec):
-                return session(rec, cfg, light=True)
+        rec = registry.by_sid(session_id, cfg, self.proc)
+        if rec and registry.is_live(rec, self.proc):
+            return session(rec, cfg, light=True)
         return None

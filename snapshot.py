@@ -28,7 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from providers import claude  # noqa: E402
+from providers import claude, registry  # noqa: E402
 
 SHELLS = {"bash", "zsh", "fish", "sh", "dash"}
 KEEP = 60                       # snapshots on disk; saves are skipped when nothing moved
@@ -181,8 +181,8 @@ def live_peers():
     """Interactive sessions at a terminal. Routines and `-p` runs are not ours to restart."""
     cfg = claude.claude_dir()
     out = []
-    for rec in claude._peers(cfg):
-        if not claude.present(rec) or rec.get("entrypoint") != "cli":
+    for rec in registry.live(cfg):
+        if rec.get("entrypoint") != "cli":
             continue
         if rec.get("kind") != "interactive" or claude.routine_of(rec, cfg):
             continue
@@ -521,9 +521,9 @@ def wait_named(session_id, timeout=20):
     """Resumes go one at a time: the name picker is first-come, first-served."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        for rec in claude._peers(claude.claude_dir()):
-            if rec.get("sessionId") == session_id and rec.get("name"):
-                return rec["name"]
+        rec = registry.by_sid(session_id, claude.claude_dir())
+        if rec and rec.get("name") and registry.is_live(rec):
+            return rec["name"]
         time.sleep(0.5)
     return ""
 

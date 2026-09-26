@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Copy cc-agent-names' session registry into this repo, stamped with its commit.
+#
+#   scripts/vendor-registry [path-to-cc-agent-names]
+#
+# The master copy lives in cc-agent-names (scripts/registry.py). Never edit the
+# vendored file; change the master and run this again.
+set -euo pipefail
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+src="${1:-${CC_AGENT_NAMES_ROOT:-$here/../cc-agent-names}}"
+master="$src/scripts/registry.py"
+dest="$here/providers/registry.py"
+[[ -f "$master" ]] || { echo "no $master" >&2; exit 1; }
+commit="$(git -C "$src" log -1 --format=%h -- scripts/registry.py)"
+{
+    head -1 "$master"
+    echo "# vendored from cc-agent-names@$commit -- do not edit, run scripts/vendor-registry"
+    tail -n +2 "$master"
+} > "$dest"
+chmod +x "$dest"
+echo "vendored registry.py from cc-agent-names@$commit"

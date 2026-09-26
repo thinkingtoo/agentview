@@ -27,6 +27,8 @@ import time
 import traceback
 from pathlib import Path
 
+from providers import registry
+
 
 def log_dir():
     state = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
@@ -110,15 +112,12 @@ def peers(cfg):
     and must stay cheap, so it never opens a transcript.
     """
     out = {}
-    for path in (Path(cfg) / "sessions").glob("*.json"):
+    for rec in registry.live(cfg):
+        rec.pop("path", None)
         try:
-            with path.open(encoding="utf-8") as fh:
-                rec = json.load(fh)
-            pid = int(rec["pid"])
-            os.kill(pid, 0)
-        except (OSError, ValueError, KeyError, TypeError):
+            out[int(rec["pid"])] = rec
+        except (KeyError, TypeError, ValueError):
             continue
-        out[pid] = rec
     return out
 
 

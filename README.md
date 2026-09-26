@@ -11,7 +11,7 @@ It generates nothing. Claude Code already writes everything the page shows:
 
 | What | Where it comes from |
 |---|---|
-| Who is running, and how busy | `~/.claude/sessions/*.json` — the peer files |
+| Who is running, and how busy | `~/.claude/sessions/*.json` — the peer files, read through `providers/registry.py` (vendored from cc-agent-names, which defines a live session; `scripts/vendor-registry` refreshes it) |
 | What the session is about | the `ai-title` record in its transcript — Claude's own title, rewritten as it learns |
 | What it was last asked | the `last-prompt` record |
 | Where it left things, and what it wants | the session itself, asked as it stops (see below) |

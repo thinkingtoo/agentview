@@ -65,46 +65,61 @@ class Stat(unittest.TestCase):
 
 
 class Present(unittest.TestCase):
-    """`present()` over a peer record, with `/proc` answered by hand."""
+    """Which peer records the Claude provider lists, over a fake `/proc`.
+
+    The rule itself is cc-agent-names' registry (vendored as
+    `providers/registry.py`, tested there); these hold the provider to it.
+    """
 
     def setUp(self):
-        self.live, self.tty = True, PTS_54
-        self.real = claude.alive, claude.controlling_tty
-        claude.alive = lambda pid: self.live
-        claude.controlling_tty = lambda pid: self.tty
+        base_dir = Path(tempfile.mkdtemp())
+        self.cfg, self.proc = base_dir / "claude", base_dir / "proc"
+        (self.cfg / "sessions").mkdir(parents=True)
+        self.proc.mkdir()
 
-    def tearDown(self):
-        claude.alive, claude.controlling_tty = self.real
+    def session(self, pid, sid, tty=PTS_54, state="S", start="1640779", **over):
+        fields = STOPPED.replace(" T 1859 742884 742539 0 ",
+                                 f" {state} 1859 742884 742539 {tty} ")
+        (self.proc / str(pid)).mkdir()
+        (self.proc / str(pid) / "stat").write_text(fields.replace("742884 (", f"{pid} (", 1) + "\n")
+        rec = {"pid": pid, "sessionId": sid, "kind": "interactive", "entrypoint": "cli",
+               "status": "waiting", "procStart": start, "cwd": "/tmp", "name": sid}
+        rec.update(over)
+        (self.cfg / "sessions" / f"{pid}.json").write_text(__import__("json").dumps(rec))
 
-    def rec(self, **over):
-        base_rec = {"pid": 742884, "sessionId": "s1", "kind": "interactive",
-                    "entrypoint": "cli", "status": "waiting"}
-        base_rec.update(over)
-        return base_rec
+    def ids(self):
+        return sorted(s["id"] for s in claude.ClaudeProvider(self.cfg, proc=self.proc).live())
 
     def test_a_session_on_its_terminal_is_there(self):
-        self.assertTrue(claude.present(self.rec()))
+        self.session(10, "on-terminal")
+        self.assertEqual(self.ids(), ["on-terminal"])
 
     def test_a_pid_that_is_gone_is_gone(self):
-        self.live = False
-        self.assertFalse(claude.present(self.rec()))
+        self.session(10, "here")
+        (self.cfg / "sessions" / "11.json").write_text('{"pid": 11, "sessionId": "gone", "procStart": "1"}')
+        self.assertEqual(self.ids(), ["here"])
+
+    def test_a_reused_pid_is_not_the_session_it_used_to_be(self):
+        self.session(10, "reused", start="999")
+        self.assertEqual(self.ids(), [])
 
     def test_a_terminal_session_without_a_terminal_is_over(self):
-        # The whole bug: the pid still answers, so this used to pass.
-        self.tty = 0
-        self.assertFalse(claude.present(self.rec()))
+        # Petra: the pid still answers, stopped, with no terminal left.
+        self.session(10, "orphan", tty=0, state="T")
+        self.assertEqual(self.ids(), [])
 
     def test_a_headless_session_never_had_a_terminal_to_lose(self):
         # A routine runs from a timer with no terminal at all. Asking it the
         # question would wipe every routine off the page.
-        self.tty = 0
-        self.assertTrue(claude.present(self.rec(entrypoint="sdk-cli")))
+        self.session(10, "routine", tty=0, entrypoint="sdk-cli")
+        self.assertEqual(self.ids(), ["routine"])
 
-    def test_a_process_proc_will_not_talk_about_stays(self):
-        # hidepid, a container, another user. Absence of evidence removes
-        # nobody -- a session wrongly dropped is one you stop hearing from.
-        self.tty = None
-        self.assertTrue(claude.present(self.rec()))
+    def test_find_answers_only_for_a_live_session(self):
+        self.session(10, "orphan", tty=0)
+        self.session(12, "on-terminal")
+        provider = claude.ClaudeProvider(self.cfg, proc=self.proc)
+        self.assertIsNone(provider.find("orphan"))
+        self.assertEqual(provider.find("on-terminal")["id"], "on-terminal")
 
 
 if __name__ == "__main__":
