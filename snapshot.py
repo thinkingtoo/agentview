@@ -16,7 +16,6 @@ under which name, and which WezTerm window showed which tmux session.
 autostart and restores the last snapshot taken before this boot. Nothing is
 ever started twice: a conversation already running is skipped.
 """
-import fcntl
 import json
 import os
 import shlex
@@ -498,23 +497,37 @@ def pane_plan(saved_panes, current, live_ids):
     return steps
 
 
+def agent_name_tool():
+    """cc-agent-names' `bin/agent-name`, found where Claude Code installed it.
+
+    Sessions have it on PATH; this runs as a service, which does not.
+    """
+    listing = claude.claude_dir() / "plugins" / "installed_plugins.json"
+    try:
+        plugins = json.loads(listing.read_text(encoding="utf-8")).get("plugins") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    for key, installs in plugins.items():
+        if key.split("@")[0] != "agent-names":
+            continue
+        for install in installs or []:
+            tool = Path(install.get("installPath") or "") / "bin" / "agent-name"
+            if os.access(tool, os.X_OK):
+                return str(tool)
+    return None
+
+
 def seed_name(session_id, name):
     """Tell cc-agent-names what this conversation was called before, so the
-    resume gets its name back instead of a fresh one."""
-    state = claude.claude_dir() / "agent-names"
-    if not name or not state.is_dir():
+    resume gets its name back instead of a fresh one. Without the plugin (or
+    with one too old to have `agent-name`) there is nothing to tell."""
+    tool = agent_name_tool()
+    if not name or not tool:
         return
-    path = state / "sessions.json"
-    with open(state / "pick.lock", "a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, ValueError):
-            data = {}
-        data[session_id] = {"name": name, "last_used": int(time.time())}
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=1, sort_keys=True))
-        os.replace(tmp, path)
+    try:
+        subprocess.run([tool, "set", session_id, name], capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def wait_named(session_id, timeout=20):
