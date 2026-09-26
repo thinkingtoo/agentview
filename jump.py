@@ -27,7 +27,7 @@ def _wezterm(tty, panes):
     for pane in panes:
         if pane.get("tty_name") and pane["tty_name"] == tty:
             return {
-                "steps": [["wezterm", "cli", "activate-pane",
+                "steps": [["wezterm", "cli", "--no-auto-start", "activate-pane",
                            "--pane-id", str(pane["pane_id"])]],
                 "window_pid": pane["term_pid"],
             }
@@ -92,7 +92,7 @@ def title_steps(*, text, tty, ancestry, tmux, panes, clients, konsole):
 
     for pane in panes:
         if pane.get("tty_name") and pane["tty_name"] == tty:
-            return [["wezterm", "cli", "set-tab-title",
+            return [["wezterm", "cli", "--no-auto-start", "set-tab-title",
                      "--pane-id", str(pane["pane_id"]), text]]
 
     pids = {pid for _, pid in ancestry}

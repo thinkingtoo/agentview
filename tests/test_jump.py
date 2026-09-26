@@ -23,7 +23,7 @@ class ChooseRoute(unittest.TestCase):
             tty="/dev/pts/2", ancestry=[("claude", 1036831), ("wezterm-gui", 99816)],
             tmux="", panes=PANES, clients=CLIENTS, konsole=KONSOLE)
         self.assertEqual(route["steps"],
-                         [["wezterm", "cli", "activate-pane", "--pane-id", "42"]])
+                         [["wezterm", "cli", "--no-auto-start", "activate-pane", "--pane-id", "42"]])
         self.assertEqual(route["window_pid"], 99816)
 
     def test_a_tmux_session_selects_the_pane_then_reveals_its_client(self):
@@ -36,7 +36,7 @@ class ChooseRoute(unittest.TestCase):
         self.assertEqual(route["steps"], [
             ["tmux", "select-window", "-t", "@39"],
             ["tmux", "select-pane", "-t", "%49"],
-            ["wezterm", "cli", "activate-pane", "--pane-id", "10"],
+            ["wezterm", "cli", "--no-auto-start", "activate-pane", "--pane-id", "10"],
         ])
         self.assertEqual(route["window_pid"], 99816)
 
@@ -77,7 +77,7 @@ class TitleSteps(unittest.TestCase):
             jump.title_steps(text="rifacendo la home", tty="/dev/pts/2",
                              ancestry=[("claude", 1036831), ("wezterm-gui", 99816)],
                              tmux="", panes=PANES, clients=CLIENTS, konsole=KONSOLE),
-            [["wezterm", "cli", "set-tab-title", "--pane-id", "42",
+            [["wezterm", "cli", "--no-auto-start", "set-tab-title", "--pane-id", "42",
               "rifacendo la home"]])
 
     def test_clearing_wezterm_means_an_empty_title(self):
@@ -85,7 +85,7 @@ class TitleSteps(unittest.TestCase):
             jump.title_steps(text="", tty="/dev/pts/2",
                              ancestry=[("claude", 1036831), ("wezterm-gui", 99816)],
                              tmux="", panes=PANES, clients=CLIENTS, konsole=KONSOLE),
-            [["wezterm", "cli", "set-tab-title", "--pane-id", "42", ""]])
+            [["wezterm", "cli", "--no-auto-start", "set-tab-title", "--pane-id", "42", ""]])
 
     def test_tmux_renames_the_window_it_actually_lives_in(self):
         # Not the WezTerm tab hosting the client -- that one shows whatever
