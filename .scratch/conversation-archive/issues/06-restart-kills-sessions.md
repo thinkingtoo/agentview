@@ -44,7 +44,7 @@ What was observed, and what was not.
 - [x] README: the restart rule is written down where the service is documented, whichever fix is chosen. ("Restarting the service, and what survives it", under "Run it".)
 - [x] Until then: the README's "Run it" section says that restarting `agentview` kills every process in the service's cgroup, which can include a tmux server and the sessions in it (check with `systemctl --user status agentview` first), and that server changes are tested on a second server on another port with its own `XDG_STATE_HOME`.
 
-The first two boxes are about the live service and stay open until it is switched over (see below).
+The first two boxes are about the live service and stay open until the last open step under "Live switchover" is done.
 
 ## Fix B, built and checked (2026-09-29)
 
@@ -74,6 +74,76 @@ What that shows, and what it does not:
 - Observed: with the scope, the tmux server and both windows were each in a scope of their own, described `agentview: ...`, with `OOMPolicy=continue`, and all four processes were alive after the restart of the unit that had started them. Without it, all four were in the unit's cgroup and none was alive after the restart.
 - Observed: the pane was in a scope tmux made itself (`OOMPolicy=stop`) in the scoped run, and in the unit's own cgroup in the control run. Why was not looked into.
 - Observed, by hand after the run: no unit, scope or process named for the run was left; the real tmux server's 6 sessions and 12 WezTerm tabs were the same before and after; `agentview.service` had the same InvocationID before and after.
-- Not shown: that `restore` and `launch` reach these helpers (`tests/test_scope.py` covers that, with fake leaves); the live service (the sessions running now are still in its old cgroup, so a restart of it today would still kill them, and reading `restore` says it reuses a tmux server and WezTerm window that are already running and does not move them, so they stay there until they are shut down and started again, for instance by the login restore after a reboot); the login autostart unit, which has not been run since the change; `systemctl stop` on its own (the check restarts, which is a stop followed by a start). The restore process itself (`server.py`, `_restore`) is not in a scope, so a restart in the middle of a restore aborts it. The check for a user manager and the launch are two `systemd-run` calls; if the manager goes away between them that one launch fails (running the command again unwrapped cannot be done safely: `systemd-run --scope` returns the command's own exit status).
+- Not shown: that `restore` and `launch` reach these helpers (`tests/test_scope.py` covers that, with fake leaves); the live service, as it was at the time of the check (the sessions running then were in its old cgroup, so a restart of it would still have killed them; see "Live switchover" below for what was done about that; and reading `restore` says it reuses a tmux server and WezTerm window that are already running and does not move them, so they stay there until they are shut down and started again, for instance by the login restore after a reboot); the login autostart unit, which has not been run since the change; `systemctl stop` on its own (the check restarts, which is a stop followed by a start). The restore process itself (`server.py`, `_restore`) is not in a scope, so a restart in the middle of a restore aborts it. The check for a user manager and the launch are two `systemd-run` calls; if the manager goes away between them that one launch fails (running the command again unwrapped cannot be done safely: `systemd-run --scope` returns the command's own exit status).
 
-`Status:` stays as it is until the live switchover is done.
+`Status:` stays as it is until the last open step under "Live switchover" is done.
+
+## Live switchover, way 1 (2026-09-29)
+
+The check above proves the mechanism on a stand-in unit. The live service was switched over the same day, without ending any session, in three steps.
+
+**Proved first on a throwaway unit** with a random name (a file unit, so the mechanism is the same as for the live one). A drop-in with `KillMode=process` and `OOMPolicy=continue` was added while it ran and `systemctl --user daemon-reload` was run: `systemctl --user show` then reported `process` and `continue` on the running unit, with its main process unchanged. After `restart`, its main process was new and the two processes it had started earlier were still alive with the same start times. The unit and its files were removed afterwards. The journal of the user manager showed, once, "Found left-over process ... (sleep) in control group while starting unit. Ignoring." Inference: that is what `KillMode=process` looks like in the log.
+
+**Then on the live unit.** The same drop-in was added to `agentview.service` (`~/.config/systemd/user/agentview.service.d/switchover.conf`) and `daemon-reload` run. `show` reported `KillMode=process` and `OOMPolicy=continue`, main process unchanged. The main checkout was clean at `75f303d`. At 14:42:10 `systemctl --user restart agentview.service` gave the service a new main process and a new InvocationID. Before and after, compared process by process:
+
+- The service's cgroup: 278 processes before, 278 after. The only difference is the old `server.py` replaced by the new one.
+- The 15 processes that host sessions (8 `claude`, 1 tmux server, 5 tmux clients, 1 wezterm-gui): all 15 alive with the same start times at the first reading, at least 12 seconds after the restart; all 15 still alive at 49 and 72 seconds.
+- The real tmux server: 6 sessions before and after. WezTerm: 12 tabs before and after.
+- `session.gone` events in the log: 574 before, 574 at each of those readings.
+- `GET /` gave 200 before and after. A search request answered with an extra `meaning` field after the restart and without it before. Inference: the restart loaded the new code; the evidence does not name the commit, only that the checkout it started from was clean at `75f303d`.
+
+The drop-in also changed the `OOMPolicy` that `systemctl --user show` reports for that cgroup (7.7 GB in it) from `stop` to `continue`. That is all that was observed; no OOM kill was induced. Inference, from the systemd documentation: one OOM-killed process there no longer stops the unit and every process in it.
+
+**The last open step: remove the drop-in after the next reboot.** Not before, because without it a restart kills the sessions again.
+
+- Why it has to wait: the tmux server and the WezTerm window that exist today were started before scopes existed, so they, and every session in them, are still in `agentview.service`'s cgroup. Restore reuses a running server and window and does not move them. Inference from reading `snapshot.py` and the autostart entry: after a reboot the login restore starts them through `scope.wrap`. The login restore has not run since the change, so confirm below that it did, before removing anything.
+- Check that first. Every tmux server and every WezTerm window must be outside `agentview.service`, in an `agentview: ...` scope with `OOMPolicy=continue`:
+
+  ```
+  T=$(pgrep -x 'tmux: server'); W=$(pgrep -x wezterm-gui)
+  [ -n "$T" ] && [ -n "$W" ] || echo "FAIL: no tmux server or no wezterm-gui is running, so there is nothing to confirm"
+  for p in $T $W; do
+    S=$(basename "$(sed 's/^0:://' /proc/$p/cgroup)")
+    echo "pid $p in $S"; systemctl --user show "$S" -p Description -p OOMPolicy
+  done
+  # expected: no FAIL line, and for every pid a run-....scope, "agentview: tmux server" or "agentview: wezterm window", OOMPolicy=continue
+  for p in $(cat /sys/fs/cgroup$(systemctl --user show agentview.service -p ControlGroup --value)/cgroup.procs); do cat /proc/$p/comm; done | sort | uniq -c | grep -E 'tmux|wezterm|claude'
+  # expected: no output (the service holds no tmux, wezterm or claude process)
+  ```
+  If either check fails, leave the drop-in in place and find out why.
+- Then remove only this drop-in, and confirm the settings reverted:
+
+  ```
+  rm ~/.config/systemd/user/agentview.service.d/switchover.conf
+  rmdir ~/.config/systemd/user/agentview.service.d      # only succeeds if nothing else is in it
+  systemctl --user daemon-reload
+  systemctl --user show agentview.service -p KillMode -p OOMPolicy      # expected: control-group, stop
+  ```
+- After that the restart must lose no session. A count is not enough (a killed and restored process gives the same count), so compare the processes themselves, by pid and start time, and the desktop:
+
+  ```
+  snap() { for p in $(pgrep -x claude); do echo "$p $(awk '{print $22}' /proc/$p/stat)"; done | sort; }
+  snap > $XDG_RUNTIME_DIR/claude-before.txt
+  G=$(grep -c '"session.gone"' ~/.local/state/agentview/events.jsonl)
+  echo "$(tmux list-sessions | wc -l) tmux sessions, $(wezterm cli --no-auto-start list | wc -l) wezterm panes"
+  systemctl --user restart agentview
+  sleep 15; snap > $XDG_RUNTIME_DIR/claude-after.txt
+  comm -23 $XDG_RUNTIME_DIR/claude-before.txt $XDG_RUNTIME_DIR/claude-after.txt   # expected: no output (no claude process lost)
+  echo "session.gone: $G -> $(grep -c '"session.gone"' ~/.local/state/agentview/events.jsonl)"   # expected: equal
+  echo "$(tmux list-sessions | wc -l) tmux sessions, $(wezterm cli --no-auto-start list | wc -l) wezterm panes"   # expected: as before
+  ```
+
+  If nothing was lost, tick the first acceptance box.
+- Then the same for a stop, which the second box is about and which nobody has tested yet without the drop-in:
+
+  ```
+  snap > $XDG_RUNTIME_DIR/claude-before.txt
+  systemctl --user stop agentview
+  systemctl --user is-active agentview                       # expected: inactive
+  snap > $XDG_RUNTIME_DIR/claude-after.txt
+  comm -23 $XDG_RUNTIME_DIR/claude-before.txt $XDG_RUNTIME_DIR/claude-after.txt   # expected: no output
+  systemctl --user start agentview
+  ```
+
+  Write one sentence into the README's "Restarting the service" section saying what a stop does (what was observed), then tick the second box and set `Status:` to `resolved`. If the stop lost sessions, say so in the README instead and leave the box and `Status:` open.
+- Inference from the documented behaviour of `KillMode=process`, not tested (only a restart was): while the drop-in exists, `systemctl --user stop agentview` reports the unit stopped and leaves everything running. Observed: the unit's task count and memory include the sessions, since they are in its cgroup.
