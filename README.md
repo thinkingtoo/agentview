@@ -453,12 +453,25 @@ reopened. So the deletion is split in two:
   `claude -p` calls, about three quarters of the transcripts on disk.
 
 Anything else is kept: a transcript with a single `cli` record, one that names
-no entrypoint, one that cannot be read, and anything reached through a link.
+no entrypoint, one with a line that does not parse (it could have been the line
+that said `cli`), and one that is not named by a session id. So is a
+transcript, session folder or project folder that is a link; the job does not
+check the directories above `~/.claude/projects`. A transcript written to while
+it is being judged, a headless session resumed by hand, is kept too: the file
+is checked again just before it goes. A session that cannot be deleted is
+reported and skipped, the rest of the run carries on, and the run exits 1.
 What each run deleted is in `journalctl --user -u agentview-retention`.
+
+To set it up, add `"cleanupPeriodDays": 36500` to `~/.claude/settings.json`
+first; without it Claude Code keeps deleting interactive transcripts after
+30 days. Then, from a checkout at `~/Projects/agentview`, which is where the
+units look, as the other units here do:
 
 ```bash
 python3 retention.py --dry-run     # what the next run would delete; deletes nothing
+mkdir -p ~/.config/systemd/user
 cp agentview-retention.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload
 systemctl --user enable --now agentview-retention.timer
 ```
 
@@ -661,7 +674,8 @@ skill, the provider contract (a minimal session fills every field the page
 reads, a provider that raises or stalls is a badge and not a blank page, a
 Codex lock with nobody behind it is an orphan), the retention job (an
 interactive transcript is never deleted, whatever its age, and neither is one
-that also carries a `cli` record, names no entrypoint or is a link), and the
+that also carries a `cli` record, names no entrypoint, has a line that does not
+parse, is a link, or is written to while it is judged), and the
 log — that a heartbeat alone says nothing, that a repeated
 error is written once, and that a fast operation writes no line at all.
 The archive's tests run on a made-up transcript holding one of every record

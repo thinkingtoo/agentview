@@ -71,12 +71,45 @@ class Prune(unittest.TestCase):
             {"type": "queue-operation", "sessionId": sid},
             {"type": "ai-title", "aiTitle": "t", "sessionId": sid},
         ])
-        with open(unknown, "a") as fh:
-            fh.write('{"entrypoint": "sdk-cli", "cut off mid-wri')
-        os.utime(unknown, (NOW - 60 * DAY, NOW - 60 * DAY))
 
         self.assertEqual(retention.prune(self.root, NOW, days=30), [])
         self.assertTrue(unknown.exists())
+
+    def test_a_line_that_cannot_be_read_keeps_the_transcript(self):
+        # The broken line could have been the one that said cli.
+        headless = transcript(self.proj, "13131313-aaaa-aaaa-aaaa-131313131313", "sdk-cli", 60)
+        with open(headless, "a") as fh:
+            fh.write('{"type": "user", "entrypoint": "cli", "mess\n["not", "a", "record"]\n')
+        os.utime(headless, (NOW - 60 * DAY, NOW - 60 * DAY))
+
+        self.assertEqual(retention.prune(self.root, NOW, days=30), [])
+        self.assertTrue(headless.exists())
+
+    def test_a_transcript_written_to_while_it_is_judged_stays(self):
+        # A headless session resumed by hand just as the job reaches it.
+        headless = transcript(self.proj, "14141414-aaaa-aaaa-aaaa-141414141414", "sdk-cli", 60)
+
+        def resumed(path):
+            with open(path, "a") as fh:
+                fh.write(json.dumps({"type": "user", "entrypoint": "cli"}) + "\n")
+
+        self.assertEqual(retention.prune(self.root, NOW, days=30, each=resumed), [])
+        self.assertTrue(headless.exists())
+        self.assertTrue((self.proj / "14141414-aaaa-aaaa-aaaa-141414141414").exists())
+
+    def test_one_session_that_cannot_be_deleted_does_not_stop_the_rest(self):
+        stuck = transcript(self.proj, "15151515-aaaa-aaaa-aaaa-151515151515", "sdk-cli", 60)
+        after = transcript(self.proj, "16161616-aaaa-aaaa-aaaa-161616161616", "sdk-cli", 60)
+        locked = self.proj / "15151515-aaaa-aaaa-aaaa-151515151515" / "subagents"
+        locked.chmod(0o500)
+        try:
+            gone = retention.prune(self.root, NOW, days=30)
+        finally:
+            locked.chmod(0o700)
+
+        self.assertEqual(gone, [after])
+        self.assertTrue(stuck.exists())
+        self.assertFalse(after.exists())
 
     def test_links_are_never_followed(self):
         outside = Path(self.tmp.name) / "elsewhere"
