@@ -132,6 +132,94 @@ class Prune(unittest.TestCase):
         self.assertEqual([p.name for p in self.proj.iterdir() if "retention" in p.name], [])
         self.assertEqual(len(warned), 1)
 
+    def _locked_and_after(self, stuck_id, after_id):
+        stuck = transcript(self.proj, stuck_id, "sdk-cli", 60)
+        after = transcript(self.proj, after_id, "sdk-cli", 60)
+        return stuck, after
+
+    def _leftovers(self):
+        return [p.name for p in self.proj.iterdir() if "retention" in p.name]
+
+    def test_a_warning_that_cannot_be_written_does_not_stop_the_run(self):
+        stuck, after = self._locked_and_after("26262626-aaaa-aaaa-aaaa-262626262626",
+                                              "27272727-aaaa-aaaa-aaaa-272727272727")
+        locked = self.proj / "26262626-aaaa-aaaa-aaaa-262626262626" / "subagents"
+        locked.chmod(0o500)
+
+        def closed(message):
+            raise BrokenPipeError
+
+        try:
+            gone = retention.prune(self.root, NOW, days=30, warn=closed)
+        finally:
+            locked.chmod(0o700)
+
+        self.assertEqual(gone, [after])
+        self.assertTrue(stuck.exists())
+        self.assertEqual(self._leftovers(), [])
+
+    def test_anything_unexpected_about_one_transcript_skips_only_that_one(self):
+        stuck, after = self._locked_and_after("28282828-aaaa-aaaa-aaaa-282828282828",
+                                              "29292929-aaaa-aaaa-aaaa-292929292929")
+        real = retention._judge
+
+        def judge(name, fd, cutoff):
+            if name.startswith("28282828"):
+                raise MemoryError
+            return real(name, fd, cutoff)
+
+        warned = []
+        with mock.patch.object(retention, "_judge", judge):
+            gone = retention.prune(self.root, NOW, days=30, warn=warned.append)
+
+        self.assertEqual(gone, [after])
+        self.assertTrue(stuck.exists())
+        self.assertEqual(len(warned), 1)
+
+    def test_an_unexpected_error_while_deleting_puts_everything_back(self):
+        stuck, after = self._locked_and_after("30303030-aaaa-aaaa-aaaa-303030303030",
+                                              "31313131-aaaa-aaaa-aaaa-313131313131")
+        real = retention.shutil.rmtree
+
+        def broken(path, *args, **kwargs):
+            if str(path).startswith("30303030"):
+                raise RuntimeError("something nobody planned for")
+            return real(path, *args, **kwargs)
+
+        warned = []
+        with mock.patch.object(retention.shutil, "rmtree", broken):
+            gone = retention.prune(self.root, NOW, days=30, warn=warned.append)
+
+        self.assertEqual(gone, [after])
+        self.assertTrue(stuck.exists())
+        self.assertTrue((self.proj / "30303030-aaaa-aaaa-aaaa-303030303030" / "subagents").exists())
+        self.assertEqual(self._leftovers(), [])
+        self.assertEqual(len(warned), 1)
+
+    def test_a_restored_transcript_counts_as_restored_when_its_second_name_will_not_go(self):
+        stuck, after = self._locked_and_after("32323232-aaaa-aaaa-aaaa-323232323232",
+                                              "33333333-aaaa-aaaa-aaaa-333333333333")
+        locked = self.proj / "32323232-aaaa-aaaa-aaaa-323232323232" / "subagents"
+        locked.chmod(0o500)
+        real = os.unlink
+
+        def flaky(path, *args, **kwargs):
+            if "32323232" in str(path) and ".retention-" in str(path):
+                raise OSError(5, "Input/output error")
+            return real(path, *args, **kwargs)
+
+        warned = []
+        try:
+            with mock.patch.object(retention.os, "unlink", flaky):
+                gone = retention.prune(self.root, NOW, days=30, warn=warned.append)
+        finally:
+            locked.chmod(0o700)
+
+        self.assertEqual(gone, [after])
+        self.assertTrue(stuck.exists())
+        self.assertEqual(len(warned), 1)
+        self.assertNotIn("took its name", warned[0])
+
     def test_a_rewrite_that_keeps_size_and_mtime_is_still_seen(self):
         # Same inode, same size, the old mtime put back: only the content differs.
         sid = "21212121-aaaa-aaaa-aaaa-212121212121"

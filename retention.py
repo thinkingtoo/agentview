@@ -108,7 +108,10 @@ def _put_file_back(tmp, name, fd):
         os.link(tmp, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
     except OSError:
         return False
-    os.unlink(tmp, dir_fd=fd)
+    try:
+        os.unlink(tmp, dir_fd=fd)
+    except OSError:
+        pass            # restored; the file just has a second name for now
     return True
 
 
@@ -156,16 +159,16 @@ def _remove(name, fd, judged, path, warn):
                 if not _one_filesystem(sid + tag, fd):
                     raise OSError("another filesystem is mounted inside its session folder")
                 shutil.rmtree(sid + tag, dir_fd=fd)
-            except (OSError, RecursionError, MemoryError) as err:
+            except Exception as err:
                 if not _put_folder_back(sid + tag, sid, fd):
                     warn(f"left what remains of {path.with_suffix('')} as {sid + tag}")
                 raise err
         os.unlink(name + tag, dir_fd=fd)
         return True
-    except (OSError, RecursionError, MemoryError) as err:
+    except Exception as err:
         try:
             back = _put_file_back(name + tag, name, fd)
-        except OSError:
+        except Exception:
             back = False
         if back:
             warn(f"kept {path}: {err}")
@@ -178,6 +181,17 @@ def _stderr(message):
     print(message, file=sys.stderr)
 
 
+def _quiet(warn):
+    """A warning that cannot be written (a closed pipe, a full journal) is
+    lost; it must not stop the run or the rollback that was about to follow."""
+    def call(message):
+        try:
+            warn(message)
+        except Exception:
+            pass
+    return call
+
+
 def prune(root, now, days=DAYS, dry_run=False, each=None, warn=_stderr):
     """Delete (or with dry_run, only name) the expired headless transcripts
     under root, each with its session folder. Returns the paths deleted.
@@ -187,37 +201,45 @@ def prune(root, now, days=DAYS, dry_run=False, each=None, warn=_stderr):
     root itself may be a link, to another disk say; it is opened once and
     held. Below it every project is opened without following links and worked
     on through that handle, so a path swapped for a link meanwhile leads
-    nowhere."""
+    nowhere.
+
+    Nothing that goes wrong with one transcript stops the run: each is
+    handled on its own, and what fails is reported and left as it was."""
     gone = []
+    warn = _quiet(warn)
     root = Path(root)
     try:
         root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:
         return gone
     try:
-        projects = sorted(os.listdir(root_fd))
-    except OSError as err:
-        warn(f"could not list {root}: {err}")
-        projects = []
-    try:
+        try:
+            projects = sorted(os.listdir(root_fd))
+        except (OSError, MemoryError) as err:
+            warn(f"could not list {root}: {err}")
+            projects = []
         for project in projects:
-            gone += _prune_project(root, root_fd, project, now - days * 86400,
-                                   dry_run, each, warn)
+            try:
+                _prune_project(root, root_fd, project, now - days * 86400,
+                               dry_run, each, warn, gone)
+            except Exception as err:
+                warn(f"skipped {root / project}: {err!r}")
     finally:
         os.close(root_fd)
     return gone
 
 
-def _prune_project(root, root_fd, project, cutoff, dry_run, each, warn):
-    gone = []
+def _prune_project(root, root_fd, project, cutoff, dry_run, each, warn, gone):
+    """Each deletion is appended to `gone` as it happens, so one that went
+    through is reported even if a later one raises."""
     try:
         fd = os.open(project, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
     except OSError:
-        return gone
+        return
     try:
         try:
             names = sorted(os.listdir(fd))
-        except OSError as err:
+        except (OSError, MemoryError) as err:
             warn(f"could not list {root / project}: {err}")
             names = []
         for name in names:
@@ -229,16 +251,21 @@ def _prune_project(root, root_fd, project, cutoff, dry_run, each, warn):
             try:
                 judged = _judge(name, fd, cutoff)
             except OSError:
+                continue            # gone since it was listed
+            except Exception as err:
+                warn(f"kept {path}: {err!r}")
                 continue
             if judged is None:
                 continue
-            if each:
-                each(path)
-            if dry_run or _remove(name, fd, judged, path, warn):
-                gone.append(path)
+            try:
+                if each:
+                    each(path)
+                if dry_run or _remove(name, fd, judged, path, warn):
+                    gone.append(path)
+            except Exception as err:
+                warn(f"kept {path}: {err!r}")
     finally:
         os.close(fd)
-    return gone
 
 
 def _size(path):

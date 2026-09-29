@@ -470,10 +470,17 @@ job never touches. The renamed file is read through once more, because a size an
 a modification time can be put back by whoever rewrote it and what it says cannot. A session that cannot be deleted is put back as it was and
 reported, the rest of the run carries on, and the run exits 1.
 
-One limit stays. A session folder is checked for another filesystem mounted
+Each transcript is handled on its own. Whatever goes wrong with one, an error
+of any kind, memory running out, a warning that cannot be written, is reported
+and that one is left as it was; it does not stop the others.
+
+Two limits stay. A session folder is checked for another filesystem mounted
 inside it before it is deleted, but not while it is deleted: someone who mounts
-one there in the milliseconds between the two can have it emptied. That takes a
-process of yours doing it on purpose, into a folder the job is about to delete.
+one there in the milliseconds between the two can have it emptied, and a
+process of yours that keeps a transcript open for writing can change it after
+the last check. Both take a process of yours doing it on purpose. And a disk
+that fails while a session is being deleted, and again while it is being put
+back, leaves it under a `.retention-` name; the warning names it.
 What each run deleted is in `journalctl --user -u agentview-retention`.
 
 To set it up, add `"cleanupPeriodDays": 36500` to `~/.claude/settings.json`
