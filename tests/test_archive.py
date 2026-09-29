@@ -369,6 +369,15 @@ class Searching(Home, unittest.TestCase):
         # Within one day the better match still comes first.
         self.assertEqual(ids[1], "00000000-0000-4000-8000-00000000000c")
 
+    def test_every_conversation_that_says_the_words_reaches_the_merge(self):
+        # Cut only after the merge: a word match cut earlier would come back
+        # through meaning and be shown as found by meaning alone.
+        con = archive.connect(self.db)
+        best, days = archive.keyword_best(con, archive.fts_query("copper"))
+        con.close()
+        self.assertEqual(len(best), 3)
+        self.assertEqual(set(days.values()), {"2026-08-10"})
+
     def test_a_newer_match_is_not_cut_by_the_limit(self):
         newer = "00000000-0000-4000-8000-00000000000e"
         self.write(newer, [typed(1, "the boiler", sid=newer),

@@ -913,15 +913,17 @@ def fuse(*lists):
     return sorted(score, key=lambda conv: -score[conv])
 
 
-def keyword_best(con, query, limit):
+def keyword_best(con, query):
     """(conversation -> the id of its best passage, conversation -> its day),
     newest day first and the best match first within a day.
 
     The most recent conversation that says your words is the one you most
     likely mean, so the day leads and the score only orders one day's rows.
     The day is the one the conversation was last active, on this machine's
-    clock. Sorted before the LIMIT, so a newer, weaker match is never cut to
-    make room for older, stronger ones."""
+    clock. Every matching conversation comes back, uncut: find() cuts once,
+    after the merge, so a newer, weaker match is never dropped for older,
+    stronger ones, and a match that meaning also finds is never mistaken for
+    one found by meaning alone."""
     if not query:
         return {}, {}
     # One row per conversation, carrying its best passage: with a single
@@ -935,8 +937,8 @@ def keyword_best(con, query, limit):
             " FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid"
             " JOIN conversations c ON c.id = p.conversation"
             " WHERE passages_fts MATCH ? GROUP BY p.conversation"
-            " ORDER BY day IS NULL, day DESC, score, c.active DESC, p.conversation LIMIT ?",
-            (query, limit)):
+            " ORDER BY day IS NULL, day DESC, score, c.active DESC, p.conversation",
+            (query,)):
         best[conv], days[conv] = rowid, day or ""
     return best, days
 
@@ -993,7 +995,7 @@ def find(words, limit=30, path=None, live=(), emb=None):
         return [], {"state": "on" if emb is not None else "off", "why": "" if emb is not None else "no embedder is configured"}
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
     try:
-        by_words, days = keyword_best(con, query, limit)
+        by_words, days = keyword_best(con, query)
         by_meaning, meaning = {}, {"state": "on"}
         try:
             if emb is None:
