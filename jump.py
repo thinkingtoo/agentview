@@ -114,7 +114,7 @@ import os
 import shutil
 import subprocess
 
-import scope
+import scope  # noqa: E402
 
 
 def _run(argv, timeout=4):
