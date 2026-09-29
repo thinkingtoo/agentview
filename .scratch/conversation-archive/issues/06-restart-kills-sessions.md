@@ -33,7 +33,7 @@ What was observed, and what was not.
 **B. Launch what the service starts outside the service's cgroup: `systemd-run --user --scope` (or `--slice=`) in front of the `tmux` and `wezterm` commands** in `snapshot.py` (`_start_gui`, and the `tmux new-session` calls of `restore`) and in `jump.py` (the `wezterm start` in `open_tab`, which the closed list reaches). The `wezterm cli spawn` path needs no change once the window it asks is itself outside the service.
 - Tradeoffs: they get a cgroup of their own, so a restart of agentview cannot touch them, and the accounting of the unit is right. It changes how the owner's session launcher starts every terminal, in two files (`snapshot.py` is 960 lines) tested mostly against fakes: a wrong flag means restore starts nothing at all, or starts it with the wrong environment (`DISPLAY`, `WAYLAND_DISPLAY`, `SSH_AUTH_SOCK`, `CLAUDE_CODE_CHILD_SESSION`). `systemd-run --scope` blocks until the command exits, so it has to be started in the background too. Every scope is one more unit to name and to clean up.
 
-**B needs one more flag.** Put `-p OOMPolicy=continue` on the scope, for the reason above. It is not in `scope.py` yet.
+**B needs one more flag.** Put `-p OOMPolicy=continue` on the scope, for the reason above. It is in `SYSTEMD_RUN` in `scope.py`, so the launch sites and the probe both carry it.
 
 **Recommendation:** B is the right end state. A is the fix to use today. A alone costs one line and removes the harm, and its leftovers are cosmetic. B is worth doing when restore is next touched for another reason. If the owner wants B, it needs a test on a real desktop: reopen one session, restart the service, and check that the session is still running.
 

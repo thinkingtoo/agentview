@@ -20,7 +20,7 @@ import jump
 import scope
 import snapshot
 
-PREFIX = ["systemd-run", "--user", "--scope", "--quiet", "--collect"]
+PREFIX = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "-p", "OOMPolicy=continue"]
 
 
 def ok(**kw):
@@ -46,6 +46,14 @@ class Wrapping(Scoped):
         argv = ["tmux", "new-session", "-d", "-s", "a b", "-c", "/x y", "claude --resume 1"]
         self.assertEqual(scope.wrap(argv, "tmux server"),
                          PREFIX + ["--description=agentview: tmux server", "--"] + argv)
+
+    def test_the_kernel_killing_one_process_does_not_take_the_scope_with_it(self):
+        # A scope defaults to OOMPolicy=stop: one process killed for memory and
+        # systemd kills the rest, which for a tmux server is every session in it.
+        wrapped = scope.wrap(["tmux", "new-session"], "tmux server")
+        self.assertEqual(wrapped.count("OOMPolicy=continue"), 1)
+        self.assertEqual(wrapped[wrapped.index("OOMPolicy=continue") - 1], "-p")
+        self.assertLess(wrapped.index("OOMPolicy=continue"), wrapped.index("--"))
 
     def test_the_caller_is_not_changed(self):
         argv = ["a", "b"]

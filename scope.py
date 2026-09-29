@@ -24,7 +24,9 @@ import subprocess
 
 import log
 
-SYSTEMD_RUN = ["systemd-run", "--user", "--scope", "--quiet", "--collect"]
+# OOMPolicy=continue: a scope defaults to `stop`, so one process the kernel kills
+# for memory takes the whole scope down, and with it every session in a tmux server.
+SYSTEMD_RUN = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "-p", "OOMPolicy=continue"]
 OFF = ("off", "0", "no", "false")
 
 
