@@ -943,11 +943,13 @@ def keyword_best(con, query):
     return best, days
 
 
-def meaning_best(con, emb, words, limit):
+def meaning_best(con, emb, words, limit=None):
     """conversation -> the id of its passage nearest the question in meaning,
     nearest conversation first. Raises embedder.Unavailable, with the reason,
     when meaning cannot be used: nothing in the index yet, vectors from
-    another model, an embedder that does not answer."""
+    another model, an embedder that does not answer. With no `limit`, every
+    conversation above the floor, which is what find() merges: it cuts once,
+    after the merge."""
     have = con.execute("SELECT value FROM meta WHERE key='embedder'").fetchone()
     if not have or not con.execute("SELECT 1 FROM vectors LIMIT 1").fetchone():
         raise embedder.Unavailable("no passage has a vector yet: the next update builds them")
@@ -969,7 +971,7 @@ def meaning_best(con, emb, words, limit):
     scores = numpy.where(numpy.isfinite(scores := matrix @ question), scores, -1.0)
     best = {}
     for i in numpy.argsort(-scores):
-        if not scores[i] >= MEANING_FLOOR or len(best) >= limit:
+        if not scores[i] >= MEANING_FLOOR or (limit is not None and len(best) >= limit):
             break
         best.setdefault(rows[i][1], rows[i][0])
     return best
@@ -1000,7 +1002,7 @@ def find(words, limit=30, path=None, live=(), emb=None):
         try:
             if emb is None:
                 raise embedder.Unavailable("no embedder is configured")
-            by_meaning = meaning_best(con, emb, words.strip(), limit)
+            by_meaning = meaning_best(con, emb, words.strip())
             meaning["pending"] = con.execute(
                 "SELECT COUNT(*) FROM passages p LEFT JOIN vectors v ON v.passage = p.id"
                 " WHERE v.passage IS NULL").fetchone()[0]

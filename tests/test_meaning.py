@@ -287,6 +287,16 @@ class Finding(Meaning, unittest.TestCase):
         self.assertEqual(ids[2], METAL)
         self.assertNotIn(OTHER, ids)
 
+    def test_the_meaning_list_reaches_the_merge_uncut(self):
+        con = archive.connect(self.db)
+        try:
+            everything = archive.meaning_best(con, self.fake.client(), "copper")
+            one = archive.meaning_best(con, self.fake.client(), "copper", limit=1)
+        finally:
+            con.close()
+        self.assertEqual(set(everything), {PIPES, SID, METAL})
+        self.assertEqual(len(one), 1)
+
     def test_a_newer_meaning_hit_stays_below_the_word_matches(self):
         # Recency orders the conversations that say your words; one that
         # only means them is a guess, and a newer guess does not jump ahead.
