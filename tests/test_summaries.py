@@ -332,8 +332,12 @@ class Overlapping(Summarised, unittest.TestCase):
             outer.update()
             raise archive.Failed("boom")
 
-        self.summarize(failing, limit=1)
+        run = self.summarize(failing, limit=1)
         self.assertEqual(self.rows("SELECT id FROM summaries WHERE id=?", SID), [])
+        # The call failed, so it is counted as failed and counts toward the
+        # breaker (which is about the model, not about the row) even though
+        # the conversation had gone and there was nothing to record it against.
+        self.assertEqual((run["made"], run["failed"], run["dropped"]), (0, 1, 0))
 
 
 class GivingUp(Summarised, unittest.TestCase):

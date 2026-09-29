@@ -809,6 +809,9 @@ def summarize(path=None, ask=None, limit=None, now=None, say=lambda *_: None):
                 run["cost_usd"] += cost
                 about, ended = two_lines(answer)
             except Failed as exc:
+                # A call that failed is a failure of the model, whether or not
+                # there is still a row to record it on; the breaker is about
+                # the model.
                 run["failed"], streak, run["error"] = run["failed"] + 1, streak + 1, str(exc)
                 # Only while the conversation is still what was asked about:
                 # the update job runs on its own timer, and may have dropped
