@@ -6,7 +6,7 @@ This is the tracer bullet: the index, the job that keeps it current, the endpoin
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [x] One piece of the index is one exchange: a prompt the user typed plus the assistant's reply text. `<system-reminder>` blocks, hook injections and tool calls and results are stripped. Unit tests on a fixture transcript cover the stripping.
 - [x] Only `entrypoint: cli` transcripts are indexed. Headless and subagent transcripts are not.
@@ -30,8 +30,22 @@ This is the tracer bullet: the index, the job that keeps it current, the endpoin
 7. **Separate request.** `/api/search` is its own GET route; `/api/roster` does not touch the index. `test_search_answers_with_rows_and_the_state_of_the_index` goes through the real route over HTTP.
 8. **README.** New section `## Search`, plus the timer in `## Run it`.
 
-Tested before the merge on a second server from the worktree (port 8766, its own log directory), leaving the live one alone: `curl 'http://127.0.0.1:8766/api/search?q=processori'` returned `Ansgar | Processori a 800Mhz`, last active `2026-09-22T07:26`.
+Tested before the merge on a second server from the worktree (port 8766, its own log directory), leaving the live one alone: `curl 'http://127.0.0.1:8766/api/search?q=<word>'` returned, as its top hit, a conversation last active `2026-09-22T07:26`. The word and the titles are left out here because the repo is public.
 
-Codex (`codex exec -s read-only` over the diff against `dev`): review 1 said NO-GO with three findings, fixed in `0717bbf`. Review 2 said NO-GO with four, fixed in the next commit. Both reviews and the verdict that let this merge are named in the report to the boss.
+Codex (`codex exec -s read-only` over the diff against `dev`): review 1 said NO-GO with three findings, fixed in `0717bbf`. Review 2 said NO-GO with four, fixed in `ae32fbe`. Review 3: "All four review-2 fixes are real and complete. No remaining qualifying bugs found. VERDICT: GO". The three reviews are kept in `~/.claude/pm/reviews/`.
+
+**Merged and live (2026-09-29).** `dev` fast-forwarded to `ae32fbe` and pushed. The live server on 8765 runs it:
+
+```
+$ curl -s 'http://127.0.0.1:8765/api/search?q=<word>'          -> 200 in 0.005 s
+  3 results, active 2026-09-22T07:26, 2026-09-22T05:34 and 2026-09-29T11:06 (titles withheld: public repo)
+  index: 537 conversations, last run 2026-09-29T13:06:19+02:00
+$ systemctl --user is-enabled agentview-archive.timer
+enabled
+$ journalctl --user -u agentview-archive.service
+  17 of 537 conversations read, 7644 passages, 0.39s      (first run by the timer, 13:06:19; next 13:11:19)
+```
+
+**Incident while going live.** `systemctl --user restart agentview` at 13:02:10 killed every Claude session in the tmux server that agentview's restore had started, this worker's own session among them. The tmux server, WezTerm and the resumed `claude` processes live in `agentview.service`'s cgroup (2,008 tasks, 5.9 GB after the restart), and a restart kills the whole cgroup. Restore brought 14 sessions back between 13:02:45 and 13:03:09, but turns in flight were lost and several came back under new names. Not fixed here, since it is outside this ticket. The fix belongs in `agentview.service` (`KillMode=process`) or in restore (launch with `systemd-run --user --scope`). Until then, restarting `agentview` restarts every session it restored.
 
 Left out on purpose: peer and task-notification messages are not indexed (the reply to them is). Names come from peer files, then agentview's own log, then the transcript's `agent-name` record. On 2026-09-29 the log named all 532 interactive conversations, and the transcripts alone named 18. The index keeps a name once it is found, so it outlives the log's rotation.
