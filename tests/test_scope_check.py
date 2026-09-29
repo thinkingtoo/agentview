@@ -150,30 +150,45 @@ class Preflight(Box):
 
 
 class ProbingAScope(Box):
-    """Inside a scope, wezterm and tmux must still be the shims."""
+    """What a wrapped command finds, and where it ran."""
 
-    def probe(self, result):
+    def probe(self, result, mode="on"):
         wrapped = ["a-scope", "wrapping", "sh"]
         with mock.patch("scope.wrap", return_value=wrapped) as wrap, \
                 mock.patch.object(sc.subprocess, "run", return_value=result) as run:
-            sc.probe_scope(self.box, "r1")
+            sc.probe_scope(self.box, "r1", mode)
         self.assertEqual(run.call_args.args[0], wrapped)
         self.assertEqual(wrap.call_args.args[0][:2], ["/bin/sh", "-c"])
+        self.assertIn("/proc/self/cgroup", wrap.call_args.args[0][2])          # it asks where it ran
 
-    def shims(self, *extra):
-        return "\n".join([f"{self.box}/bin/wezterm", f"{self.box}/bin/tmux", *extra])
+    SCOPE = "0::/user.slice/app.slice/run-u1.scope"
+    SERVICE = "0::/user.slice/app.slice/avsc-x-off.service"
 
-    def test_it_passes_when_the_scope_finds_the_shims_and_carries_the_marker(self):
-        self.probe(done(stdout=self.shims("r1")))
+    def found(self, where=SCOPE, marker="r1"):
+        return "\n".join([f"{self.box}/bin/wezterm", f"{self.box}/bin/tmux", marker, where])
 
-    def test_it_aborts_when_the_scope_finds_a_real_wezterm(self):
+    def test_it_passes_in_a_scope_for_the_scoped_run_and_in_the_unit_for_the_control(self):
+        self.probe(done(stdout=self.found()))
+        self.probe(done(stdout=self.found(self.SERVICE)), mode="off")
+
+    def test_it_aborts_when_the_wrapped_command_finds_a_real_wezterm(self):
         with self.assertRaises(sc.Abort):
-            self.probe(done(stdout="/usr/bin/wezterm\n" + f"{self.box}/bin/tmux\nr1"))
+            self.probe(done(stdout="/usr/bin/wezterm\n" + f"{self.box}/bin/tmux\nr1\n{self.SCOPE}"))
 
-    def test_it_aborts_when_the_scope_finds_nothing_or_loses_the_marker_or_fails(self):
-        for result in (done(stdout="\n\nr1"), done(stdout=self.shims("other")), done(1, self.shims("r1"))):
+    def test_it_aborts_when_it_finds_nothing_or_loses_the_marker_or_fails(self):
+        for result in (done(stdout="\n\nr1"), done(stdout=self.found(marker="other")), done(1, self.found())):
             with self.assertRaises(sc.Abort):
                 self.probe(result)
+
+    def test_it_aborts_when_the_scoped_run_ran_outside_a_scope_because_scope_wrap_failed_open(self):
+        with self.assertRaises(sc.Abort) as raised:
+            self.probe(done(stdout=self.found(self.SERVICE)))
+        self.assertIn("not in a scope", str(raised.exception))
+
+    def test_it_aborts_when_the_control_ran_in_a_scope(self):
+        with self.assertRaises(sc.Abort) as raised:
+            self.probe(done(stdout=self.found()), mode="off")
+        self.assertIn("not in the unit", str(raised.exception))
 
 
 class Reading(unittest.TestCase):
@@ -305,15 +320,41 @@ class Identity(unittest.TestCase):
             unit.stop()
         ctl.assert_not_called()
 
-    def test_a_start_with_no_invocation_id_can_still_be_stopped_because_it_was_ours(self):
+    def test_a_start_with_no_invocation_id_is_never_stopped_on_its_description_alone(self):
         unit = sc.Unit("abcd1234", "on")
-        with mock.patch.object(sc.subprocess, "run", return_value=done()), \
+        with mock.patch.object(sc.subprocess, "run", return_value=done(stderr="Running as unit: x")), \
                 mock.patch.object(sc, "show", return_value={"Description": self.DESC, "InvocationID": ""}), \
                 mock.patch.object(sc, "ctl") as ctl:
-            with self.assertRaises(sc.Abort):
+            with self.assertRaises(sc.Abort) as raised:
                 unit.start(["true"])
             unit.stop()
+        ctl.assert_not_called()
+        self.assertIn("systemctl --user stop avsc-abcd1234-on.service", str(raised.exception))
+
+    def test_the_invocation_id_is_the_one_systemd_run_says_it_created(self):
+        unit = sc.Unit("abcd1234", "on")
+        said = f"Running as unit: {unit.name}; invocation ID: {'ab' * 16}\n"
+        with mock.patch.object(sc.subprocess, "run", return_value=done(stderr=said)), \
+                mock.patch.object(sc, "show", side_effect=AssertionError("not asked for")):
+            unit.start(["true"])
+        self.assertEqual(unit.inv, "ab" * 16)
+
+    def test_a_unit_whose_start_succeeded_is_this_run_afterwards_and_can_be_stopped(self):
+        unit = sc.Unit("abcd1234", "on")
+        with mock.patch.object(sc.subprocess, "run", return_value=done(stderr=f"invocation ID: {'ab' * 16}")):
+            unit.start(["true"])
+        with mock.patch.object(sc, "show", return_value={"Description": self.DESC, "InvocationID": "ab" * 16}), \
+                mock.patch.object(sc, "ctl") as ctl:
+            self.assertTrue(unit.mine())
+            unit.stop()
         self.assertEqual([c.args[0] for c in ctl.call_args_list], ["stop", "reset-failed"])
+
+    def test_the_invocation_id_is_asked_for_when_systemd_run_does_not_say(self):
+        unit = sc.Unit("abcd1234", "on")
+        with mock.patch.object(sc.subprocess, "run", return_value=done(stderr="Running as unit: x")), \
+                mock.patch.object(sc, "show", return_value={"InvocationID": "cd" * 16}):
+            unit.start(["true"])
+        self.assertEqual(unit.inv, "cd" * 16)
 
     def test_a_restart_that_failed_still_leaves_the_new_invocation_reachable_for_the_stop(self):
         unit = self.unit()
@@ -370,24 +411,24 @@ class Ownership(Box):
         self.assertEqual(code, 2)
         self.assertNotIn("stop", [c.args[0] for c in calls.ctl.call_args_list])
         made = [c.args[0] for c in calls.run.call_args_list]
-        self.assertEqual(made[0][:3], ["systemd-run", "--user", "--quiet"])
+        self.assertEqual(made[0][:3], ["systemd-run", "--user", "--unit=avsc-r2-on.service"])
         self.assertEqual(made[1:], [["/real/tmux", "-f", "/dev/null", "-S", f"{self.tmp}/avsc-r2-on/t.sock", "kill-server"]])
         self.assertFalse((self.tmp / "avsc-r2-on").exists())
 
     def test_a_failed_cleanup_step_does_not_skip_the_ones_after_it(self):
         with mock.patch.object(sc.Unit, "start", side_effect=sc.Abort("boom")), \
                 mock.patch.object(sc.Unit, "stop", side_effect=RuntimeError("no bus")), \
-                mock.patch.object(sc, "our_scopes", return_value=["run-u9.scope"]):
+                mock.patch.object(sc, "stop_our_scopes") as scopes:
             code, calls, out = self.run_exercise("r3")
         self.assertEqual(code, 2)
         self.assertIn("cleanup step failed: RuntimeError", out)
         self.assertEqual(len(calls.run.call_args_list), 1)                       # kill-server still ran
-        self.assertEqual([c.args for c in calls.ctl.call_args_list], [("stop", "run-u9.scope")])
+        scopes.assert_called_once_with("r3")
 
     def test_a_marked_process_that_survives_keeps_the_box_and_makes_the_run_exit_2(self):
         with mock.patch.object(sc.Unit, "start", side_effect=sc.Abort("boom")), \
                 mock.patch.object(sc, "marked", return_value={4242}), \
-                mock.patch.object(sc, "our_scopes", return_value=[]), \
+                mock.patch.object(sc, "stop_our_scopes"), \
                 mock.patch.object(sc.time, "sleep"), \
                 mock.patch.object(sc.time, "time", side_effect=itertools.chain([0, 0], itertools.repeat(20))):
             code, _, out = self.run_exercise("r4")
@@ -397,14 +438,38 @@ class Ownership(Box):
         self.assertTrue((self.tmp / "avsc-r4-on").exists())
 
 
-    def test_signals_are_held_while_cleaning_up_and_given_back_after(self):
-        seen = []
-        with mock.patch.object(sc.signal, "signal", side_effect=lambda s, h: seen.append((s, h)) or f"old-{s}"), \
-                mock.patch.object(sc.Unit, "start", side_effect=sc.Abort("boom")):
-            self.run_exercise("r5")
-        self.assertEqual(seen, [(sc.signal.SIGINT, sc.signal.SIG_IGN), (sc.signal.SIGTERM, sc.signal.SIG_IGN),
-                                (sc.signal.SIGINT, f"old-{sc.signal.SIGINT}"),
-                                (sc.signal.SIGTERM, f"old-{sc.signal.SIGTERM}")])
+    def test_an_interrupted_run_stops_at_its_next_check_and_still_cleans_up(self):
+        sc.INTERRUPTED[:] = [2]
+        self.addCleanup(sc.INTERRUPTED.clear)
+        code, calls, out = self.run_exercise("r5")
+        self.assertEqual(code, 2)
+        self.assertIn("interrupted", out)
+        self.assertEqual([c.args[0][-1] for c in calls.run.call_args_list], ["kill-server"])   # and no unit was started
+        self.assertFalse((self.tmp / "avsc-r5-on").exists())
+
+
+class Interrupts(unittest.TestCase):
+    def setUp(self):
+        sc.INTERRUPTED.clear()
+        self.addCleanup(sc.INTERRUPTED.clear)
+
+    def test_a_signal_only_leaves_a_note_and_never_raises(self):
+        sc.check_interrupt()
+        sc.on_signal(2, None)
+        self.assertEqual(sc.INTERRUPTED, [2])
+
+    def test_the_next_check_stops_the_run(self):
+        sc.on_signal(15, None)
+        with self.assertRaises(sc.Abort):
+            sc.check_interrupt()
+
+    def test_the_wait_for_the_driver_checks_before_it_asks_systemd_anything(self):
+        sc.on_signal(2, None)
+        with mock.patch.object(sc, "show", side_effect=AssertionError("systemd must not be asked")), \
+                mock.patch.object(sc.subprocess, "run", side_effect=AssertionError("nothing must run")):
+            with self.assertRaises(sc.Abort) as raised:
+                sc.wait_for(Path("/nonexistent/ready"), sc.Unit("r", "on"), seconds=5)
+        self.assertIn("interrupted", str(raised.exception))
 
 
 class Driving(Box):
@@ -474,6 +539,52 @@ class Driving(Box):
         self.assertEqual(self.order, [])
 
 
+class Scopes(unittest.TestCase):
+    """Only a scope whose members, looked at now, all carry this run's marker is stopped."""
+
+    NAME, CG = "run-u1.scope", "/user.slice/app.slice/run-u1.scope"
+    OURS = {"Description": "agentview: tmux server", "InvocationID": "i1"}
+
+    def stop_with(self, members, carrying, shows):
+        looks = iter(shows)
+        with mock.patch.object(sc, "marked", return_value={5}), \
+                mock.patch.object(sc, "cgroup", return_value=self.CG), \
+                mock.patch.object(sc, "live_members", return_value=members), \
+                mock.patch.object(sc, "carries", side_effect=lambda pid, run: carrying[pid]), \
+                mock.patch.object(sc, "show", side_effect=lambda *a: next(looks)), \
+                mock.patch.object(sc, "ctl") as ctl:
+            sc.stop_our_scopes("r1")
+        return ctl
+
+    def test_a_scope_whose_members_all_carry_the_marker_is_stopped(self):
+        self.stop_with([7, 8], {7: True, 8: True}, [self.OURS, self.OURS]).assert_called_once_with("stop", self.NAME)
+
+    def test_a_reused_pid_cannot_bring_in_a_scope_that_is_not_this_runs(self):
+        # pid 5 was marked once; the scope it now points at holds a process without the marker
+        self.stop_with([7], {7: False}, [self.OURS, self.OURS]).assert_not_called()
+
+    def test_a_foreign_process_beside_ours_keeps_the_scope_alive(self):
+        self.stop_with([7, 8], {7: True, 8: False}, [self.OURS, self.OURS]).assert_not_called()
+
+    def test_an_empty_scope_is_not_ours_by_default(self):
+        self.stop_with([], {}, [self.OURS, self.OURS]).assert_not_called()
+
+    def test_a_scope_agentview_did_not_describe_is_left_alone(self):
+        other = {"Description": "tmux child pane", "InvocationID": "i1"}
+        self.stop_with([7], {7: True}, [other, other]).assert_not_called()
+
+    def test_a_scope_replaced_between_the_two_looks_is_left_alone(self):
+        self.stop_with([7], {7: True}, [self.OURS, {**self.OURS, "InvocationID": "i2"}]).assert_not_called()
+
+    def test_a_process_is_ours_only_if_its_own_environment_says_so(self):
+        proc = subprocess.Popen(["sleep", "30"], env={"PATH": "/usr/bin:/bin", "AVSC_RUN": "unit-test-run"})
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        self.assertTrue(sc.carries(proc.pid, "unit-test-run"))
+        self.assertFalse(sc.carries(proc.pid, "unit-test"))
+        self.assertFalse(sc.carries(2 ** 22 + 1, "unit-test-run"))
+
+
 class Desktop(unittest.TestCase):
     def listing(self, tmux, wezterm):
         """`desktop()` with the two real listings replaced by these results."""
@@ -525,6 +636,10 @@ class Desktop(unittest.TestCase):
 
 
 class Main(unittest.TestCase):
+    def setUp(self):
+        sc.INTERRUPTED.clear()
+        self.addCleanup(sc.INTERRUPTED.clear)
+
     def main_with(self, exercises):
         same = {"tmux sessions": [], "wezterm windows and tabs": []}
         with mock.patch.object(sc, "exercise", side_effect=exercises) as ex, \
@@ -551,14 +666,40 @@ class Main(unittest.TestCase):
         code, _, _ = self.main_with([1, 0])
         self.assertEqual(code, 1)
 
-    def test_the_desktop_is_compared_even_when_a_run_is_interrupted(self):
+    def test_main_installs_the_note_leaving_handler_for_both_signals(self):
+        installed = []
         same = {"tmux sessions": [], "wezterm windows and tabs": []}
-        with mock.patch.object(sc, "exercise", side_effect=KeyboardInterrupt), \
+        with mock.patch.object(sc, "exercise", return_value=0), mock.patch.object(sc, "desktop", return_value=same), \
+                mock.patch.object(sc.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(sc.signal, "signal", side_effect=lambda s, h: installed.append((s, h))), \
+                contextlib.redirect_stdout(io.StringIO()):
+            sc.main()
+        self.assertEqual(installed, [(sc.signal.SIGINT, sc.on_signal), (sc.signal.SIGTERM, sc.on_signal)])
+
+    def test_a_signal_during_the_scoped_run_skips_the_control_and_is_exit_2(self):
+        def exercise(run, mode, real):
+            self.assertEqual(mode, "on", "the control must not run")
+            sc.on_signal(2, None)
+            return 0
+        same = {"tmux sessions": [], "wezterm windows and tabs": []}
+        with mock.patch.object(sc, "exercise", side_effect=exercise) as ex, \
+                mock.patch.object(sc, "desktop", return_value=same), \
+                mock.patch.object(sc.shutil, "which", return_value="/usr/bin/tmux"), \
+                mock.patch.object(sc.signal, "signal"), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            code = sc.main()
+        self.assertEqual(code, 2)
+        self.assertEqual(len(ex.call_args_list), 1)
+        self.assertIn("control: not run", out.getvalue())
+
+    def test_the_desktop_is_compared_even_when_a_run_raises(self):
+        same = {"tmux sessions": [], "wezterm windows and tabs": []}
+        with mock.patch.object(sc, "exercise", side_effect=RuntimeError("boom")), \
                 mock.patch.object(sc, "desktop", return_value=same) as desktop, \
                 mock.patch.object(sc.shutil, "which", return_value="/usr/bin/tmux"), \
                 mock.patch.object(sc.signal, "signal"), \
                 contextlib.redirect_stdout(io.StringIO()) as out:
-            with self.assertRaises(KeyboardInterrupt):
+            with self.assertRaises(RuntimeError):
                 sc.main()
         self.assertEqual(desktop.call_count, 2)
         self.assertIn("the real desktop", out.getvalue())

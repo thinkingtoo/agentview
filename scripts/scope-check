@@ -26,7 +26,9 @@ What it cannot reach, and why:
             socket is never the default and no tmux.conf is read. A read-only
             preflight, in the harness and again in the unit, aborts unless tmux
             resolves to the shim and names the private socket; a second one runs
-            inside a scope and aborts unless wezterm and tmux resolve to the shims.
+            what scope.wrap wraps and aborts unless wezterm and tmux resolve to
+            the shims and it really ran in a scope (in the unit's cgroup, for
+            the control).
   WezTerm   `wezterm` is a shim that logs and runs `sleep`. The unit's
             environment holds no WEZTERM_*, no DISPLAY, no SSH_AUTH_SOCK.
   the unit  every name is `avsc-<random run id>-<mode>`; the box directory, made
@@ -36,8 +38,10 @@ What it cannot reach, and why:
             description and InvocationID are still this run's. agentview.service
             is never named.
   anything  nothing is signalled by pid. Cleanup stops this run's unit, kills the
-            private tmux server by its socket, and stops a scope only if every
-            process in it carries this run's marker.
+            private tmux server by its socket, and stops a scope only if, when
+            looked at again just before, every process in it carries this run's
+            marker. SIGINT and SIGTERM only leave a note; the run stops at its
+            next check and always cleans up.
 The only real things it uses: the user's systemd manager (the point of the
 check) and read-only listings of the real tmux and WezTerm before and after.
 
@@ -49,6 +53,7 @@ check) and read-only listings of the real tmux and WezTerm before and after.
 """
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -136,17 +141,22 @@ def preflight(box, env):
         raise Abort(f"tmux does not report the private socket (exit {res.returncode}): {res.stderr.strip()[:200]!r}")
 
 
-def probe_scope(box, run):
-    """Before anything is launched: what a command sees when scope.wrap puts it
-    in a scope. It must find the shims, not real binaries, and carry the marker."""
+def probe_scope(box, run, mode):
+    """Before anything is launched: what a command sees when scope.wrap wraps
+    it. It must find the shims, not real binaries, carry the marker, and be in
+    a scope (scoped run) or in the unit's own cgroup (control). scope.wrap
+    fails open, so without the last check a probe could pass without a scope."""
     import scope
-    show_path = 'printf "%s\\n" "$(command -v wezterm)" "$(command -v tmux)" "$AVSC_RUN"'
+    show_path = ('read -r cg < /proc/self/cgroup; '
+                 'printf "%s\\n" "$(command -v wezterm)" "$(command -v tmux)" "$AVSC_RUN" "$cg"')
     res = subprocess.run(scope.wrap(["/bin/sh", "-c", show_path], "preflight"),
                          capture_output=True, text=True, timeout=20)
-    want = [str(box / "bin" / "wezterm"), str(box / "bin" / "tmux"), run]
-    if res.returncode != 0 or res.stdout.split() != want:
-        raise Abort(f"in a scope, wezterm and tmux resolve to {res.stdout.split()[:2]} (exit {res.returncode}), "
-                    f"not to the shims in {box}/bin")
+    seen = res.stdout.split()
+    if res.returncode != 0 or seen[:3] != [str(box / "bin" / "wezterm"), str(box / "bin" / "tmux"), run]:
+        raise Abort(f"a wrapped command finds {seen[:2]} (exit {res.returncode}), not the shims in {box}/bin")
+    where = seen[3] if len(seen) > 3 else ""
+    if not where.endswith(".scope" if mode == "on" else ".service"):
+        raise Abort(f"the probe ran in {where!r}, not in {'a scope' if mode == 'on' else 'the unit'}")
 
 
 # --------------------------------------------------------------- processes
@@ -219,21 +229,26 @@ class Unit:
         self.inv = ""
 
     def mine(self):
-        if not self.attempted:
+        """Never on the description alone: the InvocationID of the invocation
+        this run started must be known and still current."""
+        if not self.attempted or not self.inv:
             return False
         p = show(self.name, "Description", "InvocationID")
-        return p.get("Description") == self.desc and (not self.inv or p.get("InvocationID") == self.inv)
+        return p.get("Description") == self.desc and p.get("InvocationID") == self.inv
 
     def start(self, cmd):
         self.attempted = True           # from here a unit of this name may exist, even if systemd-run says otherwise
-        res = subprocess.run(["systemd-run", "--user", "--quiet", f"--unit={self.name}",
+        res = subprocess.run(["systemd-run", "--user", f"--unit={self.name}",
                               f"--description={self.desc}", "--property=KillMode=control-group", "--"] + cmd,
                              capture_output=True, text=True, timeout=30)
         if res.returncode != 0:
             raise Abort(f"systemd-run exited {res.returncode}: {res.stderr.strip()[:200]}")
-        self.inv = show(self.name, "InvocationID").get("InvocationID", "")
+        # systemd-run says the invocation ID of what it just created; asking afterwards is the fallback.
+        said = re.search(r"invocation ID: ([0-9a-f]{32})", res.stderr)
+        self.inv = said.group(1) if said else show(self.name, "InvocationID").get("InvocationID", "")
         if not self.inv:
-            raise Abort("the unit has no InvocationID")
+            raise Abort(f"the unit has no InvocationID, so it will not be stopped by this script: "
+                        f"systemctl --user stop {self.name}")
 
     def restart(self):
         if not self.mine():
@@ -252,9 +267,24 @@ class Unit:
             ctl("reset-failed", self.name)
 
 
+INTERRUPTED = []
+
+
+def on_signal(signum, _frame):
+    """SIGINT and SIGTERM only leave a note. The run stops at its next check,
+    so no signal can arrive in the middle of cleanup and skip a step."""
+    INTERRUPTED.append(signum)
+
+
+def check_interrupt():
+    if INTERRUPTED:
+        raise Abort(f"interrupted (signal {INTERRUPTED[0]})")
+
+
 def wait_for(path, unit, seconds=40):
     end = time.time() + seconds
     while time.time() < end:
+        check_interrupt()
         if path.exists():
             return
         if show(unit.name, "ActiveState").get("ActiveState") in ("failed", "inactive"):
@@ -309,7 +339,7 @@ def driver(box, mode):
         idle()
     preflight(box, os.environ)
     sys.path.insert(0, str(REPO))
-    probe_scope(box, run)
+    probe_scope(box, run, mode)
     from unittest import mock
     import jump
     import snapshot
@@ -369,25 +399,46 @@ def judge(mode, rows, unit_cg, is_alive):
 
 # ------------------------------------------------------------------ cleanup
 
-def our_scopes(run):
-    """Scopes that scope.wrap made for this run: described `agentview: ...`,
-    and every live process in them carries this run's marker."""
-    ours = marked(run)
-    names = {}
-    for pid in ours:
+def carries(pid, run):
+    try:
+        return b"AVSC_RUN=" + run.encode() in Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return False
+
+
+def live_members(cg):
+    try:
+        members = [int(x) for x in Path(f"/sys/fs/cgroup{cg}/cgroup.procs").read_text().split()]
+    except OSError:
+        return []
+    return [m for m in members if (stat(m) or ("Z",))[0] != "Z"]
+
+
+def scope_invocation(name, cg, run):
+    """The InvocationID of a scope that scope.wrap made for this run, or ''.
+    Judged from the scope's members as they are now: at least one, and every one
+    carries this run's marker. A pid from an earlier list decides nothing, so a
+    reused pid cannot bring in a scope that is not this run's."""
+    members = live_members(cg)
+    if not members or not all(carries(m, run) for m in members):
+        return ""
+    p = show(name, "Description", "InvocationID")
+    return p.get("InvocationID", "") if p.get("Description", "").startswith("agentview: ") else ""
+
+
+def stop_our_scopes(run):
+    """Stop the scopes scope.wrap made for this run. The pids of the marked
+    processes only suggest which scopes to look at; each one is judged by
+    scope_invocation, twice, the second time just before the stop."""
+    candidates = {}
+    for pid in marked(run):
         cg = cgroup(pid)
         if cg.endswith(".scope"):
-            names[cg.rsplit("/", 1)[1]] = cg
-    found = []
-    for name, cg in names.items():
-        try:
-            members = {int(x) for x in Path(f"/sys/fs/cgroup{cg}/cgroup.procs").read_text().split()}
-        except OSError:
-            continue
-        live = {m for m in members if (stat(m) or ("Z",))[0] != "Z"}
-        if live <= ours and show(name, "Description").get("Description", "").startswith("agentview: "):
-            found.append(name)
-    return found
+            candidates[cg.rsplit("/", 1)[1]] = cg
+    for name, cg in candidates.items():
+        inv = scope_invocation(name, cg, run)
+        if inv and scope_invocation(name, cg, run) == inv:
+            ctl("stop", name)
 
 
 def cleanup(run, box, unit, real_tmux, made):
@@ -398,7 +449,7 @@ def cleanup(run, box, unit, real_tmux, made):
     steps = (unit.stop,
              lambda: subprocess.run([real_tmux, "-f", "/dev/null", "-S", str(box / "t.sock"), "kill-server"],
                                     capture_output=True, timeout=10),
-             lambda: [ctl("stop", scope) for scope in our_scopes(run)])
+             lambda: stop_our_scopes(run))
     for step in steps:                  # each one on its own: a failure must not skip the rest
         try:
             step()
@@ -467,14 +518,17 @@ def exercise(run, mode, real_tmux):
         made = True
         fill_box(box, real_tmux)
         preflight(box, env_for(box, mode, run))
+        check_interrupt()
         unit.start(driver_command(box, mode, run))
         wait_for(box / "ready", unit)
         rows = json.loads((box / "record.json").read_text())
         unit_cg = show(unit.name, "ControlGroup").get("ControlGroup", "")
         if not unit_cg:
             raise Abort("the unit has no ControlGroup")
+        check_interrupt()
         unit.restart()
         time.sleep(2)
+        check_interrupt()
         is_alive = {r["role"]: alive(r["pid"], r["start"]) for r in rows}
         table(rows, is_alive)
         problems = judge(mode, rows, unit_cg, is_alive)
@@ -485,15 +539,11 @@ def exercise(run, mode, real_tmux):
         print(f"  ABORTED: {type(exc).__name__}: {exc}")
         code = 2
     finally:
-        held = {s: signal.signal(s, signal.SIG_IGN) for s in (signal.SIGINT, signal.SIGTERM)}
         try:
             left = cleanup(run, box, unit, real_tmux, made)
         except Exception as exc:
             print(f"  cleanup failed: {type(exc).__name__}: {exc}")
             left = marked(run) or {0}
-        finally:
-            for sig, handler in held.items():
-                signal.signal(sig, handler)
     if left:
         print(f"  LEFT BEHIND, marker AVSC_RUN={run}, box kept at {box}, unit {unit.name}: pids {sorted(left)}")
         code = 2
@@ -507,24 +557,22 @@ def main():
     if not found:
         raise SystemExit("no tmux on PATH")
     real_tmux = os.path.abspath(found)
-
-    def stop(*_):
-        raise KeyboardInterrupt
-    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGTERM, on_signal)
     run = secrets.token_hex(4)
     print(f"run {run}")
     before = desktop(real_tmux)
     code = 2
     try:
         code = exercise(run, "on", real_tmux)
-        if code == 2:
-            print("\n== control: not run, the scoped run aborted or left something behind")
+        if code == 2 or INTERRUPTED:
+            print("\n== control: not run, the scoped run aborted, was interrupted or left something behind")
         else:
             code = max(code, exercise(run, "off", real_tmux))
     finally:
         print("\n== the real desktop")
         verdict = compare(before, desktop(real_tmux), run)
-    code = max(code, verdict)
+    code = max(code, verdict, 2 if INTERRUPTED else 0)
     print(f"\n{'PASS' if code == 0 else 'NOT PASS'} (exit {code})")
     return code
 
