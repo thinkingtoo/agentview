@@ -41,5 +41,39 @@ What was observed, and what was not.
 
 - [ ] `systemctl --user restart agentview` leaves running every session that was in the service's cgroup beforehand. Checked by listing the `claude` processes in `systemctl --user status agentview` before, and counting them and the `session.gone` events in the log after.
 - [ ] `systemctl --user stop agentview` says what happened to the sessions, or leaves them running, and the README says which.
-- [ ] README: the restart rule is written down where the service is documented, whichever fix is chosen.
-- [ ] Until then: the README's "Run it" section says that restarting `agentview` kills every process in the service's cgroup, which can include a tmux server and the sessions in it (check with `systemctl --user status agentview` first), and that server changes are tested on a second server on another port with its own `XDG_STATE_HOME`.
+- [x] README: the restart rule is written down where the service is documented, whichever fix is chosen. ("Restarting the service, and what survives it", under "Run it".)
+- [x] Until then: the README's "Run it" section says that restarting `agentview` kills every process in the service's cgroup, which can include a tmux server and the sessions in it (check with `systemctl --user status agentview` first), and that server changes are tested on a second server on another port with its own `XDG_STATE_HOME`.
+
+The first two boxes are about the live service and stay open until it is switched over (see below).
+
+## Fix B, built and checked (2026-09-29)
+
+**Built.** `scope.py` puts `systemd-run --user --scope --quiet --collect -p OOMPolicy=continue` in front of the commands that start something long-lived: the tmux server (`snapshot._tmux_argv`, for the `new-session` that can start it), the WezTerm window `restore` opens (`snapshot._start_gui`) and the one the closed list opens (`jump.open_tab`). It fails open: with no user manager the command runs as before and `scope.unavailable` goes to the event log; `AGENTVIEW_SCOPE=off` turns it off. README section added. Observed in a separate run, not part of the check below: `python3 -m pytest tests` gave 558 passed on this branch rebased onto `dev` (19 tests in `tests/test_scope.py`, 71 in `tests/test_scope_check.py`).
+
+**Checked.** `scripts/scope-check` runs a driver in a transient user unit that stands in for `agentview.service` (`KillMode=control-group`). The driver starts a window through `jump.open_tab`, a window through `snapshot._start_gui` and a tmux server and pane through `snapshot._tmux_argv`, with fake `wezterm`, `pgrep` and `claude`, and `tmux` forced onto a private socket with no config file. The harness then restarts the unit. A second run with `AGENTVIEW_SCOPE=off` is the control. No server, port or HTTP is involved. Codex reviewed the script in three rounds before it was run (NO-GO, NO-GO, GO). Run once on 2026-09-29, exit 0 (process ids and the scope's uuid replaced by placeholders):
+
+```
+== scoped
+  window via jump.open_tab         pid <pid>  run-u2451.scope (agentview: wezterm window, OOMPolicy=continue)        alive after the restart
+  window via snapshot._start_gui   pid <pid>  run-u2455.scope (agentview: wezterm window, OOMPolicy=continue)        alive after the restart
+  tmux server                      pid <pid>  run-u2458.scope (agentview: tmux server, OOMPolicy=continue)           alive after the restart
+  tmux pane                        pid <pid>  tmux-spawn-<uuid>.scope (tmux child pane <pid> launched by process <pid>, OOMPolicy=stop) alive after the restart
+
+== control, AGENTVIEW_SCOPE=off
+  window via jump.open_tab         pid <pid>  avsc-9c5471c9-off.service                                              gone after the restart
+  window via snapshot._start_gui   pid <pid>  avsc-9c5471c9-off.service                                              gone after the restart
+  tmux server                      pid <pid>  avsc-9c5471c9-off.service                                              gone after the restart
+  tmux pane                        pid <pid>  avsc-9c5471c9-off.service                                              gone after the restart
+
+== the real desktop
+  tmux sessions and WezTerm windows: exactly as before
+```
+
+What that shows, and what it does not:
+
+- Observed: with the scope, the tmux server and both windows were each in a scope of their own, described `agentview: ...`, with `OOMPolicy=continue`, and all four processes were alive after the restart of the unit that had started them. Without it, all four were in the unit's cgroup and none was alive after the restart.
+- Observed: the pane was in a scope tmux made itself (`OOMPolicy=stop`) in the scoped run, and in the unit's own cgroup in the control run. Why was not looked into.
+- Observed, by hand after the run: no unit, scope or process named for the run was left; the real tmux server's 6 sessions and 12 WezTerm tabs were the same before and after; `agentview.service` had the same InvocationID before and after.
+- Not shown: that `restore` and `launch` reach these helpers (`tests/test_scope.py` covers that, with fake leaves); the live service (the sessions running now are still in its old cgroup, so a restart of it today would still kill them, and reading `restore` says it reuses a tmux server and WezTerm window that are already running and does not move them, so they stay there until they are shut down and started again, for instance by the login restore after a reboot); the login autostart unit, which has not been run since the change; `systemctl stop` on its own (the check restarts, which is a stop followed by a start). The restore process itself (`server.py`, `_restore`) is not in a scope, so a restart in the middle of a restore aborts it. The check for a user manager and the launch are two `systemd-run` calls; if the manager goes away between them that one launch fails (running the command again unwrapped cannot be done safely: `systemd-run --scope` returns the command's own exit status).
+
+`Status:` stays as it is until the live switchover is done.
