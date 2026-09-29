@@ -115,12 +115,17 @@ class Embedder:
 
     # ------------------------------------------------------------ vectors
 
+    def _usable(self, vec):
+        """A list of the right length holding numbers, and only numbers."""
+        return (isinstance(vec, list) and len(vec) == self.dimensions()
+                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vec))
+
     def query(self, text):
         """The vector of a question, through the query endpoint."""
         got = self._call("POST", "/embed/text", {"text": text})
         vec = got.get("vector")
-        if not isinstance(vec, list) or len(vec) != self.dimensions():
-            self._fail("the embedder gave a vector of the wrong size")
+        if not self._usable(vec):
+            self._fail("the embedder gave a vector this code cannot use")
         return vec
 
     def documents(self, texts):
@@ -131,8 +136,7 @@ class Embedder:
             chunk = texts[i:i + BATCH]
             got = self._call("POST", "/embed/batch", {"texts": chunk}, read=BATCH_TIMEOUT, connect=BATCH_CONNECT)
             vecs = got.get("vectors")
-            if (not isinstance(vecs, list) or len(vecs) != len(chunk)
-                    or any(not isinstance(v, list) or len(v) != self.dimensions() for v in vecs)):
+            if not isinstance(vecs, list) or len(vecs) != len(chunk) or not all(map(self._usable, vecs)):
                 self._fail("the embedder gave vectors this code cannot use")
             out.extend(vecs)
         return out

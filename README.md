@@ -81,6 +81,8 @@ or more; each row is one conversation and shows its name, Claude's title for
 it, the project, the day it was last active, and the exchange that matched,
 with the matching words marked. The best-matching exchange decides the order.
 A row does not reopen anything yet: it tells you which conversation it was.
+Ask in your own words too: the box also finds a conversation by what it
+means, when none of your words is in it.
 
 - **What counts.** Transcripts whose `entrypoint` is `cli`. `claude -p` runs
   (`sdk-cli`) and subagent transcripts are left out.
@@ -94,7 +96,38 @@ A row does not reopen anything yet: it tells you which conversation it was.
 - **Matching.** Every word must appear. The last word also matches as a
   prefix from three characters on, so a word still being typed already
   finds something. `"two words"` in quotes is a phrase. Case and accents do
-  not matter.
+  not matter. That is the keyword half; meaning search (below) adds to it and
+  does not need the words to match.
+- **Meaning.** The text of a passage, and the words you search for, also go to
+  an embedder: a small HTTP service, run on a machine of your own, that turns
+  text into a vector (EmbeddingGemma-300m, int4, 768 dimensions). A question
+  lands near the passages that say what it says. The two lists of
+  conversations, by words and by meaning, are merged by reciprocal rank
+  fusion, so a conversation found both ways outranks one found either way,
+  and a row found by meaning alone is tagged *by meaning*. A passage counts
+  from a cosine similarity of 0.35: on 541 conversations, unrelated queries
+  (recipes, football, gibberish) put their best passage at 0.37 or lower, and
+  real ones at 0.43 or higher.
+  - *What is sent.* A passage's text, to the embedder's document endpoint (at
+    most 100 texts a call), and your query, to its query endpoint. The model
+    reads the two differently and the wrong endpoint does not fail, it ranks
+    worse, so the two paths are two methods. Never a name, a title, a path or
+    a project.
+  - *Where it is.* Not in this repo, which is public. A local file, mode 0600
+    (one others can read is refused, it holds a key):
+    `~/.config/tiroir/agentview-embedder.env`, or the path in
+    `$AGENTVIEW_EMBEDDER_ENV`, with `EMBEDDER_URL=` (scheme, host, port) and
+    `EMBEDDER_API_KEY=`. Read on every search, so a change needs no restart.
+  - *Vectors* are stored in the same SQLite file, with the model's identity as
+    its model endpoint reports it (model, dimensions, both prompts, maximum
+    length). When that changes, every vector is dropped and embedded again:
+    vectors from two models are never in one index, nor compared.
+  - *When it is off.* Not configured, unreachable, not ready, or serving
+    another model than the vectors came from: the rows are the keyword ones,
+    the answer carries `meaning: {"state": "off", "why": ...}`, and the page
+    says so above them. The reason never names the host. A box that is off
+    costs the first search at most 0.5 s (its connect timeout), and is left
+    alone for the next 30 s; a live one is given 1.5 s to answer.
 - **Names.** The name the conversation last had: its peer file while it
   lasts, then agentview's own log (`~/.local/state/agentview/events.jsonl`,
   which goes back as far as its rotation), then whatever Claude Code wrote
@@ -102,7 +135,8 @@ A row does not reopen anything yet: it tells you which conversation it was.
   session renamed while it sat idle is caught. The index keeps the name once
   found, so it outlives both.
 - **The index** is one SQLite file with FTS5, `~/.claude/agentview/archive.db`,
-  mode 0600 like the transcripts it comes from. Nothing leaves the machine.
+  mode 0600 like the transcripts it comes from. Nothing leaves the machine
+  except what meaning search sends, described above.
 - **Keeping it current.** `agentview-archive.timer` runs `archive.py update`
   every 5 minutes. It reads only transcripts whose size or mtime moved, and
   only from the start of their last exchange, the one that may still be
@@ -110,17 +144,26 @@ A row does not reopen anything yet: it tells you which conversation it was.
   already read changed (a hash covers every byte up to the resume line), was
   rewritten rather than appended to, and is read again from scratch, so
   nothing it no longer says stays findable. One that
-  is gone leaves the index.
+  is gone leaves the index. Then it embeds the passages that have no vector
+  yet, a batch at a time and committing after each, so a run cut short keeps
+  its work. With the embedder off the keyword index is brought up to date all
+  the same and the run says so: `archive.py stats` shows it under
+  `last_run.meaning`.
 - **Speed.** The first run over 534 conversations took 19 s on a quiet
   machine and 38 s on a busy one (load 6.5), and wrote 7,629 passages
   (48 MB); half of it is parsing JSON. A run with nothing new takes about
   0.15 s, most of it reading the log for names, and a search a few
   milliseconds, grouped by conversation in SQL. The search is its own request (`/api/search?q=`) and never
   part of the roster poll.
+  With meaning on, the first run also embedded all 7,665 passages of 541
+  conversations: 128 s in all, 106 s of it embedding, and the file grew to
+  75 MB. Later runs embed only what is new. A search that goes through the
+  embedder takes 120 to 160 ms (it reads every vector and scans them with
+  numpy), a keyword-only one 3 to 8 ms.
 
 ```bash
-python3 archive.py update        # what the timer runs; -v lists each file read
-python3 archive.py search words  # what the box would show
+python3 archive.py update        # what the timer runs; -v lists each file read; embeds what is new
+python3 archive.py search words  # what the box would show, meaning included
 python3 archive.py stats         # what the index holds, and how the last run went
 ```
 
@@ -718,7 +761,12 @@ The archive's tests run on a made-up transcript holding one of every record
 kind: what is kept and what is stripped, that only `cli` transcripts count, a
 growing conversation read from its last exchange, a rewritten one read again,
 names, ranking, and a query that cannot be a syntax error, through the real
-`/api/search` route.
+`/api/search` route. The meaning tests run against a stand-in embedder that
+speaks the real one's HTTP contract on a throwaway port: which endpoint each
+path calls (and that only passage text is sent), a model change rebuilding
+every vector, one batch never holding more than 100 texts, and the embedder
+being unreachable, silent, not ready, or another model, each of which leaves
+the keyword hits and says meaning is off.
 
 **Every test points at the code the page actually calls.** There used to be a
 second, full-file scanner that nothing called, and the summary tests ran

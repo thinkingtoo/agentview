@@ -53,6 +53,7 @@ class FakeEmbedder:
 
     def __init__(self, model="google/embeddinggemma-300m", dims=8):
         self.model, self.dims, self.calls, self.down, self.requests = model, dims, [], False, 0
+        self.rubbish = None      # what to put in a vector instead of numbers
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -88,14 +89,16 @@ class FakeEmbedder:
                     self._json(503, {"detail": "not ready"})
                 elif self.path == "/api/v1/embed/text":
                     fake.calls.append(("query", body["text"]))
-                    self._json(200, {"vector": meaning_of(body["text"], fake.dims, question=True),
+                    vec = meaning_of(body["text"], fake.dims, question=True)
+                    self._json(200, {"vector": [fake.rubbish] * fake.dims if fake.rubbish else vec,
                                      "dimensions": fake.dims})
                 elif self.path == "/api/v1/embed/batch":
                     if len(body["texts"]) > 100:
                         self._json(422, {"detail": "batch exceeds the 100 cap; split it"})
                         return
                     fake.calls.append(("documents", body["texts"]))
-                    self._json(200, {"vectors": [meaning_of(t, fake.dims) for t in body["texts"]],
+                    self._json(200, {"vectors": [[fake.rubbish] * fake.dims if fake.rubbish else
+                                                 meaning_of(t, fake.dims) for t in body["texts"]],
                                      "dimensions": fake.dims, "count": len(body["texts"])})
                 else:
                     self._json(404, {"detail": "Not Found"})
@@ -330,6 +333,21 @@ class EmbedderOff(Meaning, unittest.TestCase):
         self.assertIn("unreachable", meaning["why"])
         self.assertGreater(first, 0.25)
         self.assertLess(second, 0.25)
+
+    def test_a_vector_that_is_not_numbers_is_off_not_a_crash(self):
+        self.fake.rubbish = "x"
+        hits, meaning = self.find("copper", self.fake.client())
+        self.assertEqual([h["id"] for h in hits], self.keyword_ids())
+        self.assertEqual(meaning["state"], "off")
+        self.assertIn("cannot use", meaning["why"])
+
+    def test_vectors_that_are_not_numbers_are_never_stored(self):
+        self.fake.rubbish = "x"
+        self.fake.model = "another/model"       # so that everything is embedded again
+        run = self.update()
+        self.assertEqual(run["embedded"], 0)
+        self.assertTrue(run["meaning"].startswith("off: "))
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM vectors"), [(0,)])
 
     def test_an_embedder_that_is_not_ready_is_off_too(self):
         self.fake.down = True
