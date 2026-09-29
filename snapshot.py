@@ -449,7 +449,10 @@ def dismiss(session_id):
     os.replace(tmp, path)
 
 
-MODES = {"acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"}
+# What a transcript may say, and what to ask the cli for. `manual` is the
+# cli's other name for `default`; asked for by `default`, the same on any version.
+MODES = {"acceptEdits": "acceptEdits", "auto": "auto", "bypassPermissions": "bypassPermissions",
+         "default": "default", "manual": "default", "dontAsk": "dontAsk", "plan": "plan"}
 CWD_IN_LINE = re.compile(rb'"cwd":"((?:[^"\\]|\\.)*)"')
 MODE_IN_LINE = re.compile(rb'"permissionMode":"([A-Za-z]*)"')
 
@@ -475,7 +478,7 @@ def transcript_facts(path):
             cwds.append(cwd)
     filed = Path(path).parent.name
     cwd = next((c for c in cwds if registry._encode(c) == filed), cwds[0] if cwds else "")
-    mode = next((m for m in (h.group(1).decode() for h in reversed(list(MODE_IN_LINE.finditer(raw))))
+    mode = next((MODES[m] for m in (h.group(1).decode() for h in reversed(list(MODE_IN_LINE.finditer(raw))))
                  if m in MODES), "")
     return {"cwd": cwd, "flags": f"--permission-mode {mode}" if mode else ""}
 
@@ -499,6 +502,28 @@ def revive_record(session_id, snaps, transcript=None, name=""):
     if not facts or not facts["cwd"]:
         return None
     return {"sessionId": session_id, "name": name, **facts, "from": "transcript"}
+
+
+def starting(session_id, proc="/proc", cfg=None):
+    """Pids of claudes launched with `--resume <id>` that have no peer file
+    yet: a start in progress. The page cannot see it running, and it is not
+    closed. One with a peer file is the registry's to answer for -- a session
+    started that way and then moved on (`/resume` another) says so there."""
+    found = []
+    for entry in Path(proc).iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            args = (entry / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if Path(args[0].decode(errors="replace")).name != "claude":
+            continue
+        want = [b"--resume", session_id.encode()]
+        if any(args[i:i + 2] == want for i in range(len(args) - 1)) \
+                and registry.by_pid(int(entry.name), cfg) is None:
+            found.append(int(entry.name))
+    return found
 
 
 def revive(rec):

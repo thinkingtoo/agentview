@@ -21,6 +21,7 @@ import seen
 import snapshot
 import subprocess
 import sys
+import threading
 import time
 from providers import claude, registry
 
@@ -125,17 +126,26 @@ def found(query, limit=30):
     return {"query": query, "results": hits or [], "index": archive.stats(), "meaning": meaning}
 
 
+_REOPEN = threading.Lock()   # asking whether it runs and opening it are one step
 _OPENING = {}                # id -> when a tab was last opened for it
-OPENING_GRACE = 30           # seconds a new claude takes to show up as running
+OPENING_GRACE = 30           # seconds; covers the moment before the new claude has a process
 
 
 def reopen(sid):
     """A click on a search result: jump to the conversation if it runs, open
     it in a new WezTerm tab if it does not. Never both, and never twice.
 
-    Running is asked of the same registry a live row's jump uses. A tab
-    opened a moment ago is not in it yet, so a second click inside the grace
-    period waits for the first instead of resuming the conversation again."""
+    Clicks are answered one at a time, because the server takes them on
+    threads and two that both found it closed would both open it. Running is
+    asked of the same registry a live row's jump uses. A claude launched a
+    moment ago is not in it yet: it shows up as a process first
+    (`snapshot.starting`), and a tab that was just opened may not even have
+    that, so a click inside the grace period waits as well."""
+    with _REOPEN:
+        return _reopen(sid)
+
+
+def _reopen(sid):
     key = f"claude:{sid}"
     hit = fleet.look(key)
     if hit:
@@ -144,7 +154,7 @@ def reopen(sid):
         log.event("jumped", key=key, pid=session.get("pid"), name=session.get("name"),
                   source="search", **done)
         return {**done, "did": "jumped"}
-    if time.time() - _OPENING.get(sid, 0) < OPENING_GRACE:
+    if snapshot.starting(sid) or time.time() - _OPENING.get(sid, 0) < OPENING_GRACE:
         return {"ok": True, "did": "opening"}
     _snapshots()
     rec = snapshot.revive_record(sid, _SNAP["all"], transcript=claude.transcript_for(sid, ""),

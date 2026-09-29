@@ -13,6 +13,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -90,6 +91,16 @@ class FromTranscript(unittest.TestCase):
         self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["flags"],
                          "--permission-mode default")
 
+    def test_every_mode_the_cli_accepts_is_asked_for_by_the_name_it_knows(self):
+        # `manual` is the cli's other spelling of `default`, and the only one
+        # it takes that the transcript's own vocabulary does not use.
+        for written, asked in (("acceptEdits", "acceptEdits"), ("auto", "auto"),
+                               ("bypassPermissions", "bypassPermissions"), ("default", "default"),
+                               ("manual", "default"), ("dontAsk", "dontAsk"), ("plan", "plan")):
+            path = transcript("-home-alice-Projects-maple", said("/home/alice/Projects/maple", written))
+            self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["flags"],
+                             f"--permission-mode {asked}", written)
+
     def test_no_mode_or_one_claude_does_not_know_adds_no_flag(self):
         for mode in (None, "sideways"):
             path = transcript("-home-alice-Projects-maple", said("/home/alice/Projects/maple", mode))
@@ -98,6 +109,39 @@ class FromTranscript(unittest.TestCase):
     def test_with_neither_there_is_nothing_to_reopen(self):
         self.assertIsNone(snapshot.revive_record(SID, [], transcript=None))
         self.assertIsNone(snapshot.revive_record(SID, [], transcript=Path("/nonexistent/x.jsonl")))
+
+
+class Starting(unittest.TestCase):
+    """A claude launched for a conversation and not yet in the registry: no
+    peer file, so the page cannot see it running, but it is not closed."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp())
+        self.proc, self.cfg = self.root / "proc", self.root / "cfg"
+        (self.cfg / "sessions").mkdir(parents=True)
+        self.addCleanup(shutil.rmtree, self.root)
+
+    def process(self, pid, *args):
+        (self.proc / str(pid)).mkdir(parents=True)
+        (self.proc / str(pid) / "cmdline").write_bytes(b"\0".join(a.encode() for a in args) + b"\0")
+
+    def test_a_claude_resuming_it_that_has_no_peer_file_yet_is_starting(self):
+        self.process(101, "claude", "--resume", SID, "--permission-mode", "auto")
+        self.assertEqual(snapshot.starting(SID, proc=self.proc, cfg=self.cfg), [101])
+
+    def test_one_with_a_peer_file_is_the_registrys_to_answer_for(self):
+        # Started with --resume A, then /resume B inside it: A is not running
+        # in it any more, whatever its command line still says.
+        self.process(101, "claude", "--resume", SID)
+        (self.cfg / "sessions" / "101.json").write_text(json.dumps({"pid": 101, "sessionId": "another"}))
+        self.assertEqual(snapshot.starting(SID, proc=self.proc, cfg=self.cfg), [])
+
+    def test_other_conversations_and_other_programs_do_not_count(self):
+        self.process(101, "claude", "--resume", "another-conversation")
+        self.process(102, "grep", "--resume", SID)
+        self.process(103, "claude", "-c", SID)
+        self.process(104, "bash", "-c", f"claude --resume {SID}")     # a command line, not a claude
+        self.assertEqual(snapshot.starting(SID, proc=self.proc, cfg=self.cfg), [])
 
 
 class Endpoint(unittest.TestCase):
@@ -116,10 +160,10 @@ class Endpoint(unittest.TestCase):
         self.old_log, log.LOG = log.LOG, self.root / "events.jsonl"
         server._SNAP.update(files=None, snap=None, latest=None, all=[])
         server._OPENING.clear()
-        self.opened, self.jumped = [], []
+        self.opened, self.jumped, self.delay = [], [], 0
         for target, new in (
-                ("jump.open_tab", lambda argv, cwd=None: self.opened.append((argv, cwd)) or
-                 {"ok": True, "ran": ["spawn"], "pane": "7"}),
+                ("jump.open_tab", self.open_tab),
+                ("snapshot.starting", lambda sid: []),
                 ("snapshot.seed_name", lambda sid, name: self.seeded.append((sid, name))),
                 ("snapshot.wez_guis", lambda: []),
                 ("fleet.jump_to", lambda p, s: self.jumped.append(s["id"]) or {"ok": True, "ran": ["raise"]})):
@@ -129,6 +173,11 @@ class Endpoint(unittest.TestCase):
         self.seeded = []
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def open_tab(self, argv, cwd=None):
+        time.sleep(self.delay)               # wezterm takes a moment; so does the race
+        self.opened.append((argv, cwd))
+        return {"ok": True, "ran": ["spawn"], "pane": "7"}
 
     def tearDown(self):
         self.httpd.shutdown()
@@ -223,6 +272,25 @@ class Endpoint(unittest.TestCase):
         again = self.reopen()
         self.assertEqual((again["ok"], again["did"]), (True, "opening"))
         self.assertEqual(len(self.opened), 1)
+
+    def test_two_clicks_at_the_same_moment_open_one_tab(self):
+        self.conversation()
+        self.delay = 0.4
+        got = []
+        clicks = [threading.Thread(target=lambda: got.append(self.reopen())) for _ in range(2)]
+        for c in clicks:
+            c.start()
+        for c in clicks:
+            c.join()
+        self.assertEqual(sorted(g["did"] for g in got), ["opened", "opening"])
+        self.assertEqual(len(self.opened), 1)
+
+    def test_a_claude_launched_for_it_that_is_still_starting_is_not_resumed_again(self):
+        self.conversation()
+        with mock.patch("snapshot.starting", lambda sid: [4242] if sid == SID else []):
+            got = self.reopen()
+        self.assertEqual((got["ok"], got["did"]), (True, "opening"))
+        self.assertEqual((self.opened, self.seeded), ([], []))
 
     def test_a_launch_that_failed_can_be_tried_again(self):
         self.conversation()

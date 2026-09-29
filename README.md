@@ -92,8 +92,10 @@ means, when none of your words is in it.
   come from the transcript, which knows the directory it is filed under and the
   permission mode it last ran with (`--permission-mode default` is asked for by
   name, so the resume does not fall back to the settings default). A directory
-  that no longer exists is said on the row and nothing is launched. A second
-  click while the first tab is starting opens nothing more. Each one is logged
+  that no longer exists is said on the row and nothing is launched. Clicks are
+  answered one at a time, and a claude that was launched for the conversation
+  and has no peer file yet counts as starting, so a second click while the
+  first tab comes up (or two at once) opens nothing more. Each one is logged
   as `revived` (with its `source`, `snapshot` or `transcript`) or `jumped`, in
   `~/.local/state/agentview/events.jsonl`.
 - **What counts.** Transcripts whose `entrypoint` is `cli`. `claude -p` runs
@@ -790,8 +792,8 @@ being unreachable, silent, not ready, or another model, each of which leaves
 the keyword hits and says meaning is off. The reopen tests go through the real
 `/api/reopen` route with WezTerm replaced by a recorder: a running conversation
 jumps and is never resumed, a closed one opens from a snapshot or from its
-transcript alone, a missing directory launches nothing, and a second click
-opens nothing more.
+transcript alone, a missing directory launches nothing, and two clicks at once,
+or a click on a conversation whose claude is still starting, open nothing more.
 
 **Every test points at the code the page actually calls.** There used to be a
 second, full-file scanner that nothing called, and the summary tests ran
