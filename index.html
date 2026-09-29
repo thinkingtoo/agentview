@@ -187,8 +187,8 @@
 .gone .x:hover { color:var(--bad); }
 .gone .err { color:var(--bad); font-size:12px; }
 /* Every conversation this machine has had, found by what was said in it.
-   The same drop-down as the closed list, but a row here is a record, not a
-   button: nothing lights up under the pointer, because a click does nothing. */
+   The same drop-down as the closed list. A click on a row opens the
+   conversation, or jumps to it if it runs. */
 #find:focus { width:300px; }
 #found[hidden] { display:none; }
 #found { position:fixed; right:20px; z-index:6; width:min(660px, calc(100vw - 32px));
@@ -197,8 +197,10 @@
 #found .none { color:var(--dim); padding:10px 12px; font-size:13px; }
 #found .foot { color:var(--faint); font-size:11.5px; padding:6px 12px 2px; }
 #found .off { color:var(--dim); font-size:12px; padding:6px 12px; border-bottom:1px solid var(--line); }
-.hit { padding:8px 10px; cursor:default; }
+.hit { padding:8px 10px; cursor:pointer; border-radius:8px; }
+.hit:hover, .hit:focus-visible { background:color-mix(in srgb,var(--accent) 8%,transparent); outline:0; }
 .hit + .hit { border-top:1px solid var(--line); }
+.hit .err { color:var(--bad); font-size:12px; }
 .hit .who { display:flex; gap:8px; align-items:baseline; }
 .hit .nm { font-weight:600; }
 .hit .pj { color:var(--dim); font-size:12px; }
@@ -1138,10 +1140,11 @@ document.addEventListener("click", e => {
 // Every interactive conversation this machine has had, from any day: the
 // filter only sees what runs now, and ⟲ closed only this boot. A search is
 // its own request, never part of the poll. A row says which conversation it
-// was and why it matched; opening one from here comes later.
+// was and why it matched; a click opens it, or jumps to it if it runs.
 const find = document.getElementById("find");
 const found = document.getElementById("found");
-let FIND_TIMER = null, FIND_SEQ = 0;
+let FIND_TIMER = null, FIND_SEQ = 0, FOUND = null;
+const REOPENING = new Map();         // id -> "opening…", what came of the click, or the error
 function day(iso) {
   if (!iso) return "";
   const d = new Date(iso), now = new Date();
@@ -1165,16 +1168,19 @@ function paintFound(data) {
   const rows = data.results.map(h => {
     const p = h.passage || {};
     const where = h.cwd.startsWith(home) ? "~" + h.cwd.slice(home.length) : h.cwd;
-    return `<div class="hit">
+    const state = REOPENING.get(h.id), failed = state && !REOPEN_NOTES.includes(state);
+    return `<div class="hit" data-id="${esc(h.id)}" role="button" tabindex="0"
+        title="${h.live ? "jump to this running conversation" : "resume this conversation in a new WezTerm tab"}">
       <div class="who"><span class="nm">${esc(h.name || h.id.slice(0, 8))}</span>
         ${h.live ? `<span class="bg-tag">running</span>` : ""}
         ${h.via === "meaning" ? `<span class="bg-tag extra" title="no word of yours is in this passage: it means what you asked">by meaning</span>` : ""}
         ${h.project ? `<span class="pj">${esc(h.project)}</span>` : ""}
-        <span class="at">${esc(day(h.active))}</span></div>
+        <span class="at">${esc(failed || !state ? day(h.active) : state)}</span></div>
       ${h.title ? `<div class="tt">${esc(h.title)}</div>` : ""}
       ${p.prompt ? `<div class="asked">› ${marked(p.prompt)}</div>` : ""}
       ${p.reply ? `<div class="said">${marked(p.reply)}</div>` : ""}
       <div class="wd">${esc(where)}</div>
+      ${failed ? `<div class="err">${esc(state)}</div>` : ""}
     </div>`;
   }).join("");
   const run = data.index.last_run;
@@ -1204,8 +1210,36 @@ async function runFind() {
   if (seq !== FIND_SEQ) return;          // a newer search is already on its way
   document.getElementById("closedlist").hidden = true;
   found.hidden = false;
+  FOUND = data;
+  for (const [id, state] of REOPENING) if (state !== "opening…") REOPENING.delete(id);
   paintFound(data);
 }
+const REOPEN_NOTES = ["opening…", "jumped to it", "opened in a new tab"];
+found.addEventListener("click", async e => {
+  const row = e.target.closest(".hit");
+  // Dragging over a passage to copy it ends in a click; that is not a request.
+  if (!row || String(getSelection()) || REOPENING.get(row.dataset.id) === "opening…") return;
+  const id = row.dataset.id;
+  REOPENING.set(id, "opening…");
+  paintFound(FOUND);
+  const r = await fetch("/api/reopen", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify({ id }),
+  }).catch(() => null);
+  const done = r && r.ok ? await r.json().catch(() => null) : null;
+  const hit = FOUND.results.find(h => h.id === id);
+  if (done && done.ok) {
+    REOPENING.set(id, done.did === "jumped" ? "jumped to it" : "opened in a new tab");
+    if (hit) hit.live = true;
+  } else {
+    REOPENING.set(id, (done && done.reason) || "could not open it");
+  }
+  paintFound(FOUND);
+});
+found.addEventListener("keydown", e => {
+  if (e.key === "Enter" && e.target.classList.contains("hit")) e.target.click();
+});
 find.addEventListener("input", () => { clearTimeout(FIND_TIMER); FIND_TIMER = setTimeout(runFind, 250); });
 find.addEventListener("keydown", e => {
   if (e.key === "Enter") { clearTimeout(FIND_TIMER); runFind(); }
@@ -1213,7 +1247,11 @@ find.addEventListener("keydown", e => {
 });
 find.addEventListener("focus", () => { if (find.value.trim().length >= 3 && found.innerHTML) found.hidden = false; });
 document.addEventListener("keydown", e => { if (e.key === "Escape") found.hidden = true; });
-document.addEventListener("click", e => { if (!e.target.closest("#found, #find")) found.hidden = true; });
+// The path as it was when the click landed: a click on a row repaints the list,
+// and the element it hit is no longer inside it by the time this runs.
+document.addEventListener("click", e => {
+  if (!e.composedPath().some(n => n === found || n === find)) found.hidden = true;
+});
 
 // The snapshot a reboot would restore. The timer saves every 2 minutes; this
 // is for the minute before you shut down.

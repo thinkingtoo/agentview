@@ -18,6 +18,7 @@ ever started twice: a conversation already running is skipped.
 """
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -446,6 +447,58 @@ def dismiss(session_id):
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(sorted(ids)))
     os.replace(tmp, path)
+
+
+MODES = {"acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"}
+CWD_IN_LINE = re.compile(rb'"cwd":"((?:[^"\\]|\\.)*)"')
+MODE_IN_LINE = re.compile(rb'"permissionMode":"([A-Za-z]*)"')
+
+
+def transcript_facts(path):
+    """Where a conversation ran and under which permission mode, from its
+    transcript. `--resume` looks a conversation up under the directory it is
+    started in, and a transcript is filed under the one its conversation
+    started in, so the directory is the one whose filing matches. The mode is
+    the last one written down; a claude that does not know it adds no flag.
+    Read whole, like the title is: one click, one file."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return None
+    cwds = []
+    for hit in CWD_IN_LINE.finditer(raw):
+        try:
+            cwd = json.loads(b'"' + hit.group(1) + b'"')
+        except ValueError:
+            continue
+        if cwd not in cwds:
+            cwds.append(cwd)
+    filed = Path(path).parent.name
+    cwd = next((c for c in cwds if registry._encode(c) == filed), cwds[0] if cwds else "")
+    mode = next((m for m in (h.group(1).decode() for h in reversed(list(MODE_IN_LINE.finditer(raw))))
+                 if m in MODES), "")
+    return {"cwd": cwd, "flags": f"--permission-mode {mode}" if mode else ""}
+
+
+def revive_record(session_id, snaps, transcript=None, name=""):
+    """What to resume a conversation with, as the closed list's records have it.
+
+    The newest snapshot that had it says, from whichever boot. Snapshots only
+    go back a few days; for anything older the transcript does. `name` is what
+    the archive knows it as, for a snapshot that never had one. None when
+    neither knows where it ran."""
+    last = None
+    for snap in sorted(snaps, key=lambda s: s.get("taken_at", 0)):
+        for rec in snap.get("sessions", []):
+            if rec.get("sessionId") == session_id:
+                last = rec
+    if last and last.get("cwd"):
+        return {"sessionId": session_id, "name": last.get("name") or name, "cwd": last["cwd"],
+                "flags": last.get("flags") or "", "from": "snapshot"}
+    facts = transcript_facts(transcript) if transcript else None
+    if not facts or not facts["cwd"]:
+        return None
+    return {"sessionId": session_id, "name": name, **facts, "from": "transcript"}
 
 
 def revive(rec):

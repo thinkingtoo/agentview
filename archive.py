@@ -763,6 +763,20 @@ def stats(path=None):
         con.close()
 
 
+def name_of(session_id, path=None):
+    """The name the index last saw a conversation under, or "". What a
+    reopen seeds when no snapshot remembers one."""
+    path = Path(path or db_path())
+    if not path.exists():
+        return ""
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    try:
+        row = con.execute("SELECT name FROM conversations WHERE id=?", (session_id,)).fetchone()
+        return row[0] if row else ""
+    finally:
+        con.close()
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "update"
     if cmd == "update":

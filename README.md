@@ -80,10 +80,22 @@ machine has had, from any day, running ones included. Type three characters
 or more; each row is one conversation and shows its name, Claude's title for
 it, the project, the day it was last active, and the exchange that matched,
 with the matching words marked. The best-matching exchange decides the order.
-A row does not reopen anything yet: it tells you which conversation it was.
+A click on a row brings that conversation to the front.
 Ask in your own words too: the box also finds a conversation by what it
 means, when none of your words is in it.
 
+- **A click.** A conversation that runs is jumped to, like a live row: its tab
+  comes forward and nothing is opened. A closed one is resumed in a new WezTerm
+  tab, the way the closed list does it: `claude --resume <id>` in its old
+  directory, under its old name. The flags come from the newest snapshot that
+  had it; snapshots go back a few days only, so for an older conversation they
+  come from the transcript, which knows the directory it is filed under and the
+  permission mode it last ran with (`--permission-mode default` is asked for by
+  name, so the resume does not fall back to the settings default). A directory
+  that no longer exists is said on the row and nothing is launched. A second
+  click while the first tab is starting opens nothing more. Each one is logged
+  as `revived` (with its `source`, `snapshot` or `transcript`) or `jumped`, in
+  `~/.local/state/agentview/events.jsonl`.
 - **What counts.** Transcripts whose `entrypoint` is `cli`. `claude -p` runs
   (`sdk-cli`) and subagent transcripts are left out.
 - **What is indexed.** One passage is one exchange: a prompt you typed and the
@@ -775,7 +787,11 @@ speaks the real one's HTTP contract on a throwaway port: which endpoint each
 path calls (and that only passage text is sent), a model change rebuilding
 every vector, one batch never holding more than 100 texts, and the embedder
 being unreachable, silent, not ready, or another model, each of which leaves
-the keyword hits and says meaning is off.
+the keyword hits and says meaning is off. The reopen tests go through the real
+`/api/reopen` route with WezTerm replaced by a recorder: a running conversation
+jumps and is never resumed, a closed one opens from a snapshot or from its
+transcript alone, a missing directory launches nothing, and a second click
+opens nothing more.
 
 **Every test points at the code the page actually calls.** There used to be a
 second, full-file scanner that nothing called, and the summary tests ran

@@ -125,6 +125,40 @@ def found(query, limit=30):
     return {"query": query, "results": hits or [], "index": archive.stats(), "meaning": meaning}
 
 
+_OPENING = {}                # id -> when a tab was last opened for it
+OPENING_GRACE = 30           # seconds a new claude takes to show up as running
+
+
+def reopen(sid):
+    """A click on a search result: jump to the conversation if it runs, open
+    it in a new WezTerm tab if it does not. Never both, and never twice.
+
+    Running is asked of the same registry a live row's jump uses. A tab
+    opened a moment ago is not in it yet, so a second click inside the grace
+    period waits for the first instead of resuming the conversation again."""
+    key = f"claude:{sid}"
+    hit = fleet.look(key)
+    if hit:
+        provider, session = hit
+        done = fleet.jump_to(provider, session)
+        log.event("jumped", key=key, pid=session.get("pid"), name=session.get("name"),
+                  source="search", **done)
+        return {**done, "did": "jumped"}
+    if time.time() - _OPENING.get(sid, 0) < OPENING_GRACE:
+        return {"ok": True, "did": "opening"}
+    _snapshots()
+    rec = snapshot.revive_record(sid, _SNAP["all"], transcript=claude.transcript_for(sid, ""),
+                                 name=archive.name_of(sid))
+    if not rec:
+        return {"ok": False, "reason": "no transcript for that conversation any more"}
+    _OPENING[sid] = time.time()
+    done = snapshot.revive(rec)
+    if not done.get("ok"):
+        _OPENING.pop(sid, None)
+    log.event("revived", id=sid, name=rec.get("name"), source=rec["from"], **done)
+    return {**done, "did": "opened"}
+
+
 def _live_procs():
     return [{**p, "started": snapshot.started_at(p["pid"])} for p in snapshot.live_peers()]
 
@@ -165,7 +199,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore", "snapshot", "revive", "dismiss")
+    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore", "snapshot", "revive",
+              "dismiss", "reopen")
 
     def do_POST(self):
         if not self._local():
@@ -325,6 +360,12 @@ class Handler(BaseHTTPRequestHandler):
         done = snapshot.revive(rec)
         log.event("revived", id=sid, name=rec.get("name"), **done)
         self._send(json.dumps(done), "application/json")
+
+    def _reopen(self, body):
+        sid = body.get("id")
+        if not isinstance(sid, str) or not claude.SID_RE.match(sid):
+            return self.send_error(400, "expected {id}")
+        self._send(json.dumps(reopen(sid)), "application/json")
 
     def _dismiss(self, body):
         sid = body.get("id")
