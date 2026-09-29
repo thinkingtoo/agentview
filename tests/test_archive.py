@@ -353,9 +353,29 @@ class Searching(Home, unittest.TestCase):
         self.write(loud, records)
         self.update()
         ids = [h["id"] for h in archive.search("copper", path=self.db)]
-        self.assertEqual(ids[0], loud)
+        self.assertIn(loud, ids)
         self.assertIn(OTHER, ids)
         self.assertEqual(len(ids), 4)
+
+    def test_a_newer_day_comes_first_even_with_a_weaker_match(self):
+        # Two days later, copper once, in passing: it still leads.
+        newer = "00000000-0000-4000-8000-00000000000e"
+        self.write(newer, [typed(1, "the boiler", sid=newer),
+                           said(2, "Checked the copper valve.", sid=newer,
+                                timestamp="2026-08-12T12:00:00.000Z")])
+        self.update()
+        ids = [h["id"] for h in archive.search("copper", path=self.db)]
+        self.assertEqual(ids[0], newer)
+        # Within one day the better match still comes first.
+        self.assertEqual(ids[1], "00000000-0000-4000-8000-00000000000c")
+
+    def test_a_newer_match_is_not_cut_by_the_limit(self):
+        newer = "00000000-0000-4000-8000-00000000000e"
+        self.write(newer, [typed(1, "the boiler", sid=newer),
+                           said(2, "Checked the copper valve.", sid=newer,
+                                timestamp="2026-08-12T12:00:00.000Z")])
+        self.update()
+        self.assertEqual([h["id"] for h in archive.search("copper", path=self.db, limit=1)], [newer])
 
     def test_a_row_says_what_the_conversation_is(self):
         hit = archive.search("whistle", path=self.db, live={SID})[0]

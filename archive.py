@@ -914,18 +914,31 @@ def fuse(*lists):
 
 
 def keyword_best(con, query, limit):
-    """conversation -> the id of its best passage, best conversation first."""
+    """(conversation -> the id of its best passage, conversation -> its day),
+    newest day first and the best match first within a day.
+
+    The most recent conversation that says your words is the one you most
+    likely mean, so the day leads and the score only orders one day's rows.
+    The day is the one the conversation was last active, on this machine's
+    clock. Sorted before the LIMIT, so a newer, weaker match is never cut to
+    make room for older, stronger ones."""
     if not query:
-        return {}
+        return {}, {}
     # One row per conversation, carrying its best passage: with a single
     # MIN() in the query, SQLite takes the bare p.id from the row that
     # holds the minimum. Grouped here rather than after a LIMIT, so one
     # conversation with a thousand hits cannot crowd out the others.
-    return {conv: rowid for conv, rowid, _ in con.execute(
-        "SELECT p.conversation, p.id, MIN(passages_fts.rank) AS score"
-        " FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid"
-        " WHERE passages_fts MATCH ? GROUP BY p.conversation ORDER BY score LIMIT ?",
-        (query, limit))}
+    best, days = {}, {}
+    for conv, rowid, day, _ in con.execute(
+            "SELECT p.conversation, p.id, date(c.active, 'localtime') AS day,"
+            " MIN(passages_fts.rank) AS score"
+            " FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid"
+            " JOIN conversations c ON c.id = p.conversation"
+            " WHERE passages_fts MATCH ? GROUP BY p.conversation"
+            " ORDER BY day IS NULL, day DESC, score LIMIT ?",
+            (query, limit)):
+        best[conv], days[conv] = rowid, day or ""
+    return best, days
 
 
 def meaning_best(con, emb, words, limit):
@@ -980,7 +993,7 @@ def find(words, limit=30, path=None, live=(), emb=None):
         return [], {"state": "on" if emb is not None else "off", "why": "" if emb is not None else "no embedder is configured"}
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
     try:
-        by_words = keyword_best(con, query, limit)
+        by_words, days = keyword_best(con, query, limit)
         by_meaning, meaning = {}, {"state": "on"}
         try:
             if emb is None:
@@ -996,7 +1009,12 @@ def find(words, limit=30, path=None, live=(), emb=None):
             # words still answer.
             log.error("meaning", exc, query=words)
             meaning = {"state": "off", "why": f"meaning search failed ({type(exc).__name__})"}
-        order = fuse(list(by_words), list(by_meaning))[:limit]
+        # Merged for relevance, then put in the order you read them: the
+        # conversations that say your words by day, newest first, and after
+        # them the ones that only mean them, a guess however new it is.
+        fused = fuse(list(by_words), list(by_meaning))
+        worded = sorted((c for c in fused if c in by_words), key=days.get, reverse=True)
+        order = (worded + [c for c in fused if c not in by_words])[:limit]
         if not order:
             return [], meaning
         wanted = [by_words[c] for c in order if c in by_words]

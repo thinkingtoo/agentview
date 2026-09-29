@@ -287,6 +287,16 @@ class Finding(Meaning, unittest.TestCase):
         self.assertEqual(ids[2], METAL)
         self.assertNotIn(OTHER, ids)
 
+    def test_a_newer_meaning_hit_stays_below_the_word_matches(self):
+        # Recency orders the conversations that say your words; one that
+        # only means them is a guess, and a newer guess does not jump ahead.
+        self.write(METAL, [typed(1, "does aluminium conduct heat?", sid=METAL),
+                           said(2, "Yes, it is a metal that conducts heat.", sid=METAL,
+                                timestamp="2026-08-14T12:00:00.000Z")])
+        self.update()
+        ids = [h["id"] for h in self.find("copper")[0]]
+        self.assertEqual(ids[-1], METAL)
+
     def test_a_keyword_hit_keeps_its_marked_passage(self):
         hits, _ = self.find("copper")
         self.assertIn("\x02copper\x03", next(h for h in hits if h["id"] == PIPES)["passage"]["prompt"])

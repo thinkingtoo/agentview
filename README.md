@@ -79,7 +79,10 @@ WezTerm tab on it (`tmux attach`), instead of selecting a pane nobody can see.
 machine has had, from any day, running ones included. Type three characters
 or more; each row is one conversation and shows its name, Claude's title for
 it, the project, the day it was last active, and the exchange that matched,
-with the matching words marked. The best-matching exchange decides the order.
+with the matching words marked. Newest first: the conversations that say
+your words are ordered by the day they were last active, and within one day
+the best-matching exchange goes first. Those found only by meaning come after
+them, however recent.
 A click on a row brings that conversation to the front.
 Ask in your own words too: the box also finds a conversation by what it
 means, when none of your words is in it.
