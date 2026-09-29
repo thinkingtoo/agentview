@@ -679,24 +679,23 @@ def two_lines(text):
     return tuple(line if len(line) <= LINE else line[:LINE - 1].rstrip() + "\u2026" for line in lines)
 
 
-def scrub(text, sent, n=20):
-    """`text` with every stretch of `n` characters that was in `sent` masked.
-    What claude says about a failure may quote its input, and the message
-    goes to the terminal, the journal and the index."""
-    text = " ".join(str(text).split())
-    seen = {" ".join(sent.split())[i:i + n] for i in range(max(len(sent) - n + 1, 1))}
-    hide = [False] * len(text)
-    for i in range(len(text) - n + 1):
-        if text[i:i + n] in seen:
-            hide[i:i + n] = [True] * n
-    out, masked = [], False
-    for ch, gone in zip(text, hide):
-        if gone and not masked:
-            out.append("[conversation text]")
-        if not gone:
-            out.append(ch)
-        masked = gone
-    return "".join(out)
+# What is worth knowing about a failure, in our own words. Nothing claude said
+# is repeated: it may quote what it was sent, however short.
+CAUSES = (
+    (re.compile(r"credit|billing|payment", re.I), "the account has no credit"),
+    (re.compile(r"usage limit|rate limit|quota|too many requests|\b429\b", re.I), "a usage or rate limit was reached"),
+    (re.compile(r"not logged in|/login|log in|authenticat|unauthori[sz]ed|\b40[13]\b|oauth|api key", re.I),
+     "claude is not logged in"),
+    (re.compile(r"overloaded|\b5(?:03|29)\b|unavailable", re.I), "the service is overloaded"),
+    (re.compile(r"budget", re.I), "the budget for one call was exceeded"),
+    (re.compile(r"too long|context", re.I), "the excerpt was too long"),
+)
+
+
+def cause(*said):
+    """Which of the known causes what claude said points at, as a fixed label."""
+    text = " ".join(str(t) for t in said)
+    return next((label for pattern, label in CAUSES if pattern.search(text)), "no known cause")
 
 
 def claude_bin():
@@ -745,11 +744,10 @@ def ask_model(prompt):
     try:
         got = json.loads(done.stdout)
     except ValueError:
-        raise Failed(f"claude gave no JSON (exit {done.returncode}): "
-                     f"{scrub(done.stderr, prompt)[:200]}") from None
+        raise Failed(f"claude gave no JSON: {cause(done.stderr)} (exit {done.returncode})") from None
     if not isinstance(got, dict) or got.get("is_error") or not isinstance(got.get("result"), str):
-        why = got.get("result") if isinstance(got, dict) and got.get("is_error") else "no result"
-        raise Failed(f"claude said: {scrub(why, prompt)[:200]}")
+        why = got.get("result") if isinstance(got, dict) else ""
+        raise Failed(f"claude failed: {cause(why)} (exit {done.returncode})")
     return got["result"], float(got.get("total_cost_usd") or 0)
 
 
@@ -799,7 +797,7 @@ def summarize(path=None, ask=None, limit=None, now=None, say=lambda *_: None):
     now = time.time() if now is None else now
     ask = ask or ask_model
     con = connect(path)
-    run = {"asked": 0, "made": 0, "failed": 0, "waiting": 0, "cost_usd": 0.0, "error": ""}
+    run = {"asked": 0, "made": 0, "failed": 0, "dropped": 0, "waiting": 0, "cost_usd": 0.0, "error": ""}
     try:
         todo, streak = needing(con, now), 0
         for sid, size, mtime, digest, text in todo:
@@ -812,29 +810,33 @@ def summarize(path=None, ask=None, limit=None, now=None, say=lambda *_: None):
                 about, ended = two_lines(answer)
             except Failed as exc:
                 run["failed"], streak, run["error"] = run["failed"] + 1, streak + 1, str(exc)
-                # Only while the conversation is still in the index: the
-                # update job runs on its own timer, and may have dropped it
-                # while the model was answering.
+                # Only while the conversation is still what was asked about:
+                # the update job runs on its own timer, and may have dropped
+                # it, or read it again, while the model was answering.
                 con.execute(
                     "INSERT INTO summaries (id, size, mtime, failed, tried)"
-                    " SELECT ?,?,?,1,? WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)"
+                    " SELECT ?,?,?,1,? WHERE EXISTS (SELECT 1 FROM conversations WHERE id=? AND size=? AND mtime=?)"
                     " ON CONFLICT(id) DO UPDATE SET failed = CASE WHEN tried = excluded.tried"
-                    " THEN failed + 1 ELSE 1 END, tried = excluded.tried", (sid, size, mtime, digest, sid))
+                    " THEN failed + 1 ELSE 1 END, tried = excluded.tried",
+                    (sid, size, mtime, digest, sid, size, mtime))
                 con.commit()
                 say(f"  failed  {sid[:8]}  {exc}")
                 continue
             streak = 0
-            run["made"] += 1
-            con.execute(
+            # What the model saw is what is stored, or nothing: a conversation
+            # that changed meanwhile is asked about again next run.
+            stored = con.execute(
                 "INSERT INTO summaries (id, about, ended, digest, size, mtime, made, failed, tried)"
-                " SELECT ?,?,?,?,?,?,?,0,'' WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)"
+                " SELECT ?,?,?,?,?,?,?,0,'' WHERE EXISTS (SELECT 1 FROM conversations WHERE id=? AND size=? AND mtime=?)"
                 " ON CONFLICT(id) DO UPDATE SET about=excluded.about,"
                 " ended=excluded.ended, digest=excluded.digest, size=excluded.size,"
                 " mtime=excluded.mtime, made=excluded.made, failed=0, tried=''",
                 (sid, about, ended, digest, size, mtime,
-                 datetime.datetime.now().astimezone().isoformat(timespec="seconds"), sid))
+                 datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
+                 sid, size, mtime)).rowcount
             con.commit()
-            say(f"  {run['made']}  {sid[:8]}")
+            run["made" if stored else "dropped"] += 1
+            say(f"  {run['made']}  {sid[:8]}" if stored else f"  dropped  {sid[:8]}  (it changed meanwhile)")
         run["waiting"] = len(todo) - run["asked"]
         run["cost_usd"] = round(run["cost_usd"], 4)
         run["seconds"] = round(time.monotonic() - began, 2)
@@ -1121,7 +1123,8 @@ def main(argv):
                 return 0
             run = summarize(limit=limit, say=print if "-v" in argv else (lambda *_: None))
         print(f"{run['made']} made, {run['failed']} failed, {run['waiting']} still waiting, "
-              f"{run['seconds']}s, ${run['cost_usd']}" + (f", last error: {run['error']}" if run["error"] else ""))
+              f"{run['seconds']}s, ${run['cost_usd']}" + (f", {run['dropped']} dropped (changed meanwhile)" if run["dropped"] else "")
+              + (f", last error: {run['error']}" if run["error"] else ""))
         return 1 if run["failed"] and not run["made"] else 0
     if cmd == "search":
         live = {r.get("sessionId") for r in registry.live()}

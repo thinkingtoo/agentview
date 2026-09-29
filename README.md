@@ -219,7 +219,10 @@ since its summary was written shows it dimmed.
   shown, hashed: a transcript that only grew by tool output costs no call.
   A summary that fails three times for the same text is left alone until the
   text changes; three failures in a row end the run (the quota is gone, or
-  nobody is logged in).
+  nobody is logged in). A failure says which of a few known causes it was and
+  nothing claude said: that may quote the conversation. A summary is stored
+  only if the conversation is still as it was when the model was asked, so
+  one that changed meanwhile is dropped and asked about again next run.
 - **Pace.** At most 12 per run (`PER_RUN`), and `agentview-summaries.timer`
   runs every 10 minutes. The first backfill, about 510 conversations, is 43
   runs, about 7 hours. Measured on 2026-09-29 over 32 real calls: 3.3 s a call

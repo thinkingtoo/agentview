@@ -301,6 +301,26 @@ class Overlapping(Summarised, unittest.TestCase):
         self.assertEqual(self.rows("SELECT id FROM summaries WHERE id=?", SID), [])
         self.assertEqual(self.rows("SELECT id FROM conversations WHERE id=?", SID), [])
 
+    def test_a_transcript_replaced_during_the_call_does_not_take_the_old_summary(self):
+        self.write(SID, KETTLE)
+        self.update()
+        outer = self
+
+        class Replacing(Model):
+            def __call__(self, prompt):
+                if not self.prompts:
+                    # Same session id, other words: rewritten, or resumed elsewhere.
+                    outer.write(SID, [typed(1, "a different subject", sid=SID), said(2, "Something else.", sid=SID)])
+                    outer.update()
+                return super().__call__(prompt)
+
+        model = Replacing("Old subject.\nDone.", "New subject.\nDone.")
+        run = self.summarize(model)
+        self.assertEqual((run["made"], run["dropped"]), (0, 1))
+        self.assertIsNone(self.summary())                       # the old words are not shown against the new
+        self.summarize(model)                                   # ...and it is done again, from what is there now
+        self.assertEqual(self.summary(), ("New subject.", "Done."))
+
     def test_the_same_for_a_summary_that_failed(self):
         path = self.write(SID, KETTLE)
         self.write(OTHER, [typed(1, "unrelated", sid=OTHER)])
@@ -414,38 +434,38 @@ class Asking(unittest.TestCase):
         self.assertGreater(call.kwargs["timeout"], 0)
         self.assertIn("--max-budget-usd", call.args[0])
 
-    def test_a_failed_run_says_why_and_never_quotes_the_conversation(self):
-        for stdout in ('{"is_error": true, "result": "Credit balance is too low"}', "not json", ""):
-            with self.assertRaises(archive.Failed) as ctx:
-                self.run_ask(stdout)
-            self.assertNotIn("the excerpt", str(ctx.exception))
-        with self.assertRaisesRegex(archive.Failed, "Credit balance"):
-            self.run_ask('{"is_error": true, "result": "Credit balance is too low"}')
+    def test_a_failed_run_names_its_cause_and_repeats_nothing_claude_said(self):
+        # What claude says about a failure may quote what it was sent, however
+        # short: a PIN, a name. So none of it is repeated. The causes worth
+        # knowing get a fixed label of our own.
+        for secret in ("PIN 1234", "the quarterly figures for the Marlowe account were altered by hand"):
+            prompt = f"Instructions here, and then the conversation.\n{secret}\nAnd more text after it."
+            for stdout, stderr in (
+                    (json.dumps({"is_error": True, "result": f"Invalid input near: {secret}"}), ""),
+                    ("", f"error: could not parse '{secret}' at line 2"),
+                    ("not json", secret), ("", "")):
+                done = subprocess.CompletedProcess([], 1, stdout=stdout, stderr=stderr)
+                with mock.patch.object(archive.subprocess, "run", return_value=done), \
+                        mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tempfile.mkdtemp()}):
+                    with self.assertRaises(archive.Failed) as ctx:
+                        archive.ask_model(prompt)
+                message = str(ctx.exception)
+                self.assertTrue(message)
+                for word in secret.split():
+                    self.assertNotIn(word, message)
+                self.assertIn("exit 1", message)
 
-    def test_what_claude_says_about_a_failure_is_scrubbed_of_what_it_was_sent(self):
-        secret = "the quarterly figures for the Marlowe account were altered by hand"
-        prompt = f"Instructions here, and then the conversation.\n{secret}\nAnd more text after it."
-        for stdout, stderr in (
-                (json.dumps({"is_error": True, "result": f"Invalid input near: {secret[:45]}"}), ""),
-                ("", f"error: could not parse the text '{secret[10:60]}' at line 2"),
-                ("not json", f"{secret}")):
-            done = subprocess.CompletedProcess([], 1, stdout=stdout, stderr=stderr)
+    def test_the_causes_that_matter_are_named(self):
+        for said_by_claude, label in (("Credit balance is too low", "credit"),
+                                      ("Claude usage limit reached. Your limit will reset at 5pm", "limit"),
+                                      ("Not logged in · Please run /login", "logged in"),
+                                      ("API Error: 529 overloaded_error", "overloaded")):
+            done = subprocess.CompletedProcess([], 1, stdout=json.dumps(
+                {"is_error": True, "result": said_by_claude}), stderr="")
             with mock.patch.object(archive.subprocess, "run", return_value=done), \
                     mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tempfile.mkdtemp()}):
-                with self.assertRaises(archive.Failed) as ctx:
-                    archive.ask_model(prompt)
-            message = str(ctx.exception)
-            for at in range(len(secret) - 19):
-                self.assertNotIn(secret[at:at + 20], message, message)
-            self.assertTrue(message)                               # it still says something
-
-    def test_a_message_that_quotes_nothing_is_left_alone(self):
-        done = subprocess.CompletedProcess([], 1, stdout=json.dumps(
-            {"is_error": True, "result": "Credit balance is too low"}), stderr="")
-        with mock.patch.object(archive.subprocess, "run", return_value=done), \
-                mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tempfile.mkdtemp()}):
-            with self.assertRaisesRegex(archive.Failed, "Credit balance is too low"):
-                archive.ask_model("some excerpt of a conversation about kettles")
+                with self.assertRaisesRegex(archive.Failed, label):
+                    archive.ask_model("some excerpt of a conversation about kettles")
 
     def test_a_timeout_and_a_missing_binary_are_failures_too(self):
         for exc in (subprocess.TimeoutExpired("claude", 1), FileNotFoundError("claude")):
