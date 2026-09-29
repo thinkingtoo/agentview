@@ -81,7 +81,7 @@ or more; each row is one conversation and shows its name, Claude's title for
 it, the project, the day it was last active, and the exchange that matched,
 with the matching words marked. Newest first: the conversations that say
 your words are ordered by the day they were last active, and within one day
-the best-matching exchange goes first. Those found only by meaning come after
+the best match goes first, words and meaning together. Those found only by meaning come after
 them, however recent.
 A click on a row brings that conversation to the front.
 Ask in your own words too: the box also finds a conversation by what it

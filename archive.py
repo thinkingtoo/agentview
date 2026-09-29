@@ -935,7 +935,7 @@ def keyword_best(con, query, limit):
             " FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid"
             " JOIN conversations c ON c.id = p.conversation"
             " WHERE passages_fts MATCH ? GROUP BY p.conversation"
-            " ORDER BY day IS NULL, day DESC, score LIMIT ?",
+            " ORDER BY day IS NULL, day DESC, score, c.active DESC, p.conversation LIMIT ?",
             (query, limit)):
         best[conv], days[conv] = rowid, day or ""
     return best, days
@@ -1012,6 +1012,8 @@ def find(words, limit=30, path=None, live=(), emb=None):
         # Merged for relevance, then put in the order you read them: the
         # conversations that say your words by day, newest first, and after
         # them the ones that only mean them, a guess however new it is.
+        # Within a day the merged rank holds, so one that says your words
+        # and means them too goes ahead of one that only says them.
         fused = fuse(list(by_words), list(by_meaning))
         worded = sorted((c for c in fused if c in by_words), key=days.get, reverse=True)
         order = (worded + [c for c in fused if c not in by_words])[:limit]
