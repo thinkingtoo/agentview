@@ -54,6 +54,8 @@ class FakeEmbedder:
     def __init__(self, model="google/embeddinggemma-300m", dims=8):
         self.model, self.dims, self.calls, self.down, self.requests = model, dims, [], False, 0
         self.rubbish = None      # what to put in a vector instead of numbers
+        self.prompts = True      # whether the model endpoint names the two prompts
+        self.on_query = self.on_documents = None    # called as a request arrives
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -75,10 +77,12 @@ class FakeEmbedder:
                 fake.requests += 1
                 if self.path == "/api/v1/model" and self._authorised():
                     fake.calls.append(("model", None))
-                    self._json(200, {"model": fake.model, "dimensions": fake.dims,
-                                     "asymmetric": True, "max_len": 2048, "max_batch": 100,
-                                     "query_prompt": "task: search result | query: ",
-                                     "document_prompt": "title: none | text: "})
+                    info = {"model": fake.model, "dimensions": fake.dims,
+                            "asymmetric": True, "max_len": 2048, "max_batch": 100}
+                    if fake.prompts:
+                        info.update(query_prompt="task: search result | query: ",
+                                    document_prompt="title: none | text: ")
+                    self._json(200, info)
 
             def do_POST(self):
                 fake.requests += 1
@@ -89,6 +93,8 @@ class FakeEmbedder:
                     self._json(503, {"detail": "not ready"})
                 elif self.path == "/api/v1/embed/text":
                     fake.calls.append(("query", body["text"]))
+                    if fake.on_query:
+                        fake.on_query()
                     vec = meaning_of(body["text"], fake.dims, question=True)
                     self._json(200, {"vector": [fake.rubbish] * fake.dims if fake.rubbish else vec,
                                      "dimensions": fake.dims})
@@ -97,6 +103,8 @@ class FakeEmbedder:
                         self._json(422, {"detail": "batch exceeds the 100 cap; split it"})
                         return
                     fake.calls.append(("documents", body["texts"]))
+                    if fake.on_documents:
+                        fake.on_documents(len(fake.sent("documents")))
                     self._json(200, {"vectors": [[fake.rubbish] * fake.dims if fake.rubbish else
                                                  meaning_of(t, fake.dims) for t in body["texts"]],
                                      "dimensions": fake.dims, "count": len(body["texts"])})
@@ -121,9 +129,15 @@ class FakeEmbedder:
         self.httpd.server_close()
 
 
+NEXT = "google/embeddinggemma-300m-next"       # still EmbeddingGemma, but not the model the vectors came from
+
+
 class Meaning(Home):
     def setUp(self):
         super().setUp()
+        patch = mock.patch.object(embedder, "DIMENSIONS", 8)
+        patch.start()
+        self.addCleanup(patch.stop)
         self.fake = FakeEmbedder()
 
     def tearDown(self):
@@ -173,9 +187,10 @@ class Identity(Meaning, unittest.TestCase):
         self.write(SID, KETTLE)
         self.update()
         old = self.rows("SELECT vec FROM vectors")
-        self.fake.model, self.fake.dims = "another/model", 6
+        self.fake.model, self.fake.dims = NEXT, 6
         self.fake.calls.clear()
-        run = self.update()
+        with mock.patch.object(embedder, "DIMENSIONS", 6):
+            run = self.update()
         self.assertEqual(run["embedded"], 4)
         self.assertEqual(sum(len(b) for b in self.fake.sent("documents")), 4)
         self.assertEqual(self.rows("SELECT DISTINCT length(vec) FROM vectors"), [(6 * 4,)])
@@ -343,7 +358,7 @@ class EmbedderOff(Meaning, unittest.TestCase):
 
     def test_vectors_that_are_not_numbers_are_never_stored(self):
         self.fake.rubbish = "x"
-        self.fake.model = "another/model"       # so that everything is embedded again
+        self.fake.model = NEXT                  # so that everything is embedded again
         run = self.update()
         self.assertEqual(run["embedded"], 0)
         self.assertTrue(run["meaning"].startswith("off: "))
@@ -370,6 +385,15 @@ class EmbedderOff(Meaning, unittest.TestCase):
         self.assertEqual([h["id"] for h in hits], self.keyword_ids())
         self.assertEqual(meaning, {"state": "off", "why": "no embedder is configured"})
 
+    def test_a_failure_in_the_meaning_half_never_takes_the_keyword_half_down(self):
+        with mock.patch.object(archive, "meaning_best", side_effect=RuntimeError("boom")), \
+                mock.patch.object(archive.log, "error"):
+            hits, meaning = self.find("copper", self.fake.client())
+        self.assertEqual([h["id"] for h in hits], self.keyword_ids())
+        self.assertEqual(meaning["state"], "off")
+        self.assertIn("RuntimeError", meaning["why"])
+        self.assertNotIn("boom", meaning["why"])
+
     def test_no_embedder_at_all_is_off_too(self):
         hits, meaning = self.find("copper", None)
         self.assertTrue(hits)
@@ -387,7 +411,7 @@ class EmbedderOff(Meaning, unittest.TestCase):
         self.assertIn("next update", meaning["why"])
 
     def test_vectors_from_another_model_are_never_compared(self):
-        self.fake.model = "another/model"
+        self.fake.model = NEXT
         self.fake.calls.clear()
         emb = self.fake.client()
         hits, meaning = self.find("copper", emb)
@@ -448,6 +472,13 @@ class Config(unittest.TestCase):
         self.make("EMBEDDER_URL=http://example.invalid:9\n")
         with self.assertRaisesRegex(embedder.Unavailable, "lacks"):
             embedder.load(self.file).identity()
+
+    def test_a_url_that_is_not_one_is_not_used_and_does_not_crash(self):
+        for bad in ("http://host:abc", "http://", "host-without-scheme", "ftp://example.invalid:9", "http://[::1"):
+            self.make(f"EMBEDDER_URL={bad}\nEMBEDDER_API_KEY=k\n")
+            emb = embedder.load(self.file)
+            with self.assertRaisesRegex(embedder.Unavailable, "not a URL"):
+                emb.identity()
 
     def test_the_path_can_be_named_in_the_environment(self):
         with mock.patch.dict(os.environ, {embedder.ENV_VAR: str(self.file)}):
@@ -527,6 +558,110 @@ class Route(Meaning, unittest.TestCase):
         self.db.unlink()
         got = self.get("chime")
         self.assertEqual((got["results"], got["index"], got["meaning"]["state"]), ([], None, "off"))
+
+
+class Guard(unittest.TestCase):
+    """The index is built for EmbeddingGemma at 768 dimensions, and for nothing
+    else. No test here patches the size: they meet the real constants."""
+
+    def setUp(self):
+        self.made = []
+
+    def tearDown(self):
+        for fake in self.made:
+            fake.close()
+
+    def fake(self, **kw):
+        fake = FakeEmbedder(**kw)
+        self.made.append(fake)
+        return fake
+
+    def test_the_gemma_service_at_768_dimensions_is_accepted(self):
+        ident = json.loads(self.fake(dims=768).client().identity())
+        self.assertEqual((ident["model"], ident["dimensions"]), ("google/embeddinggemma-300m", 768))
+
+    def test_another_model_is_refused_before_a_single_vector_is_asked_for(self):
+        fake = self.fake(model="BAAI/bge-m3", dims=1024)
+        with self.assertRaisesRegex(embedder.Unavailable, "EmbeddingGemma"):
+            fake.client().identity()
+        self.assertEqual([k for k, _ in fake.calls], ["model"])
+
+    def test_gemma_at_another_size_is_refused(self):
+        with self.assertRaisesRegex(embedder.Unavailable, "768"):
+            self.fake(dims=1024).client().identity()
+
+    def test_a_service_that_does_not_name_its_two_prompts_is_refused(self):
+        fake = self.fake(dims=768)
+        fake.prompts = False
+        with self.assertRaisesRegex(embedder.Unavailable, "prompt"):
+            fake.client().identity()
+
+
+class GuardedIndex(Home, unittest.TestCase):
+    def test_an_index_is_not_built_from_the_wrong_model(self):
+        fake = FakeEmbedder(model="BAAI/bge-m3", dims=1024)
+        self.addCleanup(fake.close)
+        self.write(SID, KETTLE)
+        run = archive.update(path=self.db, root=self.projects, cfg=self.root, logs=self.logs,
+                             emb=fake.client())
+        self.assertEqual(run["embedded"], 0)
+        self.assertIn("EmbeddingGemma", run["meaning"])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM vectors"), [(0,)])
+        self.assertEqual(fake.sent("documents"), [])
+        # And the keyword index is there all the same.
+        hits, meaning = archive.find("kettle", path=self.db, emb=fake.client())
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(meaning["state"], "off")
+
+
+class Freshness(Meaning, unittest.TestCase):
+    """Which model made a vector is checked every time it is used, not every
+    minute: a swap between two calls must not put two models in one comparison."""
+
+    def setUp(self):
+        super().setUp()
+        self.write(SID, KETTLE)
+        self.update()
+
+    def test_a_model_swap_is_seen_by_the_very_next_search(self):
+        emb = self.fake.client()
+        hits, meaning = archive.find("copper", path=self.db, emb=emb)
+        self.assertEqual(meaning["state"], "on")
+        self.fake.model = NEXT                  # no minute has passed
+        self.fake.calls.clear()
+        hits, meaning = archive.find("copper", path=self.db, emb=emb)
+        self.assertEqual(meaning["state"], "off")
+        self.assertIn("another model", meaning["why"])
+        self.assertEqual(self.fake.sent("query"), [])
+        self.assertTrue(hits)                   # the keyword hits stand
+
+    def test_a_swap_while_the_question_is_being_embedded_is_caught(self):
+        self.fake.on_query = lambda: setattr(self.fake, "model", NEXT)
+        hits, meaning = archive.find("copper", path=self.db, emb=self.fake.client())
+        self.assertEqual(meaning["state"], "off")
+        self.assertIn("changed model", meaning["why"])
+        self.assertEqual({h["via"] for h in hits}, {"words"})
+
+    def test_a_swap_during_a_backfill_stores_nothing_from_the_new_model(self):
+        records = []
+        for i in range(250):
+            records += [typed(2 * i, f"question {i}", sid=OTHER), said(2 * i + 1, f"answer {i}", sid=OTHER)]
+        self.write(OTHER, records)
+        # The setUp run made call 1; the backfill's are 2, 3 and 4. The model changes under the second.
+        self.fake.on_documents = lambda n: setattr(self.fake, "model", NEXT) if n == 3 else None
+        run = self.update()
+        self.assertTrue(run["meaning"].startswith("off: "))
+        self.assertIn("changed model", run["meaning"])
+        # Only what the first model made is stored, under the first model's identity.
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM vectors"), [(104,)])
+        first = json.loads(self.rows("SELECT value FROM meta WHERE key='embedder'")[0][0])
+        self.assertEqual(first["model"], "google/embeddinggemma-300m")
+        # The next run sees the other model and starts over: no vector of the first survives.
+        self.fake.on_documents = None
+        run = self.update()
+        self.assertEqual((run["meaning"], run["unembedded"], run["embedded"]), ("on", 0, 254))
+        now = json.loads(self.rows("SELECT value FROM meta WHERE key='embedder'")[0][0])
+        self.assertEqual(now["model"], NEXT)
 
 
 if __name__ == "__main__":

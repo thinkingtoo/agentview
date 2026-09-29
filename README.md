@@ -118,14 +118,22 @@ means, when none of your words is in it.
     `~/.config/tiroir/agentview-embedder.env`, or the path in
     `$AGENTVIEW_EMBEDDER_ENV`, with `EMBEDDER_URL=` (scheme, host, port) and
     `EMBEDDER_API_KEY=`. Read on every search, so a change needs no restart.
+  - *One model.* The index is built for EmbeddingGemma at 768 dimensions with
+    both prompts named by the service. Any other service, the bge-m3 one on
+    the same machine included, is refused: nothing is embedded and meaning
+    search is off with that reason.
   - *Vectors* are stored in the same SQLite file, with the model's identity as
     its model endpoint reports it (model, dimensions, both prompts, maximum
     length). When that changes, every vector is dropped and embedded again:
-    vectors from two models are never in one index, nor compared.
+    vectors from two models are never in one index, nor compared. The identity
+    is asked afresh for every query and every batch, before and after; a batch
+    made while the model changed is not stored, and a query made while it
+    changed is not used.
   - *When it is off.* Not configured, unreachable, not ready, or serving
     another model than the vectors came from: the rows are the keyword ones,
     the answer carries `meaning: {"state": "off", "why": ...}`, and the page
-    says so above them. The reason never names the host. A box that is off
+    says so above them. The reason never names the host. A mistyped
+    `EMBEDDER_URL` is the same case, not an error. A box that is off
     costs the first search at most 0.5 s (its connect timeout), and is left
     alone for the next 30 s; a live one is given 1.5 s to answer.
 - **Names.** The name the conversation last had: its peer file while it

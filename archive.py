@@ -472,7 +472,7 @@ def embed_pending(con, emb, say=lambda *_: None):
             " WHERE v.passage IS NULL ORDER BY p.id LIMIT ?", (embedder.BATCH,)).fetchall()
         if not rows:
             return done
-        vectors = emb.documents([passage_text(p, r) for _, p, r in rows])
+        vectors = emb.documents([passage_text(p, r) for _, p, r in rows], identity)
         con.executemany("INSERT OR REPLACE INTO vectors VALUES (?,?)",
                         [(pid, pack(v)) for (pid, _, _), v in zip(rows, vectors)])
         con.commit()
@@ -635,17 +635,15 @@ def meaning_best(con, emb, words, limit):
     nearest conversation first. Raises embedder.Unavailable, with the reason,
     when meaning cannot be used: nothing in the index yet, vectors from
     another model, an embedder that does not answer."""
-    identity = emb.identity()
     have = con.execute("SELECT value FROM meta WHERE key='embedder'").fetchone()
     if not have or not con.execute("SELECT 1 FROM vectors LIMIT 1").fetchone():
         raise embedder.Unavailable("no passage has a vector yet: the next update builds them")
-    if have[0] != identity:
-        raise embedder.Unavailable("the vectors are from another model: the next update rebuilds them")
     try:
         import numpy
     except ImportError:
         raise embedder.Unavailable("numpy is not installed") from None
-    question = numpy.asarray(emb.query(words), dtype="<f4")
+    # The embedder checks, before and after, that it is the model behind the vectors.
+    question = numpy.asarray(emb.query(words, have[0]), dtype="<f4")
     rows = con.execute("SELECT v.passage, p.conversation, v.vec FROM vectors v"
                        " JOIN passages p ON p.id = v.passage").fetchall()
     size = question.shape[0] * 4
@@ -693,6 +691,11 @@ def find(words, limit=30, path=None, live=(), emb=None):
                 " WHERE v.passage IS NULL").fetchone()[0]
         except embedder.Unavailable as exc:
             meaning = {"state": "off", "why": str(exc)}
+        except Exception as exc:
+            # This half is optional by design: whatever goes wrong in it, the
+            # words still answer.
+            log.error("meaning", exc, query=words)
+            meaning = {"state": "off", "why": f"meaning search failed ({type(exc).__name__})"}
         order = fuse(list(by_words), list(by_meaning))[:limit]
         if not order:
             return [], meaning

@@ -19,6 +19,13 @@ number). So the two paths are two methods here and nothing chooses between them.
 Only text that is a passage, or a query, is ever sent. Never a name, a title,
 a path or a project.
 
+The index is built for one model. The service must say it is EmbeddingGemma at
+768 dimensions and name both prompts; the bge-m3 service on the same machine
+is refused, as is anything else. Which model made a vector is checked every
+time a vector is made or used, before and after the call, never remembered:
+a service that swaps its model between two calls must not put two models in
+one comparison, or one index.
+
 Nothing here raises anything but `Unavailable`. A caller that gets one carries
 on without meaning: the keyword index answers alone and the page says so.
 After a failure the embedder is left alone for BACKOFF seconds, so a box that
@@ -41,7 +48,11 @@ QUERY_TIMEOUT = 1.5      # ...and this long for the question's vector. A live on
                          # of milliseconds; it is slow only while it embeds a batch
 BATCH_CONNECT = 5.0      # a backfill can afford to be patient
 BATCH_TIMEOUT = 120.0    # a batch of long passages takes a couple of seconds
-IDENTITY_TTL = 60.0      # how long the model's identity is trusted before it is asked again
+
+# The one model this index is built for (the name says which; the size is not
+# enough, other services also give 768).
+MODEL_MARK = "embeddinggemma"
+DIMENSIONS = 768
 
 # What makes two vectors comparable. Not the device, not the batch cap.
 IDENTITY_FIELDS = ("model", "dimensions", "query_prompt", "document_prompt", "max_len")
@@ -56,8 +67,17 @@ class Embedder:
         base = url.rstrip("/")
         self.base = base[: -len("/api/v1")] if base.endswith("/api/v1") else base
         self.key, self.problem = key, problem
-        self.retry_at, self.last_error = 0.0, ""
-        self._identity, self._identity_until = None, 0.0
+        self.retry_at, self.last_error, self.dims = 0.0, "", 0
+        self.where = None
+        if not problem:
+            try:
+                self.where = urllib.parse.urlsplit(self.base)
+                self.where.port                     # a port that is not a number raises here
+                if self.where.scheme not in ("http", "https") or not self.where.hostname:
+                    raise ValueError
+            except ValueError:
+                self.where = None
+                self.problem = "EMBEDDER_URL in the embedder's config file is not a URL"
 
     # ------------------------------------------------------------ the wire
 
@@ -66,11 +86,12 @@ class Embedder:
             raise Unavailable(self.problem)
         if time.monotonic() < self.retry_at:
             raise Unavailable(f"{self.last_error} (not asked again for a while)")
-        where = urllib.parse.urlsplit(self.base)
+        where = self.where
         cls = http.client.HTTPSConnection if where.scheme == "https" else http.client.HTTPConnection
         data = json.dumps(body).encode() if body is not None else None
-        conn = cls(where.hostname, where.port, timeout=connect or CONNECT_TIMEOUT)
+        conn = None
         try:
+            conn = cls(where.hostname, where.port, timeout=connect or CONNECT_TIMEOUT)
             conn.connect()
             conn.sock.settimeout(read or QUERY_TIMEOUT)
             conn.request(method, f"{where.path.rstrip('/')}/api/v1{path}", body=data,
@@ -81,7 +102,8 @@ class Embedder:
             # A refused or timed-out connection, a reset, a reply cut short.
             self._fail(f"the embedder is unreachable ({type(exc).__name__})")
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
         if status != 200:
             self._fail(f"the embedder answered {status}")
         try:
@@ -99,42 +121,57 @@ class Embedder:
     # ------------------------------------------------------------ what it is
 
     def identity(self):
-        """The model as a string, from the service's model endpoint. Vectors
-        with different identities are never compared or stored together."""
-        if self._identity and time.monotonic() < self._identity_until:
-            return self._identity
+        """The model as a string, from the service's model endpoint, asked
+        every time. Vectors with different identities are never compared or
+        stored together. Refuses a service that is not EmbeddingGemma at 768
+        dimensions with both prompts named."""
         info = self._call("GET", "/model")
-        if not isinstance(info.get("model"), str) or not isinstance(info.get("dimensions"), int):
+        model, dims = info.get("model"), info.get("dimensions")
+        if not isinstance(model, str) or not isinstance(dims, int) or isinstance(dims, bool):
             self._fail("the embedder did not say which model it is")
-        self._identity = json.dumps({k: info.get(k) for k in IDENTITY_FIELDS}, sort_keys=True)
-        self._identity_until = time.monotonic() + IDENTITY_TTL
-        return self._identity
-
-    def dimensions(self):
-        return json.loads(self.identity())["dimensions"]
+        if MODEL_MARK not in model.lower():
+            self._fail(f"the embedder is not the EmbeddingGemma service this index is built for (it says {model[:60]})")
+        if dims != DIMENSIONS:
+            self._fail(f"the embedder gives {dims} dimensions; this index is built for {DIMENSIONS}")
+        if not all(isinstance(info.get(k), str) and info[k] for k in ("query_prompt", "document_prompt")):
+            self._fail("the embedder does not name its query and document prompts")
+        self.dims = dims
+        return json.dumps({k: info.get(k) for k in IDENTITY_FIELDS}, sort_keys=True)
 
     # ------------------------------------------------------------ vectors
 
     def _usable(self, vec):
         """A list of the right length holding numbers, and only numbers."""
-        return (isinstance(vec, list) and len(vec) == self.dimensions()
+        return (isinstance(vec, list) and len(vec) == self.dims
                 and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vec))
 
-    def query(self, text):
-        """The vector of a question, through the query endpoint."""
+    def query(self, text, identity):
+        """The vector of a question, through the query endpoint. `identity` is
+        that of the vectors it will be compared with: the embedder must be that
+        model before the call and after it, or nothing is returned."""
+        if self.identity() != identity:
+            raise Unavailable("the vectors are from another model: the next update rebuilds them")
         got = self._call("POST", "/embed/text", {"text": text})
+        if self.identity() != identity:
+            self._fail("the embedder changed model while it was asked")
         vec = got.get("vector")
         if not self._usable(vec):
             self._fail("the embedder gave a vector this code cannot use")
         return vec
 
-    def documents(self, texts):
+    def documents(self, texts, identity):
         """The vectors of stored passages, through the document endpoint, at
-        most BATCH texts a call. In the order given."""
+        most BATCH texts a call, in the order given. `identity` is that of the
+        vectors already stored: each batch is checked against it before and
+        after, and a batch made by another model is not returned."""
         out = []
         for i in range(0, len(texts), BATCH):
             chunk = texts[i:i + BATCH]
+            if self.identity() != identity:
+                self._fail("the embedder changed model in the middle of a run")
             got = self._call("POST", "/embed/batch", {"texts": chunk}, read=BATCH_TIMEOUT, connect=BATCH_CONNECT)
+            if self.identity() != identity:
+                self._fail("the embedder changed model while it was asked")
             vecs = got.get("vectors")
             if not isinstance(vecs, list) or len(vecs) != len(chunk) or not all(map(self._usable, vecs)):
                 self._fail("the embedder gave vectors this code cannot use")
