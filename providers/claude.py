@@ -29,6 +29,26 @@ def claude_dir():
     return Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude")))
 
 
+def helper_dir(cfg=None):
+    """Where agentview runs its own `claude -p` helpers: the conversation
+    summaries. A folder of their own keeps their transcripts out of every
+    project's, and tells the page which sessions are not sessions."""
+    return Path(cfg or claude_dir()) / "agentview" / "summaries"
+
+
+def is_helper(rec, cfg=None):
+    """A peer record that is one of agentview's own helper runs. A helper is
+    headless and lives in `helper_dir`, for as long as one model call takes.
+    Someone at a terminal who happens to sit there is still a session."""
+    cwd = rec.get("cwd")
+    if rec.get("entrypoint") == "cli" or not isinstance(cwd, str) or not cwd:
+        return False
+    try:
+        return Path(cwd).resolve() == helper_dir(cfg).resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
 def transcript_for(session_id, cwd, cfg=None):
     """Locate a session's transcript: the registry's rule, by id and cwd."""
     return registry.transcript_of({"sessionId": session_id, "cwd": cwd}, cfg or claude_dir())
@@ -428,7 +448,8 @@ class ClaudeProvider(Provider):
 
     def live(self):
         cfg = self.cfg or claude_dir()
-        return [session(rec, cfg) for rec in registry.live(cfg, self.proc)]
+        return [session(rec, cfg) for rec in registry.live(cfg, self.proc)
+                if not is_helper(rec, cfg)]
 
     def find(self, session_id):
         cfg = self.cfg or claude_dir()

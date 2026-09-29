@@ -207,6 +207,12 @@
 .hit .at { margin-left:auto; color:var(--faint); font-size:12px; font-variant-numeric:tabular-nums;
            white-space:nowrap; }
 .hit .tt { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* The two lines that say which conversation this is: what it was about, and
+   where it stood when it stopped. One line each; the whole text is in the tooltip. */
+.hit .sum { margin:1px 0 3px; }
+.hit .sum div { font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.hit .sum .end { color:var(--dim); }
+.hit .sum.old { opacity:.6; }
 .hit .asked, .hit .said { color:var(--dim); font-size:12.5px; overflow:hidden;
                           display:-webkit-box; -webkit-box-orient:vertical; }
 .hit .asked { -webkit-line-clamp:1; }
@@ -1141,7 +1147,8 @@ document.addEventListener("click", e => {
 // Every interactive conversation this machine has had, from any day: the
 // filter only sees what runs now, and ⟲ closed only this boot. A search is
 // its own request, never part of the poll. A row says which conversation it
-// was and why it matched; a click opens it, or jumps to it if it runs.
+// was and why it matched -- and, once it has been summarised, what it was
+// about and where it ended; a click opens it, or jumps to it if it runs.
 const find = document.getElementById("find");
 const found = document.getElementById("found");
 let FIND_TIMER = null, FIND_SEQ = 0, FOUND = null;
@@ -1188,6 +1195,10 @@ function paintFound(data) {
         ${h.project ? `<span class="pj">${esc(h.project)}</span>` : ""}
         <span class="at">${esc(failed || !state ? day(h.active) : state)}</span></div>
       ${h.title ? `<div class="tt">${esc(h.title)}</div>` : ""}
+      ${h.summary ? `<div class="sum${h.summary.stale ? " old" : ""}"
+          title="${esc(h.summary.about + "\n" + h.summary.ended)}${h.summary.stale ? esc("\n(written before its latest work)") : ""}">
+        <div class="abt">${esc(h.summary.about)}</div>
+        <div class="end">${esc(h.summary.ended)}</div></div>` : ""}
       ${p.prompt ? `<div class="asked">› ${marked(p.prompt)}</div>` : ""}
       ${p.reply ? `<div class="said">${marked(p.reply)}</div>` : ""}
       <div class="wd">${esc(where)}</div>

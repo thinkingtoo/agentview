@@ -1,0 +1,12 @@
+[Unit]
+Description=agentview — two lines for each conversation in the search results (claude -p --model haiku)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/agentview
+# The CLI, on the plan it is logged in to. A timer's environment is bare, so
+# say where `claude` lives.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 %h/Projects/agentview/archive.py summarize
+Nice=10
+IOSchedulingClass=idle

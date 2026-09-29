@@ -1,0 +1,10 @@
+[Unit]
+Description=agentview summaries: at most 12 conversations every 10 minutes, so a backfill is paced
+
+[Timer]
+OnBootSec=6min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

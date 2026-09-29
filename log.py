@@ -27,7 +27,7 @@ import time
 import traceback
 from pathlib import Path
 
-from providers import registry
+from providers import claude, registry
 
 
 def log_dir():
@@ -113,6 +113,8 @@ def peers(cfg):
     """
     out = {}
     for rec in registry.live(cfg):
+        if claude.is_helper(rec, cfg):
+            continue                      # a summary run: not a session, and gone in seconds
         rec.pop("path", None)
         try:
             out[int(rec["pid"])] = rec

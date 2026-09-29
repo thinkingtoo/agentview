@@ -159,7 +159,9 @@ means, when none of your words is in it.
   found, so it outlives both.
 - **The index** is one SQLite file with FTS5, `~/.claude/agentview/archive.db`,
   mode 0600 like the transcripts it comes from. Nothing leaves the machine
-  except what meaning search sends, described above.
+  except what meaning search sends, described above, and the excerpts that
+  [summaries](#summaries) send to Anthropic through the CLI, as any
+  conversation you have with Claude Code does.
 - **Keeping it current.** `agentview-archive.timer` runs `archive.py update`
   every 5 minutes. It reads only transcripts whose size or mtime moved, and
   only from the start of their last exchange, the one that may still be
@@ -187,12 +189,67 @@ means, when none of your words is in it.
 ```bash
 python3 archive.py update        # what the timer runs; -v lists each file read; embeds what is new
 python3 archive.py search words  # what the box would show, meaning included
-python3 archive.py stats         # what the index holds, and how the last run went
+python3 archive.py stats         # what the index holds, and how the last runs went
 ```
 
 The schema is written down at the top of `archive.py`. It carries a version,
 and an index built by another version is thrown away and rebuilt: it is
-derived from the transcripts and holds nothing they do not.
+derived from the transcripts and holds nothing they do not. The one exception
+is the summaries, which cost a model call each and are kept through a rebuild.
+
+### Summaries
+
+Under a result's title sit two lines: what the conversation was about, and
+where it stood when it stopped (finished, waiting on you, left half-way). That
+is what tells you which of five similar conversations to reopen. A
+conversation with no summary yet shows only its title; one that has moved on
+since its summary was written shows it dimmed.
+
+- **Who writes them.** `claude -p --model haiku`, through the CLI and the plan
+  it is logged in to, never the API: `ANTHROPIC_API_KEY` is taken out of the
+  run's environment, so a key in your shell cannot turn it into a paid call.
+- **What the model is shown.** Claude's title, the first three things you
+  typed, and the last two exchanges (the end of each reply, where it stopped),
+  read from the index, so tool output and hook text are already gone. About a
+  thousand tokens; never the middle. It goes in on stdin, not on the command
+  line where any user could read it in the process list. It does leave the
+  machine, as your conversations with Claude do.
+- **When.** A conversation that has been quiet for 10 minutes and whose text
+  has changed since its last summary. "Changed" means what the model would be
+  shown, hashed: a transcript that only grew by tool output costs no call.
+  A summary that fails three times for the same text is left alone until the
+  text changes; three failures in a row end the run (the quota is gone, or
+  nobody is logged in).
+- **Pace.** At most 12 per run (`PER_RUN`), and `agentview-summaries.timer`
+  runs every 10 minutes. The first backfill, about 510 conversations, is 43
+  runs, about 7 hours. Measured on 2026-09-29 over 32 real calls: 3.3 s a call
+  (2.9 to 4.1), so about 28 minutes of model time all told, and about a cent a
+  call at list price. Afterwards a run finds a handful, or nothing. Most
+  recently active first, so the conversations you are likeliest to search for
+  are done first.
+- **Not a session.** The run is `--safe-mode`: no hooks (so it cannot write a
+  team line, log the prompt into the usage study, or fire a chime), no
+  plugins, no CLAUDE.md, no MCP servers, and `--tools ""` so there is nothing it
+  could run. Thinking is off (`MAX_THINKING_TOKENS=0`): on, Haiku spent 1,700
+  to 3,800 tokens thinking about a two-line answer and a call took 10 to 50 s;
+  off, the same two lines take 3.5 s. Hooks off does not keep it off the page,
+  though: the run writes a peer file like any session, and the page listed one
+  in *No project* while it ran. So it runs in `~/.claude/agentview/summaries`,
+  and a headless session there is neither listed on the page nor written to
+  the log (`providers/claude.py`, `is_helper`).
+- **Their transcripts.** Each run is a `claude -p` run, so it leaves an
+  `sdk-cli` transcript, in a project folder of its own. The index skips it
+  (only `cli` counts) and the nightly cleanup of headless transcripts deletes
+  it after 30 days. About 510 of them for the backfill; a few a day after.
+- **Where they live.** A `summaries` table in the same index file, keyed by
+  conversation. It goes with its transcript, and it survives a rebuild of the
+  index.
+
+```bash
+python3 archive.py summarize             # what the timer runs: at most 12
+python3 archive.py summarize --limit 3 -v
+python3 archive.py summarize --dry-run   # how many need one; asks nothing
+```
 
 ## Providers
 
@@ -284,6 +341,15 @@ The search box needs its index kept current (see [Search](#search)):
 cp agentview-archive.service agentview-archive.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now agentview-archive.timer
+```
+
+The two lines under each result are written by a second timer, paced so the
+backfill does not spend the plan's quota at once (see [Summaries](#summaries)):
+
+```bash
+cp agentview-summaries.service agentview-summaries.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now agentview-summaries.timer
 ```
 
 Bound to `127.0.0.1` deliberately: the page shows your prompts verbatim, which
@@ -794,6 +860,12 @@ the keyword hits and says meaning is off. The reopen tests go through the real
 jumps and is never resumed, a closed one opens from a snapshot or from its
 transcript alone, a missing directory launches nothing, and two clicks at once,
 or a click on a conversation whose claude is still starting, open nothing more.
+The summaries' tests hand the run a stand-in for the model
+and look at what comes out: which conversations are asked for and when, that a
+run is paced, that what the model is shown is bounded and free of machine text,
+that a summary survives a rebuild and goes with its transcript, the exact
+command that is run (CLI, Haiku, hooks off, thinking off, conversation on
+stdin, no API key), and that a summary run is not a card on the page.
 
 **Every test points at the code the page actually calls.** There used to be a
 second, full-file scanner that nothing called, and the summary tests ran
