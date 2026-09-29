@@ -663,8 +663,15 @@ def model_input(con, sid, title=""):
     return "\n".join(line for line in out if line)
 
 
+# Said again after the conversation, because a conversation that ends in a
+# command (a slash command with no reply, say) reads to a small model like the
+# task in hand: with the instructions only in front, it wrote 14 to 24 lines,
+# three times in three; with this, two.
+REMINDER = "Now write the two lines about that conversation, and nothing else."
+
+
 def build_prompt(text):
-    return f"{INSTRUCTIONS}\n\n<conversation>\n{text}\n</conversation>\n"
+    return f"{INSTRUCTIONS}\n\n<conversation>\n{text}\n</conversation>\n\n{REMINDER}\n"
 
 
 LABEL = re.compile(r"^[\s\-*\u2022]*(?:\d{1,2}[.)]\s+)?"

@@ -82,6 +82,16 @@ class Making(Summarised, unittest.TestCase):
         for machine in ("REMINDERTEXT", "TOOLRESULTTEXT", "THINKINGTEXT", "HOOKTEXT"):
             self.assertNotIn(machine, shown)
 
+    def test_the_requirement_comes_again_after_the_conversation(self):
+        # Measured on 2026-09-29 on a conversation that was one slash command
+        # and no reply: with the instructions only in front, Haiku took the
+        # command for a task and wrote 14 to 24 lines, three times in three.
+        # With the requirement repeated after the material it wrote two.
+        prompt = archive.build_prompt("User: /do something, in many steps")
+        after = prompt.split("</conversation>")[-1]
+        self.assertIn("two lines", after)
+        self.assertLess(prompt.index("/do something"), prompt.index("</conversation>"))
+
     def test_what_the_model_sees_is_bounded_however_long_the_conversation(self):
         records = []
         for i in range(300):
