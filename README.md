@@ -98,7 +98,7 @@ A row does not reopen anything yet: it tells you which conversation it was.
 - **Names.** The name the conversation last had: its peer file while it
   lasts, then agentview's own log (`~/.local/state/agentview/events.jsonl`,
   which goes back as far as its rotation), then whatever Claude Code wrote
-  into the transcript. Every run takes the peer files' names again, so a
+  into the transcript. Every run asks again for every conversation, so a
   session renamed while it sat idle is caught. The index keeps the name once
   found, so it outlives both.
 - **The index** is one SQLite file with FTS5, `~/.claude/agentview/archive.db`,
@@ -106,14 +106,16 @@ A row does not reopen anything yet: it tells you which conversation it was.
 - **Keeping it current.** `agentview-archive.timer` runs `archive.py update`
   every 5 minutes. It reads only transcripts whose size or mtime moved, and
   only from the start of their last exchange, the one that may still be
-  growing. A transcript that moved without growing, or whose first bytes or
-  resume line changed, was rewritten rather than appended to, and is read
-  again from scratch, so nothing it no longer says stays findable. One that
+  growing. A transcript that moved without growing, or in which anything
+  already read changed (a hash covers every byte up to the resume line), was
+  rewritten rather than appended to, and is read again from scratch, so
+  nothing it no longer says stays findable. One that
   is gone leaves the index.
 - **Speed.** The first run over 534 conversations took 19 s on a quiet
   machine and 38 s on a busy one (load 6.5), and wrote 7,629 passages
-  (48 MB); half of it is parsing JSON. A run with nothing new takes under
-  0.1 s, and a search a few milliseconds, grouped by conversation in SQL. The search is its own request (`/api/search?q=`) and never
+  (48 MB); half of it is parsing JSON. A run with nothing new takes about
+  0.15 s, most of it reading the log for names, and a search a few
+  milliseconds, grouped by conversation in SQL. The search is its own request (`/api/search?q=`) and never
   part of the roster poll.
 
 ```bash

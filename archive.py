@@ -21,14 +21,14 @@ their last exchange -- the one that may still be growing.
     archive.py search WORDS    what the page's search box would show
     archive.py stats           what the index holds, and how the last run went
 
-Schema (version 2). Change it by bumping SCHEMA_VERSION: the index is derived
+Schema (version 3). Change it by bumping SCHEMA_VERSION: the index is derived
 from the transcripts, so a version it does not know is rebuilt from scratch.
 
     conversations  one row per transcript: id (the session id), path, cwd,
                    name, title, started, active, and where reading stopped
-                   (size, mtime, tail, exchanges, and mark: a fingerprint of
-                   the file's head and of the line at the tail, to tell an
-                   append from a rewrite)
+                   (size, mtime, tail, exchanges, and mark: a hash of all
+                   the bytes up to and including the line at the tail, to
+                   tell an append from a rewrite)
     passages       id, conversation, exchange, piece, at, uuid, prompt, reply
                    -- (conversation, exchange, piece) is unique
     passages_fts   FTS5 over passages(prompt, reply), kept in step by triggers
@@ -52,7 +52,7 @@ from pathlib import Path
 import log
 from providers import claude, registry
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -261,14 +261,19 @@ def pieces(prompt, reply, size=PIECE):
              reply[max(a - off, 0):max(b - off, 0)].strip()) for a, b in cuts]
 
 
-def fingerprint(path, tail, size=4096):
-    """The file's first bytes and the line reading resumes at. A transcript
-    only ever grows; if either of these changed, it was rewritten."""
+def fingerprint(path, tail, line=65536):
+    """A hash of everything already read: the bytes before the resume point
+    and the line there. A transcript only ever grows, so if this changed it
+    was rewritten. Appends come after the resume line and never touch it.
+    Costs one read of the file, as the title reader already does."""
+    digest = hashlib.sha1()
     with open(path, "rb") as fh:
-        head = fh.read(size)
-        fh.seek(tail)
-        at_tail = fh.read(size).split(b"\n", 1)[0]
-    return hashlib.sha1(head + b"\0" + at_tail).hexdigest()
+        left = tail
+        while left > 0 and (chunk := fh.read(min(left, 1 << 20))):
+            digest.update(chunk)
+            left -= len(chunk)
+        digest.update(b"\0" + fh.read(line).split(b"\n", 1)[0])
+    return digest.hexdigest()
 
 
 def entrypoint(path, lines=400):
@@ -408,13 +413,10 @@ class Names:
     def __init__(self, cfg=None, logs=None):
         self.cfg, self.logs, self.peers, self.logged = cfg, logs, None, None
 
-    def live(self):
+    def __call__(self, sid):
         if self.peers is None:
             self.peers = peer_names(self.cfg)
-        return self.peers
-
-    def __call__(self, sid):
-        if sid in self.live():
+        if sid in self.peers:
             return self.peers[sid]
         if self.logged is None:
             self.logged = logged_names(self.logs)
@@ -456,12 +458,14 @@ def update(path=None, root=None, cfg=None, logs=None, say=lambda *_: None):
                 say(f"  {len(changed)}  {f.name}")
         except OSError:
             con.rollback()                # gone between the listing and the read
-    # A session renamed while its transcript sat still: the peer file has the
-    # new name, and it has to be caught before that file goes.
+    # A session renamed while its transcript sat still: the new name is in
+    # its peer file, or in the log once that file is gone. Every conversation
+    # is asked, not only the ones that changed; an empty answer keeps what
+    # is stored.
     stored = dict(con.execute("SELECT id, name FROM conversations"))
-    con.executemany("UPDATE conversations SET name=? WHERE id=?",
-                    [(name, sid) for sid, name in names.live().items()
-                     if sid in stored and stored[sid] != name])
+    renamed = [(name, sid) for sid in stored if sid in seen
+               and (name := names(sid)) and name != stored[sid]]
+    con.executemany("UPDATE conversations SET name=? WHERE id=?", renamed)
     # A transcript that is gone cannot be reopened, so it cannot be found.
     # An empty listing is a missing directory, not an empty history.
     if files:

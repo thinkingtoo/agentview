@@ -6,6 +6,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -228,6 +229,33 @@ class Indexing(Home, unittest.TestCase):
         self.assertEqual(self.rows("SELECT COUNT(*) FROM passages WHERE prompt='Why does the kettle whistle?'"),
                          [(1,)])
 
+    def test_a_rewrite_deep_inside_a_growing_file_is_read_from_scratch(self):
+        # The changed word sits well past the first 4 KB and well before the
+        # line reading resumes at, and the file still grows.
+        early = [typed(1, "start"), said(2, "padding " * 1000 + "zebra"), typed(3, "next")]
+        path = self.write(SID, early + KETTLE[2:])
+        self.update()
+        text = path.read_text()
+        self.assertGreater(text.index("zebra"), 4096)
+        path.write_text(text.replace("zebra", "zebru"))
+        self.write(SID, [said(40, "And one more thing.")], mode="a")
+        self.update()
+        self.assertEqual(archive.search("zebra", path=self.db), [])
+        self.assertEqual(len(archive.search("zebru", path=self.db)), 1)
+
+    def test_a_small_file_that_grows_is_appended_to_not_rebuilt(self):
+        path = self.write(SID, [typed(1, "tiny"), said(2, "Tiny answer."), typed(3, "again")])
+        self.assertLess(path.stat().st_size, 4096)
+        self.update()
+        tail = self.rows("SELECT tail FROM conversations")[0][0]
+        self.assertGreater(tail, 0)
+        self.write(SID, [said(4, "Again, then."), typed(5, "and once more")], mode="a")
+        with mock.patch.object(archive, "read_lines", wraps=archive.read_lines) as read:
+            self.update()
+        self.assertEqual([c.args[1] for c in read.call_args_list], [tail])
+        self.assertEqual(self.rows("SELECT exchange, prompt FROM passages ORDER BY exchange"),
+                         [(0, "tiny"), (1, "again"), (2, "and once more")])
+
     def test_a_transcript_that_is_gone_leaves_the_index(self):
         path = self.write(SID, KETTLE)
         self.write(OTHER, [typed(1, "unrelated", sid=OTHER)])
@@ -263,6 +291,22 @@ class Naming(Home, unittest.TestCase):
         self.assertEqual(self.rows("SELECT name FROM conversations"), [("Tobias",)])
         # And it outlives the peer file.
         peer.unlink()
+        self.update()
+        self.assertEqual(self.rows("SELECT name FROM conversations"), [("Tobias",)])
+
+    def test_a_rename_only_the_log_saw_is_caught_while_idle(self):
+        self.write(SID, KETTLE)
+        peer = self.root / "sessions" / "123.json"
+        peer.parent.mkdir()
+        peer.write_text(json.dumps({"pid": 123, "sessionId": SID, "name": "Cleo", "updatedAt": 5}))
+        self.update()
+        peer.unlink()
+        self.logs[0].write_text(json.dumps({"kind": "flag", "sessionId": f"claude:{SID}",
+                                            "name": "Tobias"}) + "\n")
+        self.assertEqual(self.update()["changed"], 0)
+        self.assertEqual(self.rows("SELECT name FROM conversations"), [("Tobias",)])
+        # Nobody knows it any more: the stored name stands.
+        self.logs[0].unlink()
         self.update()
         self.assertEqual(self.rows("SELECT name FROM conversations"), [("Tobias",)])
 
