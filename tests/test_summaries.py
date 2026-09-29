@@ -21,8 +21,10 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 import archive
+import retention
 from providers import claude
 from test_archive import KETTLE, OTHER, SID, Home, said, typed
+from test_meaning import CHIME, QUESTION, Meaning
 
 LATER = time.time() + 3600        # an hour on: every transcript here has been quiet for it
 
@@ -245,6 +247,21 @@ class Pacing(Summarised, unittest.TestCase):
         self.assertEqual(run["made"], 7)              # the one that failed is among them
 
 
+class FoundByMeaning(Summarised, Meaning, unittest.TestCase):
+    """Ticket 04 finds conversations that share no word with the question.
+    Their rows carry the two lines like any other."""
+
+    def test_a_conversation_found_only_by_meaning_carries_its_summary(self):
+        self.write(CHIME, [typed(1, "why was the bell silent this morning?", sid=CHIME),
+                           said(2, "The volume was muted, so the sound never played.", sid=CHIME)])
+        self.update()
+        self.summarize(Model("The bell that did not ring.\nDone: it had been muted."))
+        hits, meaning = archive.find(QUESTION, path=self.db, emb=self.fake.client())
+        self.assertEqual((hits[0]["id"], hits[0]["via"], meaning["state"]), (CHIME, "meaning", "on"))
+        self.assertEqual(hits[0]["summary"], {"about": "The bell that did not ring.",
+                                              "ended": "Done: it had been muted.", "stale": False})
+
+
 class BeforeTheFirstRun(Summarised, unittest.TestCase):
     """The index a search reads may have been built before summaries existed:
     the page must go on working until the next `update` adds the table."""
@@ -436,6 +453,43 @@ class Asking(unittest.TestCase):
                     mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tempfile.mkdtemp()}):
                 with self.assertRaises(archive.Failed):
                     archive.ask_model("x")
+
+
+class TheirTranscripts(Summarised, unittest.TestCase):
+    """Each summary run is a `claude -p` run and leaves a transcript. It must
+    not be indexed (ticket 02) and must be deleted after 30 days (ticket 01)."""
+
+    HELPER = "00000000-0000-4000-8000-0000000000f1"
+
+    def write_run(self):
+        # The records a run really writes (checked against one on 2026-09-29):
+        # names and bookkeeping without an entrypoint, then `sdk-cli` on the
+        # records that carry one.
+        return self.write(self.HELPER, [
+            {"type": "custom-title", "customTitle": "agentview-summary", "sessionId": self.HELPER},
+            {"type": "queue-operation", "operation": "enqueue", "sessionId": self.HELPER},
+            typed(1, "the excerpt of some conversation", sid=self.HELPER) | {"entrypoint": "sdk-cli"},
+            said(2, "About it.\nDone.", sid=self.HELPER) | {"entrypoint": "sdk-cli"},
+            {"type": "last-prompt", "lastPrompt": "the excerpt", "sessionId": self.HELPER},
+        ], folder="-home-alice--claude-agentview-summaries")
+
+    def test_a_summary_run_is_never_indexed_so_never_summarised_itself(self):
+        self.write(SID, KETTLE)
+        self.write_run()
+        self.update()
+        self.assertEqual(self.rows("SELECT id FROM conversations"), [(SID,)])
+        self.assertEqual(self.rows("SELECT entrypoint FROM skipped"), [("sdk-cli",)])
+        model = Model()
+        self.summarize(model)
+        self.assertEqual(len(model.prompts), 1)              # the kettle, not the run
+
+    def test_a_summary_run_is_deleted_after_thirty_days_and_a_conversation_is_not(self):
+        kept = self.write(SID, KETTLE)
+        run = self.write_run()
+        self.assertEqual(retention.prune(self.projects, time.time() + 29 * 86400, days=30), [])
+        self.assertEqual(retention.prune(self.projects, time.time() + 31 * 86400, days=30), [run])
+        self.assertFalse(run.exists())
+        self.assertTrue(kept.exists())
 
 
 class Endpoint(Summarised, unittest.TestCase):

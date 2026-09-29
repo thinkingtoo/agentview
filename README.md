@@ -239,8 +239,9 @@ since its summary was written shows it dimmed.
   the log (`providers/claude.py`, `is_helper`).
 - **Their transcripts.** Each run is a `claude -p` run, so it leaves an
   `sdk-cli` transcript, in a project folder of its own. The index skips it
-  (only `cli` counts) and the nightly cleanup of headless transcripts deletes
-  it after 30 days. About 510 of them for the backfill; a few a day after.
+  (only `cli` counts) and `retention.py` deletes it after 30 days, like every
+  headless transcript (both are tested on a transcript in the shape a run
+  leaves). About 510 of them for the backfill; a few a day after.
 - **Where they live.** A `summaries` table in the same index file, keyed by
   conversation. It goes with its transcript, and it survives a rebuild of the
   index.
