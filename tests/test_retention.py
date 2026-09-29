@@ -151,6 +151,12 @@ class Prune(unittest.TestCase):
         self.assertFalse(headless.exists())
         self.assertTrue(interactive.exists())
 
+    def test_a_projects_folder_that_leads_nowhere_is_an_empty_run(self):
+        self.root.parent.mkdir(parents=True, exist_ok=True)
+        self.root.symlink_to(self.root)
+
+        self.assertEqual(retention.prune(self.root, NOW, days=30), [])
+
     def test_only_a_transcript_named_by_a_session_id_is_considered(self):
         memory = transcript(self.proj, "memory", "sdk-cli", 45)
         (self.proj / "memory" / "notes.md").write_text("x")

@@ -82,11 +82,24 @@ def _judge(name, fd, cutoff):
         return st if _headless(fh) else None
 
 
-def _put_back(tmp, name, fd):
-    """Undo a rename without overwriting whatever took the name meanwhile."""
-    if _lstat(name, fd) is not None:
+def _put_file_back(tmp, name, fd):
+    """Undo a rename without overwriting whatever took the name meanwhile:
+    a hard link fails if the name exists, where a rename would replace it."""
+    try:
+        os.link(tmp, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+    except OSError:
         return False
-    os.rename(tmp, name, src_dir_fd=fd, dst_dir_fd=fd)
+    os.unlink(tmp, dir_fd=fd)
+    return True
+
+
+def _put_folder_back(tmp, name, fd):
+    """A folder renamed onto a name that is taken fails, unless what took it
+    is an empty folder, which it replaces: nothing is lost either way."""
+    try:
+        os.rename(tmp, name, src_dir_fd=fd, dst_dir_fd=fd)
+    except OSError:
+        return False
     return True
 
 
@@ -114,14 +127,15 @@ def _remove(name, fd, judged, path, warn):
             os.rename(sid, sid + tag, src_dir_fd=fd, dst_dir_fd=fd)
             try:
                 shutil.rmtree(sid + tag, dir_fd=fd)
-            except OSError:
-                _put_back(sid + tag, sid, fd)
-                raise
+            except OSError as err:
+                if not _put_folder_back(sid + tag, sid, fd):
+                    warn(f"left what remains of {path.with_suffix('')} as {sid + tag}")
+                raise err
         os.unlink(name + tag, dir_fd=fd)
         return True
     except OSError as err:
         try:
-            back = _put_back(name + tag, name, fd)
+            back = _put_file_back(name + tag, name, fd)
         except OSError:
             back = False
         if back:
@@ -141,40 +155,50 @@ def prune(root, now, days=DAYS, dry_run=False, each=None, warn=_stderr):
     `each` is called with every one just before it goes; `warn` with every
     one that was judged expired and still kept.
 
-    root itself may be a link, to another disk say; it is resolved once.
-    Below it every project is opened without following links and worked on
-    through that handle, so a path swapped for a link meanwhile leads nowhere."""
+    root itself may be a link, to another disk say; it is opened once and
+    held. Below it every project is opened without following links and worked
+    on through that handle, so a path swapped for a link meanwhile leads
+    nowhere."""
     gone = []
-    root = Path(root).resolve()
+    root = Path(root)
     try:
-        projects = sorted(os.listdir(root))
+        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:
         return gone
-    for project in projects:
-        try:
-            fd = os.open(root / project, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        except OSError:
-            continue
-        try:
-            names = sorted(os.listdir(fd))
-            for name in names:
-                # The session folder goes with the transcript, so the name has
-                # to be a session id: never memory/, never anything else.
-                if not (name.endswith(".jsonl") and SESSION_ID.fullmatch(name[:-len(".jsonl")])):
-                    continue
-                path = root / project / name
-                try:
-                    judged = _judge(name, fd, now - days * 86400)
-                except OSError:
-                    continue
-                if judged is None:
-                    continue
-                if each:
-                    each(path)
-                if dry_run or _remove(name, fd, judged, path, warn):
-                    gone.append(path)
-        finally:
-            os.close(fd)
+    try:
+        for project in sorted(os.listdir(root_fd)):
+            gone += _prune_project(root, root_fd, project, now - days * 86400,
+                                   dry_run, each, warn)
+    finally:
+        os.close(root_fd)
+    return gone
+
+
+def _prune_project(root, root_fd, project, cutoff, dry_run, each, warn):
+    gone = []
+    try:
+        fd = os.open(project, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root_fd)
+    except OSError:
+        return gone
+    try:
+        for name in sorted(os.listdir(fd)):
+            # The session folder goes with the transcript, so the name has to
+            # be a session id: never memory/, never anything else.
+            if not (name.endswith(".jsonl") and SESSION_ID.fullmatch(name[:-len(".jsonl")])):
+                continue
+            path = root / project / name
+            try:
+                judged = _judge(name, fd, cutoff)
+            except OSError:
+                continue
+            if judged is None:
+                continue
+            if each:
+                each(path)
+            if dry_run or _remove(name, fd, judged, path, warn):
+                gone.append(path)
+    finally:
+        os.close(fd)
     return gone
 
 

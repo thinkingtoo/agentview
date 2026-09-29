@@ -456,8 +456,8 @@ Anything else is kept: a transcript with a single `cli` record, one that names
 no entrypoint, one with a line that does not parse (it could have been the line
 that said `cli`), and one that is not named by a session id. So is a
 transcript, session folder or project folder that is a link. `~/.claude/projects`
-itself may be one, to another disk say: it is resolved once, and nothing below
-it is followed. Each project is opened once and worked on through that handle,
+itself may be one, to another disk say: it is opened once and held, and nothing
+below it is followed. Each project is opened once and worked on through that handle,
 so a path swapped for a link halfway through leads nowhere.
 
 A headless session resumed by hand just as the job reaches it keeps what the
