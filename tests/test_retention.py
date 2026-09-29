@@ -38,25 +38,25 @@ class Prune(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_an_old_headless_transcript_goes_with_its_folder_and_an_old_interactive_one_stays(self):
-        headless = transcript(self.proj, "11111111-aaaa", "sdk-cli", 45)
-        interactive = transcript(self.proj, "22222222-bbbb", "cli", 45)
+        headless = transcript(self.proj, "11111111-aaaa-aaaa-aaaa-111111111111", "sdk-cli", 45)
+        interactive = transcript(self.proj, "22222222-bbbb-bbbb-bbbb-222222222222", "cli", 45)
 
         gone = retention.prune(self.root, NOW, days=30)
 
         self.assertEqual(gone, [headless])
         self.assertFalse(headless.exists())
-        self.assertFalse((self.proj / "11111111-aaaa").exists())
+        self.assertFalse((self.proj / "11111111-aaaa-aaaa-aaaa-111111111111").exists())
         self.assertTrue(interactive.exists())
-        self.assertTrue((self.proj / "22222222-bbbb" / "subagents" / "agent-a1.jsonl").exists())
+        self.assertTrue((self.proj / "22222222-bbbb-bbbb-bbbb-222222222222" / "subagents" / "agent-a1.jsonl").exists())
 
     def test_a_headless_transcript_touched_within_30_days_stays(self):
-        young = transcript(self.proj, "33333333-cccc", "sdk-cli", 29)
+        young = transcript(self.proj, "33333333-cccc-cccc-cccc-333333333333", "sdk-cli", 29)
 
         self.assertEqual(retention.prune(self.root, NOW, days=30), [])
         self.assertTrue(young.exists())
 
     def test_an_interactive_conversation_carried_on_headless_stays(self):
-        sid = "44444444-dddd"
+        sid = "44444444-dddd-dddd-dddd-444444444444"
         mixed = transcript(self.proj, sid, None, 60, records=[
             {"type": "user", "entrypoint": "cli", "sessionId": sid},
             {"type": "user", "entrypoint": "sdk-cli", "sessionId": sid},
@@ -66,7 +66,7 @@ class Prune(unittest.TestCase):
         self.assertTrue(mixed.exists())
 
     def test_a_transcript_that_names_no_entrypoint_stays(self):
-        sid = "55555555-eeee"
+        sid = "55555555-eeee-eeee-eeee-555555555555"
         unknown = transcript(self.proj, sid, None, 60, records=[
             {"type": "queue-operation", "sessionId": sid},
             {"type": "ai-title", "aiTitle": "t", "sessionId": sid},
@@ -82,7 +82,7 @@ class Prune(unittest.TestCase):
         outside = Path(self.tmp.name) / "elsewhere"
         outside.mkdir()
         (outside / "keep.txt").write_text("x")
-        sid = "77777777-aaaa"
+        sid = "77777777-aaaa-aaaa-aaaa-777777777777"
         headless = transcript(self.proj, sid, "sdk-cli", 45)
         (self.proj / sid / "subagents" / "agent-a1.jsonl").unlink()
         (self.proj / sid / "subagents").rmdir()
@@ -95,21 +95,38 @@ class Prune(unittest.TestCase):
         self.assertTrue((outside / "keep.txt").exists())
         self.assertTrue(headless.exists())
 
+    def test_a_project_reached_through_a_link_is_left_alone(self):
+        real = Path(self.tmp.name) / "real-project"
+        headless = transcript(real, "12121212-aaaa-bbbb-cccc-121212121212", "sdk-cli", 45)
+        self.root.mkdir(parents=True)
+        (self.root / "-linked").symlink_to(real)
+
+        self.assertEqual(retention.prune(self.root, NOW, days=30), [])
+        self.assertTrue(headless.exists())
+
+    def test_only_a_transcript_named_by_a_session_id_is_considered(self):
+        memory = transcript(self.proj, "memory", "sdk-cli", 45)
+        (self.proj / "memory" / "notes.md").write_text("x")
+
+        self.assertEqual(retention.prune(self.root, NOW, days=30), [])
+        self.assertTrue(memory.exists())
+        self.assertTrue((self.proj / "memory" / "notes.md").exists())
+
     def test_a_dry_run_names_what_would_go_and_deletes_nothing(self):
-        headless = transcript(self.proj, "66666666-ffff", "sdk-cli", 45)
+        headless = transcript(self.proj, "66666666-ffff-ffff-ffff-666666666666", "sdk-cli", 45)
 
         would = retention.prune(self.root, NOW, days=30, dry_run=True)
 
         self.assertEqual(would, [headless])
         self.assertTrue(headless.exists())
-        self.assertTrue((self.proj / "66666666-ffff" / "subagents").exists())
+        self.assertTrue((self.proj / "66666666-ffff-ffff-ffff-666666666666" / "subagents").exists())
 
 
 class CommandLine(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.proj = Path(self.tmp.name) / "projects" / "-home-u-p"
-        self.headless = transcript(self.proj, "99999999-cccc", "sdk-cli", 45)
+        self.headless = transcript(self.proj, "99999999-cccc-cccc-cccc-999999999999", "sdk-cli", 45)
         self.old = os.environ.get("CLAUDE_CONFIG_DIR")
         os.environ["CLAUDE_CONFIG_DIR"] = self.tmp.name
 

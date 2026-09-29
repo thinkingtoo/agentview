@@ -16,6 +16,7 @@ cannot be read, is kept.
 """
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -28,6 +29,7 @@ from providers import claude  # noqa: E402
 
 HEADLESS = "sdk-cli"
 DAYS = 30
+SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 def _headless(path):
@@ -47,8 +49,12 @@ def _headless(path):
 
 
 def _expired(path, cutoff):
+    # The session folder is removed with the transcript, so the name has to
+    # be a session id: never memory/, never anything a link leads to.
     folder = path.with_suffix("")
-    if path.is_symlink() or folder.is_symlink():
+    if not SESSION_ID.fullmatch(folder.name):
+        return False
+    if path.parent.is_symlink() or path.is_symlink() or folder.is_symlink():
         return False
     try:
         return path.stat().st_mtime < cutoff and _headless(path)
