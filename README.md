@@ -434,6 +434,39 @@ hand is headless too, and calling that a routine would be a guess.
 when a transcription is in flight — and the page lists a session only while
 its pid answers, so the card goes on its own the moment the run ends.
 
+## Which transcripts are kept
+
+Left alone, Claude Code deletes every transcript 30 days after it was last
+written, interactive or not, and a conversation that is gone cannot be
+reopened. So the deletion is split in two:
+
+- **Every interactive conversation is kept.** `cleanupPeriodDays` in
+  `~/.claude/settings.json` is set to `36500`. There is no value that means
+  *never*: `0` fails validation, and the settings reference says to pick a
+  large number. A hundred years will do.
+- **Headless runs go after 30 days.** `agentview-retention.timer` runs
+  `retention.py --delete` every night at 03:30, or at the next boot if the
+  laptop was off. It deletes a top-level transcript under
+  `~/.claude/projects/` that has not been written for 30 days and whose
+  records all say `entrypoint: sdk-cli`, together with its session folder
+  (subagent transcripts and spilled tool results). Those are routine runs and
+  `claude -p` calls, about three quarters of the transcripts on disk.
+
+Anything else is kept: a transcript with a single `cli` record, one that names
+no entrypoint, one that cannot be read, and anything reached through a link.
+What each run deleted is in `journalctl --user -u agentview-retention`.
+
+```bash
+python3 retention.py --dry-run     # what the next run would delete; deletes nothing
+cp agentview-retention.{service,timer} ~/.config/systemd/user/
+systemctl --user enable --now agentview-retention.timer
+```
+
+The same setting governs the rest of what Claude Code sweeps after 30 days
+(`file-history/`, `plans/`, `paste-cache/`, `session-env/`, `tasks/`, and so
+on), so those now stay too. Together they held about 35 MB on 2026-09-29,
+against 3.0 GB of transcripts.
+
 ## Finding one
 
 Type in the box (or press **`/`**) to filter. It matches a project's name, a
@@ -626,7 +659,10 @@ cases), reading the summary records out of a transcript, telling a routine
 from a hand-run `claude -p`, a boss from a session that has merely read the
 skill, the provider contract (a minimal session fills every field the page
 reads, a provider that raises or stalls is a badge and not a blank page, a
-Codex lock with nobody behind it is an orphan), and the log — that a heartbeat alone says nothing, that a repeated
+Codex lock with nobody behind it is an orphan), the retention job (an
+interactive transcript is never deleted, whatever its age, and neither is one
+that also carries a `cli` record, names no entrypoint or is a link), and the
+log — that a heartbeat alone says nothing, that a repeated
 error is written once, and that a fast operation writes no line at all.
 The archive's tests run on a made-up transcript holding one of every record
 kind: what is kept and what is stripped, that only `cli` transcripts count, a

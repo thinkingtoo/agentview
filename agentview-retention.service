@@ -1,0 +1,9 @@
+[Unit]
+Description=agentview — delete headless Claude transcripts older than 30 days, keep every interactive one
+
+[Service]
+Type=oneshot
+Nice=10
+IOSchedulingClass=idle
+WorkingDirectory=%h/Projects/agentview
+ExecStart=/usr/bin/python3 %h/Projects/agentview/retention.py --delete
