@@ -28,6 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import scope  # noqa: E402
 from providers import claude, registry  # noqa: E402
 
 SHELLS = {"bash", "zsh", "fish", "sh", "dash"}
@@ -630,7 +631,7 @@ def _wait_tmux_settled(max_wait=90):
     """tmux-continuum restores on server start and takes a while; wait for it
     so a pane is not built twice."""
     if _run(["tmux", "has-session"]) is None or _run(["tmux", "has-session"]).returncode != 0:
-        _run(["tmux", "new-session", "-d", "-s", "_agentview_boot"])
+        _run(_tmux_argv(["tmux", "new-session", "-d", "-s", "_agentview_boot"]))
         started = True
     else:
         started = False
@@ -645,6 +646,14 @@ def _wait_tmux_settled(max_wait=90):
         time.sleep(1)
     if started:
         _run(["tmux", "kill-session", "-t", "=_agentview_boot"])
+
+
+def _tmux_argv(argv):
+    """A tmux command that can start the server runs in a scope of its own.
+    The server is what a restart of agentview.service must not kill: it owns
+    every pane, and the panes go with it. Every other tmux command talks to a
+    server that is already running and starts nothing that outlives it."""
+    return scope.wrap(argv, "tmux server") if argv[:2] == ["tmux", "new-session"] else argv
 
 
 def _claude_cmd(rec):
@@ -666,7 +675,7 @@ def restore(snap, dry=False, log=print):
         if dry:
             return
         seed_name(rec["sessionId"], rec["name"])
-        res = _run(argv)
+        res = _run(_tmux_argv(argv))
         if res is None or res.returncode != 0:
             log(f"  failed: {res.stderr.strip() if res else 'no tmux/wezterm'}")
             return
@@ -697,7 +706,7 @@ def restore(snap, dry=False, log=print):
                             else ["tmux", "new-window", "-d", "-t", f"={name}:{w['index']}"])
                     if rec:
                         seed_name(rec["sessionId"], rec["name"])
-                    _run(base + ["-c", first["cwd"]] + cmd)
+                    _run(_tmux_argv(base + ["-c", first["cwd"]] + cmd))
                     if not exists:
                         _run(["tmux", "move-window", "-s", f"={name}:", "-t", f"={name}:{w['index']}"])
                     exists = True
@@ -852,6 +861,7 @@ def _start_gui(cwd, argv, rec):
     if rec:
         seed_name(rec["sessionId"], rec["name"])
     cmd = ["wezterm", "start"] + (["--cwd", cwd] if cwd else []) + (["--"] + argv if argv else [])
+    cmd = scope.wrap(cmd, "wezterm window")
     subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, start_new_session=True)
     deadline = time.time() + 20

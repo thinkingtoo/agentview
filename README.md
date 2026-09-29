@@ -362,6 +362,25 @@ systemctl --user enable --now agentview-summaries.timer
 Bound to `127.0.0.1` deliberately: the page shows your prompts verbatim, which
 is client work and occasionally a credential someone pasted into an error.
 
+### Restarting the service, and what survives it
+
+`systemctl --user restart agentview` kills every process in the service's
+cgroup. A tmux server or a WezTerm window that the server started (a **↺
+reopen**, a click in the closed list when no WezTerm window is open) is in
+that cgroup unless it was started in a scope of its own, and its sessions go
+with it. Check before you restart: `systemctl --user status agentview` lists
+what is in there.
+
+- From this version on, `scope.py` starts the tmux server and the WezTerm
+  window that restore and the closed list open with `systemd-run --user
+  --scope`, so a restart of the service leaves them running. Sessions that were
+  started before that stay in the service's cgroup until the next restore.
+- Without a user manager (no `systemd-run`, no bus) it starts them as before and
+  writes `scope.unavailable` to the event log. `AGENTVIEW_SCOPE=off` turns it off.
+- Test changes to the server on a second server: another port, its own
+  `XDG_STATE_HOME`, and never `agentview.service`. `scripts/scope-check` does
+  this with a real transient unit and fake `wezterm`, `claude` and `pgrep`.
+
 ## Speed
 
 Transcripts are big — 58 MB across ten sessions here, one of them 27 MB — and

@@ -114,6 +114,8 @@ import os
 import shutil
 import subprocess
 
+import scope
+
 
 def _run(argv, timeout=4):
     try:
@@ -285,6 +287,9 @@ def open_tab(argv, cwd=None):
     gui = _pid_of_command("wezterm-gui")
     if not gui:
         cmd = ["wezterm", "start"] + (["--cwd", cwd] if cwd else []) + ["--"] + argv
+        # Started from the server, the window would share its cgroup and be
+        # killed with it; the window that is already there is asked instead.
+        cmd = scope.wrap(cmd, "wezterm window")
         try:
             subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=True)

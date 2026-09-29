@@ -1,0 +1,284 @@
+#!/usr/bin/env python3
+"""Does a restart of the service leave what the server started running?
+
+Runs the real server code in a transient user unit under another name and
+port -- never `agentview.service` -- with every leaf faked: `wezterm` is a
+window that is a `sleep`, `claude` a `sleep`, `pgrep` says no window is open,
+and tmux uses a private socket (TMUX_TMPDIR). Nothing on the desktop is
+touched. Then, over HTTP as the page does it:
+
+  1. POST /api/restore   the reopen button: tmux server, tmux sessions, windows
+  2. POST /api/revive    a click in the closed list: jump.open_tab
+
+It writes down each process that came out of it and the cgroup it is in,
+restarts the unit, and looks at which are still alive. A second run does the
+same with AGENTVIEW_SCOPE=off, the old behaviour: it has to lose them all, or
+the check proves nothing.
+
+    scripts/scope-check            exit 0 if the scoped run keeps every process
+                                   and the control run loses every one
+"""
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+import snapshot  # noqa: E402  (for the boot id the fixtures must carry)
+
+FAKES = {
+    "pgrep": "#!/bin/sh\nexit 1\n",
+    "wezterm": """#!/bin/bash
+case "$1" in
+  start) echo "$$ $*" >> "$SCOPE_CHECK/window"; exec sleep 3600 ;;
+  cli) case " $* " in *" list "*) echo '[]' ;; esac; exit 0 ;;
+esac
+""",
+    "claude": """#!/bin/bash
+echo "$$ $*" >> "$SCOPE_CHECK/claude"
+exec sleep 3600
+""",
+}
+OLD, NEW = "0" * 8 + "-0000-4000-8000-00000000000a", "0" * 8 + "-0000-4000-8000-00000000000c"
+TWO = "0" * 8 + "-0000-4000-8000-00000000000b"
+
+
+def sh(*argv, **kw):
+    return subprocess.run(argv, capture_output=True, text=True, **kw)
+
+
+def write_fixtures(box):
+    for name, body in FAKES.items():
+        path = box / "bin" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+        path.chmod(0o755)
+    snaps = box / "cfg" / "agentview" / "snapshots"
+    snaps.mkdir(parents=True)
+    (box / "cfg" / "sessions").mkdir()
+    now = time.time()
+    # What the last boot had: a tmux session with one conversation, a tab that
+    # attaches to it, and a conversation straight in a window.
+    (snaps / "old.json").write_text(json.dumps({
+        "version": 2, "taken_at": now - 3600, "boot_id": "an-earlier-boot", "terminals": [],
+        "sessions": [{"sessionId": OLD, "name": "one", "cwd": "/tmp", "flags": "",
+                      "tmux": {"session": "w", "window": 0, "pane": 0}},
+                     {"sessionId": TWO, "name": "two", "cwd": "/tmp", "flags": ""}],
+        "tmux": [{"name": "w", "windows": [{"index": 0, "name": "w", "layout": "x", "panes": [
+            {"index": 0, "cwd": "/tmp", "sessionId": OLD}]}]}],
+        "wezterm": [{"tabs": [{"kind": "tmux", "session": "w"}, {"kind": "claude", "sessionId": TWO}]}]}))
+    # What this boot had and lost, for the closed list.
+    (snaps / "now.json").write_text(json.dumps({
+        "version": 2, "taken_at": now - 60, "boot_id": snapshot.boot_id(), "terminals": [],
+        "sessions": [{"sessionId": NEW, "name": "three", "cwd": "/tmp", "flags": ""}],
+        "tmux": [], "wezterm": []}))
+
+
+def real_tmux():
+    """The sessions of the tmux server this shell is really in: the one thing
+    this check must leave exactly as it found it."""
+    res = sh("tmux", "list-sessions", "-F", "#{session_name}")
+    return sorted(res.stdout.split()) if res.returncode == 0 else []
+
+
+def preflight(box):
+    """Read-only: will tmux, given the sandbox environment, use the sandbox
+    socket? tmux silently uses the REAL socket when TMUX_TMPDIR does not exist,
+    and fails with only "File name too long" when the socket path is over about
+    107 bytes; either way the restore below would act on the real server. So
+    ask, without starting anything, which socket it would use."""
+    socket_path = box / "tmux" / f"tmux-{os.getuid()}" / "default"
+    if len(str(socket_path)) > 100:
+        raise SystemExit(f"the sandbox socket path is too long for a unix socket: {socket_path}")
+    env = {k: v for k, v in os.environ.items() if k != "TMUX"}
+    env["TMUX_TMPDIR"] = str(box / "tmux")
+    res = subprocess.run(["tmux", "list-sessions"], capture_output=True, text=True, env=env)
+    if res.returncode == 0 or str(socket_path) not in res.stderr:
+        raise SystemExit("tmux would not use the sandbox socket (it answered: "
+                         f"{(res.stdout or res.stderr).strip()[:100]!r}); starting nothing")
+
+
+def free_port():
+    """A port nobody listens on now. Ports are never hard-coded: another
+    worker's server may be on the one you would have picked, and a request
+    that lands there is a request to their server."""
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def listener(port):
+    """The pid listening on the port, or None."""
+    out = sh("ss", "-ltnp", f"sport = :{port}").stdout
+    hit = re.search(r"pid=(\d+)", out)
+    return int(hit.group(1)) if hit else None
+
+
+def unit_pid(unit):
+    """The unit's main pid, but only while the unit is active."""
+    shown = sh("systemctl", "--user", "show", "-p", "ActiveState", "-p", "MainPID", f"{unit}.service").stdout
+    fields = dict(line.split("=", 1) for line in shown.splitlines() if "=" in line)
+    return int(fields.get("MainPID") or 0) if fields.get("ActiveState") == "active" else 0
+
+
+def ours(unit, port):
+    """Is what answers on this port the server this script started? Checked
+    before every request, because the answer to a request is not proof: the
+    unit can fail to bind and something else can already be listening."""
+    pid = unit_pid(unit)
+    return bool(pid) and listener(port) == pid
+
+
+def post(port, path, body=None):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=json.dumps(body or {}).encode(),
+                                 headers={"Content-Type": "application/json", "X-Fleet": "1"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.load(r)
+
+
+def wait_for(what, ok, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        if ok():
+            return True
+        time.sleep(0.5)
+    raise SystemExit(f"timed out waiting for {what}")
+
+
+def cgroup(pid):
+    try:
+        return Path(f"/proc/{pid}/cgroup").read_text().strip().removeprefix("0::")
+    except OSError:
+        return None
+
+
+def alive(pid):
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
+        return False
+
+
+def marked(pid, box):
+    """Does this process carry this run's sandbox marker in its environment?"""
+    try:
+        return f"SCOPE_CHECK={box}\0".encode() in Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return False
+
+
+def pids_in(box, name):
+    try:
+        return [int(line.split()[0]) for line in (box / name).read_text().splitlines()]
+    except OSError:
+        return []
+
+
+def run(scoped):
+    port = free_port()
+    # Short, because it holds a unix socket; and on a tmpfs, because it is private.
+    box = Path(tempfile.mkdtemp(prefix="avsc-", dir=os.environ.get("XDG_RUNTIME_DIR") or "/tmp"))
+    (box / "tmux").mkdir()
+    unit = f"agentview-scope-check-{'on' if scoped else 'off'}"
+    socket_path = box / "tmux" / f"tmux-{os.getuid()}" / "default"
+    tmux = ["tmux", "-S", str(socket_path)]
+    try:
+        preflight(box)
+        write_fixtures(box)
+        (box / "config.json").write_text(json.dumps({"port": port}))
+        env = {"PATH": f"{box / 'bin'}:{os.environ['PATH']}", "CLAUDE_CONFIG_DIR": str(box / "cfg"),
+               "TMUX_TMPDIR": str(box / "tmux"), "XDG_STATE_HOME": str(box / "state"),
+               "SCOPE_CHECK": str(box), "AGENTVIEW_SCOPE": "" if scoped else "off"}
+        real_windows, real_sessions = sh("pgrep", "-x", "wezterm-gui").stdout.split(), real_tmux()
+        sh("systemctl", "--user", "reset-failed", f"{unit}.service")
+        code = (f"import sys, pathlib; sys.path.insert(0, {str(REPO)!r}); import fleet; "
+                f"fleet.CONFIG = pathlib.Path({str(box / 'config.json')!r}); import server; server.main()")
+        started = sh("systemd-run", "--user", f"--unit={unit}", "--collect", f"--working-directory={REPO}",
+                     *[f"--setenv={k}={v}" for k, v in env.items()], sys.executable, "-c", code)
+        if started.returncode:
+            raise SystemExit(f"could not start {unit}: {started.stderr.strip()}")
+        wait_for(f"{unit} to listen on {port}", lambda: ours(unit, port), 20)
+        server_cg = cgroup(unit_pid(unit))
+
+        assert ours(unit, port), "the port is not this unit's: sending nothing"
+        post(port, "/api/restore")
+        log = box / "cfg" / "agentview" / "restore.log"
+        wait_for("the restore", lambda: log.exists() and "resumed" in log.read_text(), 240)
+        time.sleep(5)                        # the tab naming that follows it
+        assert ours(unit, port), "the port is not this unit's: sending nothing"
+        revived = post(port, "/api/revive", {"id": NEW})
+        wait_for("the revive", lambda: not revived.get("ok") or NEW in (box / "window").read_text(), 20)
+
+        # Every process that came out of it: the fakes recorded their pids, and
+        # tmux knows its own server and panes.
+        server = sh(*tmux, "display-message", "-p", "#{pid}")
+        found = {"tmux server": [int(server.stdout)] if server.returncode == 0 else [],
+                 "tmux pane": [int(p) for p in sh(*tmux, "list-panes", "-a", "-F", "#{pane_pid}").stdout.split()],
+                 "window": pids_in(box, "window"), "claude": pids_in(box, "claude")}
+        rows = [(kind, pid, cgroup(pid)) for kind, group in found.items() for pid in group]
+        sh("systemctl", "--user", "restart", f"{unit}.service")
+        time.sleep(3)
+        after = {pid: alive(pid) for _, pid, _ in rows}
+        tmux_after = sh(*tmux, "list-sessions").returncode == 0
+        return {"unit": unit, "server_cg": server_cg, "rows": rows, "after": after,
+                "tmux_after": tmux_after, "revived": revived.get("ok"),
+                "real_windows_untouched": sh("pgrep", "-x", "wezterm-gui").stdout.split() == real_windows,
+                "real_tmux_untouched": real_tmux() == real_sessions}
+    finally:
+        sh("systemctl", "--user", "stop", f"{unit}.service")
+        # Whatever got started, however far the run got: the fakes wrote their
+        # pids down, and tmux knows its own. Only processes that carry this
+        # run's marker are touched.
+        mine = set(pids_in(box, "window") + pids_in(box, "claude"))
+        if socket_path.exists():
+            mine |= {int(p) for p in sh(*tmux, "list-panes", "-a", "-F", "#{pane_pid}").stdout.split()}
+        for pid in sorted(mine):
+            scope = (cgroup(pid) or "").rsplit("/", 1)[-1]
+            if scope.endswith(".scope") and marked(pid, box):
+                sh("systemctl", "--user", "stop", scope)
+        if socket_path.exists():
+            sh(*tmux, "kill-server")
+        for pid in sorted(mine):
+            if alive(pid) and marked(pid, box):
+                os.kill(pid, 9)
+        shutil.rmtree(box, ignore_errors=True)
+
+
+def show(result):
+    print(f"\n{result['unit']}: the unit's own cgroup is {result['server_cg']}")
+    print(f"  {'process':12} {'pid':>8}  {'cgroup':58} after restart")
+    for kind, pid, cg in result["rows"]:
+        where = "the unit's cgroup" if cg == result["server_cg"] else (cg or "gone").replace(
+            f"/user.slice/user-{os.getuid()}.slice/user@{os.getuid()}.service/", "")
+        print(f"  {kind:12} {pid:>8}  {where:58} {'ALIVE' if result['after'][pid] else 'dead'}")
+    print(f"  the closed-list click worked: {result['revived']}; the real WezTerm windows were not touched: "
+          f"{result['real_windows_untouched']}; the real tmux sessions were not touched: {result['real_tmux_untouched']}")
+
+
+def main():
+    if not shutil.which("systemd-run"):
+        raise SystemExit("needs systemd-run and a user manager")
+    on, off = run(True), run(False)
+    show(on)
+    show(off)
+    kept = bool(on["rows"]) and all(on["after"].values()) and on["tmux_after"]
+    lost = bool(off["rows"]) and not any(off["after"].values()) and not off["tmux_after"]
+    kinds = {k for k, _, _ in on["rows"]}
+    covered = {"tmux server", "tmux pane", "window", "claude"} <= kinds
+    clean = all(r[k] for r in (on, off) for k in ("real_windows_untouched", "real_tmux_untouched"))
+    print(f"\nscoped run kept every process: {kept}\ncontrol run lost every process: {lost}\n"
+          f"every kind was started (tmux server, pane, window, claude): {covered}\n"
+          f"nothing real was touched: {clean}")
+    return 0 if kept and lost and covered and clean and on["revived"] and off["revived"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
