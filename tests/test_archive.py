@@ -202,6 +202,32 @@ class Indexing(Home, unittest.TestCase):
         self.assertEqual(self.rows("SELECT prompt FROM passages"), [("only this now",)])
         self.assertEqual(archive.search("kettle", path=self.db), [])
 
+    def test_a_rewrite_of_the_same_size_is_read_from_scratch(self):
+        path = self.write(SID, KETTLE)
+        self.update()
+        size = path.stat().st_size
+        # Every "kettle" becomes "kittle": the same bytes in number, different
+        # words, and the old ones must stop being findable.
+        path.write_text(path.read_text().replace("kettle", "kittle"))
+        self.assertEqual(path.stat().st_size, size)
+        os.utime(path, ns=(path.stat().st_atime_ns, path.stat().st_mtime_ns + 1_000_000))
+        self.assertEqual(self.update()["changed"], 1)
+        self.assertEqual(archive.search("kettle", path=self.db), [])
+        self.assertEqual(len(archive.search("kittle", path=self.db)), 1)
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM passages"), [(4,)])
+
+    def test_a_rewrite_that_also_grew_is_read_from_scratch(self):
+        path = self.write(SID, KETTLE)
+        self.update()
+        self.write(SID, [typed(1, "a different start entirely"), said(2, "Yes.")] + KETTLE[2:]
+                   + [said(30, "More than before.")])
+        self.assertGreater(path.stat().st_size, 0)
+        self.update()
+        self.assertEqual(self.rows("SELECT prompt FROM passages WHERE exchange=0"),
+                         [("a different start entirely",)])
+        self.assertEqual(self.rows("SELECT COUNT(*) FROM passages WHERE prompt='Why does the kettle whistle?'"),
+                         [(1,)])
+
     def test_a_transcript_that_is_gone_leaves_the_index(self):
         path = self.write(SID, KETTLE)
         self.write(OTHER, [typed(1, "unrelated", sid=OTHER)])
@@ -225,6 +251,20 @@ class Naming(Home, unittest.TestCase):
             {"pid": 123, "sessionId": SID, "name": "Cleo", "updatedAt": 5}))
         self.update()
         self.assertEqual(self.rows("SELECT name FROM conversations"), [("Cleo",)])
+
+    def test_a_rename_while_the_transcript_is_idle_is_caught(self):
+        self.write(SID, KETTLE)
+        peer = self.root / "sessions" / "123.json"
+        peer.parent.mkdir()
+        peer.write_text(json.dumps({"pid": 123, "sessionId": SID, "name": "Cleo", "updatedAt": 5}))
+        self.update()
+        peer.write_text(json.dumps({"pid": 123, "sessionId": SID, "name": "Tobias", "updatedAt": 6}))
+        self.assertEqual(self.update()["changed"], 0)
+        self.assertEqual(self.rows("SELECT name FROM conversations"), [("Tobias",)])
+        # And it outlives the peer file.
+        peer.unlink()
+        self.update()
+        self.assertEqual(self.rows("SELECT name FROM conversations"), [("Tobias",)])
 
     def test_after_the_peer_file_the_log_remembers_the_name(self):
         self.write(SID, KETTLE)
@@ -259,6 +299,19 @@ class Searching(Home, unittest.TestCase):
         self.assertEqual(len({h["id"] for h in hits}), 3)
         self.assertEqual(hits[0]["passage"]["prompt"],
                          "\x02copper\x03 \x02copper\x03 \x02copper\x03 pipes")
+
+    def test_one_conversation_with_many_hits_cannot_crowd_out_the_rest(self):
+        loud = "00000000-0000-4000-8000-00000000000d"
+        records = []
+        for i in range(2100):
+            records += [typed(2 * i, "copper copper copper copper", sid=loud),
+                        said(2 * i + 1, "Copper, copper.", sid=loud)]
+        self.write(loud, records)
+        self.update()
+        ids = [h["id"] for h in archive.search("copper", path=self.db)]
+        self.assertEqual(ids[0], loud)
+        self.assertIn(OTHER, ids)
+        self.assertEqual(len(ids), 4)
 
     def test_a_row_says_what_the_conversation_is(self):
         hit = archive.search("whistle", path=self.db, live={SID})[0]

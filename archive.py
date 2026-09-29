@@ -21,12 +21,14 @@ their last exchange -- the one that may still be growing.
     archive.py search WORDS    what the page's search box would show
     archive.py stats           what the index holds, and how the last run went
 
-Schema (version 1). Change it by bumping SCHEMA_VERSION: the index is derived
+Schema (version 2). Change it by bumping SCHEMA_VERSION: the index is derived
 from the transcripts, so a version it does not know is rebuilt from scratch.
 
     conversations  one row per transcript: id (the session id), path, cwd,
                    name, title, started, active, and where reading stopped
-                   (size, mtime, tail, exchanges)
+                   (size, mtime, tail, exchanges, and mark: a fingerprint of
+                   the file's head and of the line at the tail, to tell an
+                   append from a rewrite)
     passages       id, conversation, exchange, piece, at, uuid, prompt, reply
                    -- (conversation, exchange, piece) is unique
     passages_fts   FTS5 over passages(prompt, reply), kept in step by triggers
@@ -39,6 +41,7 @@ passage ids (vectors, ticket 04) should drop with the passage.
 """
 import datetime
 import fcntl
+import hashlib
 import json
 import re
 import sqlite3
@@ -49,7 +52,7 @@ from pathlib import Path
 import log
 from providers import claude, registry
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -64,7 +67,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     size      INTEGER NOT NULL DEFAULT 0,
     mtime     REAL NOT NULL DEFAULT 0,
     tail      INTEGER NOT NULL DEFAULT 0,
-    exchanges INTEGER NOT NULL DEFAULT 0
+    exchanges INTEGER NOT NULL DEFAULT 0,
+    mark      TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS skipped (
     path       TEXT PRIMARY KEY,
@@ -257,6 +261,16 @@ def pieces(prompt, reply, size=PIECE):
              reply[max(a - off, 0):max(b - off, 0)].strip()) for a, b in cuts]
 
 
+def fingerprint(path, tail, size=4096):
+    """The file's first bytes and the line reading resumes at. A transcript
+    only ever grows; if either of these changed, it was rewritten."""
+    with open(path, "rb") as fh:
+        head = fh.read(size)
+        fh.seek(tail)
+        at_tail = fh.read(size).split(b"\n", 1)[0]
+    return hashlib.sha1(head + b"\0" + at_tail).hexdigest()
+
+
 def entrypoint(path, lines=400):
     """What started the conversation: `cli` for a terminal, `sdk-cli` for
     `claude -p`. None until the transcript has said."""
@@ -309,12 +323,14 @@ def connect(path=None):
 def index_file(con, path, sid):
     """Bring one transcript's passages up to date. True if anything was read."""
     st = path.stat()
-    row = con.execute("SELECT size, mtime, tail, exchanges FROM conversations WHERE id=?",
+    row = con.execute("SELECT size, mtime, tail, exchanges, mark FROM conversations WHERE id=?",
                       (sid,)).fetchone()
     if row and (row[0], row[1]) == (st.st_size, st.st_mtime):
         return False
-    if row and st.st_size < row[0]:
-        # Shorter than when last read: rewritten, not appended to. Start over.
+    if row and (st.st_size <= row[0] or fingerprint(path, row[2]) != row[4]):
+        # Touched without growing, or grown from something other than what
+        # was read: rewritten, not appended to. Start over, so nothing that
+        # is no longer in the transcript stays findable.
         con.execute("DELETE FROM passages WHERE conversation=?", (sid,))
         con.execute("DELETE FROM conversations WHERE id=?", (sid,))
         row = None
@@ -329,20 +345,20 @@ def index_file(con, path, sid):
                             " VALUES (?,?,?,?,?,?,?)", (sid, n, k, ex["at"], ex["uuid"], p, r))
     if exchanges:
         tail, done = exchanges[-1]["offset"], done + len(exchanges) - 1
-    title = claude.last_title(path)
+    title, mark = claude.last_title(path), fingerprint(path, tail)
     if row:
-        con.execute("UPDATE conversations SET path=?, title=?, size=?, mtime=?, tail=?, exchanges=?,"
+        con.execute("UPDATE conversations SET path=?, title=?, size=?, mtime=?, tail=?, exchanges=?, mark=?,"
                     " cwd=CASE WHEN cwd='' THEN ? ELSE cwd END,"
                     " started=CASE WHEN started='' THEN ? ELSE started END,"
                     " active=MAX(active, ?),"
                     " name=CASE WHEN ?<>'' THEN ? ELSE name END WHERE id=?",
-                    (str(path), title, st.st_size, st.st_mtime, tail, done, facts["cwd"],
+                    (str(path), title, st.st_size, st.st_mtime, tail, done, mark, facts["cwd"],
                      facts["first"], facts["last"], facts["named"], facts["named"], sid))
     else:
         con.execute("INSERT INTO conversations (id, path, cwd, name, title, started, active,"
-                    " size, mtime, tail, exchanges) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    " size, mtime, tail, exchanges, mark) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (sid, str(path), facts["cwd"], facts["named"], title, facts["first"],
-                     facts["last"], st.st_size, st.st_mtime, tail, done))
+                     facts["last"], st.st_size, st.st_mtime, tail, done, mark))
     return True
 
 
@@ -392,10 +408,13 @@ class Names:
     def __init__(self, cfg=None, logs=None):
         self.cfg, self.logs, self.peers, self.logged = cfg, logs, None, None
 
-    def __call__(self, sid):
+    def live(self):
         if self.peers is None:
             self.peers = peer_names(self.cfg)
-        if sid in self.peers:
+        return self.peers
+
+    def __call__(self, sid):
+        if sid in self.live():
             return self.peers[sid]
         if self.logged is None:
             self.logged = logged_names(self.logs)
@@ -437,6 +456,12 @@ def update(path=None, root=None, cfg=None, logs=None, say=lambda *_: None):
                 say(f"  {len(changed)}  {f.name}")
         except OSError:
             con.rollback()                # gone between the listing and the read
+    # A session renamed while its transcript sat still: the peer file has the
+    # new name, and it has to be caught before that file goes.
+    stored = dict(con.execute("SELECT id, name FROM conversations"))
+    con.executemany("UPDATE conversations SET name=? WHERE id=?",
+                    [(name, sid) for sid, name in names.live().items()
+                     if sid in stored and stored[sid] != name])
     # A transcript that is gone cannot be reopened, so it cannot be found.
     # An empty listing is a missing directory, not an empty history.
     if files:
@@ -463,9 +488,6 @@ def update(path=None, root=None, cfg=None, logs=None, say=lambda *_: None):
 # ------------------------------------------------------------ searching
 
 WORD = re.compile(r'"([^"]*)"|(\S+)')
-# Passages ranked before grouping. Enough for a page of conversations even
-# when one long conversation holds most of the hits.
-CANDIDATES = 2000
 
 
 def fts_query(words):
@@ -499,15 +521,15 @@ def search(words, limit=30, path=None, live=()):
         return []
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
     try:
-        best = {}
-        for rowid, conv in con.execute(
-                "SELECT rowid, (SELECT conversation FROM passages WHERE id=passages_fts.rowid)"
-                " FROM passages_fts WHERE passages_fts MATCH ? ORDER BY rank LIMIT ?",
-                (query, CANDIDATES)):
-            if conv not in best:
-                best[conv] = rowid
-                if len(best) >= limit:
-                    break
+        # One row per conversation, carrying its best passage: with a single
+        # MIN() in the query, SQLite takes the bare p.id from the row that
+        # holds the minimum. Grouped here rather than after a LIMIT, so one
+        # conversation with a thousand hits cannot crowd out the others.
+        best = {conv: rowid for conv, rowid, _ in con.execute(
+            "SELECT p.conversation, p.id, MIN(passages_fts.rank) AS score"
+            " FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid"
+            " WHERE passages_fts MATCH ? GROUP BY p.conversation ORDER BY score LIMIT ?",
+            (query, limit))}
         if not best:
             return []
         marks = ",".join("?" * len(best))

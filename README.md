@@ -98,18 +98,22 @@ A row does not reopen anything yet: it tells you which conversation it was.
 - **Names.** The name the conversation last had: its peer file while it
   lasts, then agentview's own log (`~/.local/state/agentview/events.jsonl`,
   which goes back as far as its rotation), then whatever Claude Code wrote
-  into the transcript. The index keeps the name once found, so it outlives
-  both.
+  into the transcript. Every run takes the peer files' names again, so a
+  session renamed while it sat idle is caught. The index keeps the name once
+  found, so it outlives both.
 - **The index** is one SQLite file with FTS5, `~/.claude/agentview/archive.db`,
   mode 0600 like the transcripts it comes from. Nothing leaves the machine.
 - **Keeping it current.** `agentview-archive.timer` runs `archive.py update`
   every 5 minutes. It reads only transcripts whose size or mtime moved, and
   only from the start of their last exchange, the one that may still be
-  growing. A transcript that shrank is read again from scratch; one that is
-  gone leaves the index.
-- **Speed.** The first run over 534 conversations took 19 s and wrote 7,629
-  passages (48 MB). A run with nothing new takes 0.05 s, and a search takes a
-  few milliseconds. The search is its own request (`/api/search?q=`) and never
+  growing. A transcript that moved without growing, or whose first bytes or
+  resume line changed, was rewritten rather than appended to, and is read
+  again from scratch, so nothing it no longer says stays findable. One that
+  is gone leaves the index.
+- **Speed.** The first run over 534 conversations took 19 s on a quiet
+  machine and 38 s on a busy one (load 6.5), and wrote 7,629 passages
+  (48 MB); half of it is parsing JSON. A run with nothing new takes under
+  0.1 s, and a search a few milliseconds, grouped by conversation in SQL. The search is its own request (`/api/search?q=`) and never
   part of the roster poll.
 
 ```bash
