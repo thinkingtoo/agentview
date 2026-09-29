@@ -17,6 +17,12 @@ Fail-open. Without a user manager to talk to (no `systemd-run`, no bus) the
 command comes back as it was: starting it in the service's cgroup beats not
 starting it. The reason goes to the event log. `AGENTVIEW_SCOPE=off` turns
 scoping off, to compare against the old behaviour.
+
+The probe and the launch are two calls. If the user manager goes away between
+them, that one launch fails like any launch that fails. Running the command
+again unwrapped is not an answer: the exit status of `systemd-run --scope` is
+the command's own, so a failed scope and a command that failed cannot be told
+apart, and a window that was started would be started twice.
 """
 import os
 import shutil

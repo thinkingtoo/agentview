@@ -373,10 +373,17 @@ what is in there.
 
 - From this version on, `scope.py` starts the tmux server and the WezTerm
   window that restore and the closed list open with `systemd-run --user
-  --scope`, so a restart of the service leaves them running. Sessions that were
-  started before that stay in the service's cgroup until the next restore.
+  --scope`, so a restart of the service leaves them running. That holds for a
+  server or window started that way. Restore reuses a tmux server and a WezTerm
+  window that are already running and does not move them, so the ones running
+  when this version arrives stay in the service's cgroup, sessions included,
+  until they are shut down and started again: the login restore does that after
+  a reboot.
 - Without a user manager (no `systemd-run`, no bus) it starts them as before and
   writes `scope.unavailable` to the event log. `AGENTVIEW_SCOPE=off` turns it off.
+  The check for a user manager and the launch are two calls; if the manager goes
+  away in the few milliseconds between them, that one launch fails like any
+  launch that fails.
 - Test changes to the server on a second server: another port, its own
   `XDG_STATE_HOME`, and never `agentview.service`. `scripts/scope-check`
   proves the scope itself: in a transient unit of its own, with no server and no
