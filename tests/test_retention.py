@@ -137,6 +137,20 @@ class Prune(unittest.TestCase):
         self.assertEqual(retention.prune(self.root, NOW, days=30), [])
         self.assertTrue(headless.exists())
 
+    def test_the_projects_folder_itself_may_be_a_link(self):
+        # ~/.claude/projects moved to another disk: resolved once, and what
+        # is below it is judged like anywhere else.
+        disk = Path(self.tmp.name) / "other-disk"
+        headless = transcript(disk / "-home-u-p", "17171717-aaaa-aaaa-aaaa-171717171717", "sdk-cli", 45)
+        interactive = transcript(disk / "-home-u-p", "18181818-aaaa-aaaa-aaaa-181818181818", "cli", 45)
+        self.root.symlink_to(disk)
+
+        gone = retention.prune(self.root, NOW, days=30)
+
+        self.assertEqual([p.name for p in gone], [headless.name])
+        self.assertFalse(headless.exists())
+        self.assertTrue(interactive.exists())
+
     def test_only_a_transcript_named_by_a_session_id_is_considered(self):
         memory = transcript(self.proj, "memory", "sdk-cli", 45)
         (self.proj / "memory" / "notes.md").write_text("x")

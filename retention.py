@@ -19,6 +19,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import sys
 import time
 from pathlib import Path
@@ -33,44 +34,101 @@ DAYS = 30
 SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
-def _headless(path):
+def _headless(fh):
     """True only if the file reads cleanly and every record naming an
     entrypoint says sdk-cli. A line that does not parse could have been the
     one that said cli, so it keeps the transcript."""
     seen = False
-    with open(path, "rb") as fh:
-        for line in fh:
-            try:
-                record = json.loads(line)
-            except ValueError:
-                return False
-            if not isinstance(record, dict):
-                return False
-            entry = record.get("entrypoint")
-            if entry is None:
-                continue
-            if entry != HEADLESS:
-                return False
-            seen = True
+    for line in fh:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            return False
+        if not isinstance(record, dict):
+            return False
+        entry = record.get("entrypoint")
+        if entry is None:
+            continue
+        if entry != HEADLESS:
+            return False
+        seen = True
     return seen
 
 
-def _linked(path):
-    folder = path.with_suffix("")
-    return path.parent.is_symlink() or path.is_symlink() or folder.is_symlink()
-
-
-def _judge(path, cutoff):
-    """The transcript's stat if it is expired and headless, else None."""
-    # The session folder is removed with the transcript, so the name has to
-    # be a session id: never memory/, never anything a link leads to.
-    if not SESSION_ID.fullmatch(path.stem) or _linked(path):
-        return None
+def _lstat(name, fd):
     try:
-        st = path.stat()
-        return st if st.st_mtime < cutoff and _headless(path) else None
-    except OSError:
+        return os.stat(name, dir_fd=fd, follow_symlinks=False)
+    except FileNotFoundError:
         return None
+
+
+def _same(a, b):
+    return (a.st_ino, a.st_size, a.st_mtime_ns) == (b.st_ino, b.st_size, b.st_mtime_ns)
+
+
+def _judge(name, fd, cutoff):
+    """The transcript's stat if it is expired and headless, else None.
+    Nothing here follows a link: a transcript or session folder that is one
+    is not a candidate."""
+    st = _lstat(name, fd)
+    if st is None or not stat.S_ISREG(st.st_mode) or st.st_mtime >= cutoff:
+        return None
+    folder = _lstat(name[:-len(".jsonl")], fd)
+    if folder is not None and not stat.S_ISDIR(folder.st_mode):
+        return None
+    with os.fdopen(os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd), "rb") as fh:
+        if not _same(os.fstat(fh.fileno()), st):
+            return None
+        return st if _headless(fh) else None
+
+
+def _put_back(tmp, name, fd):
+    """Undo a rename without overwriting whatever took the name meanwhile."""
+    if _lstat(name, fd) is not None:
+        return False
+    os.rename(tmp, name, src_dir_fd=fd, dst_dir_fd=fd)
+    return True
+
+
+def _remove(name, fd, judged, path, warn):
+    """Delete one transcript and its session folder, or leave both as they
+    were. Claude Code appends to a transcript by path and holds no handle
+    open (15 running sessions checked, 2026-09-29), so once the transcript is
+    renamed nothing can write to it: a resume that arrives now starts a new
+    file under the old name, which is never touched."""
+    sid = name[:-len(".jsonl")]
+    tag = f".retention-{os.getpid()}"
+    try:
+        os.rename(name, name + tag, src_dir_fd=fd, dst_dir_fd=fd)
+    except OSError as err:
+        warn(f"kept {path}: {err}")
+        return False
+    try:
+        now = _lstat(name + tag, fd)
+        if now is None or not _same(now, judged):
+            raise OSError("it changed while it was being judged")
+        folder = _lstat(sid, fd)
+        if folder is not None:
+            if not stat.S_ISDIR(folder.st_mode):
+                raise OSError("its session folder became a link")
+            os.rename(sid, sid + tag, src_dir_fd=fd, dst_dir_fd=fd)
+            try:
+                shutil.rmtree(sid + tag, dir_fd=fd)
+            except OSError:
+                _put_back(sid + tag, sid, fd)
+                raise
+        os.unlink(name + tag, dir_fd=fd)
+        return True
+    except OSError as err:
+        try:
+            back = _put_back(name + tag, name, fd)
+        except OSError:
+            back = False
+        if back:
+            warn(f"kept {path}: {err}")
+        else:
+            warn(f"kept {path} as {name + tag}: {err}, and a new transcript took its name")
+        return False
 
 
 def _stderr(message):
@@ -81,37 +139,42 @@ def prune(root, now, days=DAYS, dry_run=False, each=None, warn=_stderr):
     """Delete (or with dry_run, only name) the expired headless transcripts
     under root, each with its session folder. Returns the paths deleted.
     `each` is called with every one just before it goes; `warn` with every
-    one that was judged expired and still kept."""
+    one that was judged expired and still kept.
+
+    root itself may be a link, to another disk say; it is resolved once.
+    Below it every project is opened without following links and worked on
+    through that handle, so a path swapped for a link meanwhile leads nowhere."""
     gone = []
-    for path in sorted(Path(root).glob("*/*.jsonl")):
-        judged = _judge(path, now - days * 86400)
-        if judged is None:
-            continue
-        if each:
-            each(path)
-        if dry_run:
-            gone.append(path)
-            continue
-        # Judging reads the whole file. Anything written meanwhile, a resume
-        # above all, means the verdict is about a file that no longer exists.
+    root = Path(root).resolve()
+    try:
+        projects = sorted(os.listdir(root))
+    except OSError:
+        return gone
+    for project in projects:
         try:
-            st = path.lstat()
-        except OSError as err:
-            warn(f"kept {path}: {err}")
+            fd = os.open(root / project, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError:
             continue
-        if (st.st_ino, st.st_size, st.st_mtime_ns) != (
-                judged.st_ino, judged.st_size, judged.st_mtime_ns) or _linked(path):
-            warn(f"kept {path}: it changed while it was being judged")
-            continue
-        folder = path.with_suffix("")
         try:
-            if folder.is_dir():
-                shutil.rmtree(folder)
-            path.unlink()
-        except OSError as err:
-            warn(f"kept {path}: {err}")
-            continue
-        gone.append(path)
+            names = sorted(os.listdir(fd))
+            for name in names:
+                # The session folder goes with the transcript, so the name has
+                # to be a session id: never memory/, never anything else.
+                if not (name.endswith(".jsonl") and SESSION_ID.fullmatch(name[:-len(".jsonl")])):
+                    continue
+                path = root / project / name
+                try:
+                    judged = _judge(name, fd, now - days * 86400)
+                except OSError:
+                    continue
+                if judged is None:
+                    continue
+                if each:
+                    each(path)
+                if dry_run or _remove(name, fd, judged, path, warn):
+                    gone.append(path)
+        finally:
+            os.close(fd)
     return gone
 
 
