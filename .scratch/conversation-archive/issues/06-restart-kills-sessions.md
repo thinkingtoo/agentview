@@ -1,8 +1,8 @@
-# 06: Restarting agentview.service kills the sessions that restore resumed
+# 06: Restarting agentview.service kills the sessions in its cgroup
 
 **What to build:** nothing yet. This is a problem write-up for the owner to triage, and it changes how the owner's session launcher works, so the fix is their call. When it is decided, this ticket becomes the build.
 
-**The problem:** `systemctl --user restart agentview` kills the Claude sessions that agentview itself launched (**↺ reopen**, a click in the closed list), and the tmux server and WezTerm windows they run in. They die with the server, in the middle of whatever they were doing. A session that was not launched by the service is not touched.
+**The problem:** `systemctl --user restart agentview` ended a batch of running Claude sessions, this one's included, two seconds after the new server started. The service's cgroup holds a tmux server and, afterwards, WezTerm windows and `claude --resume` processes, and systemd kills a cgroup as a whole on a restart. Both facts were observed (see Evidence); that the sessions that died were the ones in the cgroup was not checked directly, and only one session, started 15 hours earlier, was seen to survive.
 
 **Blocked by:** None
 
@@ -21,7 +21,7 @@ What was observed, and what was not.
 
 - `agentview.service` is a plain service with the default `KillMode=control-group`. A restart or a stop sends SIGTERM to every process in its cgroup, then SIGKILL to what is left.
 - The server launches what ends up in that cgroup itself. **↺ reopen** POSTs to `/api/restore`, and `server.py` starts `snapshot.py restore` with `subprocess.Popen(..., start_new_session=True)` (`server.py`, `_restore`). A click in the closed list runs `snapshot.revive`, which ends in `_start_gui` in `snapshot.py`: the same call, `wezterm start` under `start_new_session=True`. `start_new_session` only calls `setsid`. It gives the child its own session and process group. It does not leave the cgroup.
-- The login autostart (`agentview-restore.desktop`) is not affected. It runs from the desktop session, so what it starts lives in that session's scope, not in the service.
+- The login autostart (`agentview-restore.desktop`) should be unaffected: its `Exec=` line runs `snapshot.py restore --login` from the desktop session, so what it starts is expected to live in that session's scope, not in the service. Its cgroup was not checked. Verify it before relying on it, for example by looking at `/proc/<pid>/cgroup` of a session started that way.
 
 ## Two ways to fix it
 
