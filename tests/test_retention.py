@@ -85,6 +85,15 @@ class Prune(unittest.TestCase):
         self.assertEqual(retention.prune(self.root, NOW, days=30), [])
         self.assertTrue(headless.exists())
 
+    def test_a_line_nested_too_deep_to_read_keeps_the_transcript(self):
+        headless = transcript(self.proj, "19191919-aaaa-aaaa-aaaa-191919191919", "sdk-cli", 60)
+        with open(headless, "a") as fh:
+            fh.write("[" * 100_000 + "]" * 100_000 + "\n")
+        os.utime(headless, (NOW - 60 * DAY, NOW - 60 * DAY))
+
+        self.assertEqual(retention.prune(self.root, NOW, days=30), [])
+        self.assertTrue(headless.exists())
+
     def test_a_transcript_written_to_while_it_is_judged_stays(self):
         # A headless session resumed by hand just as the job reaches it.
         headless = transcript(self.proj, "14141414-aaaa-aaaa-aaaa-141414141414", "sdk-cli", 60)

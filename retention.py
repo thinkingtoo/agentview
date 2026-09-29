@@ -22,6 +22,7 @@ import shutil
 import stat
 import sys
 import time
+import uuid
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -42,7 +43,7 @@ def _headless(fh):
     for line in fh:
         try:
             record = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
             return False
         if not isinstance(record, dict):
             return False
@@ -82,6 +83,17 @@ def _judge(name, fd, cutoff):
         return st if _headless(fh) else None
 
 
+def _one_filesystem(name, fd):
+    """rmtree follows no link, but it does walk into a filesystem mounted
+    below the folder and empties it before it fails on the mount point."""
+    dev = os.stat(name, dir_fd=fd, follow_symlinks=False).st_dev
+    for _, dirs, _, dir_fd in os.fwalk(name, dir_fd=fd):
+        for d in dirs:
+            if os.stat(d, dir_fd=dir_fd, follow_symlinks=False).st_dev != dev:
+                return False
+    return True
+
+
 def _put_file_back(tmp, name, fd):
     """Undo a rename without overwriting whatever took the name meanwhile:
     a hard link fails if the name exists, where a rename would replace it."""
@@ -110,7 +122,10 @@ def _remove(name, fd, judged, path, warn):
     renamed nothing can write to it: a resume that arrives now starts a new
     file under the old name, which is never touched."""
     sid = name[:-len(".jsonl")]
-    tag = f".retention-{os.getpid()}"
+    # A rename replaces a file that already has the new name, so the name is
+    # one nothing else can have: not a leftover of an earlier run, and not
+    # one guessed in advance.
+    tag = f".retention-{uuid.uuid4().hex}"
     try:
         os.rename(name, name + tag, src_dir_fd=fd, dst_dir_fd=fd)
     except OSError as err:
@@ -126,6 +141,8 @@ def _remove(name, fd, judged, path, warn):
                 raise OSError("its session folder became a link")
             os.rename(sid, sid + tag, src_dir_fd=fd, dst_dir_fd=fd)
             try:
+                if not _one_filesystem(sid + tag, fd):
+                    raise OSError("another filesystem is mounted inside its session folder")
                 shutil.rmtree(sid + tag, dir_fd=fd)
             except OSError as err:
                 if not _put_folder_back(sid + tag, sid, fd):
@@ -166,7 +183,12 @@ def prune(root, now, days=DAYS, dry_run=False, each=None, warn=_stderr):
     except OSError:
         return gone
     try:
-        for project in sorted(os.listdir(root_fd)):
+        projects = sorted(os.listdir(root_fd))
+    except OSError as err:
+        warn(f"could not list {root}: {err}")
+        projects = []
+    try:
+        for project in projects:
             gone += _prune_project(root, root_fd, project, now - days * 86400,
                                    dry_run, each, warn)
     finally:
@@ -181,7 +203,12 @@ def _prune_project(root, root_fd, project, cutoff, dry_run, each, warn):
     except OSError:
         return gone
     try:
-        for name in sorted(os.listdir(fd)):
+        try:
+            names = sorted(os.listdir(fd))
+        except OSError as err:
+            warn(f"could not list {root / project}: {err}")
+            names = []
+        for name in names:
             # The session folder goes with the transcript, so the name has to
             # be a session id: never memory/, never anything else.
             if not (name.endswith(".jsonl") and SESSION_ID.fullmatch(name[:-len(".jsonl")])):
