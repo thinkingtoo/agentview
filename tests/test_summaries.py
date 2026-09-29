@@ -139,6 +139,25 @@ class Choosing(Summarised, unittest.TestCase):
         self.summarize(model, now=time.time() + archive.QUIET + 60)
         self.assertEqual(len(model.prompts), 1)
 
+    def test_quiet_is_judged_on_the_transcript_not_on_the_index(self):
+        # The index last read it an hour ago; someone has written to it since.
+        # The update timer has not come round yet, so the index still says quiet.
+        model = Model()
+        self.write(SID, [typed(30, "and lead?"), said(31, "Lead is soft.")], mode="a")
+        run = self.summarize(model)
+        self.assertEqual((run["asked"], model.prompts), (0, []))
+        self.update()                                     # the index catches up...
+        self.summarize(model)                             # ...and only then is it summarised
+        self.assertIn("Lead is soft.", model.prompts[0])
+
+    def test_a_transcript_touched_since_the_last_read_waits_too(self):
+        model = Model()
+        later = time.time() + 5
+        os.utime(self.path, (later, later))
+        self.assertEqual(self.summarize(model)["asked"], 0)
+        self.update()
+        self.assertEqual(self.summarize(model)["asked"], 1)
+
     def test_a_summary_stands_until_the_conversation_changes(self):
         model = Model()
         self.summarize(model)
@@ -242,6 +261,42 @@ class BeforeTheFirstRun(Summarised, unittest.TestCase):
         self.assertEqual(archive.stats(self.db)["summaries"], 0)
         self.update()                                    # the next run adds the table again
         self.assertEqual(self.rows("SELECT COUNT(*) FROM summaries"), [(0,)])
+
+
+class Overlapping(Summarised, unittest.TestCase):
+    """The update job and the summary job are separate timers. One can finish
+    while the other is waiting for the model."""
+
+    def test_a_transcript_deleted_during_the_call_leaves_no_summary_behind(self):
+        path = self.write(SID, KETTLE)
+        self.write(OTHER, [typed(1, "unrelated", sid=OTHER)])
+        self.update()
+        outer = self
+
+        class Deleting(Model):
+            def __call__(self, prompt):
+                if "kettle" in prompt:
+                    path.unlink()
+                    outer.update()                       # the update job runs in the meantime
+                return super().__call__(prompt)
+
+        self.summarize(Deleting())
+        self.assertEqual(self.rows("SELECT id FROM summaries WHERE id=?", SID), [])
+        self.assertEqual(self.rows("SELECT id FROM conversations WHERE id=?", SID), [])
+
+    def test_the_same_for_a_summary_that_failed(self):
+        path = self.write(SID, KETTLE)
+        self.write(OTHER, [typed(1, "unrelated", sid=OTHER)])
+        self.update()
+        outer = self
+
+        def failing(prompt):
+            path.unlink()
+            outer.update()
+            raise archive.Failed("boom")
+
+        self.summarize(failing, limit=1)
+        self.assertEqual(self.rows("SELECT id FROM summaries WHERE id=?", SID), [])
 
 
 class GivingUp(Summarised, unittest.TestCase):
@@ -349,6 +404,31 @@ class Asking(unittest.TestCase):
             self.assertNotIn("the excerpt", str(ctx.exception))
         with self.assertRaisesRegex(archive.Failed, "Credit balance"):
             self.run_ask('{"is_error": true, "result": "Credit balance is too low"}')
+
+    def test_what_claude_says_about_a_failure_is_scrubbed_of_what_it_was_sent(self):
+        secret = "the quarterly figures for the Marlowe account were altered by hand"
+        prompt = f"Instructions here, and then the conversation.\n{secret}\nAnd more text after it."
+        for stdout, stderr in (
+                (json.dumps({"is_error": True, "result": f"Invalid input near: {secret[:45]}"}), ""),
+                ("", f"error: could not parse the text '{secret[10:60]}' at line 2"),
+                ("not json", f"{secret}")):
+            done = subprocess.CompletedProcess([], 1, stdout=stdout, stderr=stderr)
+            with mock.patch.object(archive.subprocess, "run", return_value=done), \
+                    mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tempfile.mkdtemp()}):
+                with self.assertRaises(archive.Failed) as ctx:
+                    archive.ask_model(prompt)
+            message = str(ctx.exception)
+            for at in range(len(secret) - 19):
+                self.assertNotIn(secret[at:at + 20], message, message)
+            self.assertTrue(message)                               # it still says something
+
+    def test_a_message_that_quotes_nothing_is_left_alone(self):
+        done = subprocess.CompletedProcess([], 1, stdout=json.dumps(
+            {"is_error": True, "result": "Credit balance is too low"}), stderr="")
+        with mock.patch.object(archive.subprocess, "run", return_value=done), \
+                mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tempfile.mkdtemp()}):
+            with self.assertRaisesRegex(archive.Failed, "Credit balance is too low"):
+                archive.ask_model("some excerpt of a conversation about kettles")
 
     def test_a_timeout_and_a_missing_binary_are_failures_too(self):
         for exc in (subprocess.TimeoutExpired("claude", 1), FileNotFoundError("claude")):

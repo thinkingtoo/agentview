@@ -679,6 +679,26 @@ def two_lines(text):
     return tuple(line if len(line) <= LINE else line[:LINE - 1].rstrip() + "\u2026" for line in lines)
 
 
+def scrub(text, sent, n=20):
+    """`text` with every stretch of `n` characters that was in `sent` masked.
+    What claude says about a failure may quote its input, and the message
+    goes to the terminal, the journal and the index."""
+    text = " ".join(str(text).split())
+    seen = {" ".join(sent.split())[i:i + n] for i in range(max(len(sent) - n + 1, 1))}
+    hide = [False] * len(text)
+    for i in range(len(text) - n + 1):
+        if text[i:i + n] in seen:
+            hide[i:i + n] = [True] * n
+    out, masked = [], False
+    for ch, gone in zip(text, hide):
+        if gone and not masked:
+            out.append("[conversation text]")
+        if not gone:
+            out.append(ch)
+        masked = gone
+    return "".join(out)
+
+
 def claude_bin():
     return shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
 
@@ -725,10 +745,11 @@ def ask_model(prompt):
     try:
         got = json.loads(done.stdout)
     except ValueError:
-        raise Failed(f"claude gave no JSON (exit {done.returncode}): {done.stderr.strip()[:200]}") from None
+        raise Failed(f"claude gave no JSON (exit {done.returncode}): "
+                     f"{scrub(done.stderr, prompt)[:200]}") from None
     if not isinstance(got, dict) or got.get("is_error") or not isinstance(got.get("result"), str):
         why = got.get("result") if isinstance(got, dict) and got.get("is_error") else "no result"
-        raise Failed(f"claude said: {str(why)[:200]}")
+        raise Failed(f"claude said: {scrub(why, prompt)[:200]}")
     return got["result"], float(got.get("total_cost_usd") or 0)
 
 
@@ -738,13 +759,21 @@ def needing(con, now):
     have been quiet for QUIET, with something said in them, and not given up on."""
     todo = []
     rows = con.execute(
-        "SELECT c.id, c.title, c.size, c.mtime, s.digest, s.size, s.mtime, s.failed, s.tried"
+        "SELECT c.id, c.path, c.title, c.size, c.mtime, s.digest, s.size, s.mtime, s.failed, s.tried"
         " FROM conversations c LEFT JOIN summaries s ON s.id = c.id"
         " WHERE c.mtime <= ? ORDER BY c.active DESC", (now - QUIET,)).fetchall()
-    for sid, title, size, mtime, had, s_size, s_mtime, failed, tried in rows:
+    for sid, path, title, size, mtime, had, s_size, s_mtime, failed, tried in rows:
         failed = failed or 0
         if had is not None and not failed and (s_size, s_mtime) == (size, mtime):
             continue                               # nothing has changed since
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue                               # gone; the next update drops it
+        if (st.st_size, st.st_mtime) != (size, mtime):
+            # Written to since the index last read it, so it is not quiet
+            # whatever the index remembers. The next update catches up.
+            continue
         text = model_input(con, sid, title)
         if not text:
             continue
@@ -783,10 +812,14 @@ def summarize(path=None, ask=None, limit=None, now=None, say=lambda *_: None):
                 about, ended = two_lines(answer)
             except Failed as exc:
                 run["failed"], streak, run["error"] = run["failed"] + 1, streak + 1, str(exc)
+                # Only while the conversation is still in the index: the
+                # update job runs on its own timer, and may have dropped it
+                # while the model was answering.
                 con.execute(
-                    "INSERT INTO summaries (id, size, mtime, failed, tried) VALUES (?,?,?,1,?)"
+                    "INSERT INTO summaries (id, size, mtime, failed, tried)"
+                    " SELECT ?,?,?,1,? WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)"
                     " ON CONFLICT(id) DO UPDATE SET failed = CASE WHEN tried = excluded.tried"
-                    " THEN failed + 1 ELSE 1 END, tried = excluded.tried", (sid, size, mtime, digest))
+                    " THEN failed + 1 ELSE 1 END, tried = excluded.tried", (sid, size, mtime, digest, sid))
                 con.commit()
                 say(f"  failed  {sid[:8]}  {exc}")
                 continue
@@ -794,11 +827,12 @@ def summarize(path=None, ask=None, limit=None, now=None, say=lambda *_: None):
             run["made"] += 1
             con.execute(
                 "INSERT INTO summaries (id, about, ended, digest, size, mtime, made, failed, tried)"
-                " VALUES (?,?,?,?,?,?,?,0,'') ON CONFLICT(id) DO UPDATE SET about=excluded.about,"
+                " SELECT ?,?,?,?,?,?,?,0,'' WHERE EXISTS (SELECT 1 FROM conversations WHERE id=?)"
+                " ON CONFLICT(id) DO UPDATE SET about=excluded.about,"
                 " ended=excluded.ended, digest=excluded.digest, size=excluded.size,"
                 " mtime=excluded.mtime, made=excluded.made, failed=0, tried=''",
                 (sid, about, ended, digest, size, mtime,
-                 datetime.datetime.now().astimezone().isoformat(timespec="seconds")))
+                 datetime.datetime.now().astimezone().isoformat(timespec="seconds"), sid))
             con.commit()
             say(f"  {run['made']}  {sid[:8]}")
         run["waiting"] = len(todo) - run["asked"]
