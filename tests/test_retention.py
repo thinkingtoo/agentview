@@ -220,6 +220,52 @@ class Prune(unittest.TestCase):
         self.assertEqual(len(warned), 1)
         self.assertNotIn("took its name", warned[0])
 
+    def _session_with_a_directory_that_resists(self, sid, mode):
+        """Twenty deletable files next to a directory that will not be emptied:
+        rmtree would remove some of the files before it got to the directory."""
+        headless = transcript(self.proj, sid, "sdk-cli", 60)
+        folder = self.proj / sid
+        files = []
+        for i in range(20):
+            f = folder / f"tool-result-{i:02d}.txt"
+            f.write_text("x")
+            files.append(f)
+        resisting = folder / "subagents"
+        return headless, files, resisting
+
+    def test_a_session_that_cannot_be_emptied_loses_nothing(self):
+        sid = "34343434-aaaa-aaaa-aaaa-343434343434"
+        headless, files, resisting = self._session_with_a_directory_that_resists(sid, 0o500)
+        after = transcript(self.proj, "35353535-aaaa-aaaa-aaaa-353535353535", "sdk-cli", 60)
+        resisting.chmod(0o500)          # can be read, nothing in it can be removed
+        warned = []
+        try:
+            gone = retention.prune(self.root, NOW, days=30, warn=warned.append)
+        finally:
+            resisting.chmod(0o700)
+
+        self.assertEqual(gone, [after])
+        self.assertTrue(headless.exists())
+        self.assertEqual([f.name for f in files if not f.exists()], [])
+        self.assertTrue((resisting / "agent-a1.jsonl").exists())
+        self.assertEqual(self._leftovers(), [])
+        self.assertEqual(len(warned), 1)
+
+    def test_a_session_with_a_directory_that_cannot_be_read_loses_nothing(self):
+        sid = "36363636-aaaa-aaaa-aaaa-363636363636"
+        headless, files, resisting = self._session_with_a_directory_that_resists(sid, 0o000)
+        resisting.chmod(0o000)
+        try:
+            gone = retention.prune(self.root, NOW, days=30, warn=lambda m: None)
+        finally:
+            resisting.chmod(0o700)
+
+        self.assertEqual(gone, [])
+        self.assertTrue(headless.exists())
+        self.assertEqual([f.name for f in files if not f.exists()], [])
+        self.assertTrue((resisting / "agent-a1.jsonl").exists())
+        self.assertEqual(self._leftovers(), [])
+
     def test_a_rewrite_that_keeps_size_and_mtime_is_still_seen(self):
         # Same inode, same size, the old mtime put back: only the content differs.
         sid = "21212121-aaaa-aaaa-aaaa-212121212121"

@@ -90,15 +90,24 @@ def _judge(name, fd, cutoff):
         return st if _headless(fh) else None
 
 
-def _one_filesystem(name, fd):
-    """rmtree follows no link, but it does walk into a filesystem mounted
-    below the folder and empties it before it fails on the mount point."""
+def _refuse(err):
+    raise err
+
+
+def _check_deletable(name, fd):
+    """Raise unless the whole folder can be deleted, before anything in it is.
+    rmtree is not transactional: stopped halfway it leaves files gone that no
+    rollback brings back. So look first, in one walk: every directory must be
+    readable, writable and searchable, and none may be another filesystem
+    (rmtree walks into a mount and empties it before it fails on the mount
+    point)."""
     dev = os.stat(name, dir_fd=fd, follow_symlinks=False).st_dev
-    for _, dirs, _, dir_fd in os.fwalk(name, dir_fd=fd):
+    for dirpath, dirs, _, dir_fd in os.fwalk(name, dir_fd=fd, onerror=_refuse):
+        if not os.access(".", os.R_OK | os.W_OK | os.X_OK, dir_fd=dir_fd):
+            raise OSError(f"{dirpath} in its session folder cannot be emptied")
         for d in dirs:
             if os.stat(d, dir_fd=dir_fd, follow_symlinks=False).st_dev != dev:
-                return False
-    return True
+                raise OSError("another filesystem is mounted inside its session folder")
 
 
 def _put_file_back(tmp, name, fd):
@@ -156,8 +165,7 @@ def _remove(name, fd, judged, path, warn):
                 raise OSError("its session folder became a link")
             os.rename(sid, sid + tag, src_dir_fd=fd, dst_dir_fd=fd)
             try:
-                if not _one_filesystem(sid + tag, fd):
-                    raise OSError("another filesystem is mounted inside its session folder")
+                _check_deletable(sid + tag, fd)
                 shutil.rmtree(sid + tag, dir_fd=fd)
             except Exception as err:
                 if not _put_folder_back(sid + tag, sid, fd):

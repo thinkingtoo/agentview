@@ -474,11 +474,16 @@ Each transcript is handled on its own. Whatever goes wrong with one, an error
 of any kind, memory running out, a warning that cannot be written, is reported
 and that one is left as it was; it does not stop the others.
 
-Two limits stay. A session folder is checked for another filesystem mounted
-inside it before it is deleted, but not while it is deleted: someone who mounts
-one there in the milliseconds between the two can have it emptied, and a
-process of yours that keeps a transcript open for writing can change it after
-the last check. Both take a process of yours doing it on purpose. And a disk
+A session folder is looked over before anything in it is deleted, because
+deleting a folder cannot be undone halfway: every directory in it has to be
+readable, writable and searchable, and none may be another filesystem mounted
+inside it. A folder that fails the look is kept whole, with its transcript.
+
+Two limits stay. That look is not repeated while the folder is deleted:
+someone who mounts a filesystem there in the milliseconds between the two can
+have it emptied, and a process of yours that keeps a transcript open for
+writing can change it after the last check. Both take a process of yours doing
+it on purpose. And a disk
 that fails while a session is being deleted, and again while it is being put
 back, leaves it under a `.retention-` name; the warning names it.
 What each run deleted is in `journalctl --user -u agentview-retention`.
