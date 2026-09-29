@@ -20,7 +20,7 @@ running.
 | 7 | Headless transcripts | Since 2 applies to all transcripts, a nightly job deletes `sdk-cli` transcripts older than 30 days. |
 | 8 | A hit that is still running | A click jumps to its pane, like a live row. It is never resumed a second time. |
 | 9 | Where the index lives | One SQLite file under `~/.claude/agentview/` on this laptop. The transcripts are stored nowhere else. |
-| 10 | t-compute unreachable | Hybrid search. The local keyword index (FTS5) always answers, and meaning hits are merged in when the embedder responds. When it doesn't, the page says meaning search is off. |
+| 10 | Embedder unreachable | Hybrid search. The local keyword index (FTS5) always answers, and meaning hits are merged in when the embedder responds. When it doesn't, the page says meaning search is off. |
 | 12 | When indexing runs | A timer every few minutes, on transcripts that changed. Running conversations are included. |
 | 13 | What a result shows | Name, Claude's title, project, date, a two-line summary (what it was about, where it ended), and the passage that matched. |
 | 14 | Who writes the summary | `claude -p --model haiku`, through the CLI, not the API. |
@@ -30,9 +30,9 @@ running.
 - `~/.claude/projects` holds 2,240 top-level transcripts, 3.0 GB. Of those, 527 are `entrypoint: cli` and 1,713 are `sdk-cli`. A further 261 subagent transcripts sit under `subagents/`.
 - The interactive transcripts hold about 41 MB of prompt and reply text. The median transcript is 570 KB, mostly tool output.
 - `cleanupPeriodDays` is not set in `~/.claude/settings.json`. The oldest transcript is from 2026-08-07.
-- **Embedder:** `tiroir-embedder-gpu.service` on t-compute, `http://100.117.2.45:8771`. It serves `google/embeddinggemma-300m` int4 ONNX, 768 dimensions, L2-normalised, with `GEMMA_MAX_LEN=2048`. It needs an `X-API-Key` (`EMBEDDER_API_KEY` in `/home/tcompute/tiroir-embedder/embedder.env` on t-compute). Its README is in `/home/tcompute/tiroir-embedder/README.md` on that box.
-  - The model is **asymmetric**. A search query goes through `POST /api/v1/embed/text` (query prompt), and a stored passage through `POST /api/v1/embed/batch` (document prompt, at most 100 texts per call). Using the wrong one does not fail, it just ranks worse: the separation between right and wrong documents drops by 36% (measured in its README).
-  - Vectors are tied to their model. t-compute's other service on `:8080` defaults to bge-m3 (1024 dimensions). It also serves `embeddinggemma-300m`, but that is not the int4 build. Never mix vectors from two services in one index; record the model identity from `GET /api/v1/model` and re-index when it changes.
+- **Embedder:** the owner's own EmbeddingGemma-300m service (int4 ONNX, 768 dimensions, L2-normalised, 2,048 tokens at most per text), running on a GPU box on the tailnet. Its URL and API key are local config and never go in this repo.
+  - The model is **asymmetric**. A search query goes through `POST /api/v1/embed/text` (query prompt), and a stored passage through `POST /api/v1/embed/batch` (document prompt, at most 100 texts per call). Using the wrong one does not fail, it just ranks worse: the separation between right and wrong documents drops by 36% (the service's own measurement).
+  - Vectors are tied to their model. The same box also serves bge-m3 (1024 dimensions) on another service. Never mix vectors from two models in one index; record the model identity from `GET /api/v1/model` and re-index when it changes.
 - SQLite 3.45.1 with FTS5 is available locally. `sqlite_vec` is not installed. At this size, a brute-force cosine scan over the vectors in numpy is enough.
 - Every transcript already carries Claude's short title as `{"type":"ai-title","aiTitle":...}` lines.
 
