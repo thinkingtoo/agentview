@@ -1159,13 +1159,18 @@ function day(iso) {
 // The server marks the matched words with \x02 and \x03, so the text can be
 // escaped whole before the marks become <mark>.
 const marked = s => esc(s).replace(/\x02/g, "<mark>").replace(/\x03/g, "</mark>");
-function paintFound(data) {
+function fitFound() {
   found.style.top = document.querySelector("header").getBoundingClientRect().bottom + 6 + "px";
   // `vh` grows with the page's zoom, so a box of 75vh runs off the bottom of
   // the window and its last rows can never be scrolled into view, let alone
-  // clicked. What is left below the header, in the page's own units:
+  // clicked. What is left below the header, in the page's own units (the box
+  // is border-box, so its padding is inside this).
   const room = innerHeight / ZOOM - parseFloat(found.style.top) - 12;
-  found.style.maxHeight = Math.max(160, Math.min(room, innerHeight * 0.75)) + "px";
+  found.style.maxHeight = Math.max(0, Math.min(room, innerHeight * 0.75)) + "px";
+}
+window.addEventListener("resize", () => { if (!found.hidden) fitFound(); });
+function paintFound(data) {
+  fitFound();
   if (data.error) { found.innerHTML = `<div class="none">search failed: ${esc(data.error)}</div>`; return; }
   if (!data.index) {
     found.innerHTML = `<div class="none">no index yet: agentview-archive.timer builds it within a few minutes</div>`;
