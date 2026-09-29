@@ -378,8 +378,11 @@ what is in there.
 - Without a user manager (no `systemd-run`, no bus) it starts them as before and
   writes `scope.unavailable` to the event log. `AGENTVIEW_SCOPE=off` turns it off.
 - Test changes to the server on a second server: another port, its own
-  `XDG_STATE_HOME`, and never `agentview.service`. `scripts/scope-check` does
-  this with a real transient unit and fake `wezterm`, `claude` and `pgrep`.
+  `XDG_STATE_HOME`, and never `agentview.service`. `scripts/scope-check`
+  proves the scope itself: in a transient unit of its own, with no server and no
+  port, a fake `wezterm` and a `tmux` forced onto a private socket, it starts
+  what restore and the closed list start, restarts the unit, and reports what
+  survived. A control run with `AGENTVIEW_SCOPE=off` has to lose them all.
 
 ## Speed
 
