@@ -261,6 +261,7 @@ let editing = false;
 let dragging = false;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const home = "{{HOME}}";        // substituted by the server, like the zoom
+const ZOOM = parseFloat("{{ZOOM}}") || 1;
 
 function since(ms) {
   // How long this session has been up. A background worker two days old reads
@@ -1160,6 +1161,11 @@ function day(iso) {
 const marked = s => esc(s).replace(/\x02/g, "<mark>").replace(/\x03/g, "</mark>");
 function paintFound(data) {
   found.style.top = document.querySelector("header").getBoundingClientRect().bottom + 6 + "px";
+  // `vh` grows with the page's zoom, so a box of 75vh runs off the bottom of
+  // the window and its last rows can never be scrolled into view, let alone
+  // clicked. What is left below the header, in the page's own units:
+  const room = innerHeight / ZOOM - parseFloat(found.style.top) - 12;
+  found.style.maxHeight = Math.max(160, Math.min(room, innerHeight * 0.75)) + "px";
   if (data.error) { found.innerHTML = `<div class="none">search failed: ${esc(data.error)}</div>`; return; }
   if (!data.index) {
     found.innerHTML = `<div class="none">no index yet: agentview-archive.timer builds it within a few minutes</div>`;
