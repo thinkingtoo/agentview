@@ -72,6 +72,56 @@ tells two Tareks apart.
 A click on a live row whose tmux session no terminal is attached to opens a
 WezTerm tab on it (`tmux attach`), instead of selecting a pane nobody can see.
 
+## Search
+
+**⟲ closed N** knows this boot and nothing before it. The box next to it,
+*search old conversations…*, searches every interactive conversation this
+machine has had, from any day, running ones included. Type three characters
+or more; each row is one conversation and shows its name, Claude's title for
+it, the project, the day it was last active, and the exchange that matched,
+with the matching words marked. The best-matching exchange decides the order.
+A row does not reopen anything yet: it tells you which conversation it was.
+
+- **What counts.** Transcripts whose `entrypoint` is `cli`. `claude -p` runs
+  (`sdk-cli`) and subagent transcripts are left out.
+- **What is indexed.** One passage is one exchange: a prompt you typed and the
+  text of the assistant's reply. Tool calls and results, thinking,
+  `<system-reminder>` blocks, hook output, skill bodies and slash-command
+  markup are stripped (`/rem notes` stays `/rem notes`). A turn someone else
+  started (a peer's message, a finished background task) opens an exchange of
+  its own with an empty prompt: the reply is indexed, the message is not.
+  An exchange over 6,000 characters is cut into pieces.
+- **Matching.** Every word must appear. The last word also matches as a
+  prefix from three characters on, so a word still being typed already
+  finds something. `"two words"` in quotes is a phrase. Case and accents do
+  not matter.
+- **Names.** The name the conversation last had: its peer file while it
+  lasts, then agentview's own log (`~/.local/state/agentview/events.jsonl`,
+  which goes back as far as its rotation), then whatever Claude Code wrote
+  into the transcript. The index keeps the name once found, so it outlives
+  both.
+- **The index** is one SQLite file with FTS5, `~/.claude/agentview/archive.db`,
+  mode 0600 like the transcripts it comes from. Nothing leaves the machine.
+- **Keeping it current.** `agentview-archive.timer` runs `archive.py update`
+  every 5 minutes. It reads only transcripts whose size or mtime moved, and
+  only from the start of their last exchange, the one that may still be
+  growing. A transcript that shrank is read again from scratch; one that is
+  gone leaves the index.
+- **Speed.** The first run over 534 conversations took 19 s and wrote 7,629
+  passages (48 MB). A run with nothing new takes 0.05 s, and a search takes a
+  few milliseconds. The search is its own request (`/api/search?q=`) and never
+  part of the roster poll.
+
+```bash
+python3 archive.py update        # what the timer runs; -v lists each file read
+python3 archive.py search words  # what the box would show
+python3 archive.py stats         # what the index holds, and how the last run went
+```
+
+The schema is written down at the top of `archive.py`. It carries a version,
+and an index built by another version is thrown away and rebuilt: it is
+derived from the transcripts and holds nothing they do not.
+
 ## Providers
 
 The page does not know Claude Code. It knows *providers*: one module each
@@ -154,6 +204,14 @@ Or as a service that survives reboot:
 ```bash
 cp agentview.service ~/.config/systemd/user/
 systemctl --user enable --now agentview
+```
+
+The search box needs its index kept current (see [Search](#search)):
+
+```bash
+cp agentview-archive.service agentview-archive.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now agentview-archive.timer
 ```
 
 Bound to `127.0.0.1` deliberately: the page shows your prompts verbatim, which
@@ -564,6 +622,11 @@ skill, the provider contract (a minimal session fills every field the page
 reads, a provider that raises or stalls is a badge and not a blank page, a
 Codex lock with nobody behind it is an orphan), and the log — that a heartbeat alone says nothing, that a repeated
 error is written once, and that a fast operation writes no line at all.
+The archive's tests run on a made-up transcript holding one of every record
+kind: what is kept and what is stripped, that only `cli` transcripts count, a
+growing conversation read from its last exchange, a rewritten one read again,
+names, ranking, and a query that cannot be a syntax error, through the real
+`/api/search` route.
 
 **Every test points at the code the page actually calls.** There used to be a
 second, full-file scanner that nothing called, and the summary tests ran

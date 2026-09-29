@@ -34,6 +34,32 @@ def transcript_for(session_id, cwd, cfg=None):
     return registry.transcript_of({"sessionId": session_id, "cwd": cwd}, cfg or claude_dir())
 
 
+def last_title(path):
+    """The newest ai-title record, else the last prompt. Found from the end of
+    the file: parsing a 20 MB transcript whole held the poll for seconds.
+
+    The closed list and the conversation archive both name a conversation
+    with this, so the two never disagree about what one was called."""
+    if not path:
+        return ""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return ""
+    for marker, field in ((b'"type":"ai-title"', "aiTitle"), (b'"type":"last-prompt"', "lastPrompt")):
+        at = len(raw)
+        # The newest record can be empty; walk back to one that says something.
+        while (at := raw.rfind(marker, 0, at)) >= 0:
+            start, end = raw.rfind(b"\n", 0, at) + 1, raw.find(b"\n", at)
+            try:
+                text = json.loads(raw[start:end if end >= 0 else None]).get(field) or ""
+            except ValueError:
+                text = ""
+            if isinstance(text, str) and text.strip():
+                return " ".join(text.split())[:120]
+    return ""
+
+
 def _ancestry(pid, depth=6):
     """The command lines above a pid, closest parent first.
 

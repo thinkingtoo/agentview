@@ -5,9 +5,12 @@ Bound to 127.0.0.1 on purpose: the page shows your prompts verbatim, which is
 client work, and occasionally a credential someone pasted into an error.
 """
 import json
+import sqlite3
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import archive
 import fleet
 import jump
 import lines
@@ -18,7 +21,7 @@ import snapshot
 import subprocess
 import sys
 import time
-from providers import claude
+from providers import claude, registry
 
 HERE = Path(__file__).resolve().parent
 
@@ -100,31 +103,22 @@ def _title(rec):
     again during the day, so the name alone does not say which one it was."""
     sid = rec["sessionId"]
     if sid not in _TITLES:
-        _TITLES[sid] = _last_title(claude.transcript_for(sid, rec.get("cwd") or ""))
+        _TITLES[sid] = claude.last_title(claude.transcript_for(sid, rec.get("cwd") or ""))
     return _TITLES[sid]
 
 
-def _last_title(path):
-    """The newest ai-title record, else the last prompt. Found from the end of
-    the file: parsing a 20 MB transcript whole held the poll for seconds."""
-    if not path:
-        return ""
-    try:
-        raw = path.read_bytes()
-    except OSError:
-        return ""
-    for marker, field in ((b'"type":"ai-title"', "aiTitle"), (b'"type":"last-prompt"', "lastPrompt")):
-        at = len(raw)
-        # The newest record can be empty; walk back to one that says something.
-        while (at := raw.rfind(marker, 0, at)) >= 0:
-            start, end = raw.rfind(b"\n", 0, at) + 1, raw.find(b"\n", at)
-            try:
-                text = json.loads(raw[start:end if end >= 0 else None]).get(field) or ""
-            except ValueError:
-                text = ""
-            if isinstance(text, str) and text.strip():
-                return " ".join(text.split())[:120]
-    return ""
+def found(query, limit=30):
+    """The search box: conversations from any day, running ones included.
+
+    Its own request, never part of the roster poll -- the poll has to stay
+    fast, and a search only runs when you type one."""
+    live = {r.get("sessionId") for r in registry.live(claude.claude_dir())}
+    hits = archive.search(query, limit=limit, live=live)
+    shelves, names = fleet.config(), fleet.config_value("names", {})
+    for h in hits or []:
+        project = fleet.resolve_project(h["cwd"], shelves)
+        h["project"] = names.get(project, project) if project else ""
+    return {"query": query, "results": hits or [], "index": archive.stats()}
 
 
 def _live_procs():
@@ -372,6 +366,22 @@ class Handler(BaseHTTPRequestHandler):
                                    "hold": fleet.config_value("hold", False),
                                    "chime": fleet.config_value("chime", True)}),
                        "application/json")
+        elif self.path.startswith("/api/search"):
+            ask = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            query = (ask.get("q") or [""])[0]
+            try:
+                limit = max(1, min(int((ask.get("limit") or ["30"])[0]), 100))
+            except ValueError:
+                limit = 30
+            try:
+                with log.timed("search", 1.0, query=query):
+                    body = found(query, limit)
+            except sqlite3.Error as exc:
+                # A locked or damaged index is a message on the page, not a
+                # dead request: the rest of the page has nothing to do with it.
+                log.error("search", exc, query=query)
+                body = {"query": query, "results": [], "error": str(exc)}
+            self._send(json.dumps(body), "application/json")
         elif self.path in ("/", "/index.html"):
             self._send(page(), "text/html; charset=utf-8")
         else:
