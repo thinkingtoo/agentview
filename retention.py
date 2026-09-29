@@ -32,6 +32,7 @@ from providers import claude  # noqa: E402
 
 HEADLESS = "sdk-cli"
 DAYS = 30
+MAX_LINE = 64 * 1024 * 1024     # the largest line here is 1.5 MB; more is not read
 SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
@@ -40,10 +41,15 @@ def _headless(fh):
     entrypoint says sdk-cli. A line that does not parse could have been the
     one that said cli, so it keeps the transcript."""
     seen = False
-    for line in fh:
+    while True:
+        line = fh.readline(MAX_LINE + 1)
+        if not line:
+            break
+        if len(line) > MAX_LINE:
+            return False
         try:
             record = json.loads(line)
-        except (ValueError, RecursionError):
+        except (ValueError, RecursionError, MemoryError):
             return False
         if not isinstance(record, dict):
             return False
@@ -135,6 +141,11 @@ def _remove(name, fd, judged, path, warn):
         now = _lstat(name + tag, fd)
         if now is None or not _same(now, judged):
             raise OSError("it changed while it was being judged")
+        # Inode, size and mtime can be put back by whoever rewrote the file;
+        # what it says cannot. Judge the renamed file's content once more.
+        with os.fdopen(os.open(name + tag, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd), "rb") as fh:
+            if not _headless(fh):
+                raise OSError("it changed while it was being judged")
         folder = _lstat(sid, fd)
         if folder is not None:
             if not stat.S_ISDIR(folder.st_mode):
@@ -144,13 +155,13 @@ def _remove(name, fd, judged, path, warn):
                 if not _one_filesystem(sid + tag, fd):
                     raise OSError("another filesystem is mounted inside its session folder")
                 shutil.rmtree(sid + tag, dir_fd=fd)
-            except OSError as err:
+            except (OSError, RecursionError) as err:
                 if not _put_folder_back(sid + tag, sid, fd):
                     warn(f"left what remains of {path.with_suffix('')} as {sid + tag}")
                 raise err
         os.unlink(name + tag, dir_fd=fd)
         return True
-    except OSError as err:
+    except (OSError, RecursionError) as err:
         try:
             back = _put_file_back(name + tag, name, fd)
         except OSError:

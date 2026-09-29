@@ -1,4 +1,5 @@
 import contextlib, io, json, os, sys, tempfile, unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -93,6 +94,52 @@ class Prune(unittest.TestCase):
 
         self.assertEqual(retention.prune(self.root, NOW, days=30), [])
         self.assertTrue(headless.exists())
+
+    def test_a_line_too_large_to_read_keeps_the_transcript(self):
+        headless = transcript(self.proj, "20202020-aaaa-aaaa-aaaa-202020202020", "sdk-cli", 60)
+        with open(headless, "a") as fh:
+            fh.write(json.dumps({"type": "user", "blob": "x" * 5000}) + "\n")
+        os.utime(headless, (NOW - 60 * DAY, NOW - 60 * DAY))
+
+        with mock.patch.object(retention, "MAX_LINE", 1000):
+            self.assertEqual(retention.prune(self.root, NOW, days=30), [])
+        self.assertTrue(headless.exists())
+
+    def test_a_rewrite_that_keeps_size_and_mtime_is_still_seen(self):
+        # Same inode, same size, the old mtime put back: only the content differs.
+        sid = "21212121-aaaa-aaaa-aaaa-212121212121"
+        headless = transcript(self.proj, sid, "sdk-cli", 60)
+
+        def rewritten(path):
+            data = path.read_bytes()
+            with open(path, "r+b") as fh:
+                fh.write(data.replace(b'"sdk-cli"', b'"cli"    '))
+            os.utime(path, (NOW - 60 * DAY, NOW - 60 * DAY))
+
+        gone = retention.prune(self.root, NOW, days=30, each=rewritten, warn=lambda m: None)
+
+        self.assertEqual(gone, [])
+        self.assertIn(b'"cli"', headless.read_bytes())
+        self.assertTrue((self.proj / sid).exists())
+
+    def test_a_session_folder_too_deep_to_delete_is_put_back_and_the_run_goes_on(self):
+        stuck = transcript(self.proj, "22222222-aaaa-aaaa-aaaa-222222222222", "sdk-cli", 60)
+        after = transcript(self.proj, "23232323-aaaa-aaaa-aaaa-232323232323", "sdk-cli", 60)
+        real = retention.shutil.rmtree
+
+        def too_deep(path, *args, **kwargs):
+            if str(path).startswith("22222222"):
+                raise RecursionError("maximum recursion depth exceeded")
+            return real(path, *args, **kwargs)
+
+        warned = []
+        with mock.patch.object(retention.shutil, "rmtree", too_deep):
+            gone = retention.prune(self.root, NOW, days=30, warn=warned.append)
+
+        self.assertEqual(gone, [after])
+        self.assertTrue(stuck.exists())
+        self.assertTrue((self.proj / "22222222-aaaa-aaaa-aaaa-222222222222" / "subagents").exists())
+        self.assertEqual(len(warned), 1)
 
     def test_a_transcript_written_to_while_it_is_judged_stays(self):
         # A headless session resumed by hand just as the job reaches it.

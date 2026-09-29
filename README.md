@@ -454,7 +454,8 @@ reopened. So the deletion is split in two:
 
 Anything else is kept: a transcript with a single `cli` record, one that names
 no entrypoint, one with a line that does not parse (it could have been the line
-that said `cli`), and one that is not named by a session id. So is a
+that said `cli`, or one over 64 MB, which is not read; the largest here is
+1.5 MB), and one that is not named by a session id. So is a
 transcript, session folder or project folder that is a link. `~/.claude/projects`
 itself may be one, to another disk say: it is opened once and held, and nothing
 below it is followed. Each project is opened once and worked on through that handle,
@@ -465,8 +466,14 @@ resume writes. The transcript is renamed first and checked again under its new
 name; anything written to it before the rename shows there, and it is put back.
 After the rename nothing can write to it: Claude Code appends by path and holds
 no file open, so a resume starts a new transcript under the old name, which the
-job never touches. A session that cannot be deleted is put back as it was and
+job never touches. The renamed file is read through once more, because a size and
+a modification time can be put back by whoever rewrote it and what it says cannot. A session that cannot be deleted is put back as it was and
 reported, the rest of the run carries on, and the run exits 1.
+
+One limit stays. A session folder is checked for another filesystem mounted
+inside it before it is deleted, but not while it is deleted: someone who mounts
+one there in the milliseconds between the two can have it emptied. That takes a
+process of yours doing it on purpose, into a folder the job is about to delete.
 What each run deleted is in `journalctl --user -u agentview-retention`.
 
 To set it up, add `"cleanupPeriodDays": 36500` to `~/.claude/settings.json`
