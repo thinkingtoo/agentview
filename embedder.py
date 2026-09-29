@@ -33,6 +33,7 @@ is off costs one slow search, not one per keystroke.
 """
 import http.client
 import json
+import math
 import os
 import time
 import urllib.parse
@@ -49,10 +50,16 @@ QUERY_TIMEOUT = 1.5      # ...and this long for the question's vector. A live on
 BATCH_CONNECT = 5.0      # a backfill can afford to be patient
 BATCH_TIMEOUT = 120.0    # a batch of long passages takes a couple of seconds
 
-# The one model this index is built for (the name says which; the size is not
-# enough, other services also give 768).
-MODEL_MARK = "embeddinggemma"
+# The one model this index is built for, by the name its service reports (the
+# size is not enough, other services also give 768; a name that merely contains
+# the word is not enough either). A new export under another name is a change
+# to make here, on purpose.
+MODELS = ("google/embeddinggemma-300m",)
 DIMENSIONS = 768
+
+# A component of a unit vector is at most 1. Far beyond it is not a vector, and
+# beyond float32's range it would turn into infinity when stored.
+LARGEST = 1e6
 
 # What makes two vectors comparable. Not the device, not the batch cap.
 IDENTITY_FIELDS = ("model", "dimensions", "query_prompt", "document_prompt", "max_len")
@@ -129,8 +136,9 @@ class Embedder:
         model, dims = info.get("model"), info.get("dimensions")
         if not isinstance(model, str) or not isinstance(dims, int) or isinstance(dims, bool):
             self._fail("the embedder did not say which model it is")
-        if MODEL_MARK not in model.lower():
-            self._fail(f"the embedder is not the EmbeddingGemma service this index is built for (it says {model[:60]})")
+        # Nothing the service says is repeated in a reason: it reaches the page and the log.
+        if model not in MODELS:
+            self._fail("the embedder is not the EmbeddingGemma service this index is built for")
         if dims != DIMENSIONS:
             self._fail(f"the embedder gives {dims} dimensions; this index is built for {DIMENSIONS}")
         if not all(isinstance(info.get(k), str) and info[k] for k in ("query_prompt", "document_prompt")):
@@ -140,10 +148,18 @@ class Embedder:
 
     # ------------------------------------------------------------ vectors
 
+    @staticmethod
+    def _number(x):
+        if isinstance(x, bool) or not isinstance(x, (int, float)):
+            return False
+        try:
+            return math.isfinite(x) and abs(x) <= LARGEST
+        except OverflowError:               # an integer too large for a float
+            return False
+
     def _usable(self, vec):
-        """A list of the right length holding numbers, and only numbers."""
-        return (isinstance(vec, list) and len(vec) == self.dims
-                and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vec))
+        """A list of the right length holding finite numbers, and only those."""
+        return isinstance(vec, list) and len(vec) == self.dims and all(map(self._number, vec))
 
     def query(self, text, identity):
         """The vector of a question, through the query endpoint. `identity` is

@@ -118,8 +118,9 @@ means, when none of your words is in it.
     `~/.config/tiroir/agentview-embedder.env`, or the path in
     `$AGENTVIEW_EMBEDDER_ENV`, with `EMBEDDER_URL=` (scheme, host, port) and
     `EMBEDDER_API_KEY=`. Read on every search, so a change needs no restart.
-  - *One model.* The index is built for EmbeddingGemma at 768 dimensions with
-    both prompts named by the service. Any other service, the bge-m3 one on
+  - *One model.* The index is built for one model, `google/embeddinggemma-300m`,
+    by the exact name its service reports, at 768 dimensions, with both prompts
+    named by the service. A vector that is not a finite number is refused too. Any other service, the bge-m3 one on
     the same machine included, is refused: nothing is embedded and meaning
     search is off with that reason.
   - *Vectors* are stored in the same SQLite file, with the model's identity as
