@@ -479,13 +479,23 @@ deleting a folder cannot be undone halfway: every directory in it has to be
 readable, writable and searchable, and none may be another filesystem mounted
 inside it. A folder that fails the look is kept whole, with its transcript.
 
-Two limits stay. That look is not repeated while the folder is deleted:
-someone who mounts a filesystem there in the milliseconds between the two can
-have it emptied, and a process of yours that keeps a transcript open for
-writing can change it after the last check. Both take a process of yours doing
-it on purpose. And a disk
-that fails while a session is being deleted, and again while it is being put
-back, leaves it under a `.retention-` name; the warning names it.
+Four limits stay, all of them rare:
+
+- That look is not repeated while the folder is deleted: someone who mounts a
+  filesystem there in the milliseconds between the two can have it emptied, and
+  a process of yours that keeps a transcript open for writing can change it
+  after the last check. Both take a process of yours doing it on purpose.
+- The look reads permission bits and ACLs, not inode flags. A file marked
+  immutable or append-only (`chattr +i`, which only root can set) inside a
+  session folder passes it, and the delete stops there with the files before it
+  already gone. What is lost is part of a headless session that was due to go
+  anyway; the transcript is put back and the next night tries again. None of the
+  6,572 entries under `~/.claude/projects` carried such a flag on 2026-09-29.
+- An empty directory without write permission is refused although it could be
+  removed. The session is kept until someone changes the mode.
+- A disk that fails while a session is being deleted, and again while it is
+  being put back, leaves it under a `.retention-` name; the warning names it.
+
 What each run deleted is in `journalctl --user -u agentview-retention`.
 
 To set it up, add `"cleanupPeriodDays": 36500` to `~/.claude/settings.json`
