@@ -105,6 +105,33 @@ class Prune(unittest.TestCase):
             self.assertEqual(retention.prune(self.root, NOW, days=30), [])
         self.assertTrue(headless.exists())
 
+    def test_running_out_of_memory_while_reading_keeps_the_transcript(self):
+        class Starved:
+            def readline(self, limit=-1):
+                raise MemoryError
+
+        self.assertFalse(retention._headless(Starved()))
+
+    def test_running_out_of_memory_while_deleting_puts_everything_back(self):
+        stuck = transcript(self.proj, "24242424-aaaa-aaaa-aaaa-242424242424", "sdk-cli", 60)
+        after = transcript(self.proj, "25252525-aaaa-aaaa-aaaa-252525252525", "sdk-cli", 60)
+        real = retention.shutil.rmtree
+
+        def starved(path, *args, **kwargs):
+            if str(path).startswith("24242424"):
+                raise MemoryError
+            return real(path, *args, **kwargs)
+
+        warned = []
+        with mock.patch.object(retention.shutil, "rmtree", starved):
+            gone = retention.prune(self.root, NOW, days=30, warn=warned.append)
+
+        self.assertEqual(gone, [after])
+        self.assertTrue(stuck.exists())
+        self.assertTrue((self.proj / "24242424-aaaa-aaaa-aaaa-242424242424" / "subagents").exists())
+        self.assertEqual([p.name for p in self.proj.iterdir() if "retention" in p.name], [])
+        self.assertEqual(len(warned), 1)
+
     def test_a_rewrite_that_keeps_size_and_mtime_is_still_seen(self):
         # Same inode, same size, the old mtime put back: only the content differs.
         sid = "21212121-aaaa-aaaa-aaaa-212121212121"

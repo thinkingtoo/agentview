@@ -41,24 +41,25 @@ def _headless(fh):
     entrypoint says sdk-cli. A line that does not parse could have been the
     one that said cli, so it keeps the transcript."""
     seen = False
-    while True:
-        line = fh.readline(MAX_LINE + 1)
-        if not line:
-            break
-        if len(line) > MAX_LINE:
-            return False
-        try:
+    try:
+        while True:
+            line = fh.readline(MAX_LINE + 1)
+            if not line:
+                break
+            if len(line) > MAX_LINE:
+                return False
             record = json.loads(line)
-        except (ValueError, RecursionError, MemoryError):
-            return False
-        if not isinstance(record, dict):
-            return False
-        entry = record.get("entrypoint")
-        if entry is None:
-            continue
-        if entry != HEADLESS:
-            return False
-        seen = True
+            if not isinstance(record, dict):
+                return False
+            entry = record.get("entrypoint")
+            if entry is None:
+                continue
+            if entry != HEADLESS:
+                return False
+            seen = True
+    except (ValueError, RecursionError, MemoryError):
+        # Not enough memory to read a line is not enough to say it was not cli.
+        return False
     return seen
 
 
@@ -155,13 +156,13 @@ def _remove(name, fd, judged, path, warn):
                 if not _one_filesystem(sid + tag, fd):
                     raise OSError("another filesystem is mounted inside its session folder")
                 shutil.rmtree(sid + tag, dir_fd=fd)
-            except (OSError, RecursionError) as err:
+            except (OSError, RecursionError, MemoryError) as err:
                 if not _put_folder_back(sid + tag, sid, fd):
                     warn(f"left what remains of {path.with_suffix('')} as {sid + tag}")
                 raise err
         os.unlink(name + tag, dir_fd=fd)
         return True
-    except (OSError, RecursionError) as err:
+    except (OSError, RecursionError, MemoryError) as err:
         try:
             back = _put_file_back(name + tag, name, fd)
         except OSError:
