@@ -135,8 +135,8 @@ means, when none of your words is in it.
     the answer carries `meaning: {"state": "off", "why": ...}`, and the page
     says so above them. The reason never names the host. A mistyped
     `EMBEDDER_URL` is the same case, not an error. A box that is off
-    costs the first search at most 0.5 s (its connect timeout), and is left
-    alone for the next 30 s; a live one is given 1.5 s to answer.
+    costs the first search about half a second (its connect timeout), and is
+    left alone for the next 30 s; a live one is given 1.5 s to answer.
 - **Names.** The name the conversation last had: its peer file while it
   lasts, then agentview's own log (`~/.local/state/agentview/events.jsonl`,
   which goes back as far as its rotation), then whatever Claude Code wrote
