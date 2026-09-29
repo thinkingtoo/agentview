@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import archive
+import embedder
 import fleet
 import jump
 import lines
@@ -111,14 +112,17 @@ def found(query, limit=30):
     """The search box: conversations from any day, running ones included.
 
     Its own request, never part of the roster poll -- the poll has to stay
-    fast, and a search only runs when you type one."""
+    fast, and a search only runs when you type one.
+
+    The answer says whether meaning search took part: with the embedder out
+    of reach the rows are the keyword ones alone, and the page says so."""
     live = {r.get("sessionId") for r in registry.live(claude.claude_dir())}
-    hits = archive.search(query, limit=limit, live=live)
+    hits, meaning = archive.find(query, limit=limit, live=live, emb=embedder.load())
     shelves, names = fleet.config(), fleet.config_value("names", {})
     for h in hits or []:
         project = fleet.resolve_project(h["cwd"], shelves)
         h["project"] = names.get(project, project) if project else ""
-    return {"query": query, "results": hits or [], "index": archive.stats()}
+    return {"query": query, "results": hits or [], "index": archive.stats(), "meaning": meaning}
 
 
 def _live_procs():

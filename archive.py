@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Every interactive conversation, searchable by keyword.
+"""Every interactive conversation, searchable by keyword and by meaning.
 
 **⟲ closed N** only knows this boot. This keeps an index of every
 interactive Claude Code conversation on the machine -- running ones included
@@ -12,16 +12,23 @@ weight and none of what you would remember it by. A turn someone else started
 (a peer's message, a finished background task) begins an exchange of its own
 with an empty prompt, so a passage always points at one moment.
 
-The index is one SQLite file (FTS5) under `~/.claude/agentview/`. Nothing
-leaves the machine. A timer runs `archive.py update` every few minutes; it
-reads only transcripts whose size or mtime moved, and only from the start of
-their last exchange -- the one that may still be growing.
+The index is one SQLite file (FTS5) under `~/.claude/agentview/`. A timer
+runs `archive.py update` every few minutes; it reads only transcripts whose
+size or mtime moved, and only from the start of their last exchange -- the one
+that may still be growing.
+
+Meaning search adds one thing that leaves the machine: the text of a passage,
+sent to the owner's embedder (see embedder.py), and the words of a query.
+Nothing else -- no name, title, path or project. The vectors come back into
+the same file. A search merges the keyword list and the meaning list (see
+`fuse`); with the embedder unreachable it is the keyword list alone, and it
+says so.
 
     archive.py update          index what changed (the timer runs this)
     archive.py search WORDS    what the page's search box would show
     archive.py stats           what the index holds, and how the last run went
 
-Schema (version 3). Change it by bumping SCHEMA_VERSION: the index is derived
+Schema (version 4). Change it by bumping SCHEMA_VERSION: the index is derived
 from the transcripts, so a version it does not know is rebuilt from scratch.
 
     conversations  one row per transcript: id (the session id), path, cwd,
@@ -32,12 +39,16 @@ from the transcripts, so a version it does not know is rebuilt from scratch.
     passages       id, conversation, exchange, piece, at, uuid, prompt, reply
                    -- (conversation, exchange, piece) is unique
     passages_fts   FTS5 over passages(prompt, reply), kept in step by triggers
+    vectors        passage id -> its embedding (float32, little-endian). A
+                   trigger drops it with its passage. meta 'embedder' holds the
+                   identity of the model that made every vector here; when the
+                   embedder's identity differs, all of them go and are rebuilt
     skipped        transcripts that are not interactive, never read again
     meta           schema version, and what the last run did
 
 A passage's id changes when its exchange is read again, which happens only to
-the last exchange of a conversation that is still growing. Anything keyed on
-passage ids (vectors, ticket 04) should drop with the passage.
+the last exchange of a conversation that is still growing. Its vector goes
+with it and the next update embeds the new one.
 """
 import datetime
 import fcntl
@@ -49,10 +60,11 @@ import sys
 import time
 from pathlib import Path
 
+import embedder
 import log
 from providers import claude, registry
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -85,6 +97,10 @@ CREATE TABLE IF NOT EXISTS passages (
     reply        TEXT NOT NULL DEFAULT '',
     UNIQUE (conversation, exchange, piece)
 );
+CREATE TABLE IF NOT EXISTS vectors (
+    passage INTEGER PRIMARY KEY,
+    vec     BLOB NOT NULL
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS passages_fts USING fts5(
     prompt, reply, content='passages', content_rowid='id',
     tokenize='unicode61 remove_diacritics 2', prefix='2 3');
@@ -94,10 +110,11 @@ END;
 CREATE TRIGGER IF NOT EXISTS passages_removed AFTER DELETE ON passages BEGIN
     INSERT INTO passages_fts(passages_fts, rowid, prompt, reply)
     VALUES ('delete', old.id, old.prompt, old.reply);
+    DELETE FROM vectors WHERE passage = old.id;
 END;
 """
 
-# The embedder that ticket 04 feeds takes 2,048 tokens a text. Three
+# The embedder takes 2,048 tokens a text. Three
 # characters a token is pessimistic for prose and about right for code, so
 # a piece this long fits either way.
 PIECE = 6000
@@ -423,8 +440,50 @@ class Names:
         return self.logged.get(sid, "")
 
 
-def update(path=None, root=None, cfg=None, logs=None, say=lambda *_: None):
-    """Index every interactive transcript that changed since the last run."""
+# ------------------------------------------------------------ meaning
+
+def passage_text(prompt, reply):
+    """What is sent to be embedded: the words of the exchange and nothing
+    about the conversation around it."""
+    return "\n\n".join(t for t in (prompt, reply) if t)
+
+
+def pack(vector):
+    import numpy
+    return numpy.asarray(vector, dtype="<f4").tobytes()
+
+
+def embed_pending(con, emb, say=lambda *_: None):
+    """Give every passage a vector, through the document endpoint. When the
+    embedder is not the model that made the vectors already here, those go
+    first: two models' vectors are never in one index. Commits after every
+    batch, so a run cut short keeps what it did. Returns how many passages
+    were embedded; raises embedder.Unavailable if the embedder cannot be used."""
+    identity = emb.identity()
+    have = con.execute("SELECT value FROM meta WHERE key='embedder'").fetchone()
+    if not have or have[0] != identity:
+        con.execute("DELETE FROM vectors")
+        con.execute("INSERT OR REPLACE INTO meta VALUES ('embedder', ?)", (identity,))
+        con.commit()
+    done = 0
+    while True:
+        rows = con.execute(
+            "SELECT p.id, p.prompt, p.reply FROM passages p LEFT JOIN vectors v ON v.passage = p.id"
+            " WHERE v.passage IS NULL ORDER BY p.id LIMIT ?", (embedder.BATCH,)).fetchall()
+        if not rows:
+            return done
+        vectors = emb.documents([passage_text(p, r) for _, p, r in rows])
+        con.executemany("INSERT OR REPLACE INTO vectors VALUES (?,?)",
+                        [(pid, pack(v)) for (pid, _, _), v in zip(rows, vectors)])
+        con.commit()
+        done += len(rows)
+        say(f"  embedded {done}")
+
+
+def update(path=None, root=None, cfg=None, logs=None, say=lambda *_: None, emb=None):
+    """Index every interactive transcript that changed since the last run,
+    then embed what has no vector yet. `emb` is the embedder; without one the
+    keyword index is all there is."""
     began = time.monotonic()
     con = connect(path)
     root = Path(root or projects_dir())
@@ -477,11 +536,27 @@ def update(path=None, root=None, cfg=None, logs=None, say=lambda *_: None):
                 con.execute("DELETE FROM conversations WHERE id=?", (sid,))
         con.executemany("DELETE FROM skipped WHERE path=?",
                         [(p,) for p in skipped if p not in present])
+    con.commit()
+    indexed = time.monotonic()
+    embedded, meaning = 0, "off: no embedder is configured"
+    if emb is not None:
+        try:
+            embedded, meaning = embed_pending(con, emb, say), "on"
+        except embedder.Unavailable as exc:
+            con.rollback()
+            meaning = f"off: {exc}"
+        except ImportError:
+            meaning = "off: numpy is not installed"
     run = {"at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
            "files": len(files),
            "conversations": con.execute("SELECT COUNT(*) FROM conversations").fetchone()[0],
            "changed": len(changed),
            "passages": con.execute("SELECT COUNT(*) FROM passages").fetchone()[0],
+           "embedded": embedded,
+           "unembedded": con.execute("SELECT COUNT(*) FROM passages p LEFT JOIN vectors v"
+                                     " ON v.passage = p.id WHERE v.passage IS NULL").fetchone()[0],
+           "meaning": meaning,
+           "embed_seconds": round(time.monotonic() - indexed, 2),
            "seconds": round(time.monotonic() - began, 2)}
     con.execute("INSERT OR REPLACE INTO meta VALUES ('last_run', ?)", (json.dumps(run),))
     con.commit()
@@ -514,52 +589,158 @@ def fts_query(words):
     return " ".join(quoted)
 
 
-def search(words, limit=30, path=None, live=()):
-    """Conversations matching every word, best first, each with the passage
-    that matched best. None when there is no index yet."""
+# Reciprocal rank fusion: a conversation scores 1/(RRF_K + rank) in each list it
+# is in, so one found by both the words and the meaning beats one found by
+# either alone, and a place near the top of one list is worth more than a
+# place far down two. 60 is the constant the method was published with.
+RRF_K = 60
+
+# Below this cosine similarity a passage is not about the question. The
+# embedder ranks every passage there is, so without a floor a question that
+# means nothing still gets its ten nearest, none of them near.
+MEANING_FLOOR = 0.35
+
+# How much of a passage a meaning hit shows. A keyword hit shows a snippet
+# around the words; there are no words to be around here.
+SHOWN_PROMPT, SHOWN_REPLY = 160, 420
+
+
+def fuse(*lists):
+    """Conversation ids best first, from lists that are each best first.
+    A tie goes to the earlier list, which is the keyword one."""
+    score = {}
+    for ranked in lists:
+        for rank, conv in enumerate(ranked):
+            score[conv] = score.get(conv, 0.0) + 1.0 / (RRF_K + rank + 1)
+    return sorted(score, key=lambda conv: -score[conv])
+
+
+def keyword_best(con, query, limit):
+    """conversation -> the id of its best passage, best conversation first."""
+    if not query:
+        return {}
+    # One row per conversation, carrying its best passage: with a single
+    # MIN() in the query, SQLite takes the bare p.id from the row that
+    # holds the minimum. Grouped here rather than after a LIMIT, so one
+    # conversation with a thousand hits cannot crowd out the others.
+    return {conv: rowid for conv, rowid, _ in con.execute(
+        "SELECT p.conversation, p.id, MIN(passages_fts.rank) AS score"
+        " FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid"
+        " WHERE passages_fts MATCH ? GROUP BY p.conversation ORDER BY score LIMIT ?",
+        (query, limit))}
+
+
+def meaning_best(con, emb, words, limit):
+    """conversation -> the id of its passage nearest the question in meaning,
+    nearest conversation first. Raises embedder.Unavailable, with the reason,
+    when meaning cannot be used: nothing in the index yet, vectors from
+    another model, an embedder that does not answer."""
+    identity = emb.identity()
+    have = con.execute("SELECT value FROM meta WHERE key='embedder'").fetchone()
+    if not have or not con.execute("SELECT 1 FROM vectors LIMIT 1").fetchone():
+        raise embedder.Unavailable("no passage has a vector yet: the next update builds them")
+    if have[0] != identity:
+        raise embedder.Unavailable("the vectors are from another model: the next update rebuilds them")
+    try:
+        import numpy
+    except ImportError:
+        raise embedder.Unavailable("numpy is not installed") from None
+    question = numpy.asarray(emb.query(words), dtype="<f4")
+    rows = con.execute("SELECT v.passage, p.conversation, v.vec FROM vectors v"
+                       " JOIN passages p ON p.id = v.passage").fetchall()
+    size = question.shape[0] * 4
+    rows = [r for r in rows if len(r[2]) == size]        # a vector of another size is not comparable
+    if not rows:
+        raise embedder.Unavailable("no passage has a vector yet: the next update builds them")
+    matrix = numpy.frombuffer(b"".join(r[2] for r in rows), dtype="<f4").reshape(len(rows), -1)
+    scores = matrix @ question
+    best = {}
+    for i in numpy.argsort(-scores):
+        if scores[i] < MEANING_FLOOR or len(best) >= limit:
+            break
+        best.setdefault(rows[i][1], rows[i][0])
+    return best
+
+
+def excerpt(text, size):
+    text = " ".join(text.split())
+    return text if len(text) <= size else text[:size].rstrip() + "…"
+
+
+def find(words, limit=30, path=None, live=(), emb=None):
+    """What the search box shows: conversations matching every word, and
+    conversations whose passages mean what the words mean, merged, each with
+    the passage that matched best. Returns (hits, meaning). `hits` is None
+    when there is no index yet. `meaning` says whether the meaning half
+    answered: {"state": "on"} or {"state": "off", "why": ...}. With it off the
+    hits are the keyword ones alone."""
     query = fts_query(words)
     path = Path(path or db_path())
     if not path.exists():
-        return None
+        return None, {"state": "off", "why": "no index yet"}
     if not query:
-        return []
+        return [], {"state": "on" if emb is not None else "off", "why": "" if emb is not None else "no embedder is configured"}
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
     try:
-        # One row per conversation, carrying its best passage: with a single
-        # MIN() in the query, SQLite takes the bare p.id from the row that
-        # holds the minimum. Grouped here rather than after a LIMIT, so one
-        # conversation with a thousand hits cannot crowd out the others.
-        best = {conv: rowid for conv, rowid, _ in con.execute(
-            "SELECT p.conversation, p.id, MIN(passages_fts.rank) AS score"
-            " FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid"
-            " WHERE passages_fts MATCH ? GROUP BY p.conversation ORDER BY score LIMIT ?",
-            (query, limit))}
-        if not best:
-            return []
-        marks = ",".join("?" * len(best))
+        by_words = keyword_best(con, query, limit)
+        by_meaning, meaning = {}, {"state": "on"}
+        try:
+            if emb is None:
+                raise embedder.Unavailable("no embedder is configured")
+            by_meaning = meaning_best(con, emb, words.strip(), limit)
+            meaning["pending"] = con.execute(
+                "SELECT COUNT(*) FROM passages p LEFT JOIN vectors v ON v.passage = p.id"
+                " WHERE v.passage IS NULL").fetchone()[0]
+        except embedder.Unavailable as exc:
+            meaning = {"state": "off", "why": str(exc)}
+        order = fuse(list(by_words), list(by_meaning))[:limit]
+        if not order:
+            return [], meaning
+        wanted = [by_words[c] for c in order if c in by_words]
+        marks = ",".join("?" * len(wanted))
         quoted = {r[0]: r[1:] for r in con.execute(
             "SELECT p.id, p.exchange, p.piece, p.at, p.uuid,"
             " snippet(passages_fts, 0, char(2), char(3), '…', 16),"
             " snippet(passages_fts, 1, char(2), char(3), '…', 32)"
-            f" FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid"
+            " FROM passages_fts JOIN passages p ON p.id = passages_fts.rowid"
             f" WHERE passages_fts MATCH ? AND passages_fts.rowid IN ({marks})",
-            (query, *best.values()))}
+            (query, *wanted))} if wanted else {}
+        plain = {}
+        for conv in order:
+            if conv not in by_words and conv in by_meaning:
+                pid, ex, pc, at, uuid, prompt, reply = con.execute(
+                    "SELECT id, exchange, piece, at, uuid, prompt, reply FROM passages WHERE id=?",
+                    (by_meaning[conv],)).fetchone()
+                plain[pid] = (ex, pc, at, uuid, excerpt(prompt, SHOWN_PROMPT), excerpt(reply, SHOWN_REPLY))
+        marks = ",".join("?" * len(order))
         about = {r[0]: r[1:] for r in con.execute(
             f"SELECT id, name, title, cwd, started, active FROM conversations WHERE id IN ({marks})",
-            tuple(best))}
+            tuple(order))}
     finally:
         con.close()
     out = []
-    for conv, rowid in best.items():
-        if conv not in about or rowid not in quoted:
+    for conv in order:
+        if conv not in about:
+            continue
+        rowid = by_words.get(conv) or by_meaning[conv]
+        found = quoted.get(rowid) or plain.get(rowid)
+        if found is None:
             continue
         name, title, cwd, started, active = about[conv]
-        exchange, piece, at, uuid, prompt, reply = quoted[rowid]
+        exchange, piece, at, uuid, prompt, reply = found
         out.append({"id": conv, "name": name, "title": title, "cwd": cwd,
                     "started": started, "active": active, "live": conv in live,
+                    "via": "both" if conv in by_words and conv in by_meaning
+                           else "words" if conv in by_words else "meaning",
                     "passage": {"exchange": exchange, "piece": piece, "at": at, "uuid": uuid,
                                 "prompt": prompt, "reply": reply}})
-    return out
+    return out, meaning
+
+
+def search(words, limit=30, path=None, live=()):
+    """By keyword alone: conversations matching every word, best first, each
+    with the passage that matched best. None when there is no index yet."""
+    return find(words, limit=limit, path=path, live=live)[0]
 
 
 def stats(path=None):
@@ -571,6 +752,7 @@ def stats(path=None):
         run = con.execute("SELECT value FROM meta WHERE key='last_run'").fetchone()
         return {"conversations": con.execute("SELECT COUNT(*) FROM conversations").fetchone()[0],
                 "passages": con.execute("SELECT COUNT(*) FROM passages").fetchone()[0],
+                "vectors": con.execute("SELECT COUNT(*) FROM vectors").fetchone()[0],
                 "last_run": json.loads(run[0]) if run else None}
     finally:
         con.close()
@@ -588,19 +770,24 @@ def main(argv):
                 print("another update is running")
                 return 0
             verbose = "-v" in argv
-            run = update(say=print if verbose else (lambda *_: None))
+            run = update(say=print if verbose else (lambda *_: None), emb=embedder.load())
         print(f"{run['changed']} of {run['conversations']} conversations read, "
               f"{run['passages']} passages, {run['seconds']}s")
+        print(f"meaning {run['meaning']}: {run['embedded']} embedded in {run['embed_seconds']}s, "
+              f"{run['unembedded']} still without a vector")
         return 0
     if cmd == "search":
         live = {r.get("sessionId") for r in registry.live()}
-        hits = search(" ".join(argv[2:]), live=live)
+        hits, meaning = find(" ".join(argv[2:]), live=live, emb=embedder.load())
         if hits is None:
             print("no index yet: run archive.py update")
             return 1
+        if meaning["state"] == "off":
+            print(f"(meaning search is off: {meaning['why']})")
         for h in hits:
             quote = (h["passage"]["reply"] or h["passage"]["prompt"]).replace("\x02", "[").replace("\x03", "]")
-            print(f"{h['active'][:16]}  {h['name'] or h['id'][:8]:<14} {h['title'][:60]}")
+            print(f"{h['active'][:16]}  {h['name'] or h['id'][:8]:<14} {h['title'][:60]}"
+                  f"{'  (by meaning)' if h['via'] == 'meaning' else ''}")
             print(f"{'':18}{' '.join(quote.split())[:110]}")
         return 0
     if cmd == "stats":
