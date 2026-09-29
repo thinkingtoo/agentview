@@ -140,7 +140,7 @@ class Embedder:
         if model not in MODELS:
             self._fail("the embedder is not the EmbeddingGemma service this index is built for")
         if dims != DIMENSIONS:
-            self._fail(f"the embedder gives {dims} dimensions; this index is built for {DIMENSIONS}")
+            self._fail(f"the embedder's vectors are not the {DIMENSIONS} dimensions this index is built for")
         if not all(isinstance(info.get(k), str) and info[k] for k in ("query_prompt", "document_prompt")):
             self._fail("the embedder does not name its query and document prompts")
         self.dims = dims

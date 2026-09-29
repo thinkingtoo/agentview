@@ -298,6 +298,20 @@ class Finding(Meaning, unittest.TestCase):
         self.assertNotIn("\x02", hit["passage"]["prompt"] + hit["passage"]["reply"])
         self.assertEqual((hit["cwd"], hit["live"]), ("/home/alice/Projects/maple", False))
 
+    def test_a_stored_vector_that_is_not_finite_is_never_a_match(self):
+        # Whatever put it there, it must not score as anything: NaN compares
+        # false with every floor, and would otherwise slip past it.
+        import numpy
+        con = sqlite3.connect(self.db)
+        con.execute("UPDATE vectors SET vec = ?", (numpy.full(8, numpy.nan, dtype="<f4").tobytes(),))
+        con.commit()
+        con.close()
+        hits, meaning = self.find("copper")
+        self.assertEqual(meaning["state"], "on")
+        self.assertEqual({h["via"] for h in hits}, {"words"})
+        self.assertEqual({h["id"] for h in hits}, {PIPES, SID})
+        self.assertEqual(self.find(QUESTION)[0], [])
+
     def test_a_question_that_means_nothing_finds_nothing(self):
         hits, meaning = self.find("zzz qqq")
         self.assertEqual(hits, [])
@@ -608,6 +622,16 @@ class Guard(unittest.TestCase):
         with self.assertRaises(embedder.Unavailable) as got:
             fake.client().identity()
         self.assertNotIn(KEY, str(got.exception))
+
+    def test_the_size_the_service_reports_is_not_repeated_either(self):
+        # A key made of digits, and a service that reports it as its dimensions.
+        info = {"model": "google/embeddinggemma-300m", "dimensions": 123456,
+                "query_prompt": "q", "document_prompt": "d", "max_len": 2048}
+        with mock.patch.object(embedder.Embedder, "_call", return_value=info):
+            with self.assertRaises(embedder.Unavailable) as got:
+                embedder.Embedder("http://example.invalid:9", "123456").identity()
+        self.assertNotIn("123456", str(got.exception))
+        self.assertIn("768", str(got.exception))
 
     def test_gemma_at_another_size_is_refused(self):
         with self.assertRaisesRegex(embedder.Unavailable, "768"):

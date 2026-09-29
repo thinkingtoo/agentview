@@ -651,10 +651,12 @@ def meaning_best(con, emb, words, limit):
     if not rows:
         raise embedder.Unavailable("no passage has a vector yet: the next update builds them")
     matrix = numpy.frombuffer(b"".join(r[2] for r in rows), dtype="<f4").reshape(len(rows), -1)
-    scores = matrix @ question
+    # A vector that is not finite (whatever stored it) scores nothing: NaN is
+    # neither above nor below a floor, and would otherwise slip past it.
+    scores = numpy.where(numpy.isfinite(scores := matrix @ question), scores, -1.0)
     best = {}
     for i in numpy.argsort(-scores):
-        if scores[i] < MEANING_FLOOR or len(best) >= limit:
+        if not scores[i] >= MEANING_FLOOR or len(best) >= limit:
             break
         best.setdefault(rows[i][1], rows[i][0])
     return best
