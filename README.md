@@ -486,6 +486,26 @@ The lines live in `~/.local/state/agentview/lines/`, beside `seen.json` and
 out of `config.json` — that file is yours to hand-edit, this one is written by a
 hook. Sessions that are gone are forgotten on the next poll.
 
+## Open a ticket in Claude
+
+A GitHub ticket can carry a link to `http://127.0.0.1:8765/ticket/<owner>/<repo>/<n>`.
+Following it shows the ticket, its map and what blocks it, with one button:
+
+- **No conversation yet:** a new Claude starts in a new WezTerm tab, in the
+  directory configured for the repo. On a wayfinder map it opens
+  `/mattpocock-skills:wayfinder <map> <ticket>`; on the map itself, wayfinder on
+  the map; any other ticket is simply handed over. The conversation is started
+  with a fixed session id, named `<repo>-<n>`, and remembered in
+  `~/.local/state/agentview/tickets.json`.
+- **A conversation exists:** the button goes to it if it runs, or resumes it
+  in a new tab if it was closed, exactly like a search result.
+
+Only repos under `ticket_repos` in `config.json` are served, each mapped to its
+directory. The prompt is built from the ticket number and its map, never from
+the URL or the ticket's text. A GET only shows the page; the launch is a POST
+under the same local guard as every other action, so a link on another site
+cannot start anything.
+
 ## Click a card, get the terminal
 
 Clicking a session raises the terminal it is running in. The page never guesses

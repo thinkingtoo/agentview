@@ -21,5 +21,7 @@
   "waiting_after_seconds": 20,
   "hold": false,
   "_chime": "Sound: a two-stroke chime when a session starts waiting on you, a single short tick when one finishes. Either sounds once, for whoever has just changed -- never for the ones already on screen when the page opens.",
-  "chime": true
+  "chime": true,
+  "_ticket_repos": "Repos whose tickets open in Claude from /ticket/<owner>/<repo>/<n>, each with the directory its Claude starts in.",
+  "ticket_repos": {}
 }

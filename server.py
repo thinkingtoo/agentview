@@ -5,6 +5,7 @@ Bound to 127.0.0.1 on purpose: the page shows your prompts verbatim, which is
 client work, and occasionally a credential someone pasted into an error.
 """
 import json
+import os
 import sqlite3
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,6 +21,7 @@ import providers
 import seen
 import snapshot
 import subprocess
+import tickets
 import sys
 import threading
 import time
@@ -169,6 +171,53 @@ def _reopen(sid):
     return {**done, "did": "opened"}
 
 
+def ticket_repos():
+    """repo -> the directory its Claude starts in. Only these are served."""
+    got = fleet.config_value("ticket_repos", {})
+    return {k: os.path.expanduser(v) for k, v in got.items() if isinstance(v, str)}
+
+
+def ticket_status(repo, number):
+    """"running", "closed" or "none": what a click on the ticket would find."""
+    sid = tickets.session_of(repo, number)
+    if not sid:
+        return "none"
+    if fleet.find(f"claude:{sid}"):
+        return "running"
+    return "closed" if claude.transcript_for(sid, ticket_repos().get(repo, "")) else "none"
+
+
+def open_ticket(repo, number):
+    """A click on a ticket's button: its conversation, or a new one.
+
+    Same lock as a search result's reopen, so two clicks never start two
+    conversations for one ticket."""
+    cwd = ticket_repos().get(repo)
+    if not cwd:
+        return {"ok": False, "reason": f"{repo} is not under ticket_repos in config.json"}
+    if not os.path.isdir(cwd):
+        return {"ok": False, "reason": f"its directory is gone: {cwd}"}
+    with _REOPEN:
+        sid = tickets.session_of(repo, number)
+        if sid and time.time() - _OPENING.get(sid, 0) < OPENING_GRACE:
+            return {"ok": True, "did": "opening"}
+        live = bool(sid and fleet.find(f"claude:{sid}"))
+        known = bool(sid and claude.transcript_for(sid, cwd))
+        if tickets.decide(sid, live, known) == "reopen":
+            return _reopen(sid)
+        info = tickets.fetch(repo, number)
+        if "error" in info:
+            return {"ok": False, "reason": info["error"]}
+        sid = tickets.new_session_id()
+        snapshot.seed_name(sid, tickets.name_for(repo, number))
+        done = jump.open_tab(tickets.command(sid, tickets.prompt(repo, number, info)), cwd=cwd)
+        if done.get("ok"):
+            tickets.remember(repo, number, sid)
+            _OPENING[sid] = time.time()
+        log.event("ticket-started", repo=repo, number=number, id=sid, **done)
+        return {**done, "did": "started"}
+
+
 def _live_procs():
     return [{**p, "started": snapshot.started_at(p["pid"])} for p in snapshot.live_peers()]
 
@@ -210,7 +259,7 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or "{}")
 
     ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore", "snapshot", "revive",
-              "dismiss", "reopen")
+              "dismiss", "reopen", "ticket")
 
     def do_POST(self):
         if not self._local():
@@ -377,6 +426,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400, "expected {id}")
         self._send(json.dumps(reopen(sid)), "application/json")
 
+    def _ticket(self, body):
+        repo, number = body.get("repo"), body.get("number")
+        if not isinstance(repo, str) or not isinstance(number, int) \
+                or tickets.route(f"/ticket/{repo}/{number}") is None:
+            return self.send_error(400, "expected {repo, number}")
+        self._send(json.dumps(open_ticket(repo, number)), "application/json")
+
     def _dismiss(self, body):
         sid = body.get("id")
         if not isinstance(sid, str):
@@ -437,6 +493,12 @@ class Handler(BaseHTTPRequestHandler):
                 log.error("search", exc, query=query)
                 body = {"query": query, "results": [], "error": str(exc)}
             self._send(json.dumps(body), "application/json")
+        elif tickets.route(self.path):
+            repo, number = tickets.route(self.path)
+            if repo not in ticket_repos():
+                return self.send_error(404, f"{repo} is not under ticket_repos in config.json")
+            self._send(tickets.page(repo, number, tickets.fetch(repo, number), ticket_status(repo, number)),
+                       "text/html; charset=utf-8")
         elif self.path in ("/", "/index.html"):
             self._send(page(), "text/html; charset=utf-8")
         else:
