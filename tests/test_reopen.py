@@ -240,7 +240,7 @@ class Endpoint(unittest.TestCase):
         self.conversation()
         got = self.reopen()
         self.assertEqual((got["ok"], got["did"]), (True, "opened"))
-        self.assertEqual(self.opened, [(["claude", "--resume", SID, "--permission-mode", "plan"],
+        self.assertEqual(self.opened, [([snapshot.claude_bin(), "--resume", SID, "--permission-mode", "plan"],
                                         str(self.work))])
         self.assertEqual(self.seeded, [(SID, "Nimbus")])
         self.assertEqual(self.jumped, [])
@@ -249,7 +249,8 @@ class Endpoint(unittest.TestCase):
         self.conversation(mode="default")
         self.snapshotted(session("Renamed", cwd=str(self.work), flags="--model opus"))
         self.reopen()
-        self.assertEqual(self.opened, [(["claude", "--resume", SID, "--model", "opus"], str(self.work))])
+        self.assertEqual(self.opened, [([snapshot.claude_bin(), "--resume", SID, "--model", "opus"],
+                                        str(self.work))])
         self.assertEqual(self.seeded, [(SID, "Renamed")])
 
     def test_when_the_directory_is_gone_nothing_is_launched(self):
@@ -297,6 +298,17 @@ class Endpoint(unittest.TestCase):
         with mock.patch("jump.open_tab", return_value={"ok": False, "reason": "wezterm cli spawn failed"}):
             self.assertFalse(self.reopen()["ok"])
         self.assertEqual(self.reopen()["did"], "opened")
+
+    def test_claude_is_launched_by_its_full_path_when_the_service_path_lacks_it(self):
+        # agentview.service has no ~/.local/bin on PATH, and `wezterm cli spawn`
+        # looks the program up in the caller's PATH (2026-10-12: "No viable
+        # candidates found in PATH").
+        home = self.root / "home"
+        (home / ".local" / "bin").mkdir(parents=True)
+        self.conversation()
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "HOME": str(home)}):
+            self.reopen()
+        self.assertEqual(self.opened[0][0][0], str(home / ".local" / "bin" / "claude"))
 
     def test_each_reopen_is_logged_like_the_closed_lists_revives(self):
         self.conversation()

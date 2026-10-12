@@ -180,7 +180,7 @@ class Restoring(Scoped):
         made = [c for c in calls if "new-session" in c]
         self.assertEqual(len(made), 1)
         self.assertEqual(made[0][:len(PREFIX)], PREFIX)
-        self.assertIn("claude --resume s1", made[0])
+        self.assertIn(f"{snapshot.claude_bin()} --resume s1", made[0])
 
     def test_a_tmux_session_from_the_snapshot_is_created_in_its_own_scope(self):
         snap = {"sessions": [{**self.REC, "tmux": {"session": "w", "window": 0, "pane": 0}}],

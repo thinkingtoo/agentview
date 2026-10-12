@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -656,8 +657,15 @@ def _tmux_argv(argv):
     return scope.wrap(argv, "tmux server") if argv[:2] == ["tmux", "new-session"] else argv
 
 
+def claude_bin():
+    """`claude` by its full path. agentview.service runs without ~/.local/bin on
+    PATH, and `wezterm cli spawn` looks the program up in the caller's PATH, so
+    a bare `claude` fails there (2026-10-12)."""
+    return shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
+
+
 def _claude_cmd(rec):
-    return f"claude --resume {rec['sessionId']} {rec.get('flags') or ''}".strip()
+    return f"{shlex.quote(claude_bin())} --resume {rec['sessionId']} {rec.get('flags') or ''}".strip()
 
 
 def restore(snap, dry=False, log=print):
