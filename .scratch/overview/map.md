@@ -22,6 +22,7 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 
 - [What signals exist to group sessions into projects?](issues/01-project-signals.md): the boss track is the only project-shaped signal (18 of 24); repository identity with worktrees merged covers the rest; folder labels split 7 repos into 14 groups.
 - [What signals show that a session is moving?](issues/02-movement-signals.md): moving = recent transcript or subagent write, a shell under it using CPU, or an open background task with a live shell; the status field alone has no heartbeat.
+- [What has stuck looked like on this machine so far?](issues/03-stuck-history.md): unanswered dialogs and waiting on another session dominate; rate limits and server errors show as `ready`; today's `stuck` is false 86% of the time.
 
 ## Not yet specified
 
