@@ -23,12 +23,12 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 - [What signals exist to group sessions into projects?](issues/01-project-signals.md): the boss track is the only project-shaped signal (18 of 24); repository identity with worktrees merged covers the rest; folder labels split 7 repos into 14 groups.
 - [What signals show that a session is moving?](issues/02-movement-signals.md): moving = recent transcript or subagent write, a shell under it using CPU, or an open background task with a live shell; the status field alone has no heartbeat.
 - [What has stuck looked like on this machine so far?](issues/03-stuck-history.md): unanswered dialogs and waiting on another session dominate; rate limits and server errors show as `ready`; today's `stuck` is false 86% of the time.
+- [How does a session get its project?](issues/04-project-assignment.md): person's setting, then boss track (spans repos), then repository with worktrees folded and each client its own project, then folder; launch folder fixes it; leftovers in "No project"; overrides in `config.json` by track or repo.
 
 ## Not yet specified
 
 - **Finished and forgotten sessions.** Sessions idle for hours (13 of 24 on 2026-10-17): shown, folded or dimmed. Decide after the stuck kinds and the layout.
 - **What one click lands on.** The pane, the tab, the open dialog; what happens when no terminal is attached. Today's jump covers part of this. Revisit once the stuck kinds say where unsticking happens.
-- **A boss whose workers span projects.** Whether the boss shows once or under each project. Depends on how sessions get a project.
 - **Codex parity.** Which movement and stuck signals Codex sessions can give at all.
 
 ## Out of scope

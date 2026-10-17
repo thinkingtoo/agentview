@@ -18,6 +18,9 @@ A session that dispatches work to other sessions and leads them.
 **Worker**:
 A session that a boss leads.
 
+**Track**:
+The line of work a boss leads, with its workers. When a session belongs to a track, the track is its project, whichever repositories the work touches.
+
 **Overview**:
 The main page: every running project, separated, with its sessions.
 _Avoid_: dashboard, roster
