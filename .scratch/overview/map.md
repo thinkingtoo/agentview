@@ -20,6 +20,8 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 
 ## Decisions so far
 
+- [What signals exist to group sessions into projects?](issues/01-project-signals.md): the boss track is the only project-shaped signal (18 of 24); repository identity with worktrees merged covers the rest; folder labels split 7 repos into 14 groups.
+
 ## Not yet specified
 
 - **Finished and forgotten sessions.** Sessions idle for hours (13 of 24 on 2026-10-17): shown, folded or dimmed. Decide after the stuck kinds and the layout.
