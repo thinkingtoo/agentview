@@ -24,6 +24,7 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 - [What signals show that a session is moving?](issues/02-movement-signals.md): moving = recent transcript or subagent write, a shell under it using CPU, or an open background task with a live shell; the status field alone has no heartbeat.
 - [What has stuck looked like on this machine so far?](issues/03-stuck-history.md): unanswered dialogs and waiting on another session dominate; rate limits and server errors show as `ready`; today's `stuck` is false 86% of the time.
 - [How does a session get its project?](issues/04-project-assignment.md): person's setting, then boss track (spans repos), then repository with worktrees folded and each client its own project, then folder; launch folder fixes it; leftovers in "No project"; overrides in `config.json` by track or repo.
+- [Where does a project's "what is this about" line come from?](issues/05-project-context.md): a track uses its goal's Outcome, status tag and "N of M"; a repository its README then CLAUDE.md; the person's own line wins; otherwise greyed session titles; names are prettified slugs; the brain only behind an on-click "notes" link.
 
 ## Not yet specified
 

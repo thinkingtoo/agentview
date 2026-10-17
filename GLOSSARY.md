@@ -21,6 +21,10 @@ A session that a boss leads.
 **Track**:
 The line of work a boss leads, with its workers. When a session belongs to a track, the track is its project, whichever repositories the work touches.
 
+**Context line**:
+A short line under a project's name that reminds the person what the project is about.
+_Avoid_: description, summary
+
 **Overview**:
 The main page: every running project, separated, with its sessions.
 _Avoid_: dashboard, roster
