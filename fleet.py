@@ -525,13 +525,15 @@ def roster(providers=None):
     swallowed into it.
     """
     groups = {}
-    listed = set()
+    listed = {}
     for s in sessions(providers):
         # A session is one `provider:id`. A provider that lists it twice has
-        # still only one session to show, and one to count for the chime.
-        if s["key"] in listed:
-            continue
-        listed.add(s["key"])
+        # still only one session to show, and one to count for the chime --
+        # and if only one of the records knows it leads a track, that one.
+        first = listed.get(s["key"])
+        if first is None or (s["boss"] and not first["boss"]):
+            listed[s["key"]] = s
+    for s in listed.values():
         key = (True, ROUTINES) if s["routine"] else (False, s["project"] or "")
         groups.setdefault(key, []).append(s)
 
@@ -614,22 +616,19 @@ def columns_of(blocks):
         rows = order_members(list(rows))
         rows.sort(key=lambda s: not s["boss"])
         pin = projects.pin_rank(place, pinned) if place is not NO_PROJECT else None
+        name = projects.display_name(place, names) if place["raw"] else names.get("No project") or "No project"
         out.append(({
-            "project": place["id"], "raw": place["raw"], "kind": place["kind"],
-            "name": projects.display_name(place, names) if place["raw"] else "No project",
+            "project": place["id"], "raw": place["raw"], "kind": place["kind"], "name": name,
             "sessions": [tile_of(m, _suggestion(m, place, folder_rule, names)) for m in rows],
         }, (
             # Your pins lead, in your order; then the tracks, the repositories
-            # and the folders; No project last whatever. Inside each, what
-            # wants you comes before what is only running, as the blocks do.
+            # and the folders; No project last whatever. Inside a kind they go
+            # by name and stay put: a column that jumps sideways because a
+            # session woke up is the reshuffling this page exists to stop.
             place is NO_PROJECT,
             len(pinned) if pin is None else pin,
             projects.COLUMN_RANK[place["kind"]],
-            -sum(1 for s in rows if s["flag"] in ("waiting", "stuck") or s["blocked"]),
-            -sum(1 for s in rows if s["flag"] == "ready"),
-            -sum(1 for s in rows if s["status"] == "busy"),
-            -max(s["updatedAt"] for s in rows),
-            place["raw"])))
+            name.casefold(), place["id"])))
     return [column for column, _ in sorted(out, key=lambda pair: pair[1])]
 
 

@@ -30,7 +30,7 @@ def _repository(cwd):
             return None
         git = d / ".git"
         if git.is_dir():
-            return git, here.relative_to(d)
+            return git.resolve(), here.relative_to(d)
         if git.is_file():
             try:
                 admin = d / git.read_text(encoding="utf-8").split(":", 1)[1].strip()
@@ -85,19 +85,26 @@ def display_name(place, names):
     return names.get(place["id"]) or names.get(place["raw"]) or place["raw"]
 
 
-def holds_repositories(path):
-    """Is this folder only a shelf for several repositories?"""
-    found = 0
+def _subfolders(path):
     try:
         with os.scandir(path) as entries:
-            for entry in entries:
-                if entry.is_dir(follow_symlinks=False) and os.path.exists(
-                        os.path.join(entry.path, ".git")):
-                    found += 1
-                    if found == 2:
-                        return True
+            return [e.path for e in entries
+                    if not e.name.startswith(".") and e.is_dir(follow_symlinks=False)]
     except OSError:
-        pass
+        return []
+
+
+def holds_repositories(path):
+    """Is this folder only a shelf: several repositories in it, or in the
+    folders directly below it (`~/Projects/tiroir/{o,v,biz}`)?"""
+    found = 0
+    for child in _subfolders(path):
+        if os.path.exists(os.path.join(child, ".git")):
+            found += 1
+        else:
+            found += sum(os.path.exists(os.path.join(g, ".git")) for g in _subfolders(child))
+        if found >= 2:
+            return True
     return False
 
 
@@ -114,7 +121,9 @@ def place_of(cwd, folder_rule):
         return None
     found = _repository(cwd)
     if not found:
-        label = None if holds_repositories(cwd) else folder_rule(cwd)
+        label = folder_rule(cwd)
+        if label and holds_repositories(cwd):
+            label = None
         return {"id": f"folder:{label}", "kind": "folder", "raw": label} if label else None
     common, inside = found
     # Known by its remote, so a second clone is the same project. With none,
@@ -122,9 +131,10 @@ def place_of(cwd, folder_rule):
     key = _remote(common) or str(common.parent)
     # Each `clients/<client>/` is a project of its own: the work of one
     # client is not the work of the one beside it, or of the repository.
-    if len(inside.parts) >= 2 and inside.parts[0] == "clients":
-        return {"id": f"client:{key}/{inside.parts[1]}", "kind": "folder",
-                "raw": inside.parts[1]}
+    below = inside.parts[1:] if inside.parts[:1] == ("clients",) else (
+        inside.parts if common.parent.name == "clients" else ())
+    if below:
+        return {"id": f"client:{key}/{below[0]}", "kind": "folder", "raw": below[0]}
     return {"id": f"repo:{key}", "kind": "repository",
             "raw": key.rstrip("/").rsplit("/", 1)[-1]}
 
@@ -222,6 +232,8 @@ def _boss_tracks(members):
 
 
 HEADING = re.compile(r"^#{1,6}\s*(.*?)\s*#*\s*$")
+# `Roster`, `Roster (current, max 2)`, `Worker roster` -- not `Roster correction`.
+ROSTER = re.compile(r"^(?:worker )?roster(?: *\(.*\))?:?$")
 FIRST_WORD = re.compile(r"[^\s(,/|]+")
 TRACKER_READ = 1_000_000
 
@@ -241,7 +253,7 @@ def _named_in(track):
     for line in text.splitlines():
         heading = HEADING.match(line)
         if heading:
-            in_roster = heading.group(1).strip("*_` ").casefold() == "roster"
+            in_roster = bool(ROSTER.match(heading.group(1).strip("*_` ").casefold()))
             continue
         if not in_roster or not line.lstrip().startswith("|"):
             continue
@@ -322,10 +334,16 @@ def place_all(members, folder_rule, assigned):
         if m["cwd"] not in folders:
             folders[m["cwd"]] = place_of(m["cwd"], folder_rule) or NO_PROJECT
         places[m["key"]] = folders[m["cwd"]]
+    # What a plain name can mean: the name a project carries now, or the label
+    # the folder rule gave the folders its sessions are in -- assignments were
+    # made against those labels, `client › project`, before projects had names.
     carried = {}
-    for place in places.values():
-        if place is not NO_PROJECT:
-            carried.setdefault(place["raw"], []).append(place)
+    for m in members:
+        place = places.get(m["key"])
+        if place is not None and place is not NO_PROJECT:
+            for name in (place["raw"], folder_rule(m["cwd"])):
+                if name and place not in carried.setdefault(name, []):
+                    carried[name].append(place)
     for m in members:
         if _own(assigned, m["key"]):
             places[m["key"]] = _named(assigned[m["key"]].strip(), carried)
