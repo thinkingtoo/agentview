@@ -511,6 +511,19 @@ class OwnSetting(Placed):
         self.assertEqual(got["columns"][0]["kind"], "repository")
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["fake:a", "fake:b"])
 
+    def test_a_name_two_projects_carry_goes_to_the_one_that_comes_first_in_the_columns(self):
+        # A track, a repository and a folder can all be called "loom". A plain
+        # name is the old way of saying it, so it takes the order the columns
+        # have: track, then repository, then folder.
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.config = {"assign": {"claude:a": "loom"}}
+        got = self.roster(provider=Claude([
+            sess("b", orchard, name="Ilse", boss=True, track="loom"),
+            sess("p", loom, name="Femi"),
+            sess("a", self.repo("elsewhere"), name="Odile")]))
+        self.assertEqual(self.keys(self.column(got, "track:loom")), ["claude:b", "claude:a"])
+        self.assertEqual(self.keys(self.column(got, "repo:example.com/alice/loom")), ["claude:p"])
+
     def test_a_session_you_assigned_by_identity_joins_that_project_even_alone(self):
         orchard = self.repo("orchard")
         self.config = {"assign": {"fake:a": "repo:example.com/alice/loom"}}
