@@ -488,10 +488,10 @@ class Click(FakeRegistry):
 
     fails = False
 
-    def post(self, body, headers=None):
+    def post(self, body, headers=None, path="/api/jump"):
         headers = {"Content-Type": "application/json", "X-Fleet": "1", **(headers or {})}
         req = urllib.request.Request(
-            f"http://127.0.0.1:{self.httpd.server_address[1]}/api/jump",
+            f"http://127.0.0.1:{self.httpd.server_address[1]}{path}",
             data=json.dumps(body).encode(), headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
@@ -512,6 +512,13 @@ class Click(FakeRegistry):
         self.background(statusUpdatedAt=1790000000000)
         self.assertEqual(self.tile()["flag"], "ready")
         self.assertTrue(self.unread())
+
+    def test_looking_at_a_session_that_has_no_terminal_marks_it_seen(self):
+        # The tile that says "no terminal" is clicked only to mark it read.
+        self.background(statusUpdatedAt=1790000000000)
+        status, done = self.post({"key": f"claude:{SID}"}, path="/api/seen")
+        self.assertEqual((status, done), (200, {"ok": True}))
+        self.assertFalse(self.unread())
 
     def test_a_jump_that_reached_the_terminal_marks_the_session_seen(self):
         self.background(statusUpdatedAt=1790000000000)
