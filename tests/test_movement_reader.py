@@ -123,14 +123,20 @@ class ColdStart(Base):
         self.assertEqual(seen[-2], 3)
 
     def test_the_first_minute_in_the_window_may_be_cut_so_it_is_unknown_too(self):
-        # The window starts mid-minute: part of that minute is before it.
-        self.big_transcript()
-        with mock.patch.object(base, "COLD_BYTES", 6000):
+        # Equal-length records, three a minute at :10 :30 :50, and a window
+        # that starts inside the line of the 11:57:10 record: the first whole
+        # record is the one at 11:57:30, so the 11:57:10 one, in the same
+        # minute, was never seen. That minute is therefore unknown. The next
+        # one, 11:58, is whole.
+        pad = "p" * 400
+        write(self.path, [record(s, pad=pad) for s in range(40 * 60, -1, -20)], "w")
+        line = len(self.path.read_bytes().splitlines()[0]) + 1
+        with mock.patch.object(base, "COLD_BYTES", 10 * line + line // 2):
             writes = self.scan()["writes"]
-        first_seen = next(i for i, w in enumerate(writes) if w is not None)
-        self.assertEqual(writes[first_seen - 1], None)
-        # ... and the minute after it is whole: three records, 20 s apart.
-        self.assertEqual(writes[first_seen], 3)
+        # Slot 29 is 12:00, so 11:58 is slot 27 and 11:57 is slot 26.
+        self.assertEqual(writes[:26], [None] * 26)
+        self.assertEqual(writes[26], None)
+        self.assertEqual(writes[27], 3)
 
     def test_the_counters_add_no_read_to_a_cold_start(self):
         # One read of the tail, and nothing else: the counters ride on it.
