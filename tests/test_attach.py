@@ -120,14 +120,28 @@ class Attach(unittest.TestCase):
         self.attach()
         self.assertEqual(self.opened, [])
 
-    def test_a_name_fragment_two_sessions_share_names_neither(self):
-        # `harbor` could be this session or the other; a window raised for the
-        # wrong one is worse than a tab for the right one.
+    def test_a_name_fragment_two_sessions_share_may_be_either_so_it_opens_nothing(self):
+        # `harbor` could be this session or the other. A window raised for the
+        # wrong one is worse than none, and a tab for it would put a second
+        # copy on a conversation that may be shown already.
         self.viewer(700, "harbor")
         self.routes[700] = PANE_ROUTE
-        self.attach(rivals=["Harbor build"])
-        self.assertEqual(self.ran, [])
-        self.assertEqual(len(self.opened), 1)
+        done = self.attach(rivals=["Harbor build"])
+        self.assertFalse(done["ok"])
+        self.assertIn("may be", done["reason"])
+        self.assertEqual((self.ran, self.opened), ([], []))
+
+    def test_a_fragment_that_is_ambiguous_only_later_still_opens_nothing(self):
+        # The same `claude attach harbor` was this session's alone while no
+        # other session had "harbor" in its name; a second one starting turns
+        # the viewer from sure into doubtful, and the click must not open a copy.
+        self.viewer(700, "harbor")
+        self.routes[700] = PANE_ROUTE
+        self.attach()
+        self.assertEqual(self.ran, PANE_ROUTE["steps"])          # sure: its window is raised
+        self.ran.clear()
+        self.assertFalse(self.attach(rivals=["Harbor build"])["ok"])
+        self.assertEqual((self.ran, self.opened), ([], []))
 
     def test_a_viewer_started_with_the_session_id_counts(self):
         self.viewer(700, SID[:13])
@@ -158,7 +172,7 @@ class Attach(unittest.TestCase):
         self.assertEqual(len(self.opened), 1)
 
     def test_a_tab_opened_long_ago_is_forgotten(self):
-        jump._ATTACHING["aaaaaaaa"] = jump._now() - 3600
+        jump._ATTACHING["aaaaaaaa"] = jump._now() - 3600     # it was due then
         self.attach()
         self.assertEqual(list(jump._ATTACHING), [JOB])
 
@@ -168,6 +182,17 @@ class Attach(unittest.TestCase):
             time.sleep(0.08)
             self.attach()
         self.assertEqual(len(self.opened), 2)
+
+    def test_a_tab_whose_window_is_still_starting_is_waited_for_longer(self):
+        # With no WezTerm running the tab is only started, not confirmed: no
+        # pane id comes back, and `claude attach` has no process until the
+        # window is up. Five seconds is too short for that.
+        cold = lambda argv, cwd=None: self.opened.append(argv) or {"ok": True, "ran": ["wezterm start"]}
+        with mock.patch("jump.open_tab", cold), mock.patch("jump.ATTACH_GRACE", 0.05):
+            self.attach()
+            time.sleep(0.08)
+            self.assertEqual(self.attach().get("did"), "opening")
+        self.assertEqual(len(self.opened), 1)
 
     def test_something_that_is_not_a_job_id_launches_nothing(self):
         for bad in ("--help", None, 12345678, ["3f9a0c2e"]):
@@ -273,12 +298,20 @@ class BackgroundSessions(FakeRegistry):
         (argv,) = opened
         self.assertEqual((Path(argv[0]).name, argv[1:]), ("claude", ["attach", JOB]))
 
-    def test_a_fragment_both_background_sessions_share_is_nobodys_viewer(self):
+    def test_a_fragment_both_background_sessions_share_may_be_attached_to_either(self):
         self.background(10, JOB, name="Harbor review")
         self.background(11, "9d8c7b6a", name="Harbor build", sessionId="7a7a7a7a-0000-0000-0000-000000000002")
         self.process(700, PTS_54, "/home/alice/.local/bin/claude", "attach", "harbor")
-        got = {s["name"]: s["attach"] for s in self.provider.live()}
-        self.assertEqual(got, {"Harbor review": JOB, "Harbor build": "9d8c7b6a"})
+        got = {s["name"]: (s["attach"], s["canJump"], "may be" in s["noJump"]) for s in self.provider.live()}
+        self.assertEqual(got, {"Harbor review": ("", False, True), "Harbor build": ("", False, True)})
+
+    def test_clicking_one_of_two_that_a_shared_fragment_may_show_opens_nothing(self):
+        self.background(10, JOB, name="Harbor review")
+        self.background(11, "9d8c7b6a", name="Harbor build", sessionId="7a7a7a7a-0000-0000-0000-000000000002")
+        self.process(700, PTS_54, "/home/alice/.local/bin/claude", "attach", "harbor")
+        done, opened = self.click()
+        self.assertFalse(done["ok"])
+        self.assertEqual(opened, [])
 
     def test_a_fragment_only_one_has_is_that_ones_viewer(self):
         self.background(10, JOB, name="Harbor review")
@@ -429,7 +462,7 @@ class Click(FakeRegistry):
     def test_a_click_that_only_waited_for_a_tab_reached_nothing_and_marks_nothing(self):
         # The first tab may have died; this click did not reach a terminal.
         self.background(statusUpdatedAt=1790000000000)
-        jump._ATTACHING[JOB] = jump._now()
+        jump._ATTACHING[JOB] = jump._now() + jump.ATTACH_GRACE
         status, done = self.post({"key": f"claude:{SID}"})
         self.assertEqual((status, done["ok"], done["did"]), (200, True, "opening"))
         self.assertTrue(self.unread())

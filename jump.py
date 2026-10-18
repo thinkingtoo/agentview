@@ -306,8 +306,12 @@ def _follow(route):
 # ------------------------------------------------- background sessions
 
 ATTACH_GRACE = 5             # seconds a new tab is given to show up as a process
+COLD_START_GRACE = 30        # ...when no WezTerm was running: the window has to start first
 _ATTACH = threading.Lock()   # asking whether it is attached and attaching are one step
-_ATTACHING = {}              # job id -> when a tab was last opened to attach it
+_ATTACHING = {}              # job id -> until when a tab opened for it may still be starting
+
+
+MAY_BE_SHOWN = "a claude attach on a name shared with another session may be showing it"
 
 
 def attaches(proc="/proc"):
@@ -338,7 +342,7 @@ def _now():
 
 
 def viewers(job, sid="", name="", proc="/proc", running=None, rivals=()):
-    """Pids of `claude attach` processes showing this background session.
+    """Pids of `claude attach` processes that show this background session.
 
     `claude attach` takes the job id, the session id or part of the name, and
     a person attaching by hand may have used any of them: every one counts,
@@ -346,23 +350,40 @@ def viewers(job, sid="", name="", proc="/proc", running=None, rivals=()):
     `running` is `attaches()` when the caller has it already; `rivals` are the
     names of the other background sessions.
     """
+    return _viewing("is", job, sid, name, proc, running, rivals)
+
+
+def doubtful(job, sid="", name="", proc="/proc", running=None, rivals=()):
+    """Pids of `claude attach` processes that may show this session.
+
+    Part of a name that another background session has too fits both. Which
+    one the person meant cannot be told, and neither can the one it meant be
+    ruled out, so a session such a viewer fits is never attached to: a window
+    raised for it could be the wrong one, a new tab a second copy.
+    """
+    return _viewing("may", job, sid, name, proc, running, rivals)
+
+
+def _viewing(how, job, sid, name, proc, running, rivals):
     running = attaches(proc) if running is None else running
-    return [pid for pid, token in running if _names(token, job, sid, name, rivals)]
+    return [pid for pid, token in running if _match(token, job, sid, name, rivals) == how]
 
 
-def _names(token, job, sid, name, rivals):
+def _match(token, job, sid, name, rivals):
+    """How `claude attach <token>` relates to this session: "is" when it can
+    only mean this one, "may" when it is part of a name another session has
+    too, "" when it is not this session."""
     text = lambda v: v.lower() if isinstance(v, str) else ""
     token, sid, name = token.strip().lower(), text(sid), text(name)
     if not token:
-        return False
+        return ""
     if token == job or (len(token) >= 4 and job.startswith(token)):
-        return True
+        return "is"
     if len(token) >= 8 and sid.startswith(token):
-        return True
-    # Part of a name only means this session when no other one has it too: a
-    # fragment two sessions share names neither, and raising a window that
-    # shows the wrong one would be worse than opening none.
-    return token in name and not any(token in text(other) for other in rivals)
+        return "is"
+    if token not in name:
+        return ""
+    return "may" if any(token in text(other) for other in rivals) else "is"
 
 
 def attach(job, sid="", name="", proc="/proc", rivals=()):
@@ -377,15 +398,18 @@ def attach(job, sid="", name="", proc="/proc", rivals=()):
     if not is_job(job):
         return {"ok": False, "reason": "no background job id is known for this session"}
     with _ATTACH:
-        seen = viewers(job, sid, name, proc, rivals=rivals)
+        running = attaches(proc)
+        seen = viewers(job, sid, name, proc, running, rivals)
         for pid in seen:
             route = route_for(pid)
             if route:
                 return _follow(route)
         if seen:
             return {"ok": False, "reason": "already attached, and no window showing it can be raised"}
+        if doubtful(job, sid, name, proc, running, rivals):
+            return {"ok": False, "reason": MAY_BE_SHOWN}
         now = _now()
-        for old in [j for j, at in _ATTACHING.items() if now - at >= ATTACH_GRACE]:
+        for old in [j for j, until in _ATTACHING.items() if now >= until]:
             del _ATTACHING[old]
         if job in _ATTACHING:
             return {"ok": True, "did": "opening"}
@@ -393,7 +417,10 @@ def attach(job, sid="", name="", proc="/proc", rivals=()):
                              konsole=[], job=job)
         done = _follow(route)
         if done["ok"]:
-            _ATTACHING[job] = _now()
+            # A tab asked of a running WezTerm comes back with its pane; one
+            # that started WezTerm is not confirmed, and its claude has no
+            # process until the window is up.
+            _ATTACHING[job] = _now() + (ATTACH_GRACE if done.get("pane") else COLD_START_GRACE)
         return done
 
 

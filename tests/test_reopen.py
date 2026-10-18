@@ -252,6 +252,16 @@ class Endpoint(unittest.TestCase):
             self.assertFalse(self.reopen()["ok"])
         self.assertTrue(seen.ready(f"claude:{SID}", 1790000000000, seen.load()))
 
+    def test_a_click_that_only_waited_for_a_tab_does_not_claim_it_jumped(self):
+        # A background session being attached answers "opening": a tab was
+        # opened a moment ago and nothing has been reached yet.
+        self.conversation()
+        self.running()
+        with mock.patch("fleet.jump_to", return_value={"ok": True, "did": "opening"}):
+            got = self.reopen()
+        self.assertEqual((got["ok"], got["did"]), (True, "opening"))
+        self.assertEqual(self.events("jumped")[0]["did"], "opening")
+
     def test_a_closed_one_older_than_every_snapshot_opens_from_its_transcript_under_its_name(self):
         self.conversation()
         got = self.reopen()

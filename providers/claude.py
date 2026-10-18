@@ -592,8 +592,9 @@ def reach(rec, proc="/proc", running=None, rivals=()):
     (`claude --bg`) has none of its own: what shows it is a `claude attach`
     in some window, so it is that window's pane when there is one, and
     otherwise a new tab that attaches (`attach` is the job id then). One
-    attached somewhere nothing can raise is neither: attaching again would
-    put two windows on one conversation, so `noJump` says why.
+    attached somewhere nothing can raise, or by a name another session has
+    too, is neither: attaching again could put two windows on one
+    conversation, so `noJump` says why.
     """
     # Imported here: jump -> scope -> log -> this module would be a cycle.
     import jump
@@ -605,8 +606,12 @@ def reach(rec, proc="/proc", running=None, rivals=()):
     if not jump.is_job(job):
         return way
     way["jobId"] = job
-    shown = jump.viewers(job, _str(rec, "sessionId"), _str(rec, "name"), proc, running, rivals)
-    if not shown:
+    sid, name = _str(rec, "sessionId"), _str(rec, "name")
+    running = jump.attaches(proc) if running is None else running
+    shown = jump.viewers(job, sid, name, proc, running, rivals)
+    if not shown and jump.doubtful(job, sid, name, proc, running, rivals):
+        way["noJump"] = jump.MAY_BE_SHOWN
+    elif not shown:
         way["attach"] = job
     elif any(on_a_terminal(pid, proc) for pid in shown):
         way["canJump"] = True

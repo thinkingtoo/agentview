@@ -157,7 +157,9 @@ def _reopen(sid):
             fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"), name=session.get("name"),
                   source="search", **done)
-        return {**done, "did": "jumped"}
+        # Attaching a background session may answer "opening": a tab is on its
+        # way and nothing is reached yet, which "jumped" would claim.
+        return {"did": "jumped", **done}
     if snapshot.starting(sid) or time.time() - _OPENING.get(sid, 0) < OPENING_GRACE:
         return {"ok": True, "did": "opening"}
     _snapshots()
