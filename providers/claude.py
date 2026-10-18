@@ -622,6 +622,48 @@ def _peers(cfg):
     return registry.records(cfg)
 
 
+def _str(rec, key):
+    """A peer file field that must be text, or "" -- a hand-edited or newer
+    file with something else in it must not be able to stop a poll."""
+    got = rec.get(key)
+    return got if isinstance(got, str) else ""
+
+
+def reach(rec, proc="/proc", running=None, rivals=()):
+    """How a click gets to this session: `canJump`, `jobId`, `attach`, `noJump`.
+
+    A session at a terminal has a pane to raise. A background session
+    (`claude --bg`) has none of its own: what shows it is a `claude attach`
+    in some window, so it is that window's pane when there is one, and
+    otherwise a new tab that attaches (`attach` is the job id then). One
+    attached somewhere nothing can raise, or by a name another session has
+    too, is neither: attaching again could put two windows on one
+    conversation, so `noJump` says why.
+    """
+    # Imported here: jump -> scope -> log -> this module would be a cycle.
+    import jump
+    way = {"canJump": False, "jobId": "", "attach": "", "noJump": ""}
+    if rec.get("kind") != "bg":
+        way["canJump"] = rec.get("kind") == "interactive" and on_a_terminal(rec.get("pid"), proc)
+        return way
+    job = rec.get("jobId")
+    if not jump.is_job(job):
+        return way
+    way["jobId"] = job
+    sid, name = _str(rec, "sessionId"), _str(rec, "name")
+    running = jump.attaches(proc) if running is None else running
+    shown = jump.viewers(job, sid, name, proc, running, rivals)
+    if not shown and jump.doubtful(job, sid, name, proc, running, rivals):
+        way["noJump"] = jump.MAY_BE_SHOWN
+    elif not shown:
+        way["attach"] = job
+    elif any(on_a_terminal(pid, proc) for pid in shown):
+        way["canJump"] = True
+    else:
+        way["noJump"] = "attached, but in no window that can be raised"
+    return way
+
+
 def _processes(rec, summary, status, shells):
     """Open background shells and CPU under the session, from `/proc`.
 
@@ -669,7 +711,7 @@ def asking_of(status, waiting_for, calls):
             "target": target if isinstance(target, str) and name != "Bash" else ""}
 
 
-def session(rec, cfg=None, light=False, shells=None):
+def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None, rivals=()):
     """The facts about one live peer, with its transcript summary attached.
 
     `light` skips the transcript: a click only needs to know the session is
@@ -721,8 +763,7 @@ def session(rec, cfg=None, light=False, shells=None):
         # Cheap: a session on a pty is hosted by some emulator, so a route
         # exists. Working out which one costs subprocesses, so that waits
         # until you actually click.
-        "canJump": (rec.get("kind") == "interactive"
-                    and on_a_terminal(rec.get("pid"))),
+        **reach(rec, proc, running, rivals),
         "title": summary["title"],
         "prompt": summary["prompt"],
         "branch": summary["branch"],
@@ -737,6 +778,13 @@ def session(rec, cfg=None, light=False, shells=None):
     }
 
 
+def _rivals(rec, live):
+    """The names of the other background sessions, so that a fragment of a
+    name both share is not taken for either."""
+    return [_str(r, "name") for r in live
+            if r.get("kind") == "bg" and r.get("pid") != rec.get("pid")]
+
+
 class ClaudeProvider(Provider):
     name = "claude"
     capabilities = frozenset({"jump", "branch", "waiting", "name", "status"})
@@ -748,13 +796,32 @@ class ClaudeProvider(Provider):
 
     def live(self):
         cfg = self.cfg or claude_dir()
-        return [session(rec, cfg, shells=self.shells)
-                for rec in registry.live(cfg, self.proc)
-                if not is_helper(rec, cfg)]
+        recs = [rec for rec in registry.live(cfg, self.proc) if not is_helper(rec, cfg)]
+        # Who is attached to a background session is read once for the poll.
+        running = None
+        if any(rec.get("kind") == "bg" for rec in recs):
+            import jump
+            running = jump.attaches(self.proc)
+        return [session(rec, cfg, shells=self.shells, proc=self.proc, running=running,
+                        rivals=_rivals(rec, recs) if rec.get("kind") == "bg" else ())
+                for rec in recs]
 
     def find(self, session_id):
         cfg = self.cfg or claude_dir()
         rec = registry.by_sid(session_id, cfg, self.proc)
         if rec and registry.is_live(rec, self.proc):
-            return session(rec, cfg, light=True)
+            rivals = _rivals(rec, registry.live(cfg, self.proc)) if rec.get("kind") == "bg" else ()
+            return session(rec, cfg, light=True, proc=self.proc, rivals=rivals)
         return None
+
+    def jump(self, session):
+        """A background session is attached to; every other is the core's pane search."""
+        if session.get("kind") != "bg":
+            return None
+        import jump
+        # The record's own name, not the page's "(unnamed)" stand-in for none.
+        cfg = self.cfg or claude_dir()
+        rec = registry.by_sid(session.get("id") or "", cfg, self.proc) or {}
+        return jump.attach(session.get("jobId") or "", sid=_str(rec, "sessionId"),
+                           name=_str(rec, "name"), proc=self.proc,
+                           rivals=_rivals(rec, registry.live(cfg, self.proc)))

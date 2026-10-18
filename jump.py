@@ -6,13 +6,37 @@ tmux, or Konsole over D-Bus -- and a session inside tmux inside WezTerm needs
 two of them in order.
 """
 
+import re
 
-def choose_route(*, tty, ancestry, tmux, panes, clients, konsole):
+
+# `claude --bg` names a background session by eight hex digits. That, and
+# nothing else, is what may reach `claude attach`'s command line.
+JOB_ID = re.compile(r"[a-f0-9]{8}")
+
+
+def is_job(value):
+    return isinstance(value, str) and bool(JOB_ID.fullmatch(value))
+
+
+def choose_route(*, tty, ancestry, tmux, panes, clients, konsole, job=""):
     """Return {"steps": [argv, ...], "window_pid": pid} or None.
+
+    A background session has no terminal of its own: `job` is its job id, and
+    when no terminal route is found a new tab that attaches to it is asked
+    for. Whoever calls with a job has already ruled out that a `claude attach`
+    is showing it (`attach()` does), because two windows on one conversation
+    would both write to it.
 
     Pure on purpose: the awkward part is deciding, not executing, so deciding
     is what the tests can reach.
     """
+    route = _terminal_route(tty, ancestry, tmux, panes, clients, konsole)
+    if route or not is_job(job):
+        return route
+    return {"steps": [], "window_pid": None, "open": ["claude", "attach", job]}
+
+
+def _terminal_route(tty, ancestry, tmux, panes, clients, konsole):
     direct = _wezterm(tty, panes)
     if direct:
         return direct
@@ -113,6 +137,8 @@ import json
 import os
 import shutil
 import subprocess
+import threading
+import time
 
 import scope  # noqa: E402
 
@@ -247,11 +273,47 @@ def route_for(pid, tmux=""):
         konsole=konsole_apps(), **args)
 
 
+PANE_ID = re.compile(r"%[0-9]+")
+
+
+def tmux_target(pid, proc="/proc"):
+    """`session:@window.%pane` for a process that runs in a tmux pane, or "".
+
+    A session at a terminal says it in its peer file. A `claude attach` that
+    somebody started by hand says it only through the `TMUX_PANE` in its
+    environment, and the pane is then asked of tmux. Pane ids repeat from one
+    tmux server to the next, so the answer is believed only when the shell tmux
+    started in that pane is an ancestor of the process.
+    """
+    try:
+        with open(os.path.join(proc, str(pid), "environ"), "rb") as fh:
+            env = fh.read().split(b"\0")
+    except OSError:
+        return ""
+    pane = next((e[len(b"TMUX_PANE="):].decode(errors="replace")
+                 for e in env if e.startswith(b"TMUX_PANE=")), "")
+    if not PANE_ID.fullmatch(pane):
+        return ""
+    res = _run(["tmux", "display-message", "-p", "-t", pane,
+                "#{pane_pid}\t#{session_name}:#{window_id}.#{pane_id}"])
+    if not res or res.returncode != 0:
+        return ""
+    shell, _, target = res.stdout.strip().partition("\t")
+    if not shell.isdigit() or int(shell) not in {p for _, p in ancestry_of(pid)}:
+        return ""
+    return target
+
+
 def jump(pid, tmux=""):
     """Put that session's terminal in front of the user. Returns a report."""
     route = route_for(pid, tmux)
     if not route:
         return {"ok": False, "reason": "no terminal hosts this session"}
+    return _follow(route)
+
+
+def _follow(route):
+    """Carry a route out: run its steps, open the tab it asks for, raise the window."""
     ran = []
     for step in route["steps"]:
         res = _run(step)
@@ -262,8 +324,135 @@ def jump(pid, tmux=""):
         opened = open_tab(["tmux", "attach", "-t", f"={route['attach']}"])
         ran += opened["ran"]
         return {**opened, "ran": ran}
+    if route.get("open"):
+        # The tab runs in WezTerm's environment, whose PATH may lack `claude`.
+        import snapshot
+        opened = open_tab([snapshot.claude_bin(), *route["open"][1:]])
+        ran += opened["ran"]
+        return {**opened, "ran": ran}
     _raise(route.get("window_pid"), ran)
     return {"ok": True, "ran": ran}
+
+
+# ------------------------------------------------- background sessions
+
+ATTACH_GRACE = 5             # seconds a new tab is given to show up as a process
+COLD_START_GRACE = 30        # ...when no WezTerm was running: the window has to start first
+_ATTACH = threading.Lock()   # asking whether it is attached and attaching are one step
+_ATTACHING = {}              # job id -> until when a tab opened for it may still be starting
+
+
+MAY_BE_SHOWN = "a claude attach on a name shared with another session may be showing it"
+
+
+def attaches(proc="/proc"):
+    """[(pid, what it was told to attach), ...] for every `claude attach` running."""
+    found = []
+    try:
+        entries = list(os.scandir(proc))
+    except OSError:
+        return found
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            with open(os.path.join(entry.path, "cmdline"), "rb") as fh:
+                args = fh.read().split(b"\0")
+        except OSError:
+            continue
+        if len(args) >= 3 and args[1] == b"attach" \
+                and os.path.basename(args[0].decode(errors="replace")) == "claude":
+            found.append((int(entry.name), args[2].decode(errors="replace")))
+    return found
+
+
+def _now():
+    """Seconds since boot, suspended time included: `time.monotonic()` stops
+    while the machine sleeps, which would stretch the wait for a new tab."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
+def viewers(job, sid="", name="", proc="/proc", running=None, rivals=()):
+    """Pids of `claude attach` processes that show this background session.
+
+    `claude attach` takes the job id, the session id or part of the name, and
+    a person attaching by hand may have used any of them: every one counts,
+    because a missed viewer means a second window on the same conversation.
+    `running` is `attaches()` when the caller has it already; `rivals` are the
+    names of the other background sessions.
+    """
+    return _viewing("is", job, sid, name, proc, running, rivals)
+
+
+def doubtful(job, sid="", name="", proc="/proc", running=None, rivals=()):
+    """Pids of `claude attach` processes that may show this session.
+
+    Part of a name that another background session has too fits both. Which
+    one the person meant cannot be told, and neither can the one it meant be
+    ruled out, so a session such a viewer fits is never attached to: a window
+    raised for it could be the wrong one, a new tab a second copy.
+    """
+    return _viewing("may", job, sid, name, proc, running, rivals)
+
+
+def _viewing(how, job, sid, name, proc, running, rivals):
+    running = attaches(proc) if running is None else running
+    return [pid for pid, token in running if _match(token, job, sid, name, rivals) == how]
+
+
+def _match(token, job, sid, name, rivals):
+    """How `claude attach <token>` relates to this session: "is" when it can
+    only mean this one, "may" when it is part of a name another session has
+    too, "" when it is not this session."""
+    text = lambda v: v.lower() if isinstance(v, str) else ""
+    token, sid, name = token.strip().lower(), text(sid), text(name)
+    if not token:
+        return ""
+    if token == job or (len(token) >= 4 and job.startswith(token)):
+        return "is"
+    if len(token) >= 8 and sid.startswith(token):
+        return "is"
+    if token not in name:
+        return ""
+    return "may" if any(token in text(other) for other in rivals) else "is"
+
+
+def attach(job, sid="", name="", proc="/proc", rivals=()):
+    """Put a background session in front of the user, attaching it only once.
+
+    Someone is already attached: their window is raised. Nobody is: a new tab
+    attaches. A tab opened a moment ago shows no process yet, and a second
+    click inside that moment waits instead of opening another. The whole
+    thing runs one click at a time, because the server takes clicks on
+    threads and two that both found nobody attached would both open a tab.
+    """
+    if not is_job(job):
+        return {"ok": False, "reason": "no background job id is known for this session"}
+    with _ATTACH:
+        running = attaches(proc)
+        seen = viewers(job, sid, name, proc, running, rivals)
+        for pid in seen:
+            route = route_for(pid, tmux_target(pid, proc))
+            if route:
+                return _follow(route)
+        if seen:
+            return {"ok": False, "reason": "already attached, and no window showing it can be raised"}
+        if doubtful(job, sid, name, proc, running, rivals):
+            return {"ok": False, "reason": MAY_BE_SHOWN}
+        now = _now()
+        for old in [j for j, until in _ATTACHING.items() if now >= until]:
+            del _ATTACHING[old]
+        if job in _ATTACHING:
+            return {"ok": True, "did": "opening"}
+        route = choose_route(tty="", ancestry=[], tmux="", panes=[], clients=[],
+                             konsole=[], job=job)
+        done = _follow(route)
+        if done["ok"]:
+            # A tab asked of a running WezTerm comes back with its pane; one
+            # that started WezTerm is not confirmed, and its claude has no
+            # process until the window is up.
+            _ATTACHING[job] = _now() + (ATTACH_GRACE if done.get("pane") else COLD_START_GRACE)
+        return done
 
 
 def _raise(window_pid, ran):
