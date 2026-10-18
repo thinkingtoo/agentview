@@ -22,4 +22,4 @@ The working-on line says what the session's job is, and nothing about this minut
 
 The "now" words leave the line. `doing` goes into the movement sign ("running tests, 4 min"). `ask` goes into the Needs you context. `said` shows only on a finished session the person has not seen yet, as the handover. Today's second line under a session goes away.
 
-Codex sessions have no hook, so they have no `did` and start at `title`. That belongs to "Codex parity".
+Codex sessions have no hook, so they have no `did` and start at `title`. That belongs to "Codex parity". Corrected by "Which movement and stuck signals can Codex sessions give?": Codex 0.147.0 does have a `stop` hook; whether to use it is in "How do Codex runs appear on the overview?".

@@ -29,10 +29,12 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 - [What does the "working on" line of a session say?](issues/07-working-on-line.md): the job, not the minute: own line, then `did` (kept while busy), then `title`, else the last prompt greyed; skips repeats of the project line; `doing`, `ask` and `said` move into the movement sign, Needs you and the unseen handover.
 - [Where does one click land, for each kind of stuck?](issues/09-jump-target.md): the stuck session's own pane for every kind, `n` > 1 included; background sessions open with `claude attach` in a new tab; no terminal shows greyed before the click, and a failed jump keeps its reason on the row.
 - [How should the overview look?](issues/08-layout.md): one column per project, tracks first, scrolling sideways; a project card on top, always coloured by its most urgent session, with a combined 30-minute movement strip; session tiles under it with no strip of their own; a copy button on commands; header counts that light up their sessions.
+- [When is a session finished and forgotten, and how does it show?](issues/10-finished-sessions.md): idle 2 h with its handover seen and nothing left for you; a pill at the foot of its column, left out of the card state and the counts; back to a tile on any sign of life, or pinned open by hand.
+- [Which movement and stuck signals can Codex sessions give?](issues/11-codex-parity.md): writes, busy/idle, Limit and Error come from the rollout; background work only from output text; Needs you is never written and can only be inferred; Codex has `stop` and `permissionRequest` hooks after all; Codex here is almost all `codex exec` runs.
 
 ## Not yet specified
 
-Nothing left in the fog: "Finished and forgotten sessions" became [When is a session finished and forgotten, and how does it show?](issues/10-finished-sessions.md), and "Codex parity" became [Which movement and stuck signals can Codex sessions give?](issues/11-codex-parity.md).
+Nothing left in the fog.
 
 ## Out of scope
 
