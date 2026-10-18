@@ -37,9 +37,13 @@ class RoutineOf(unittest.TestCase):
 
 
 def session(name, routine="", project=None, **kw):
+    # The fields the page reads off a row; `roster()` now makes tiles from them.
     base = {"name": name, "routine": routine, "project": project, "status": "idle",
             "flag": None, "updatedAt": 0, "branch": "", "key": name,
-            "boss": False, "team": [], "blocked": False}
+            "boss": False, "team": [], "blocked": False,
+            "provider": "claude", "title": "", "did": "", "ask": "", "prompt": "",
+            "cwd": "", "canJump": False, "waitingFor": "", "quietFor": None,
+            "toolFor": None}
     base.update(kw)
     return base
 
@@ -49,7 +53,7 @@ class Grouping(unittest.TestCase):
         real = fleet.sessions
         fleet.sessions = lambda providers=None: members
         try:
-            return fleet.roster()
+            return fleet.roster()["blocks"]
         finally:
             fleet.sessions = real
 
@@ -101,7 +105,7 @@ class Teams(unittest.TestCase):
         real = fleet.sessions
         fleet.sessions = lambda providers=None: members
         try:
-            return fleet.roster()
+            return fleet.roster()["blocks"]
         finally:
             fleet.sessions = real
 
@@ -152,7 +156,7 @@ class TwoBosses(unittest.TestCase):
         real = fleet.sessions
         fleet.sessions = lambda providers=None: members
         try:
-            return fleet.roster()
+            return fleet.roster()["blocks"]
         finally:
             fleet.sessions = real
 

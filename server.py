@@ -454,7 +454,8 @@ class Handler(BaseHTTPRequestHandler):
             # clicking feel broken would have written a line every time.
             with fleet.POLL:
                 with log.timed("roster", 1.5):
-                    blocks = fleet.roster()
+                    overview = fleet.roster()
+                blocks = overview["blocks"]
                 failed = {**providers.broken(), **fleet.ROUND["failed"]}
                 answered = set(fleet.ROUND["answered"])
             log.note_roster(blocks)
@@ -469,7 +470,7 @@ class Handler(BaseHTTPRequestHandler):
             status.update({name: {"ok": False, "error": why} for name, why in failed.items()})
             live_ids = {m["key"].partition(":")[2] for b in blocks for m in b["members"]
                         if m["key"].startswith("claude:")}
-            self._send(json.dumps({"blocks": blocks,
+            self._send(json.dumps({**overview,
                                    "restore": restorable(live_ids),
                                    "closed": closed_now(live_ids),
                                    "saved": coverage(live_ids),

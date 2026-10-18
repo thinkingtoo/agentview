@@ -507,7 +507,8 @@ def sessions_in(groups):
 
 
 def roster(providers=None):
-    """Sessions grouped into project blocks, liveliest project first.
+    """The page's data: `blocks` (sessions grouped into project blocks,
+    liveliest project first) and `columns` (the overview, made from them).
 
     Project-first: the question is what is happening, and who is on it.
 
@@ -567,7 +568,63 @@ def roster(providers=None):
     pinned = config_value("pinned", [])
     for b in blocks:
         b["pinned"] = b["project"] in pinned
-    return order_blocks(blocks, pinned)
+    blocks = order_blocks(blocks, pinned)
+    return {"blocks": blocks, "columns": columns_of(blocks)}
+
+
+def columns_of(blocks):
+    """What the overview page draws: one column per project, in display order.
+
+    Made from the blocks, so grouping and order are today's for now. The page
+    reads these and decides nothing of its own. Routines are not on the page;
+    their sessions stay in `blocks`, which the chime reads.
+    """
+    return [column_of(b) for b in blocks if not b["routines"]]
+
+
+def column_of(block):
+    """One block as a column. `project` is the key your own settings are
+    stored against, `name` what the card says, `raw` what the folder rule
+    called it. A session with no project is the one column that has none."""
+    raw = "" if block["orphan"] else block["project"]
+    return {"project": raw, "name": block["label"], "raw": raw,
+            "kind": "none" if block["orphan"] else "folder",
+            "sessions": [tile_of(m) for m in block["members"]]}
+
+
+def tile_of(m):
+    """One session as a tile: today's data, finished for the page to print.
+
+    The page never has to decide which of the session's words to show.
+    """
+    # Your words first, then the session's, then Claude Code's title -- and
+    # nothing at all when that only says the name again.
+    line = m["title"] if m["overridden"] else (m["did"] or m["title"])
+    return {
+        "key": m["key"], "name": m["name"], "provider": m["provider"],
+        "status": m["status"],
+        "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
+        "line": "" if line.strip() == m["name"].strip() else line,
+        "jump": {"via": "pane" if m["canJump"] else "none"},
+        "flag": m["flag"], "flagNote": flag_note(m),
+        # What the filter box looks through, so the page does not have to know
+        # which of a session's words are searchable.
+        "find": "\n".join(m[k] for k in ("name", "title", "did", "ask", "prompt",
+                                         "cwd", "branch")).lower(),
+    }
+
+
+def flag_note(m):
+    """What a flag adds to its word: what a waiting session is blocked on, or
+    the minutes a stuck session has been quiet and a tool call has run."""
+    if m["flag"] == "waiting":
+        return m["waitingFor"]
+    if m["flag"] == "stuck":
+        return f"{int(m['quietFor'] + 0.5)}m"
+    if m["flag"] == "tool":
+        minutes = m["toolFor"] if m["toolFor"] is not None else m["quietFor"]
+        return f"{int(minutes + 0.5)}m"
+    return ""
 
 
 MIN_VOTES = 3          # below this it is noise, not a habit
