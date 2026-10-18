@@ -893,6 +893,7 @@ function tile(t) {
       ${mark(t)}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${can ? `<span class="go">open ↗</span>` : ""}
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
+    ${t.need ? `<div class="need">${esc(t.need)}</div>` : ""}
   </div>`;
 }
 

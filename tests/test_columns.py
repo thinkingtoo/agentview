@@ -142,6 +142,35 @@ class Tiles(Base):
     def test_a_session_at_work_has_no_flag(self):
         self.assertEqual(self.flag_of(status="busy", quietFor=0.1), (None, ""))
 
+    def asked(self, sid, ask, n):
+        """The session wrote down what it is blocked on, in the turn it is in."""
+        lines.begin_turn(sid, self.lines)
+        lines.write(sid, did="working", ask=ask, n=n, root=self.lines)
+
+    def test_a_session_that_wrote_down_what_it_is_blocked_on_says_so_on_its_tile(self):
+        # The chime rings for it whatever its flag, so the tile must show why.
+        self.asked("a", "Which database should I use?", 1)
+        tile = self.tile(session("a", status="idle"))
+        self.assertTrue(tile["blocked"])
+        self.assertEqual(tile["need"], "Which database should I use?")
+
+    def test_several_questions_are_a_count_not_the_first_of_them(self):
+        self.asked("a", "Which database should I use?", 3)
+        self.assertEqual(self.tile(session("a", status="idle"))["need"], "3 answers needed")
+
+    def test_a_session_that_wants_nothing_has_no_need_and_is_not_blocked(self):
+        tile = self.tile(session("a", status="busy", quietFor=0.1))
+        self.assertFalse(tile["blocked"])
+        self.assertEqual(tile["need"], "")
+
+    def test_making_the_columns_leaves_the_blocks_as_they_were(self):
+        self.asked("a", "Which database should I use?", 1)
+        blocks = self.roster(session("a", "maple"), session("b", None),
+                             session("r", None, routine="nightly-report"))["blocks"]
+        before = json.dumps(blocks, sort_keys=True)
+        fleet.columns_of(blocks)
+        self.assertEqual(json.dumps(blocks, sort_keys=True), before)
+
     def test_the_boss_leads_its_column_whatever_the_activity(self):
         got = self.roster(session("w", name="Mateo", status="busy", updatedAt=1790000900000),
                           session("b", name="Ilse", boss=True, updatedAt=1790000000000))

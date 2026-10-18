@@ -607,11 +607,23 @@ def tile_of(m):
         "line": "" if line.strip() == m["name"].strip() else line,
         "jump": {"via": "pane" if m["canJump"] else "none"},
         "flag": m["flag"], "flagNote": flag_note(m),
+        # The chime rings for a blocked session whatever its flag says, so the
+        # tile carries what it is asking, the way the old row did.
+        "blocked": m["blocked"], "need": need_of(m),
         # What the filter box looks through, so the page does not have to know
         # which of a session's words are searchable.
         "find": "\n".join(m[k] for k in ("name", "title", "did", "ask", "prompt",
                                          "cwd", "branch")).lower(),
     }
+
+
+def need_of(m):
+    """What a session wants from you: its own words when it asks one thing,
+    a count when it asks several -- quoting the first of four misrepresents
+    the size of the job."""
+    if m["n"] <= 0:
+        return ""
+    return m["ask"] if m["n"] == 1 and m["ask"] else f"{m['n']} answers needed"
 
 
 def flag_note(m):

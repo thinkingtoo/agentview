@@ -21,6 +21,21 @@ Names come from [cc-agent-names](https://github.com/sweatshop-ai/cc-agent-names)
 but nothing here requires it — an unnamed session shows whatever Claude Code
 called it.
 
+## The overview, and the block view
+
+The main page is the **overview**: one column per project, each with a project
+card (its name) and one tile per session — name, flag, the line it works from,
+and a click that raises its terminal. The server decides which sessions share a
+column and in what order (`columns` in `/api/roster`, next to the `blocks` the
+chime and the counts read); the page prints what it is sent and decides nothing.
+Columns keep at least 230 px and the row scrolls sideways when there are more
+projects than fit. Systemd routines are not on the overview.
+
+The page this README describes below is still there as the **block view**, at
+`/?view=blocks` (a link in the header goes each way). Rename, pin, assign, fold,
+hold, the boss nesting and the routines block exist only on the block view for
+now; the overview retires it later.
+
 ## After a reboot
 
 tmux-resurrect brings tmux back, but every pane that ran Claude comes back as
@@ -533,6 +548,8 @@ the window stayed where it was. Also needs whichever of `wezterm`, `tmux` and
 
 ## Arranging it yourself
 
+*Block view (`/?view=blocks`).*
+
 The order is recomputed every few seconds: whichever project has someone
 **busy** leads, ties broken by most recent activity, and `No project` always
 sits at the bottom.
@@ -569,6 +586,8 @@ project and lives forever.
 
 ## A boss and its team
 
+*Block view (`/?view=blocks`); on the overview a boss is a tile with a `boss` tag.*
+
 A session registered as a boss by the claude-boss plugin coordinates other
 sessions and does no implementation work itself. On the page it **leads its
 project block** whatever the activity, carries a `boss` badge, and names the
@@ -600,6 +619,8 @@ they message the boss, so the hub of the graph is not the boss. Only the
 marker says who is running the team.
 
 ## Routines keep to themselves
+
+*Block view (`/?view=blocks`); the overview leaves routines out.*
 
 A systemd timer firing `claude -p` is a session like any other, and there are
 six of them here — `nightly-report` every 20 minutes, `gpu-watch`

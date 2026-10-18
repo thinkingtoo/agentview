@@ -61,9 +61,9 @@ def sha(path):
 # which the chime and the counts also read) and the tile the overview prints
 # (`columns`), so the two never disagree about who is waiting.
 
-def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=True, **extra):
+def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=True, need="", **extra):
     return {"key": key, "name": name, "status": status, "flag": flag, "note": note,
-            "line": line, "tags": list(tags), "can": can, "extra": extra}
+            "line": line, "tags": list(tags), "can": can, "need": need, "extra": extra}
 
 
 def member(s, project):
@@ -72,7 +72,8 @@ def member(s, project):
          "updatedAt": 1787830000000, "project": project, "title": s["line"] or f"{s['name']} at work",
          "prompt": "carry on", "branch": "main", "canJump": s["can"], "assigned": False,
          "suggestion": None, "quietFor": 0.2, "toolFor": None, "flag": s["flag"],
-         "startedAt": 1787830000000}
+         "startedAt": 1787830000000,
+         "ask": s["need"], "n": 1 if s["need"] else 0, "blocked": bool(s["need"])}
     if s["flag"] == "waiting":
         m["waitingFor"] = s["note"]
     if s["flag"] in ("stuck", "tool"):
@@ -84,6 +85,7 @@ def member(s, project):
 def tile(s):
     return {"key": s["key"], "name": s["name"], "provider": "claude", "status": s["status"],
             "tags": s["tags"], "line": s["line"], "flag": s["flag"], "flagNote": s["note"],
+            "blocked": bool(s["need"]), "need": s["need"],
             "jump": {"via": "pane" if s["can"] else "none"},
             "find": f"{s['name']}\n{s['line']}".lower()}
 
@@ -117,7 +119,8 @@ def routine_block():
 MAPLE = ("maple", "maple", [
     S("m1", "Vera", "waiting", "waiting", note="input needed", line="Port the importer", tags=["boss"]),
     S("m2", "Mei", "busy", "stuck", note="17m", line="Rewrite the parser"),
-    S("m3", "Nour", "idle", "ready", line="Two had no composer — guess or skip?"),
+    S("m3", "Nour", "idle", "ready", line="Two had no composer — guess or skip?",
+      need="Which table should I drop?"),
     S("m4", "Aziz", "busy", "tool", note="34m", line="Running the full suite"),
     S("m5", "Dmitri", "idle", can=False)])
 PMD = ("pmd", "pmd", [S("p1", "Lennart", "idle", tags=["boss", "codex"], line="Plan the cutover"),
@@ -134,9 +137,8 @@ def overview_fixture():
     return got
 
 
-def many(n, tiles=1):
-    return roster([(f"proj{i:02d}", f"proj{i:02d}",
-                    [S(f"x{i}-{j}", f"S{i}-{j}", "idle", line="working on it") for j in range(tiles)])
+def many(n):
+    return roster([(f"proj{i:02d}", f"proj{i:02d}", [S(f"x{i}", f"S{i}", "idle", line="working on it")])
                    for i in range(n)])
 
 
@@ -336,6 +338,9 @@ def overview_pass(browser):
           and t("m5").locator(".tline").count() == 0)
     check("open ↗ only where there is a pane to go to",
           t("m1").locator(".go").count() == 1 and t("m5").locator(".go").count() == 0)
+    check("a session that wrote down what it is blocked on shows it, whatever its flag",
+          t("m3").locator(".need").inner_text() == "Which table should I drop?"
+          and t("m2").locator(".need").count() == 0)
 
     # Geometry: box 3.
     widths = page.locator(".ov-col").evaluate_all("els => els.map(e => e.offsetWidth)")
@@ -436,12 +441,12 @@ def overview_pass(browser):
     # reads `blocks` exactly as the block view's did.
     check("the header counts alarms from blocks", "waiting" in page.locator("#count").inner_text()
           and "stuck" in page.locator("#count").inner_text(), page.locator("#count").inner_text())
-    check("the tab title counts what wants you", page.title().startswith("(2)"), page.title())
+    check("the tab title counts what wants you: waiting, stuck and blocked",
+          page.title().startswith("(3)"), page.title())
     check("the overview has no hold button and a way to the block view",
           page.locator("#hold").is_hidden() and page.locator("#view").get_attribute("href") == "?view=blocks")
     check("overview: nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()
-    return fake
 
 
 def hostile_pass(browser, view):
@@ -746,7 +751,7 @@ def main():
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
         real_keys = real_pass(browser, url, pid)
-        overview = overview_pass(browser)
+        overview_pass(browser)
         for view in ("overview", "blocks"):
             hostile_pass(browser, view)
             chime_pass(browser, view)
