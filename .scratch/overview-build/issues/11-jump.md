@@ -4,7 +4,9 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Claimed by:** Joaquin 2026-10-19 00:45
+
+**Status:** in-progress
 
 - [ ] The pure route chooser returns an attach route for a background session (tested like today's routes)
 - [ ] The roster reports jump as pane, attach or none with a reason
