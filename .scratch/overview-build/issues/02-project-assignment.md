@@ -4,7 +4,9 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Claimed by:** Hugo 2026-10-19 00:44
+
+**Status:** in-progress
 
 - [ ] A worker in another repository than its boss sits in the boss's track column
 - [ ] Two worktrees of one repository share one column; two client folders never do
