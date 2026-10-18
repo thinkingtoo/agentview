@@ -73,6 +73,12 @@ class Sign(Base):
         self.assertEqual(self.movement(status="busy", quietFor=12.0, subQuiet=4.0),
                          ({"kind": "waiting", "text": "waiting on: a subagent, 12 min"}, True))
 
+    def test_a_subagent_still_writing_is_enough_when_the_session_has_no_time_of_its_own(self):
+        # Neither number may be missing for the sign to be made: no transcript
+        # time for the session, a subagent that wrote four minutes ago.
+        self.assertEqual(self.movement(status="busy", subQuiet=4.0),
+                         ({"kind": "waiting", "text": "waiting on: a subagent, 4 min"}, True))
+
     def test_a_subagent_gone_quiet_is_not_movement(self):
         self.assertEqual(self.movement(status="busy", quietFor=12.0, subQuiet=11.0),
                          (None, False))
