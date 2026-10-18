@@ -61,7 +61,7 @@ class Normalization(unittest.TestCase):
         real = fleet.sessions
         fleet.sessions = lambda providers=None: rows
         try:
-            blocks = fleet.roster()
+            blocks = fleet.roster()["blocks"]
         finally:
             fleet.sessions = real
         self.assertEqual(blocks[0]["members"][0]["key"], "fake:s1")
