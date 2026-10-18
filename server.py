@@ -308,11 +308,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400, "expected {key}")
         # The key names a provider and a session; the provider says whether
         # it is still alive. Only ever act on one that is.
-        hit = fleet.look(key)          # looking is looking, whatever comes next
+        hit = fleet.find(key)
         if not hit:
             return self.send_error(404, "no such live session")
         provider, session = hit
         done = fleet.jump_to(provider, session)
+        # Seen once the terminal was reached, not when the click arrived: a
+        # jump that failed leaves what the session said unread, with the
+        # reason on its tile, until the next poll.
+        if done.get("ok"):
+            fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"),
                   name=session.get("name"), **done)
         self._send(json.dumps(done), "application/json")

@@ -61,9 +61,11 @@ def sha(path):
 # which the chime and the counts also read) and the tile the overview prints
 # (`columns`), so the two never disagree about who is waiting.
 
-def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=True, need="", **extra):
+def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=True, need="",
+      via=None, why="", **extra):
     return {"key": key, "name": name, "status": status, "flag": flag, "note": note,
-            "line": line, "tags": list(tags), "can": can, "need": need, "extra": extra}
+            "line": line, "tags": list(tags), "can": can, "need": need, "extra": extra,
+            "via": via, "why": why}
 
 
 def member(s, project):
@@ -82,11 +84,17 @@ def member(s, project):
     return {**m, **s["extra"]}
 
 
+def jump_field(s):
+    """What the server says of the jump: pane, attach, or none and why."""
+    via = s["via"] or ("pane" if s["can"] else "none")
+    return {"via": via} if via != "none" else {"via": "none", "reason": s["why"] or "no terminal"}
+
+
 def tile(s):
     return {"key": s["key"], "name": s["name"], "provider": "claude", "status": s["status"],
             "tags": s["tags"], "line": s["line"], "flag": s["flag"], "flagNote": s["note"],
             "blocked": bool(s["need"]), "need": s["need"],
-            "jump": {"via": "pane" if s["can"] else "none"},
+            "jump": jump_field(s),
             "find": f"{s['name']}\n{s['line']}".lower()}
 
 
@@ -337,7 +345,8 @@ def overview_pass(browser):
     check("the line sits under the name", t("m2").locator(".tline").inner_text() == "Rewrite the parser"
           and t("m5").locator(".tline").count() == 0)
     check("open ↗ only where there is a pane to go to",
-          t("m1").locator(".go").count() == 1 and t("m5").locator(".go").count() == 0)
+          t("m1").locator(".go:not(.none)").inner_text() == "open ↗"
+          and t("m5").locator(".go:not(.none)").count() == 0)
     check("a session that wrote down what it is blocked on shows it, whatever its flag",
           t("m3").locator(".need").inner_text() == "Which table should I drop?"
           and t("m2").locator(".need").count() == 0)
@@ -446,6 +455,54 @@ def overview_pass(browser):
     check("the overview has no hold button and a way to the block view",
           page.locator("#hold").is_hidden() and page.locator("#view").get_attribute("href") == "?view=blocks")
     check("overview: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
+def jump_pass(browser):
+    """The three jumps and their failures. Every POST is the route's: nothing
+    is attached, raised or opened, and a request the routes do not know fails."""
+    fake = Fake(roster([("harbor", "harbor", [
+        S("h1", "Quill", "idle", "ready", line="Reviewed the plan"),
+        S("h2", "Sorrel", "idle", "ready", line="Tide table review", via="attach", can=False),
+        S("h3", "Piet", "idle", can=False),
+        S("h4", "Mona", "idle", can=False, why="attached, but in no window that can be raised")])]))
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".tile")
+    t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
+    go = lambda sid: t(sid).locator(".go")
+
+    check("a pane says open ↗", go("h1").inner_text() == "open ↗")
+    check("a background session says attach ↗ and is clickable",
+          go("h2").inner_text() == "attach ↗" and "can" in t("h2").get_attribute("class").split())
+    check("a session with no terminal says so, greyed, in place of the jump",
+          go("h3").inner_text() == "no terminal" and "can" not in t("h3").get_attribute("class").split()
+          and go("h3").evaluate("e => getComputedStyle(e).opacity") == "1"
+          and go("h3").evaluate("e => getComputedStyle(e).color") != go("h1").evaluate("e => getComputedStyle(e).color"))
+    check("and the reason is one hover away", go("h4").get_attribute("title")
+          == "attached, but in no window that can be raised" and go("h3").get_attribute("title") == "no terminal")
+
+    t("h2").click()
+    page.wait_for_timeout(300)
+    check("an attach tile posts /api/jump with its key and nothing else", fake.of("/api/jump") == [{"key": "h2"}], fake.posts)
+    check("a jump that worked shows no reason", t("h2").locator(".why").count() == 0)
+
+    fake.answer["/api/jump"] = {"ok": False, "reason": "wezterm cli spawn failed"}
+    t("h2").click()
+    t("h2").locator(".why").wait_for(timeout=3000)
+    check("a failed jump leaves its reason on the tile",
+          t("h2").locator(".why").inner_text() == "wezterm cli spawn failed" and "failed" in t("h2").get_attribute("class"))
+    check("and the handover is still unread there", t("h2").locator(".tick").count() == 1)
+    poll_now(page)
+    page.wait_for_function("document.querySelectorAll('.tile .why').length === 0", timeout=3000)
+    check("until the next poll", t("h2").locator(".why").count() == 0 and t("h2").locator(".tick").count() == 1)
+
+    n = len(fake.of("/api/jump"))
+    t("h3").click()
+    page.wait_for_timeout(300)
+    check("a click on a no-terminal tile jumps nowhere", len(fake.of("/api/jump")) == n
+          and fake.of("/api/seen") == [{"key": "h3"}], fake.posts)
+    check("jump: nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()
 
 
@@ -752,6 +809,7 @@ def main():
         browser = pw.chromium.launch()
         real_keys = real_pass(browser, url, pid)
         overview_pass(browser)
+        jump_pass(browser)
         for view in ("overview", "blocks"):
             hostile_pass(browser, view)
             chime_pass(browser, view)

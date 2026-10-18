@@ -106,7 +106,8 @@ class Tiles(Base):
         self.assertEqual(self.tile(provider=Codex([session("b")]))["tags"], ["codex"])
 
     def test_a_session_with_no_terminal_has_nowhere_to_jump(self):
-        self.assertEqual(self.tile(session("a", canJump=False))["jump"], {"via": "none"})
+        self.assertEqual(self.tile(session("a", canJump=False))["jump"],
+                         {"via": "none", "reason": "no terminal"})
 
     def test_what_the_session_wrote_beats_the_title(self):
         self.wrote("a", "Card form wired to the vault, tests green.")

@@ -379,7 +379,32 @@ def _peers(cfg):
     return registry.records(cfg)
 
 
-def session(rec, cfg=None, light=False):
+def reach(rec, proc="/proc", running=None):
+    """How a click gets to this session: (canJump, jobId, attach, noJump).
+
+    A session at a terminal has a pane to raise. A background session
+    (`claude --bg`) has none of its own: what shows it is a `claude attach`
+    in some window, so it is that window's pane when there is one, and
+    otherwise a new tab that attaches (`attach` is the job id then). One
+    attached somewhere nothing can raise is neither: attaching again would
+    put two windows on one conversation, so `noJump` says why.
+    """
+    import jump
+    if rec.get("kind") != "bg":
+        return (rec.get("kind") == "interactive" and on_a_terminal(rec.get("pid"), proc),
+                "", "", "")
+    job = rec.get("jobId")
+    if not isinstance(job, str) or not jump.JOB_ID.fullmatch(job):
+        return False, "", "", ""
+    shown = jump.viewers(job, rec.get("sessionId") or "", rec.get("name") or "", proc, running)
+    if not shown:
+        return False, job, job, ""
+    if any(on_a_terminal(pid, proc) for pid in shown):
+        return True, job, "", ""
+    return False, job, "", "attached, but in no window that can be raised"
+
+
+def session(rec, cfg=None, light=False, proc="/proc", running=None):
     """The facts about one live peer, with its transcript summary attached.
 
     `light` skips the transcript: a click only needs to know the session is
@@ -401,6 +426,7 @@ def session(rec, cfg=None, light=False):
     bg = status == "shell"
     routine = routine_of(rec, cfg)
     boss = is_boss(sid, cfg)
+    can_jump, job, attach, no_jump = reach(rec, proc, running)
     return {
         "id": sid,
         "name": rec.get("name") or "(unnamed)",
@@ -429,8 +455,10 @@ def session(rec, cfg=None, light=False):
         # Cheap: a session on a pty is hosted by some emulator, so a route
         # exists. Working out which one costs subprocesses, so that waits
         # until you actually click.
-        "canJump": (rec.get("kind") == "interactive"
-                    and on_a_terminal(rec.get("pid"))),
+        "canJump": can_jump,
+        "jobId": job,
+        "attach": attach,
+        "noJump": no_jump,
         "title": summary["title"],
         "prompt": summary["prompt"],
         "branch": summary["branch"],
@@ -448,12 +476,25 @@ class ClaudeProvider(Provider):
 
     def live(self):
         cfg = self.cfg or claude_dir()
-        return [session(rec, cfg) for rec in registry.live(cfg, self.proc)
-                if not is_helper(rec, cfg)]
+        recs = [rec for rec in registry.live(cfg, self.proc) if not is_helper(rec, cfg)]
+        # Who is attached to a background session is read once for the poll.
+        running = None
+        if any(rec.get("kind") == "bg" for rec in recs):
+            import jump
+            running = jump.attaches(self.proc)
+        return [session(rec, cfg, proc=self.proc, running=running) for rec in recs]
 
     def find(self, session_id):
         cfg = self.cfg or claude_dir()
         rec = registry.by_sid(session_id, cfg, self.proc)
         if rec and registry.is_live(rec, self.proc):
-            return session(rec, cfg, light=True)
+            return session(rec, cfg, light=True, proc=self.proc)
         return None
+
+    def jump(self, session):
+        """A background session is attached to; every other is the core's pane search."""
+        if session.get("kind") != "bg":
+            return None
+        import jump
+        return jump.attach(session.get("jobId") or "", sid=session.get("id") or "",
+                           name=session.get("name") or "", proc=self.proc)
