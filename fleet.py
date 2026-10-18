@@ -7,6 +7,7 @@ The provider gives the facts; the core gives the voice.
 """
 import collections
 import concurrent.futures
+import functools
 import json
 import os
 import re
@@ -592,50 +593,58 @@ def columns_of(blocks):
     """What the overview page draws: one column per project, in display order.
 
     The sessions come from the blocks, but the grouping is the overview's own
-    (`projects.place_all`): a project is what the person thinks of, not the
+    (`projects.assign_all`): a project is what the person thinks of, not the
     folder a block was keyed by. The page reads these and decides nothing of
     its own. Routines are not on the page; their sessions stay in `blocks`,
     which the chime reads.
     """
-    shelves = config()
+    folder_rule = functools.partial(resolve_project, shelves=config())
     names = config_value("names", {})
-
-    def folder_rule(cwd):
-        return resolve_project(cwd, shelves)
+    pinned = config_value("pinned", [])
     members = [m for b in blocks if not b["routines"] for m in b["members"]]
-    places = projects.place_all(members, folder_rule, config_value("assign", {}))
+    by_key = projects.assign_all(members, folder_rule, config_value("assign", {}))
     grouped = {}
     for m in members:
-        grouped.setdefault(places[m["key"]]["id"], []).append(m)
-    pinned = config_value("pinned", [])
-    out = []
-    for rows in grouped.values():
-        place = places[rows[0]["key"]]
-        # A boss leads its column, whatever the activity: who leads before
-        # who works. The rest are in the order the blocks have always used.
-        rows = order_members(list(rows))
-        rows.sort(key=lambda s: not s["boss"])
-        pin = projects.pin_rank(place, pinned) if place is not NO_PROJECT else None
-        name = projects.display_name(place, names) if place["raw"] else names.get("No project") or "No project"
-        out.append(({
-            "project": place["id"], "raw": place["raw"], "kind": place["kind"], "name": name,
-            "sessions": [tile_of(m, _suggestion(m, place, folder_rule, names)) for m in rows],
-        }, (
-            # Your pins lead, in your order; then the tracks, the repositories
-            # and the folders; No project last whatever. Inside a kind they go
-            # by name and stay put: a column that jumps sideways because a
-            # session woke up is the reshuffling this page exists to stop.
-            place is NO_PROJECT,
+        grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names),
+                _column_order(rows, by_key[rows[0]["key"]], names, pinned))
+               for rows in grouped.values()]
+    return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
+
+
+def _column_name(project, names):
+    return (projects.display_name(project, names) if project["raw"]
+            else names.get("No project") or "No project")
+
+
+def _column(rows, project, folder_rule, names):
+    # A boss leads its column, whatever the activity: who leads before who
+    # works. The rest are in the order the blocks have always used.
+    rows = order_members(list(rows))
+    rows.sort(key=lambda s: not s["boss"])
+    return {
+        "project": project["id"], "raw": project["raw"], "kind": project["kind"],
+        "name": _column_name(project, names),
+        "sessions": [tile_of(m, _suggestion(m, project, folder_rule, names)) for m in rows],
+    }
+
+
+def _column_order(rows, project, names, pinned):
+    """Your pins lead, in your order; then the tracks, the repositories and
+    the folders; No project last whatever. Inside a kind they go by name and
+    stay put: a column that jumps sideways because a session woke up is the
+    reshuffling this page exists to stop."""
+    pin = None if project is NO_PROJECT else projects.pin_rank(project, pinned)
+    return (project is NO_PROJECT,
             len(pinned) if pin is None else pin,
-            projects.COLUMN_RANK[place["kind"]],
-            name.casefold(), place["id"])))
-    return [column for column, _ in sorted(out, key=lambda pair: pair[1])]
+            projects.COLUMN_RANK[project["kind"]],
+            _column_name(project, names).casefold(), project["id"])
 
 
-def _suggestion(m, place, folder_rule, names):
+def _suggestion(m, project, folder_rule, names):
     """Where a session with no project probably belongs, as the one click
     that puts it there -- or None."""
-    guessed = projects.guess(m.get("paths") or [], folder_rule) if place is NO_PROJECT else None
+    guessed = projects.guess(m.get("paths") or [], folder_rule) if project is NO_PROJECT else None
     if not guessed:
         return None
     return {"project": guessed["id"], "name": projects.display_name(guessed, names)}

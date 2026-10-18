@@ -448,7 +448,8 @@ def session(rec, cfg=None, light=False):
         "said": summary["said"],
         "boss": boss,
         # The name of the boss's tracker, which is the project its workers
-        # share; the boss's marker says so and nothing else does.
+        # share. Read from the marker; the core falls back to the pane's name
+        # when the marker names none.
         "track": track or "",
         "team": summary["sent"] if boss else [],
         # A routine is never guessed for: it belongs to the routine that

@@ -3,6 +3,16 @@
 The person thinks in projects; the machine knows folders, repositories and
 bosses. This turns the second into the first, once per round, for the
 overview's columns.
+
+A project here is a small dict: `id` is its *identity*, namespaced by what it
+is (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`) so a track, a
+repository, a client folder and a folder that share a name are never one
+project; `kind` is the column it makes (track, repository, folder, none);
+`raw` is its name before the person renames it.
+
+A session's project is the first of these that answers: the person's own
+setting, the boss's track, the repository, the folder rule, and otherwise
+none -- with a guess from the files it touched offered as a suggestion.
 """
 import collections
 import os
@@ -11,11 +21,53 @@ from pathlib import Path
 
 from providers import claude
 
+# What an identity starts with, and the kind of column it makes.
+KINDS = {"track": "track", "repo": "repository", "client": "folder", "folder": "folder"}
+# Column order when nothing else decides: tracks, repositories, folders, nowhere.
+COLUMN_RANK = {"track": 0, "repository": 1, "folder": 2, "none": 3}
+NO_PROJECT = {"id": "", "kind": "none", "raw": ""}
+
 
 def pm_dir():
     """Where claude-boss keeps its trackers. A function so a test can move it."""
     return claude.claude_dir() / "pm"
 
+
+def _project(prefix, key, raw):
+    return {"id": f"{prefix}:{key}", "kind": KINDS[prefix], "raw": raw}
+
+
+def _last(path):
+    return path.rstrip("/").rsplit("/", 1)[-1]
+
+
+def from_identity(ident):
+    """The project an identity names, whether or not anyone is in it, or None."""
+    prefix, _, key = ident.partition(":")
+    if prefix not in KINDS or not key:
+        return None
+    return _project(prefix, key, _last(key) if prefix in ("repo", "client") else key)
+
+
+def display_name(project, names):
+    """What the card says: your name for the project, else the raw one. Your
+    names are keyed by the project's identity, or -- as they were before
+    projects had one -- by its raw name."""
+    return names.get(project["id"]) or names.get(project["raw"]) or project["raw"]
+
+
+def pin_rank(project, pinned):
+    """Where the person pinned this project, or None. A pin names the
+    identity; one written before projects had identities names the raw name,
+    which a project of any kind may carry."""
+    for i, pin in enumerate(pinned):
+        if isinstance(pin, str) and pin and (
+                pin == project["id"] or (from_identity(pin) is None and pin == project["raw"])):
+            return i
+    return None
+
+
+# ------------------------------------------------------- the repository
 
 def _repository(cwd):
     """The repository a folder is in, worktrees folded onto their parent:
@@ -78,13 +130,6 @@ def _remote(common):
     return f"{host.lower()}/{path.strip('/').removesuffix('.git')}"
 
 
-def display_name(place, names):
-    """What the card says: your name for the project, else the raw one. Your
-    names are keyed by the project's identity, or -- as they were before
-    projects had one -- by its raw name."""
-    return names.get(place["id"]) or names.get(place["raw"]) or place["raw"]
-
-
 def _subfolders(path):
     try:
         with os.scandir(path) as entries:
@@ -108,12 +153,12 @@ def holds_repositories(path):
     return False
 
 
-def place_of(cwd, folder_rule):
-    """Rules 3 and 4 for the folder a session was launched in: its
-    repository's project, else the folder rule's, else None.
+def project_of(cwd, folder_rule):
+    """The project of the folder a session was launched in: its repository,
+    or a client folder in it, else what the folder rule says, else None.
 
-    A folder that only holds several repositories is nobody's project --
-    sessions there are looking for one -- so the folder rule is not asked.
+    A folder that only holds repositories is nobody's project -- sessions
+    there are looking for one -- so the folder rule's answer is dropped.
     """
     # A launch folder that is not a full path would be read against wherever
     # the server happens to run.
@@ -124,7 +169,7 @@ def place_of(cwd, folder_rule):
         label = folder_rule(cwd)
         if label and holds_repositories(cwd):
             label = None
-        return {"id": f"folder:{label}", "kind": "folder", "raw": label} if label else None
+        return _project("folder", label, label) if label else None
     common, inside = found
     # Known by its remote, so a second clone is the same project. With none,
     # by where its main checkout is.
@@ -134,17 +179,18 @@ def place_of(cwd, folder_rule):
     below = inside.parts[1:] if inside.parts[:1] == ("clients",) else (
         inside.parts if common.parent.name == "clients" else ())
     if below:
-        return {"id": f"client:{key}/{below[0]}", "kind": "folder", "raw": below[0]}
-    return {"id": f"repo:{key}", "kind": "repository",
-            "raw": key.rstrip("/").rsplit("/", 1)[-1]}
+        return _project("client", f"{key}/{below[0]}", below[0])
+    return _project("repo", key, _last(key))
 
+
+# ----------------------------------------------------------- the guess
 
 MIN_VOTES = 3          # below this it is noise, not a habit
 LEAD = 1.5             # the winner has to be clearly ahead of the runner-up
 
 
 def guess(paths, folder_rule):
-    """Rule 5: the project a session keeps touching files in, or None.
+    """The project a session keeps touching files in, or None.
 
     Only ever a suggestion. It is right when a session works in one place and
     silent when it does not -- being confidently wrong is the one outcome that
@@ -153,50 +199,21 @@ def guess(paths, folder_rule):
     folders = collections.Counter(
         os.path.dirname(p) if os.path.splitext(p)[1] else p
         for p in paths if os.path.isabs(p))
-    votes, seen = collections.Counter(), {}
+    votes, known = collections.Counter(), {}
     for folder, n in folders.items():
-        place = place_of(folder, folder_rule)
-        if place:
-            votes[place["id"]] += n
-            seen[place["id"]] = place
+        project = project_of(folder, folder_rule)
+        if project:
+            votes[project["id"]] += n
+            known[project["id"]] = project
     ranked = votes.most_common(2)
     if not ranked or ranked[0][1] < MIN_VOTES:
         return None
     if len(ranked) > 1 and ranked[0][1] < ranked[1][1] * LEAD:
         return None
-    return seen[ranked[0][0]]
+    return known[ranked[0][0]]
 
 
-NO_PROJECT = {"id": "", "kind": "none", "raw": ""}
-
-# What a project's identity starts with, and the kind of column it makes. The
-# prefix is what keeps a track, a repository, a client folder and a folder
-# that share a name from ever being one project.
-KINDS = {"track": "track", "repo": "repository", "client": "folder", "folder": "folder"}
-KIND_RANK = {"track": 0, "repository": 1, "folder": 2}
-
-
-def from_identity(ident):
-    """The project an identity names, whether or not anyone is in it, or None."""
-    kind, _, rest = ident.partition(":")
-    if kind not in KINDS or not rest:
-        return None
-    raw = rest.rstrip("/").rsplit("/", 1)[-1] if kind in ("repo", "client") else rest
-    return {"id": ident, "kind": KINDS[kind], "raw": raw}
-
-
-def _named(value, carried):
-    """Rule 1 for a session you assigned: the identity you gave, or else the
-    project that carries the name you gave -- the way it worked before
-    projects had identities -- or else a new folder project of that name."""
-    by_identity = from_identity(value)
-    if by_identity:
-        return by_identity
-    same = carried.get(value)
-    if same:
-        return min(same, key=lambda p: (KIND_RANK[p["kind"]], p["id"]))
-    return {"id": f"folder:{value}", "kind": "folder", "raw": value}
-
+# ------------------------------------------------------ the boss's track
 
 # Only claude-boss makes bosses and tracks, and it does so for Claude Code.
 # Codex sessions reach the repository, the folder and the guess, nothing above.
@@ -212,14 +229,14 @@ def _tmux_track(tmux):
     return name[len(BOSS_PANE):] if name.startswith(BOSS_PANE) else ""
 
 
-def _track_place(track):
-    return {"id": f"track:{track}", "kind": "track", "raw": track}
-
-
 def _boss_tracks(members):
     """`{session key: track}` for each boss that has one. A boss's marker
     names it; the tmux session it runs in is only the fallback, because a
-    renamed track keeps its old pane."""
+    renamed track keeps its old pane.
+
+    `track` and `tmux` are read with `.get`: a row made by hand, as some
+    tests do, may not carry them.
+    """
     out = {}
     for m in members:
         if m["boss"] and m["provider"] in TRACKED:
@@ -238,7 +255,7 @@ FIRST_WORD = re.compile(r"[^\s(,/|]+")
 TRACKER_READ = 1_000_000
 
 
-def _named_in(track):
+def _roster_names(track):
     """The workers a running track's tracker lists in a `Roster` table, as
     lowercase names. A struck-through row is a worker who was retired; a name
     anywhere else in the file is a mention, not a roster."""
@@ -275,17 +292,17 @@ class Trackers:
         """The running tracks whose roster lists this worker."""
         name = name.casefold()
         for track in self.live - self._read.keys():
-            self._read[track] = _named_in(track)
+            self._read[track] = _roster_names(track)
         return {t for t in sorted(self.live) if name in self._read[t]}
 
 
-def _teams(members, held):
+def _teams(members, boss_tracks):
     """`{worker name: the tracks of the running bosses that messaged it}`."""
     out = {}
     for m in members:
-        if m["key"] in held:
+        if m["key"] in boss_tracks:
             for name in m.get("team") or []:
-                out.setdefault(name, set()).add(held[m["key"]])
+                out.setdefault(name, set()).add(boss_tracks[m["key"]])
     return out
 
 
@@ -312,57 +329,58 @@ def _worker_track(m, live, teams, trackers):
     return next(iter(listed)) if len(listed) == 1 else ""
 
 
-def place_all(members, folder_rule, assigned):
-    """Every session's project: `{session key: place}`.
+# --------------------------------------------------------- the assignment
 
-    First match wins, in the order the person thinks of it: their own setting,
-    then the boss's track, then the repository, then the folder, then nowhere.
-    """
-    held = _boss_tracks(members)
-    live = set(held.values())
-    teams = _teams(members, held)
-    trackers = Trackers(live)
-    folders = {}        # workers of one track share a launch folder, often
-    places = {}
-    for m in members:
-        if _own(assigned, m["key"]):
-            continue
-        track = held.get(m["key"]) or _worker_track(m, live, teams, trackers)
-        if track:
-            places[m["key"]] = _track_place(track)
-            continue
-        if m["cwd"] not in folders:
-            folders[m["cwd"]] = place_of(m["cwd"], folder_rule) or NO_PROJECT
-        places[m["key"]] = folders[m["cwd"]]
-    # What a plain name can mean: the name a project carries now, or the label
-    # the folder rule gave the folders its sessions are in -- assignments were
-    # made against those labels, `client › project`, before projects had names.
-    carried = {}
-    for m in members:
-        place = places.get(m["key"])
-        if place is not None and place is not NO_PROJECT:
-            for name in (place["raw"], folder_rule(m["cwd"])):
-                if name and place not in carried.setdefault(name, []):
-                    carried[name].append(place)
-    for m in members:
-        if _own(assigned, m["key"]):
-            places[m["key"]] = _named(assigned[m["key"]].strip(), carried)
-    return places
-
-
-def _own(assigned, key):
+def _is_assigned(assigned, key):
     return isinstance(assigned.get(key), str) and bool(assigned[key].strip())
 
 
-COLUMN_RANK = {"track": 0, "repository": 1, "folder": 2, "none": 3}
+def _assigned_project(value, known_as):
+    """The project a session you assigned goes to: the identity you gave, or
+    else the project that carries the name you gave -- the way it worked
+    before projects had identities -- or else a new folder project."""
+    by_identity = from_identity(value)
+    if by_identity:
+        return by_identity
+    same = known_as.get(value)
+    if same:
+        return min(same, key=lambda p: (COLUMN_RANK[p["kind"]], p["id"]))
+    return _project("folder", value, value)
 
 
-def pin_rank(place, pinned):
-    """Where the person pinned this project, or None. A pin names the
-    identity; one written before projects had identities names the raw name,
-    which a project of any kind may carry."""
-    for i, pin in enumerate(pinned):
-        if isinstance(pin, str) and pin and (
-                pin == place["id"] or (from_identity(pin) is None and pin == place["raw"])):
-            return i
-    return None
+def assign_all(members, folder_rule, assigned):
+    """Every session's project: `{session key: project}`.
+
+    First match wins, in the order the person thinks of it: their own setting,
+    then the boss's track, then the repository, then the folder, then none.
+    """
+    boss_tracks = _boss_tracks(members)
+    live = set(boss_tracks.values())
+    teams = _teams(members, boss_tracks)
+    trackers = Trackers(live)
+    by_folder = {}      # sessions often share a launch folder; look it up once
+    by_key = {}
+    for m in members:
+        if _is_assigned(assigned, m["key"]):
+            continue
+        track = boss_tracks.get(m["key"]) or _worker_track(m, live, teams, trackers)
+        if track:
+            by_key[m["key"]] = _project("track", track, track)
+            continue
+        if m["cwd"] not in by_folder:
+            by_folder[m["cwd"]] = project_of(m["cwd"], folder_rule) or NO_PROJECT
+        by_key[m["key"]] = by_folder[m["cwd"]]
+    # What a plain name can mean: the name a project carries now, or the label
+    # the folder rule gave the folders its sessions are in -- assignments were
+    # made against those labels, `client › project`, before projects had names.
+    known_as = {}
+    for m in members:
+        project = by_key.get(m["key"])
+        if project is not None and project is not NO_PROJECT:
+            for name in (project["raw"], folder_rule(m["cwd"])):
+                if name and project not in known_as.setdefault(name, []):
+                    known_as[name].append(project)
+    for m in members:
+        if _is_assigned(assigned, m["key"]):
+            by_key[m["key"]] = _assigned_project(assigned[m["key"]].strip(), known_as)
+    return by_key

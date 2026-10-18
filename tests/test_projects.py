@@ -334,8 +334,8 @@ class Tracks(TrackFixtures):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         self.tracker("checkout", "Odile")
         reads = []
-        real = projects._named_in
-        projects._named_in = lambda track: reads.append(track) or real(track)
+        real = projects._roster_names
+        projects._roster_names = lambda track: reads.append(track) or real(track)
         self.addCleanup(setattr, projects, "_named_in", real)
         self.claude(self.boss("b", loom, "checkout"),
                     *[sess(f"w{i}", orchard, name=f"Worker{i}") for i in range(5)])

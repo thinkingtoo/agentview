@@ -42,7 +42,8 @@ rule (`shelves`); otherwise *No project*, last, with a one-click suggestion
 taken from the files the session touched. The folder a session was launched in
 decides, so a session that `cd`s elsewhere keeps its column. A boss shows once,
 first in its column. Columns go pinned first, in your order, then tracks,
-repositories and folders. A column's `project` is its identity, namespaced by
+repositories and folders, each by name, so a column never moves because a
+session woke up. A column's `project` is its identity, namespaced by
 kind (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track
 and a repository that share a name stay two projects; `pinned`, `names` and
 `assign` take an identity, or a plain name as they did before.

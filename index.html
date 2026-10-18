@@ -902,7 +902,7 @@ function tile(t) {
 // The click is the page's existing `.guess` handler, which assigns it.
 function suggestionChip(t) {
   return `<div class="assign"><span class="guess" data-sid="${esc(t.key)}"
-    data-project="${esc(t.suggestion.project)}">${esc(t.suggestion.name)}?</span></div>`;
+    data-project="${esc(t.suggestion.project)}">→ ${esc(t.suggestion.name)}</span></div>`;
 }
 
 function tileFlag(t) {
