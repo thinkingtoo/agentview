@@ -6,13 +6,16 @@
 
 **Claimed by:** Joaquin 2026-10-19 00:45
 
-**Status:** in-progress
+**Status:** done
 
 - [x] The pure route chooser returns an attach route for a background session (tested like today's routes)
 - [x] The roster reports jump as pane, attach or none with a reason
 - [x] A failed jump's reason shows on the tile
 
-**Evidence (Joaquin, 2026-10-19, branch `overview/11-jump`, pushed, head a350e0f with origin/dev e4f8240 merged in; NOT merged; Mistral GO on a350e0f, see item 8; items 1 to 7 were written at head 7aeebf8 and still stand; Status stays `in-progress` until the boss decides):**
+**Evidence (Joaquin, 2026-10-19, branch `overview/11-jump`, pushed, head a350e0f with origin/dev e4f8240 merged in; Mistral GO on a350e0f, see items 8 to 10; items 1 to 7 were written at head 7aeebf8 and still stand; merge order from Piotr 2026-10-19, integration by a fresh session):**
+
+- GO: `/home/tiroir/Projects/agentview-wt/reviews/mistral-review-11-13.md`, head a350e0f19fe008d28fb2e898f26c949b42dae931, `VERDICT: GO`. Part 2 review files: `mistral-review-11-11.md` (mistral-large-latest, head 49b26b7, NO-GO), `mistral-review-11-12.md` (magistral-medium-latest, head 474518c, NO-GO), `mistral-review-11-13.md` (magistral-medium-latest, head a350e0f, GO).
+- Smoke ran on 49b26b7; the later commits are test-only (`tests/test_attach.py`, `tests/test_reopen.py`; checked with `git diff --name-only 49b26b7 a350e0f`).
 
 1. Route chooser: `tests/test_jump.py` `BackgroundRoute` (2 tests, pure `choose_route(job=...)`): a background session with no viewer gets `{"steps": [], "window_pid": None, "open": ["claude", "attach", "<job>"]}`; only an eight-hex job id reaches the command line (`""`, `--help`, `3f9a0c2e --x`, upper case, 7 or 9 digits, `None`, a number, a list all give None).
 2. Roster: `tests/test_attach.py` `Tile` (6 tests through `roster()` with the `Fake` provider): `{"via": "pane"}`, `{"via": "attach"}`, a pane beats an attach, `{"via": "none", "reason": "no terminal"}`, the provider's own reason, and a provider without `jump` never offers attach. `BackgroundSessions` (11 tests, real `ClaudeProvider` over a fake registry and a fake `/proc`): no viewer gives `attach=<job>`; a viewer on a pty gives `canJump`; a viewer with no terminal gives no attach and a reason.
