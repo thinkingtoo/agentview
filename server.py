@@ -454,7 +454,8 @@ class Handler(BaseHTTPRequestHandler):
             # clicking feel broken would have written a line every time.
             with fleet.POLL:
                 with log.timed("roster", 1.5):
-                    blocks = fleet.roster()
+                    data = fleet.roster()
+                blocks = data["blocks"]
                 failed = {**providers.broken(), **fleet.ROUND["failed"]}
                 answered = set(fleet.ROUND["answered"])
             log.note_roster(blocks)
@@ -469,7 +470,7 @@ class Handler(BaseHTTPRequestHandler):
             status.update({name: {"ok": False, "error": why} for name, why in failed.items()})
             live_ids = {m["key"].partition(":")[2] for b in blocks for m in b["members"]
                         if m["key"].startswith("claude:")}
-            self._send(json.dumps({"blocks": blocks,
+            self._send(json.dumps({**data,
                                    "restore": restorable(live_ids),
                                    "closed": closed_now(live_ids),
                                    "saved": coverage(live_ids),
@@ -499,7 +500,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_error(404, f"{repo} is not under ticket_repos in config.json")
             self._send(tickets.page(repo, number, tickets.fetch(repo, number), ticket_status(repo, number)),
                        "text/html; charset=utf-8")
-        elif self.path in ("/", "/index.html"):
+        elif urllib.parse.urlsplit(self.path).path in ("/", "/index.html"):
+            # The query is the page's own (`?view=blocks`); the server has none.
             self._send(page(), "text/html; charset=utf-8")
         else:
             self.send_error(404)
