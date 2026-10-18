@@ -4,7 +4,9 @@
 
 **Blocked by:** 06
 
-**Status:** ready-for-agent
+**Claimed by:** Bettina 2026-10-19 01:25
+
+**Status:** in-progress
 
 - [ ] Each of the three sources yields Needs you with the right reason and context
 - [ ] The copy button appears on commands only

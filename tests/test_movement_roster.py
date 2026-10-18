@@ -16,12 +16,13 @@ import fleet
 import lines
 from test_columns import Base, session
 
-NOW_MS = time.time() * 1000
-
-
 def ago(minutes):
-    """The moment a status changed `minutes` ago, as a peer file says it."""
-    return int(NOW_MS - minutes * 60000)
+    """The moment a status changed `minutes` ago, as a peer file says it.
+
+    Measured from the call, not from import: the code under test reads the
+    clock when it runs, and a suite that has been going for a few seconds
+    would otherwise put the sign at 14.1 minutes instead of 14."""
+    return int(time.time() * 1000 - minutes * 60000)
 
 
 def strip(**slots):

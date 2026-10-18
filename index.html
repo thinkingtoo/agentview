@@ -180,6 +180,9 @@
   .tile .rhead { flex-wrap:wrap; gap:6px 8px; }
   .tile .nm { overflow-wrap:anywhere; }
   .tile .go { margin-left:auto; }
+  .tile .go.none { opacity:1; color:var(--faint); }
+  .tile .why { color:var(--bad); font-size:12px; overflow-wrap:anywhere; }
+  .tile .why.note { color:var(--dim); }
   .tile .tline { color:var(--dim); font-size:13px; overflow-wrap:anywhere;
                  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .tile.waiting { border-color:var(--wait); }
@@ -911,12 +914,13 @@ function movementOf(c) {
 
 function tile(t) {
   const alarm = ["waiting", "stuck", "ready"].includes(t.flag) ? t.flag : "";
-  const can = t.jump?.via === "pane";
+  const via = t.jump?.via;
+  const can = via === "pane" || via === "attach";
   const tags = (t.tags || []).map(g =>
     `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
   return `<div class="tile ${can ? "can" : ""} ${alarm}" data-sid="${esc(t.key)}">
     <div class="rhead">
-      ${mark({ ...t, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${can ? `<span class="go">open ↗</span>` : ""}
+      ${mark({ ...t, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${jumpLabel(t, via)}
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
@@ -930,6 +934,15 @@ function tile(t) {
 function suggestionChip(t) {
   return `<div class="assign"><span class="guess" data-sid="${esc(t.key)}"
     data-project="${esc(t.suggestion.project)}">→ ${esc(t.suggestion.name)}</span></div>`;
+}
+
+// The jump is worked out by the server before anyone clicks: a pane to raise,
+// a new tab that attaches, or none -- and then it says so, greyed, instead of
+// leaving you to click for nothing.
+function jumpLabel(t, via) {
+  if (via === "pane") return `<span class="go">open ↗</span>`;
+  if (via === "attach") return `<span class="go">attach ↗</span>`;
+  return `<span class="go none" title="${esc(t.jump?.reason || "no terminal")}">no terminal</span>`;
 }
 
 function tileFlag(t) {
@@ -957,19 +970,36 @@ document.getElementById("main").addEventListener("click", async ev => {
     return;
   }
   el.classList.remove("jumped", "failed");
+  el.querySelector(".why")?.remove();
   void el.offsetWidth;
   el.classList.add("jumped");
+  const key = el.dataset.sid;
   try {
-    const out = await (await post("/api/jump", { key: el.dataset.sid })).json();
-    if (!out.ok) {
-      el.classList.remove("jumped");
-      el.classList.add("failed");
-      document.getElementById("stamp").textContent = out.reason || "jump failed";
-    }
+    const out = await (await post("/api/jump", { key })).json();
+    if (!out.ok) say(key, out.reason || "jump failed", true);
+    else if (out.did === "opening") say(key, "opening a tab for it…", false);
   } catch (e) {
-    el.classList.add("failed");
+    say(key, "jump failed", true);
   }
 });
+
+// What a jump has to say sits on the tile itself until the next poll repaints
+// the page. The tile is found again by its key: a slow jump is answered after
+// a poll has replaced every node, and the one that was clicked is gone.
+function say(key, text, bad) {
+  const el = [...document.querySelectorAll(".tile")].find(t => t.dataset.sid === key);
+  if (!el) return;
+  el.classList.remove("jumped");
+  el.querySelector(".why")?.remove();
+  const why = document.createElement("div");
+  why.className = bad ? "why" : "why note";
+  why.textContent = text;
+  el.append(why);
+  if (bad) {
+    el.classList.add("failed");
+    document.getElementById("stamp").textContent = text;
+  }
+}
 
 // Click a row and its terminal comes to the front. The page never guesses
 // how: the server works out whether that means WezTerm, tmux or Konsole.

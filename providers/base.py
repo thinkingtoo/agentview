@@ -19,7 +19,12 @@ Optional: `pid`, `name`, `branch`, `title`, `prompt`, `said` (the raw text of
 the last thing the agent said -- the core shapes it), `waitingFor`,
 `startedAt`, `kind`, `tmux`, `bg`, `routine`, `boss`, `track` (a boss's
 track: the name of its tracker), `team`, `paths`, `doing`, `quietFor`,
-`toolFor`, `canJump`, `extras`.
+`toolFor`, `canJump`, `attach`, `noJump`, `extras`.
+
+`canJump` says a pane shows the session. `attach` is what to attach to when no
+pane does but a new tab can show it (a background session; the provider's own
+`jump` does the attaching). `noJump` is why neither, when the provider has more
+to say than "no terminal".
 """
 import os
 

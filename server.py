@@ -149,13 +149,17 @@ def reopen(sid):
 
 def _reopen(sid):
     key = f"claude:{sid}"
-    hit = fleet.look(key)
+    hit = fleet.find(key)
     if hit:
         provider, session = hit
         done = fleet.jump_to(provider, session)
+        if done.get("ok") and done.get("did") != "opening":
+            fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"), name=session.get("name"),
                   source="search", **done)
-        return {**done, "did": "jumped"}
+        # Attaching a background session may answer "opening": a tab is on its
+        # way and nothing is reached yet, which "jumped" would claim.
+        return {"did": "jumped", **done}
     if snapshot.starting(sid) or time.time() - _OPENING.get(sid, 0) < OPENING_GRACE:
         return {"ok": True, "did": "opening"}
     _snapshots()
@@ -308,11 +312,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400, "expected {key}")
         # The key names a provider and a session; the provider says whether
         # it is still alive. Only ever act on one that is.
-        hit = fleet.look(key)          # looking is looking, whatever comes next
+        hit = fleet.find(key)
         if not hit:
             return self.send_error(404, "no such live session")
         provider, session = hit
         done = fleet.jump_to(provider, session)
+        # Seen once the terminal was reached, not when the click arrived: a
+        # jump that failed leaves what the session said unread, with the
+        # reason on its tile, until the next poll. `did: opening` is a click
+        # that found a tab opened moments ago and reached nothing itself.
+        if done.get("ok") and done.get("did") != "opening":
+            fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"),
                   name=session.get("name"), **done)
         self._send(json.dumps(done), "application/json")
