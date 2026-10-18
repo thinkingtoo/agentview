@@ -16,6 +16,7 @@ from pathlib import Path
 
 import jump
 import lines
+import projects
 import providers
 import seen
 from providers.base import CAPABILITIES, STATUSES, on_a_terminal
@@ -499,6 +500,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
 # ---------------------------------------------------------------- roster
 
 ROUTINES = "Routines"
+NO_PROJECT = {"id": "", "kind": "none", "raw": ""}
 
 
 def sessions_in(groups):
@@ -579,17 +581,20 @@ def columns_of(blocks):
     reads these and decides nothing of its own. Routines are not on the page;
     their sessions stay in `blocks`, which the chime reads.
     """
-    return [column_of(b) for b in blocks if not b["routines"]]
-
-
-def column_of(block):
-    """One block as a column. `project` is the key your own settings are
-    stored against, `name` what the card says, `raw` what the folder rule
-    called it. A session with no project is the one column that has none."""
-    raw = "" if block["orphan"] else block["project"]
-    return {"project": raw, "name": block["label"], "raw": raw,
-            "kind": "none" if block["orphan"] else "folder",
-            "sessions": [tile_of(m) for m in block["members"]]}
+    shelves = config()
+    names = config_value("names", {})
+    out = {}
+    for b in blocks:
+        if b["routines"]:
+            continue
+        for m in b["members"]:
+            place = projects.place_of(m["cwd"], lambda c: resolve_project(c, shelves)) or NO_PROJECT
+            col = out.setdefault(place["id"], {
+                "project": place["id"], "raw": place["raw"], "kind": place["kind"],
+                "name": projects.display_name(place, names) if place["raw"] else "No project",
+                "sessions": []})
+            col["sessions"].append(tile_of(m))
+    return list(out.values())
 
 
 def tile_of(m):

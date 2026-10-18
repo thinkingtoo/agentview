@@ -75,13 +75,13 @@ class Columns(Base):
         got = self.roster(session("a", "maple"))
         self.assertEqual(
             {k: got["columns"][0][k] for k in ("project", "name", "raw", "kind")},
-            {"project": "maple", "name": "maple", "raw": "maple", "kind": "folder"})
+            {"project": "folder:maple", "name": "maple", "raw": "maple", "kind": "folder"})
 
     def test_your_own_name_for_a_project_is_the_name_and_the_raw_one_stays(self):
         self.config = {"names": {"maple": "Maple syrup"}}
         column = self.roster(session("a", "maple"))["columns"][0]
         self.assertEqual((column["project"], column["name"], column["raw"]),
-                         ("maple", "Maple syrup", "maple"))
+                         ("folder:maple", "Maple syrup", "maple"))
 
     def test_sessions_with_no_project_share_a_column_that_says_so(self):
         column = self.roster(session("a", None))["columns"][0]
