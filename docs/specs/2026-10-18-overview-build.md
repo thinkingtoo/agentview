@@ -238,6 +238,7 @@ its file.
 - Any change to the chime or to the flags it reads.
 - Replacing dialogs with one list of things left for the person.
 - Codex hooks (`stop`, `permissionRequest`): not until interactive Codex use returns.
+- Systemd routines: no longer shown on the page (decided 2026-10-18, while cutting the tickets).
 
 ## Further Notes
 
