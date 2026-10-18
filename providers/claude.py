@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 import lines
-from providers import registry
+from providers import procs, registry
 from providers.base import (Provider, Tailed, on_a_terminal,
                             read_from as _read_from)
 
@@ -571,7 +571,27 @@ def _peers(cfg):
     return registry.records(cfg)
 
 
-def session(rec, cfg=None, light=False):
+def _processes(rec, summary, status, shells):
+    """Open background shells and CPU under the session, from `/proc`.
+
+    Only looked at when the session has something a process could belong to:
+    a call that has not come back, or a background task it was not told had
+    ended. A session with neither has nothing to wait on, and a shell burning
+    CPU under it is somebody else's. A task counts only with a Bash shell of
+    the session still alive behind it: a task whose shell died and sent no
+    notice is not running.
+    """
+    tasks = summary["tasks"]
+    if shells is None or not rec.get("pid") or not (
+            tasks or (status == "busy" and summary["pending"] is not None)):
+        return [], False
+    seen = shells.look(rec["pid"])
+    if seen is None:
+        return [], False
+    return (tasks if seen["shells"] else []), seen["cpu"]
+
+
+def session(rec, cfg=None, light=False, shells=None):
     """The facts about one live peer, with its transcript summary attached.
 
     `light` skips the transcript: a click only needs to know the session is
@@ -593,6 +613,7 @@ def session(rec, cfg=None, light=False):
     bg = status == "shell"
     routine = routine_of(rec, cfg)
     boss = is_boss(sid, cfg)
+    background, cpu = _processes(rec, summary, status, shells)
     return {
         "id": sid,
         "name": rec.get("name") or "(unnamed)",
@@ -627,6 +648,13 @@ def session(rec, cfg=None, light=False):
         "prompt": summary["prompt"],
         "branch": summary["branch"],
         "doing": summary["doing"],
+        # Movement: writes per minute (own and subagents', oldest first, None
+        # where unseen), minutes since a subagent wrote, open background
+        # tasks with a live shell behind them, and CPU under a shell.
+        "writes": summary["writes"],
+        "subQuiet": summary["subQuiet"],
+        "bgTasks": background,
+        "shellCpu": cpu,
     }
 
 
@@ -637,10 +665,12 @@ class ClaudeProvider(Provider):
     def __init__(self, cfg=None, proc="/proc"):
         self.cfg = cfg
         self.proc = proc
+        self.shells = procs.Shells(proc)
 
     def live(self):
         cfg = self.cfg or claude_dir()
-        return [session(rec, cfg) for rec in registry.live(cfg, self.proc)
+        return [session(rec, cfg, shells=self.shells)
+                for rec in registry.live(cfg, self.proc)
                 if not is_helper(rec, cfg)]
 
     def find(self, session_id):
