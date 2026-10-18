@@ -165,9 +165,15 @@ class Attach(unittest.TestCase):
         self.assertEqual(len(self.opened), 2)
 
     def test_something_that_is_not_a_job_id_launches_nothing(self):
-        done = self.attach("--help")
-        self.assertFalse(done["ok"])
+        for bad in ("--help", None, 12345678, ["3f9a0c2e"]):
+            self.assertFalse(self.attach(bad)["ok"], bad)
         self.assertEqual(self.opened, [])
+
+    def test_a_name_or_id_that_is_not_text_matches_nothing_and_stops_nothing(self):
+        self.viewer(700, "harbor")
+        self.routes[700] = PANE_ROUTE
+        self.assertTrue(self.attach(name=7, rivals=[None, 3, ["x"]])["ok"])
+        self.assertEqual(len(self.opened), 1)
 
 
 PTS_54 = 34870          # `/dev/pts/54` as the kernel numbers it

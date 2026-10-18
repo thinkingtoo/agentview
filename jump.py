@@ -14,6 +14,10 @@ import re
 JOB_ID = re.compile(r"[a-f0-9]{8}")
 
 
+def is_job(value):
+    return isinstance(value, str) and bool(JOB_ID.fullmatch(value))
+
+
 def choose_route(*, tty, ancestry, tmux, panes, clients, konsole, job=""):
     """Return {"steps": [argv, ...], "window_pid": pid} or None.
 
@@ -27,7 +31,7 @@ def choose_route(*, tty, ancestry, tmux, panes, clients, konsole, job=""):
     is what the tests can reach.
     """
     route = _terminal_route(tty, ancestry, tmux, panes, clients, konsole)
-    if route or not JOB_ID.fullmatch(job or ""):
+    if route or not is_job(job):
         return route
     return {"steps": [], "window_pid": None, "open": ["claude", "attach", job]}
 
@@ -347,18 +351,18 @@ def viewers(job, sid="", name="", proc="/proc", running=None, rivals=()):
 
 
 def _names(token, job, sid, name, rivals):
-    token = token.strip().lower()
+    text = lambda v: v.lower() if isinstance(v, str) else ""
+    token, sid, name = token.strip().lower(), text(sid), text(name)
     if not token:
         return False
     if token == job or (len(token) >= 4 and job.startswith(token)):
         return True
-    if len(token) >= 8 and sid and sid.lower().startswith(token):
+    if len(token) >= 8 and sid.startswith(token):
         return True
     # Part of a name only means this session when no other one has it too: a
     # fragment two sessions share names neither, and raising a window that
     # shows the wrong one would be worse than opening none.
-    return bool(name) and token in name.lower() \
-        and not any(token in (other or "").lower() for other in rivals)
+    return token in name and not any(token in text(other) for other in rivals)
 
 
 def attach(job, sid="", name="", proc="/proc", rivals=()):
@@ -370,7 +374,7 @@ def attach(job, sid="", name="", proc="/proc", rivals=()):
     thing runs one click at a time, because the server takes clicks on
     threads and two that both found nobody attached would both open a tab.
     """
-    if not JOB_ID.fullmatch(job or ""):
+    if not is_job(job):
         return {"ok": False, "reason": "no background job id is known for this session"}
     with _ATTACH:
         seen = viewers(job, sid, name, proc, rivals=rivals)

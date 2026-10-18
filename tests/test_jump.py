@@ -84,7 +84,7 @@ class BackgroundRoute(unittest.TestCase):
     def test_only_a_job_id_can_reach_the_command_line(self):
         # The id comes from a peer file; whatever it holds must never be able
         # to pass as an option or a second argument.
-        for bad in ("", "--help", "3f9a0c2e --x", "3F9A0C2E", "3f9a0c2", "3f9a0c2e0"):
+        for bad in ("", "--help", "3f9a0c2e --x", "3F9A0C2E", "3f9a0c2", "3f9a0c2e0", None, 12345678, ["3f9a0c2e"]):
             self.assertIsNone(jump.choose_route(job=bad, **NOWHERE), bad)
 
 

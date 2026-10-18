@@ -403,7 +403,7 @@ def reach(rec, proc="/proc", running=None, rivals=()):
         way["canJump"] = rec.get("kind") == "interactive" and on_a_terminal(rec.get("pid"), proc)
         return way
     job = rec.get("jobId")
-    if not isinstance(job, str) or not jump.JOB_ID.fullmatch(job):
+    if not jump.is_job(job):
         return way
     way["jobId"] = job
     shown = jump.viewers(job, _str(rec, "sessionId"), _str(rec, "name"), proc, running, rivals)
