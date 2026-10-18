@@ -379,6 +379,13 @@ def _peers(cfg):
     return registry.records(cfg)
 
 
+def _str(rec, key):
+    """A peer file field that must be text, or "" -- a hand-edited or newer
+    file with something else in it must not be able to stop a poll."""
+    got = rec.get(key)
+    return got if isinstance(got, str) else ""
+
+
 def reach(rec, proc="/proc", running=None, rivals=()):
     """How a click gets to this session: `canJump`, `jobId`, `attach`, `noJump`.
 
@@ -399,8 +406,7 @@ def reach(rec, proc="/proc", running=None, rivals=()):
     if not isinstance(job, str) or not jump.JOB_ID.fullmatch(job):
         return way
     way["jobId"] = job
-    shown = jump.viewers(job, rec.get("sessionId") or "", rec.get("name") or "", proc,
-                         running, rivals)
+    shown = jump.viewers(job, _str(rec, "sessionId"), _str(rec, "name"), proc, running, rivals)
     if not shown:
         way["attach"] = job
     elif any(on_a_terminal(pid, proc) for pid in shown):
@@ -471,7 +477,7 @@ def session(rec, cfg=None, light=False, proc="/proc", running=None, rivals=()):
 def _rivals(rec, live):
     """The names of the other background sessions, so that a fragment of a
     name both share is not taken for either."""
-    return [r.get("name") or "" for r in live
+    return [_str(r, "name") for r in live
             if r.get("kind") == "bg" and r.get("pid") != rec.get("pid")]
 
 
@@ -510,6 +516,6 @@ class ClaudeProvider(Provider):
         # The record's own name, not the page's "(unnamed)" stand-in for none.
         cfg = self.cfg or claude_dir()
         rec = registry.by_sid(session.get("id") or "", cfg, self.proc) or {}
-        return jump.attach(session.get("jobId") or "", sid=rec.get("sessionId") or "",
-                           name=rec.get("name") or "", proc=self.proc,
+        return jump.attach(session.get("jobId") or "", sid=_str(rec, "sessionId"),
+                           name=_str(rec, "name"), proc=self.proc,
                            rivals=_rivals(rec, registry.live(cfg, self.proc)))

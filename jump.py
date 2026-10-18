@@ -309,7 +309,11 @@ _ATTACHING = {}              # job id -> when a tab was last opened to attach it
 def attaches(proc="/proc"):
     """[(pid, what it was told to attach), ...] for every `claude attach` running."""
     found = []
-    for entry in os.scandir(proc):
+    try:
+        entries = list(os.scandir(proc))
+    except OSError:
+        return found
+    for entry in entries:
         if not entry.name.isdigit():
             continue
         try:

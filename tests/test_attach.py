@@ -141,6 +141,9 @@ class Attach(unittest.TestCase):
         self.attach()
         self.assertEqual(len(self.opened), 1)
 
+    def test_a_process_table_that_cannot_be_read_has_no_viewers(self):
+        self.assertEqual(jump.attaches(self.proc / "gone"), [])
+
     def test_a_process_that_only_mentions_attach_is_not_a_viewer(self):
         (self.proc / "800").mkdir()
         (self.proc / "800" / "cmdline").write_bytes(
@@ -219,6 +222,15 @@ class BackgroundSessions(FakeRegistry):
         got = self.only()
         self.assertEqual((got["attach"], got["canJump"]), ("", False))
         self.assertIn("attached", got["noJump"])
+
+    def test_a_peer_file_with_odd_fields_does_not_stop_the_poll(self):
+        # A name that is a number or a list: the page keeps polling and the
+        # other sessions keep their tiles.
+        self.background(10, JOB, name=7)
+        self.background(11, "9d8c7b6a", name=["Orchard build"], sessionId="7a7a7a7a-0000-0000-0000-000000000002")
+        self.process(700, PTS_54, "/home/alice/.local/bin/claude", "attach", "orchard")
+        got = {s["id"]: s["attach"] for s in self.provider.live()}
+        self.assertEqual(got, {SID: JOB, "7a7a7a7a-0000-0000-0000-000000000002": "9d8c7b6a"})
 
     def test_a_record_with_no_usable_job_id_has_nothing_to_attach(self):
         self.background(job="--help")
