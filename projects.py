@@ -209,14 +209,82 @@ def _boss_tracks(members):
     return out
 
 
-def _worker_track(m, live):
+HEADING = re.compile(r"^#{1,6}\s*(.*?)\s*#*\s*$")
+FIRST_WORD = re.compile(r"[^\s(,/|]+")
+TRACKER_READ = 1_000_000
+
+
+def _named_in(track):
+    """The workers a running track's tracker lists in a `Roster` table, as
+    lowercase names. A struck-through row is a worker who was retired; a name
+    anywhere else in the file is a mention, not a roster."""
+    if not TRACK_NAME.match(track):
+        return set()
+    try:
+        with open(pm_dir() / f"{track}.md", encoding="utf-8", errors="replace") as fh:
+            text = fh.read(TRACKER_READ)
+    except OSError:
+        return set()
+    names, in_roster = set(), False
+    for line in text.splitlines():
+        heading = HEADING.match(line)
+        if heading:
+            in_roster = heading.group(1).strip("*_` ").casefold() == "roster"
+            continue
+        if not in_roster or not line.lstrip().startswith("|"):
+            continue
+        cell = line.strip().strip("|").split("|", 1)[0].strip()
+        cell = re.sub(r"[*_`]", "", cell) if not cell.startswith("~~") else ""
+        word = FIRST_WORD.match(cell)
+        if word and word.group().strip("-:"):
+            names.add(word.group().casefold())
+    return names
+
+
+class Trackers:
+    """The running tracks' trackers, each read once and only if asked."""
+
+    def __init__(self, live):
+        self.live, self._read = live, {}
+
+    def naming(self, name):
+        """The running tracks whose roster lists this worker."""
+        name = name.casefold()
+        return {t for t in sorted(self.live)
+                if name in self._read.setdefault(t, _named_in(t))}
+
+
+def _teams(members, held):
+    """`{worker name: the tracks of the running bosses that messaged it}`."""
+    out = {}
+    for m in members:
+        if m["key"] in held:
+            for name in m.get("team") or []:
+                out.setdefault(name, set()).add(held[m["key"]])
+    return out
+
+
+def _worker_track(m, live, teams, trackers):
     """The track a worker belongs to, from what points at a boss that is
     running -- or "". A pointer at a track nobody leads any more is stale and
-    files nobody."""
+    files nobody, and so does one that points two ways.
+
+    The order, when they disagree: the pane the worker was launched into,
+    then the boss that messaged it, then the one tracker that lists it. A
+    message is the weaker word: a worker handed from one boss to another
+    stays in the first boss's team. A tracker is the weakest: it is written
+    by hand, and nobody takes a retired worker off it in time.
+    """
     if m["provider"] not in TRACKED or m["boss"]:
         return ""
     tmux = _tmux_track(m.get("tmux") or "")
-    return tmux if tmux in live else ""
+    if tmux in live:
+        return tmux
+    messaged = teams.get(m["name"], ())
+    if len(messaged) == 1:
+        return next(iter(messaged))
+    listed = trackers.naming(m["name"])
+    return next(iter(listed)) if len(listed) == 1 else ""
 
 
 def place_all(members, folder_rule, assigned):
@@ -227,11 +295,13 @@ def place_all(members, folder_rule, assigned):
     """
     held = _boss_tracks(members)
     live = set(held.values())
+    teams = _teams(members, held)
+    trackers = Trackers(live)
     places = {}
     for m in members:
         if _own(assigned, m["key"]):
             continue
-        track = held.get(m["key"]) or _worker_track(m, live)
+        track = held.get(m["key"]) or _worker_track(m, live, teams, trackers)
         places[m["key"]] = (_track_place(track) if track
                             else place_of(m["cwd"], folder_rule) or NO_PROJECT)
     carried = {}

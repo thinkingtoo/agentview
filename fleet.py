@@ -525,7 +525,13 @@ def roster(providers=None):
     swallowed into it.
     """
     groups = {}
+    listed = set()
     for s in sessions(providers):
+        # A session is one `provider:id`. A provider that lists it twice has
+        # still only one session to show, and one to count for the chime.
+        if s["key"] in listed:
+            continue
+        listed.add(s["key"])
         key = (True, ROUTINES) if s["routine"] else (False, s["project"] or "")
         groups.setdefault(key, []).append(s)
 

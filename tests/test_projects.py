@@ -84,6 +84,9 @@ class Placed(Base):
     def keys(self, column):
         return [t["key"] for t in column["sessions"]]
 
+    def column(self, got, project):
+        return next(c for c in got["columns"] if c["project"] == project)
+
 
 class Folders(Placed):
     def test_a_folder_that_is_no_repository_is_a_project_by_the_folder_rule(self):
@@ -130,7 +133,7 @@ class LaunchFolder(Placed):
         self.assertEqual(self.names(got), ["loom"])
 
 
-class Tracks(Placed):
+class TrackFixtures(Placed):
     def claude(self, *sessions):
         return self.roster(provider=Claude(sessions))
 
@@ -141,9 +144,15 @@ class Tracks(Placed):
         """A worker claude-boss launched into the tmux session of its track."""
         return sess(sid, cwd, tmux=f"boss-{track}:@3.%5", **over)
 
-    def column(self, got, project):
-        return next(c for c in got["columns"] if c["project"] == project)
+    def tracker(self, track, *workers, prose=""):
+        """`pm/<track>.md` as claude-boss writes it: a Roster table of workers."""
+        rows = "".join(f"| {w} | 13:0.1 %31 | `src/`, notes |\n" for w in workers)
+        (self.pm / f"{track}.md").write_text(
+            f"# PM Tracker \u2014 {track}\n\n{prose}\n## Roster\n"
+            f"| Worker | Pane | Perimetro |\n|---|---|---|\n{rows}\n## Open blockers\nnone\n")
 
+
+class Tracks(TrackFixtures):
     def test_a_worker_in_another_repository_than_its_boss_sits_in_the_boss_track_column(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         got = self.claude(self.worker("w", orchard, "checkout", name="Mateo"),
@@ -178,6 +187,96 @@ class Tracks(Placed):
         self.assertEqual(sorted(c["kind"] for c in got["columns"]),
                          ["folder", "folder", "repository", "track"])
 
+    def test_a_worker_with_no_pane_name_follows_the_boss_that_messaged_it(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        got = self.claude(self.boss("b", loom, "checkout", team=["Mateo"]),
+                          sess("w", orchard, name="Mateo"))
+        self.assertEqual(self.names(got), ["checkout"])
+        self.assertEqual(self.keys(got["columns"][0]), ["claude:b", "claude:w"])
+
+    def test_the_pane_name_beats_the_boss_that_messaged_the_worker(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        got = self.claude(self.boss("b1", loom, "checkout", team=["Mateo"]),
+                          self.boss("b2", loom, "docs", name="Saskia"),
+                          self.worker("w", orchard, "docs", name="Mateo"))
+        self.assertEqual(self.keys(self.column(got, "track:docs")), ["claude:b2", "claude:w"])
+        self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b1"])
+
+    def test_a_worker_two_bosses_of_different_tracks_both_messaged_is_filed_under_neither(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        got = self.claude(self.boss("b1", loom, "checkout", team=["Mateo"]),
+                          self.boss("b2", loom, "docs", name="Saskia", team=["Mateo"]),
+                          sess("w", orchard, name="Mateo"))
+        self.assertEqual(self.keys(self.column(got, "repo:example.com/alice/orchard")),
+                         ["claude:w"])
+
+    def test_a_worker_a_boss_without_a_track_messaged_is_not_filed_by_it(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        got = self.claude(sess("b", loom, name="Ilse", boss=True, team=["Mateo"]),
+                          sess("w", orchard, name="Mateo"))
+        self.assertEqual(sorted(self.names(got)), ["loom", "orchard"])
+
+    def test_a_worker_only_the_tracker_names_is_filed_under_that_track(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("checkout", "Mateo (sonnet)", "Odile")
+        got = self.claude(self.boss("b", loom, "checkout"),
+                          sess("w", orchard, name="Mateo"))
+        self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b", "claude:w"])
+
+    def test_a_worker_named_by_two_trackers_is_filed_under_neither(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("checkout", "Mateo")
+        self.tracker("docs", "Mateo")
+        got = self.claude(self.boss("b1", loom, "checkout"),
+                          self.boss("b2", loom, "docs", name="Saskia"),
+                          sess("w", orchard, name="Mateo"))
+        self.assertEqual(self.keys(self.column(got, "repo:example.com/alice/orchard")),
+                         ["claude:w"])
+
+    def test_a_retired_worker_and_a_name_in_passing_do_not_count_as_named(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("checkout", "~~Mateo~~", "Mateo2",
+                     prose="Not claimed: Odile (idle), the owner's planning session.\n")
+        got = self.claude(self.boss("b", loom, "checkout"),
+                          sess("w1", orchard, name="Mateo"),
+                          sess("w2", orchard, name="Odile"))
+        self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b"])
+
+    def test_the_boss_that_messaged_a_worker_beats_a_tracker_that_names_it(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("docs", "Mateo")
+        got = self.claude(self.boss("b1", loom, "checkout", team=["Mateo"]),
+                          self.boss("b2", loom, "docs", name="Saskia"),
+                          sess("w", orchard, name="Mateo"))
+        self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b1", "claude:w"])
+
+    def test_when_two_bosses_messaged_a_worker_the_one_tracker_that_lists_it_decides(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("docs", "Mateo")
+        got = self.claude(self.boss("b1", loom, "checkout", team=["Mateo"]),
+                          self.boss("b2", loom, "docs", name="Saskia", team=["Mateo"]),
+                          sess("w", orchard, name="Mateo"))
+        self.assertEqual(self.keys(self.column(got, "track:docs")), ["claude:b2", "claude:w"])
+
+    def test_the_pane_name_beats_a_tracker_that_names_the_worker(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("checkout", "Mateo")
+        got = self.claude(self.boss("b1", loom, "checkout"),
+                          self.boss("b2", loom, "docs", name="Saskia"),
+                          self.worker("w", orchard, "docs", name="Mateo"))
+        self.assertEqual(self.keys(self.column(got, "track:docs")), ["claude:b2", "claude:w"])
+
+    def test_a_tracker_of_a_track_nobody_leads_files_nobody(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("old", "Mateo")
+        got = self.claude(sess("b", loom, name="Ilse"), sess("w", orchard, name="Mateo"))
+        self.assertEqual(sorted(self.names(got)), ["loom", "orchard"])
+
+    def test_a_marker_that_is_a_path_makes_no_track(self):
+        loom = self.repo("loom")
+        got = self.claude(self.boss("b", loom, "../../elsewhere"))
+        self.assertEqual(self.names(got), ["loom"])
+
     def test_a_track_whose_boss_is_gone_files_nobody(self):
         # The pane still says `boss-old` and a marker for the departed boss
         # is still on disk. Neither is a boss that is running.
@@ -193,6 +292,51 @@ class Tracks(Placed):
         got = fleet_roster(Claude([self.boss("b", loom, "checkout")]),
                            Codex([self.worker("x", orchard, "checkout", name="Mateo")]))
         self.assertEqual(sorted(self.names(got)), ["checkout", "orchard"])
+
+
+class Bosses(TrackFixtures):
+    def test_a_boss_is_where_its_marker_puts_it_whatever_its_pane_is_called(self):
+        loom = self.repo("loom")
+        got = self.claude(self.boss("b1", loom, "checkout", tmux="boss-docs:@1.%2"),
+                          self.boss("b2", loom, "docs", name="Saskia"))
+        self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b1"])
+        self.assertEqual(self.keys(self.column(got, "track:docs")), ["claude:b2"])
+
+    def test_a_boss_with_no_marker_track_falls_back_to_the_pane_it_runs_in(self):
+        loom = self.repo("loom")
+        got = self.claude(self.boss("b", loom, "", tmux="boss-checkout:@1.%2"))
+        self.assertEqual(self.names(got), ["checkout"])
+
+    def test_a_boss_with_no_track_at_all_leads_the_column_of_its_repository(self):
+        loom = self.repo("loom")
+        got = self.claude(sess("w", loom, name="Mateo"),
+                          sess("b", loom, name="Ilse", boss=True))
+        self.assertEqual(self.keys(got["columns"][0]), ["claude:b", "claude:w"])
+
+    def test_a_boss_that_other_signals_point_at_shows_once_and_first(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("docs", "Ilse", "Mateo")
+        got = self.claude(
+            self.worker("w", orchard, "checkout", name="Mateo"),
+            self.boss("b1", loom, "checkout", name="Ilse", tmux="boss-docs:@1.%2"),
+            self.boss("b2", loom, "docs", name="Saskia", team=["Ilse"]))
+        self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b1", "claude:w"])
+        every = [k for c in got["columns"] for k in self.keys(c)]
+        self.assertEqual(sorted(every), ["claude:b1", "claude:b2", "claude:w"])
+
+    def test_a_session_a_provider_lists_twice_shows_once(self):
+        loom = self.repo("loom")
+        boss = self.boss("b", loom, "checkout")
+        got = self.claude(boss, dict(boss), sess("w", loom, name="Mateo"), sess("w", loom, name="Mateo"))
+        every = [k for c in got["columns"] for k in self.keys(c)]
+        self.assertEqual(sorted(every), ["claude:b", "claude:w"])
+        self.assertEqual(sum(len(c["sessions"]) for c in got["columns"]), 2)
+
+    def test_a_routine_with_a_track_signal_is_in_no_column(self):
+        loom = self.repo("loom")
+        got = self.claude(self.boss("b", loom, "checkout"),
+                          self.worker("r", loom, "checkout", name="Mateo", routine="nightly-report"))
+        self.assertEqual(self.keys(got["columns"][0]), ["claude:b"])
 
 
 class OwnSetting(Placed):
@@ -211,6 +355,15 @@ class OwnSetting(Placed):
         self.assertEqual((got["columns"][0]["project"], got["columns"][0]["name"],
                           got["columns"][0]["kind"]),
                          ("repo:example.com/alice/loom", "loom", "repository"))
+
+    def test_your_own_setting_beats_the_boss_track(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.config = {"assign": {"claude:w": "repo:example.com/alice/orchard"}}
+        got = self.roster(provider=Claude([
+            sess("b", loom, name="Ilse", boss=True, track="checkout"),
+            sess("w", orchard, name="Mateo", tmux="boss-checkout:@1.%2")]))
+        self.assertEqual(self.keys(self.column(got, "repo:example.com/alice/orchard")), ["claude:w"])
+        self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b"])
 
     def test_a_name_no_project_carries_starts_a_folder_project(self):
         orchard = self.repo("orchard")
