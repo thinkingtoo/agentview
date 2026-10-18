@@ -219,7 +219,7 @@ class Card(Base):
         self.assertEqual(self.state(session("a", status="idle"), session("b", status="idle")), "idle")
 
     def test_every_card_has_a_state_and_the_no_project_one_too(self):
-        got = self.roster(self.writing("a", ), session("b", None, status="idle"))["columns"]
+        got = self.roster(self.writing("a"), session("b", None, status="idle"))["columns"]
         self.assertEqual([(c["name"], c["state"]) for c in got],
                          [("maple", "moving"), ("No project", "idle")])
 

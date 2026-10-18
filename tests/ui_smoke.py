@@ -296,8 +296,14 @@ class Fake:
             route.abort()
 
 
-def new_page(browser, fake, width=1700):
-    page = browser.new_page(viewport={"width": width, "height": 2400})
+def new_page(browser, fake, width=1700, clipboard=False):
+    """A routed page. `clipboard` grants the page the clipboard, which the
+    browser gives only to a secure origin: open it at `http://localhost/`."""
+    if clipboard:
+        page = browser.new_context(viewport={"width": width, "height": 2400},
+                                   permissions=["clipboard-read", "clipboard-write"]).new_page()
+    else:
+        page = browser.new_page(viewport={"width": width, "height": 2400})
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
     page.on("console", lambda m: errors.append(f"console: {m.text}") if m.type == "error" else None)
     page.on("dialog", lambda d: (errors.append(f"dialog: {d.message}"), d.dismiss()))
@@ -603,12 +609,19 @@ def needs_pass(browser):
               h.locator(".ov-state").inner_text())
         check(f"{project}: the state word sits under the name, never above or beside it",
               state["y"] >= name["y"] + name["height"] - 1 and state["y"] > name["y"], (name, state))
-    check("the card is coloured by its state: edge, word and bars (amber, green, grey)",
-          head("maple").evaluate("e => getComputedStyle(e).borderTopColor") == probe("--wait")
-          and head("maple").locator(".ov-state").evaluate("e => getComputedStyle(e).color") == probe("--wait")
-          and head("maple").locator(".strip i:not(.u):not(.z)").first.evaluate("e => getComputedStyle(e).backgroundColor") == probe("--wait")
-          and head("orchard").evaluate("e => getComputedStyle(e).borderTopColor") == probe("--busy")
-          and head("pmd").evaluate("e => getComputedStyle(e).borderTopColor") == probe("--idle"))
+    # The card is always coloured by its state: the top edge, a light tint, the
+    # word and the strip's bars -- grey for a card with nothing moving too.
+    plain = page.evaluate("""() => { const d = document.createElement('div'); d.style.background = 'var(--card)';
+      document.body.appendChild(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c }""")
+    for project, var in (("maple", "--wait"), ("orchard", "--busy"), ("pmd", "--idle")):
+        h = head(project)
+        paint = lambda loc, prop: loc.evaluate(f"e => getComputedStyle(e).{prop}")
+        check(f"{project}: the card's top edge, word and bars take the state's colour",
+              paint(h, "borderTopColor") == probe(var) and paint(h.locator(".ov-state"), "color") == probe(var)
+              and paint(h.locator(".strip i:not(.u):not(.z)").first, "backgroundColor") == probe(var),
+              (paint(h, "borderTopColor"), paint(h.locator(".ov-state"), "color"), probe(var)))
+        check(f"{project}: the card has a light tint of its own", paint(h, "backgroundColor") != plain,
+              paint(h, "backgroundColor"))
 
     # Copy does not answer the session and does not jump.
     posts = len(fake.posts)
@@ -621,18 +634,13 @@ def needs_pass(browser):
     page.close()
 
     # Copy puts the command on the clipboard, character for character.
-    ctx = browser.new_context(viewport={"width": 1700, "height": 2400},
-                              permissions=["clipboard-read", "clipboard-write"])
-    page = ctx.new_page()
-    page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
-    page.on("dialog", lambda d: (errors.append(f"dialog: {d.message}"), d.dismiss()))
-    page.route("**/*", fake.handle)
+    page = new_page(browser, fake, clipboard=True)
     page.goto("http://localhost/", wait_until="load")
     page.wait_for_selector(".tile")
     page.locator('.tile[data-sid="q2"] button.copy').click()
     page.wait_for_timeout(200)
     check("the clipboard holds the command", page.evaluate("navigator.clipboard.readText()") == cmd)
-    ctx.close()
+    page.context.close()
 
     # R7 at the page: question, options, header, command, tool, target and ask are text.
     nasty = f"echo {BOMB}\nls 'a b' \"c\""
@@ -643,13 +651,8 @@ def needs_pass(browser):
         S("h3", "Nour", "waiting", "waiting", note="permission prompt", stuck=prompts(BOMB, target=BOMB)),
         S("h4", "Aziz", "idle", need=BOMB)])
     fake2 = Fake(roster([hostile]))
-    ctx = browser.new_context(viewport={"width": 1700, "height": 2400},
-                              permissions=["clipboard-read", "clipboard-write"])
-    page = ctx.new_page()
+    page = new_page(browser, fake2, clipboard=True)
     seen = len(errors)
-    page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
-    page.on("dialog", lambda d: (errors.append(f"dialog: {d.message}"), d.dismiss()))
-    page.route("**/*", fake2.handle)
     page.goto("http://localhost/", wait_until="load")
     page.wait_for_selector(".tile")
     page.wait_for_timeout(300)
@@ -666,7 +669,7 @@ def needs_pass(browser):
     check("R7: copy copies the literal command, markup, line break and quotes included",
           page.evaluate("navigator.clipboard.readText()") == nasty, page.evaluate("navigator.clipboard.readText()"))
     check("R7: no dialog, no page error", len(errors) == seen, errors[seen:])
-    ctx.close()
+    page.context.close()
 
     # Where the page has no clipboard API (plain http on a name that is not
     # localhost), copy still works through the selection fallback.
