@@ -894,7 +894,15 @@ function tile(t) {
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
     ${t.need ? `<div class="need">${esc(t.need)}</div>` : ""}
+    ${t.suggestion ? suggestionChip(t) : ""}
   </div>`;
+}
+
+// In No project: where the roster thinks this session belongs, one click away.
+// The click is the page's existing `.guess` handler, which assigns it.
+function suggestionChip(t) {
+  return `<div class="assign"><span class="guess" data-sid="${esc(t.key)}"
+    data-project="${esc(t.suggestion.project)}">${esc(t.suggestion.name)}?</span></div>`;
 }
 
 function tileFlag(t) {
@@ -911,7 +919,7 @@ function tileFlag(t) {
 // acknowledged first for the reason given on the row's handler below.
 document.getElementById("main").addEventListener("click", async ev => {
   const el = ev.target.closest(".tile");
-  if (!el) return;
+  if (!el || ev.target.closest(".guess")) return;      // the chip assigns; it does not jump
   const post = (path, body) => fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
