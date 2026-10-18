@@ -6,14 +6,14 @@
 
 **Claimed by:** Bettina 2026-10-19 00:44
 
-**Status:** in-progress
+**Status:** done
 
 - [x] Reader facts tested on fixture transcripts (writes per minute, subagent writes, background tasks)
 - [x] A session with a live background job reads as moving, never idle or stuck
 - [x] The strip has 30 per-minute counts, oldest first, summed across the project's sessions
 - [x] No extra full-file reads: the counters ride on the existing tail reading
 
-**Evidence (Bettina, 2026-10-19, branch `overview/06-movement`, pushed, final head d2f4baf; Mistral GO on that head; merge waits for the boss's order, Status stays `in-progress`):**
+**Evidence (Bettina, 2026-10-19, branch `overview/06-movement`, pushed, final head d2f4bafd42ea629c4627eb1ee53bf4fba2fcfc7d; Mistral GO on that head (`mistral-review-06-4.md`); Status `done` on the boss's merge order):**
 
 1. `tests/test_movement_reader.py` (33, fixture transcripts with invented text: writes per minute, cold start, subagents, background tasks), `tests/test_movement_procs.py` (23, a fake `/proc`), `tests/test_movement_provider.py` (11, through `ClaudeProvider.live()`), `tests/test_movement_roster.py` (44, the sign, the strip, the mix). Full suite `python3 -m unittest discover -s tests`: 709 tests, OK (skipped=1) on the final tree; the baseline on dev was 598. Mutation pass by hand: 33 of 33 mutants of the new rules fail a test.
 2. Live background job: `tests/test_movement_provider.py` `test_a_background_task_with_its_own_shell_alive_is_reported` (the task's id is tied to the shell whose stdout is `.../tasks/<id>.output`), `tests/test_movement_roster.py` `test_an_idle_session_with_a_background_job_is_moving_never_idle` and `test_a_session_waiting_on_a_job_is_not_shown_stuck`. The bound (360 minutes of waiting at most) is `TheBound` in the same file.
