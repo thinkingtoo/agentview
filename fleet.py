@@ -491,7 +491,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         "bg": bool(raw.get("bg")),
         "flag": flag,
         "canJump": can_jump,
-        # A provider that cannot jump cannot attach either.
+        # A provider that cannot jump has no terminal to attach to: the field is emptied.
         "attach": row["attach"] if "jump" in caps else "",
         "extras": extras_of(raw.get("extras")),
         # What it is doing while it works, and what it left you with when it
