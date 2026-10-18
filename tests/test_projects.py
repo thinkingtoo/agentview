@@ -116,6 +116,83 @@ class Folders(Placed):
         self.assertEqual(self.names(self.roster(sess("a", wrapper))), ["wrapper"])
 
 
+class LaunchFolder(Placed):
+    def test_a_session_that_works_in_another_repository_keeps_the_column_it_started_in(self):
+        home = self.repo("loom")
+        elsewhere = self.repo("orchard")
+        touched = [str(elsewhere / "src" / f"{n}.py") for n in "abcd"]
+        got = self.roster(sess("a", home, paths=touched))
+        self.assertEqual(self.names(got), ["loom"])
+
+
+class OwnSetting(Placed):
+    def test_a_session_you_assigned_by_name_joins_the_project_that_carries_that_name(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.config = {"assign": {"fake:a": "loom"}}
+        got = self.roster(sess("a", orchard), sess("b", loom))
+        self.assertEqual(self.names(got), ["loom"])
+        self.assertEqual(got["columns"][0]["kind"], "repository")
+        self.assertEqual(sorted(self.keys(got["columns"][0])), ["fake:a", "fake:b"])
+
+    def test_a_session_you_assigned_by_identity_joins_that_project_even_alone(self):
+        orchard = self.repo("orchard")
+        self.config = {"assign": {"fake:a": "repo:example.com/alice/loom"}}
+        got = self.roster(sess("a", orchard))
+        self.assertEqual((got["columns"][0]["project"], got["columns"][0]["name"],
+                          got["columns"][0]["kind"]),
+                         ("repo:example.com/alice/loom", "loom", "repository"))
+
+    def test_a_name_no_project_carries_starts_a_folder_project(self):
+        orchard = self.repo("orchard")
+        self.config = {"assign": {"fake:a": "Invoice tool"}}
+        column = self.roster(sess("a", orchard))["columns"][0]
+        self.assertEqual((column["project"], column["name"], column["kind"]),
+                         ("folder:Invoice tool", "Invoice tool", "folder"))
+
+
+class Guess(Placed):
+    def lost(self, **over):
+        """A session launched on a shelf, which is nobody's project."""
+        shelf = self.folder("Projects")
+        self.config = {"shelves": [str(shelf)]}
+        return sess("a", shelf, **over)
+
+    def test_a_session_on_a_shelf_that_works_in_one_repository_is_offered_that_project(self):
+        orchard = self.repo("orchard")
+        touched = [str(orchard / "src" / f"{n}.py") for n in "abc"]
+        got = self.roster(self.lost(paths=touched))
+        self.assertEqual(self.names(got), ["No project"])
+        self.assertEqual(got["columns"][0]["sessions"][0]["suggestion"],
+                         {"project": "repo:example.com/alice/orchard", "name": "orchard"})
+
+    def test_too_few_files_or_no_clear_favourite_is_no_suggestion(self):
+        orchard, loom = self.repo("orchard"), self.repo("loom")
+        few = [str(orchard / "a.py"), str(orchard / "b.py")]
+        split = [str(orchard / f"{n}.py") for n in "abc"] + [str(loom / f"{n}.py") for n in "abc"]
+        for paths in ([], few, split):
+            tile = self.roster(self.lost(paths=paths))["columns"][0]["sessions"][0]
+            self.assertIsNone(tile["suggestion"], paths)
+
+    def test_a_relative_path_is_not_a_place_to_look_for_a_project(self):
+        # It would be read against wherever the server happens to run, which
+        # is itself a repository.
+        tile = self.roster(self.lost(paths=["src/a.py", "src/b.py", "src/c.py"]))[
+            "columns"][0]["sessions"][0]
+        self.assertIsNone(tile["suggestion"])
+
+    def test_a_session_that_has_a_project_is_offered_nothing(self):
+        orchard = self.repo("orchard")
+        loom = self.repo("loom")
+        touched = [str(orchard / f"{n}.py") for n in "abc"]
+        tile = self.roster(sess("a", loom, paths=touched))["columns"][0]["sessions"][0]
+        self.assertIsNone(tile["suggestion"])
+
+    def test_the_paths_a_session_touched_do_not_travel_to_the_page(self):
+        orchard = self.repo("orchard")
+        got = self.roster(self.lost(paths=[str(orchard / "a.py")]))
+        self.assertNotIn("paths", got["blocks"][0]["members"][0])
+
+
 class Clients(Placed):
     def monorepo(self, name="mono"):
         main = self.repo(name)

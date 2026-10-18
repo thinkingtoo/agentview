@@ -477,6 +477,9 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         "project": project, "routine": routine,
         "assigned": key in assigned,
         "suggestion": guess,
+        # Only the round needs them, for the guess; `roster()` drops them
+        # before the rows go anywhere.
+        "paths": paths,
         "quietFor": round(quiet, 1) if quiet is not None else None,
         "toolFor": round(in_flight, 1) if in_flight is not None else None,
         "waitingFor": waiting_for,
@@ -500,7 +503,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
 # ---------------------------------------------------------------- roster
 
 ROUTINES = "Routines"
-NO_PROJECT = {"id": "", "kind": "none", "raw": ""}
+NO_PROJECT = projects.NO_PROJECT
 
 
 def sessions_in(groups):
@@ -571,7 +574,10 @@ def roster(providers=None):
     for b in blocks:
         b["pinned"] = b["project"] in pinned
     blocks = order_blocks(blocks, pinned)
-    return {"blocks": blocks, "columns": columns_of(blocks)}
+    columns = columns_of(blocks)
+    for s in everyone:
+        s.pop("paths", None)
+    return {"blocks": blocks, "columns": columns}
 
 
 def columns_of(blocks):
@@ -583,21 +589,27 @@ def columns_of(blocks):
     """
     shelves = config()
     names = config_value("names", {})
+
+    def folder_rule(cwd):
+        return resolve_project(cwd, shelves)
+    members = [m for b in blocks if not b["routines"] for m in b["members"]]
+    places = projects.place_all(members, folder_rule, config_value("assign", {}))
     out = {}
-    for b in blocks:
-        if b["routines"]:
-            continue
-        for m in b["members"]:
-            place = projects.place_of(m["cwd"], lambda c: resolve_project(c, shelves)) or NO_PROJECT
-            col = out.setdefault(place["id"], {
-                "project": place["id"], "raw": place["raw"], "kind": place["kind"],
-                "name": projects.display_name(place, names) if place["raw"] else "No project",
-                "sessions": []})
-            col["sessions"].append(tile_of(m))
+    for m in members:
+        place = places[m["key"]]
+        col = out.setdefault(place["id"], {
+            "project": place["id"], "raw": place["raw"], "kind": place["kind"],
+            "name": projects.display_name(place, names) if place["raw"] else "No project",
+            "sessions": []})
+        guessed = None if place is not NO_PROJECT else projects.guess(
+            m.get("paths") or [], folder_rule)
+        col["sessions"].append(tile_of(m, {
+            "project": guessed["id"], "name": projects.display_name(guessed, names)
+        } if guessed else None))
     return list(out.values())
 
 
-def tile_of(m):
+def tile_of(m, suggestion=None):
     """One session as a tile: today's data, finished for the page to print.
 
     The page never has to decide which of the session's words to show.
@@ -607,7 +619,7 @@ def tile_of(m):
     line = m["title"] if m["overridden"] else (m["did"] or m["title"])
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
-        "status": m["status"],
+        "status": m["status"], "suggestion": suggestion,
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
         "line": "" if line.strip() == m["name"].strip() else line,
         "jump": {"via": "pane" if m["canJump"] else "none"},
@@ -644,8 +656,8 @@ def flag_note(m):
     return ""
 
 
-MIN_VOTES = 3          # below this it is noise, not a habit
-LEAD = 1.5             # the winner has to be clearly ahead of the runner-up
+MIN_VOTES = projects.MIN_VOTES
+LEAD = projects.LEAD
 
 
 def order_members(members):

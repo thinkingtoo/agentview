@@ -4,6 +4,7 @@ The person thinks in projects; the machine knows folders, repositories and
 bosses. This turns the second into the first, once per round, for the
 overview's columns.
 """
+import collections
 import os
 import re
 from pathlib import Path
@@ -114,3 +115,84 @@ def place_of(cwd, folder_rule):
                 "raw": inside.parts[1]}
     return {"id": f"repo:{key}", "kind": "repository",
             "raw": key.rstrip("/").rsplit("/", 1)[-1]}
+
+
+MIN_VOTES = 3          # below this it is noise, not a habit
+LEAD = 1.5             # the winner has to be clearly ahead of the runner-up
+
+
+def guess(paths, folder_rule):
+    """Rule 5: the project a session keeps touching files in, or None.
+
+    Only ever a suggestion. It is right when a session works in one place and
+    silent when it does not -- being confidently wrong is the one outcome that
+    matters here, because you would never know to look.
+    """
+    folders = collections.Counter(
+        os.path.dirname(p) if os.path.splitext(p)[1] else p
+        for p in paths if os.path.isabs(p))
+    votes, seen = collections.Counter(), {}
+    for folder, n in folders.items():
+        place = place_of(folder, folder_rule)
+        if place:
+            votes[place["id"]] += n
+            seen[place["id"]] = place
+    ranked = votes.most_common(2)
+    if not ranked or ranked[0][1] < MIN_VOTES:
+        return None
+    if len(ranked) > 1 and ranked[0][1] < ranked[1][1] * LEAD:
+        return None
+    return seen[ranked[0][0]]
+
+
+NO_PROJECT = {"id": "", "kind": "none", "raw": ""}
+
+# What a project's identity starts with, and the kind of column it makes. The
+# prefix is what keeps a track, a repository, a client folder and a folder
+# that share a name from ever being one project.
+KINDS = {"track": "track", "repo": "repository", "client": "folder", "folder": "folder"}
+KIND_RANK = {"track": 0, "repository": 1, "folder": 2}
+
+
+def from_identity(ident):
+    """The project an identity names, whether or not anyone is in it, or None."""
+    kind, _, rest = ident.partition(":")
+    if kind not in KINDS or not rest:
+        return None
+    raw = rest.rstrip("/").rsplit("/", 1)[-1] if kind in ("repo", "client") else rest
+    return {"id": ident, "kind": KINDS[kind], "raw": raw}
+
+
+def _named(value, carried):
+    """Rule 1 for a session you assigned: the identity you gave, or else the
+    project that carries the name you gave -- the way it worked before
+    projects had identities -- or else a new folder project of that name."""
+    by_identity = from_identity(value)
+    if by_identity:
+        return by_identity
+    same = carried.get(value)
+    if same:
+        return min(same, key=lambda p: (KIND_RANK[p["kind"]], p["id"]))
+    return {"id": f"folder:{value}", "kind": "folder", "raw": value}
+
+
+def place_all(members, folder_rule, assigned):
+    """Every session's project: `{session key: place}`.
+
+    First match wins, in the order the person thinks of it: their own setting,
+    then the repository, then the folder, then nowhere.
+    """
+    places = {m["key"]: place_of(m["cwd"], folder_rule) or NO_PROJECT
+              for m in members if not _own(assigned, m["key"])}
+    carried = {}
+    for place in places.values():
+        if place is not NO_PROJECT:
+            carried.setdefault(place["raw"], []).append(place)
+    for m in members:
+        if _own(assigned, m["key"]):
+            places[m["key"]] = _named(assigned[m["key"]].strip(), carried)
+    return places
+
+
+def _own(assigned, key):
+    return isinstance(assigned.get(key), str) and bool(assigned[key].strip())
