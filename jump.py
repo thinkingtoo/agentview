@@ -327,6 +327,12 @@ def attaches(proc="/proc"):
     return found
 
 
+def _now():
+    """Seconds since boot, suspended time included: `time.monotonic()` stops
+    while the machine sleeps, which would stretch the wait for a new tab."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
 def viewers(job, sid="", name="", proc="/proc", running=None, rivals=()):
     """Pids of `claude attach` processes showing this background session.
 
@@ -373,14 +379,14 @@ def attach(job, sid="", name="", proc="/proc", rivals=()):
             if route:
                 return _follow(route)
         if seen:
-            return {"ok": False, "reason": "already attached, in a window that cannot be raised"}
-        if time.monotonic() - _ATTACHING.get(job, float("-inf")) < ATTACH_GRACE:
+            return {"ok": False, "reason": "already attached, and no window showing it can be raised"}
+        if _now() - _ATTACHING.get(job, float("-inf")) < ATTACH_GRACE:
             return {"ok": True, "did": "opening"}
         route = choose_route(tty="", ancestry=[], tmux="", panes=[], clients=[],
                              konsole=[], job=job)
         done = _follow(route)
         if done["ok"]:
-            _ATTACHING[job] = time.monotonic()
+            _ATTACHING[job] = _now()
         return done
 
 

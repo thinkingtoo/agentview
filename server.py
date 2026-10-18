@@ -317,7 +317,8 @@ class Handler(BaseHTTPRequestHandler):
         done = fleet.jump_to(provider, session)
         # Seen once the terminal was reached, not when the click arrived: a
         # jump that failed leaves what the session said unread, with the
-        # reason on its tile, until the next poll.
+        # reason on its tile, until the next poll. `did: opening` is a click
+        # that found a tab opened moments ago and reached nothing itself.
         if done.get("ok") and done.get("did") != "opening":
             fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"),

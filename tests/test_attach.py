@@ -418,7 +418,7 @@ class Click(FakeRegistry):
     def test_a_click_that_only_waited_for_a_tab_reached_nothing_and_marks_nothing(self):
         # The first tab may have died; this click did not reach a terminal.
         self.background(statusUpdatedAt=1790000000000)
-        jump._ATTACHING[JOB] = time.monotonic()
+        jump._ATTACHING[JOB] = jump._now()
         status, done = self.post({"key": f"claude:{SID}"})
         self.assertEqual((status, done["ok"], done["did"]), (200, True, "opening"))
         self.assertTrue(self.unread())
