@@ -496,6 +496,28 @@ def overview_pass(browser):
     page.close()
 
 
+def suggestion_pass(browser):
+    """A session in No project carries a suggestion; one click assigns it."""
+    body = roster([PMD, LOOSE])
+    next(c for c in body["columns"] if c["project"] == "")["sessions"][0]["suggestion"] = {
+        "project": "repo:example.com/alice/pmd", "name": "pmd"}
+    fake = Fake(body)
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    chip = page.locator('.ov-col[data-project=""] .guess')
+    check("a suggestion is one chip, in the No project column, saying where it would go",
+          chip.count() == 1 and chip.inner_text().strip().endswith("pmd"), chip.count())
+    check("a column with a project has no chip", page.locator('.ov-col[data-project="pmd"] .guess').count() == 0)
+    chip.click()
+    page.wait_for_timeout(300)
+    check("a click on it assigns the session by project identity",
+          fake.of("/api/assign") == [{"key": "o1", "project": "repo:example.com/alice/pmd"}], fake.posts)
+    check("and the tile under it is not opened", [p for p, _ in fake.posts if p != "/api/assign"] == [], fake.posts)
+    check("suggestion: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
 def hostile_pass(browser, view):
     """R7 at the page: markup in a project, a name and a line is text."""
     s = S("h1", BOMB, "idle", line="line: " + BOMB, mv="waiting on: " + BOMB + ", 3 min")
@@ -801,6 +823,7 @@ def main():
         browser = pw.chromium.launch()
         real_keys = real_pass(browser, url, pid)
         overview_pass(browser)
+        suggestion_pass(browser)
         for view in ("overview", "blocks"):
             hostile_pass(browser, view)
             chime_pass(browser, view)
