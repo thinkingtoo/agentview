@@ -134,8 +134,12 @@ class Tiles(Base):
     def test_a_busy_session_gone_quiet_is_stuck_and_says_for_how_long(self):
         self.assertEqual(self.flag_of(status="busy", quietFor=17.2), ("stuck", "17m"))
 
-    def test_a_long_tool_call_is_a_tool_flag_with_its_length(self):
-        self.assertEqual(self.flag_of(status="busy", quietFor=34.0, toolFor=34.0), ("tool", "34m"))
+    def test_a_long_tool_call_is_no_flag_on_the_tile_but_a_sign(self):
+        # The `tool` flag is replaced by the movement sign ("waiting on: ...,
+        # 34 min"); the chime still reads the flag from the blocks.
+        tile = self.tile(session("a", status="busy", quietFor=34.0, toolFor=34.0))
+        self.assertEqual((tile["flag"], tile["flagNote"]), (None, ""))
+        self.assertEqual(tile["movement"]["text"], "waiting on: a command, 34 min")
 
     def test_a_finished_turn_you_have_not_read_is_ready(self):
         self.assertEqual(self.flag_of(status="idle"), ("ready", ""))

@@ -190,6 +190,16 @@
   .tile.ready { border-color:color-mix(in srgb,var(--accent) 55%,var(--line)); }
   .tile.waiting .dot { animation:nudge 2.2s ease-in-out infinite; background:var(--wait); }
   .tile.stuck .dot { animation:nudge 1.8s ease-in-out infinite; background:var(--bad); }
+  /* Movement. The strip is the project's only graph: one bar per minute for
+     the last 30, oldest first. A minute the server could not see is a dotted
+     stub, never an empty bar, because empty would say "wrote nothing". */
+  .ov-mv { margin-top:8px; font-weight:400; font-size:12px; color:var(--dim); }
+  .strip { display:flex; align-items:flex-end; gap:1px; height:28px; }
+  .strip i { flex:1 1 0; min-width:2px; background:var(--busy); border-radius:1px 1px 0 0; }
+  .strip i.z { height:1px; opacity:.35; }
+  .strip i.u { height:1px; background:none; border-top:1px dotted var(--faint); }
+  .mix { margin-top:5px; font-variant-numeric:tabular-nums; }
+  .tile .mv { color:var(--dim); font-size:12px; }
   .tile.jumped { animation:flash .7s ease-out; }
   .tile.failed { animation:flash-bad 1.4s ease-out; }
   .viewlink { color:var(--faint); font-size:12px; text-decoration:none; white-space:nowrap; }
@@ -881,9 +891,25 @@ function overview(cols) {
 
 function column(c) {
   return `<section class="ov-col" data-project="${esc(c.project)}">
-    <div class="ov-head">${esc(c.name)}</div>
+    <div class="ov-head"><span class="ov-name">${esc(c.name)}</span>${movementOf(c)}</div>
     ${c.sessions.map(tile).join("")}
   </section>`;
+}
+
+// The card's movement: the strip the server summed over the project's
+// sessions, and the mix under it. Heights are scaled to the busiest minute
+// shown; the counts themselves are the server's.
+function movementOf(c) {
+  const bars = (c.strip || []).map(v => v === null ? null : Number(v) || 0);
+  const top = Math.max(1, ...bars.filter(v => v !== null));
+  const bar = v => v === null ? `<i class="u" title="not seen"></i>`
+    : v === 0 ? `<i class="z" title="0 writes"></i>`
+    : `<i style="height:${Math.max(2, Math.round(v / top * 28))}px" title="${v} writes"></i>`;
+  const m = Object.fromEntries(["moving", "stuck", "idle"].map(k => [k, Number(c.summary?.[k]) || 0]));
+  return `<div class="ov-mv">
+    <div class="strip" role="img" aria-label="Writes per minute, last 30 minutes">${bars.map(bar).join("")}</div>
+    <div class="mix">${m.moving} moving · ${m.stuck} stuck · ${m.idle} idle</div>
+  </div>`;
 }
 
 function tile(t) {
@@ -894,9 +920,10 @@ function tile(t) {
     `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
   return `<div class="tile ${can ? "can" : ""} ${alarm}" data-sid="${esc(t.key)}">
     <div class="rhead">
-      ${mark(t)}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${jumpLabel(t, via)}
+      ${mark({ ...t, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${jumpLabel(t, via)}
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
+    ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
     ${t.need ? `<div class="need">${esc(t.need)}</div>` : ""}
   </div>`;
 }
@@ -915,8 +942,8 @@ function tileFlag(t) {
   // on, or the minutes a stuck session has been quiet and a tool call has run.
   return t.flag === "waiting"
     ? `<span class="flag waiting">waiting</span>` + (t.flagNote ? `<span class="wf">${esc(t.flagNote)}</span>` : "")
-    : t.flag === "stuck" || t.flag === "tool"
-      ? `<span class="flag ${t.flag}">${t.flag} ${esc(t.flagNote)}</span>`
+    : t.flag === "stuck"
+      ? `<span class="flag stuck">stuck ${esc(t.flagNote)}</span>`
       : t.flag === "ready" ? `<span class="flag ready">ready</span>` : "";
 }
 
