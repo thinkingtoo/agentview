@@ -25,11 +25,11 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 - [What has stuck looked like on this machine so far?](issues/03-stuck-history.md): unanswered dialogs and waiting on another session dominate; rate limits and server errors show as `ready`; today's `stuck` is false 86% of the time.
 - [How does a session get its project?](issues/04-project-assignment.md): person's setting, then boss track (spans repos), then repository with worktrees folded and each client its own project, then folder; launch folder fixes it; leftovers in "No project"; overrides in `config.json` by track or repo.
 - [Where does a project's "what is this about" line come from?](issues/05-project-context.md): a track uses its goal's Outcome, status tag and "N of M"; a repository its README then CLAUDE.md; the person's own line wins; otherwise greyed session titles; names are prettified slugs; the brain only behind an on-click "notes" link.
+- [Which kinds of stuck does the overview name, and how is each detected?](issues/06-stuck-kinds.md): four kinds, Needs you (question, permission prompt or things left on the session line, all one level), Limit, Error, Hung (busy, not moving for 10 min); waiting on jobs is movement, idle is neutral; flags stay for the chime.
 
 ## Not yet specified
 
 - **Finished and forgotten sessions.** Sessions idle for hours (13 of 24 on 2026-10-17): shown, folded or dimmed. Decide after the stuck kinds and the layout.
-- **What one click lands on.** The pane, the tab, the open dialog; what happens when no terminal is attached. Today's jump covers part of this. Revisit once the stuck kinds say where unsticking happens.
 - **Codex parity.** Which movement and stuck signals Codex sessions can give at all.
 
 ## Out of scope
@@ -38,3 +38,4 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 - Other machines, cloud sessions, systemd routines.
 - Viewing from a phone.
 - Changes to the chime.
+- Replacing dialogs with one list of things left for the person, answered some other way: changes how every session asks, the chime and the person's own rules; a separate effort (ruled in "Which kinds of stuck does the overview name, and how is each detected?").

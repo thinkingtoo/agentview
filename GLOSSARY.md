@@ -32,6 +32,10 @@ _Avoid_: dashboard, roster
 **Stuck**:
 A session that cannot move on without something changing, of a kind the overview can name.
 
+**Needs you**:
+A kind of stuck: the session cannot go on until the person answers, approves, or does something themselves, such as running a command, sending a mail or buying something.
+_Avoid_: waiting, ready, your turn
+
 **Movement**:
 Visible evidence that a session is still making progress, including while it waits on CI or tests.
 _Avoid_: activity, liveness
