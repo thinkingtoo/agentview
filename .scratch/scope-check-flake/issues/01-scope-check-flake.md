@@ -6,7 +6,9 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Claimed by:** Joaquin 2026-10-19 01:45
+
+**Status:** in-progress
 
 - [ ] The cause is named with evidence (what `carries()` read, and when), not guessed
 - [ ] 200 isolated runs of the test pass after the fix, and the same loop fails on the old code
