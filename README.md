@@ -31,6 +31,22 @@ chime and the counts read); the page prints what it is sent and decides nothing.
 Columns keep at least 230 px and the row scrolls sideways when there are more
 projects than fit. Systemd routines are not on the overview.
 
+**Which project a session is in** is decided in this order, first match wins:
+your own setting (`assign` in `config.json`); the boss's track (a boss by its
+marker in `~/.claude/pm/.boss-sessions`, a worker by its `boss-<track>` tmux
+session, then the boss that messaged it, then the one tracker that lists it --
+a track is one project across repositories, and exists only while its boss
+runs); the repository, keyed by its remote, with worktrees folded onto their
+parent and every `clients/<client>/` folder a project of its own; the folder
+rule (`shelves`); otherwise *No project*, last, with a one-click suggestion
+taken from the files the session touched. The folder a session was launched in
+decides, so a session that `cd`s elsewhere keeps its column. A boss shows once,
+first in its column. Columns go pinned first, in your order, then tracks,
+repositories and folders. A column's `project` is its identity, namespaced by
+kind (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track
+and a repository that share a name stay two projects; `pinned`, `names` and
+`assign` take an identity, or a plain name as they did before.
+
 The page this README describes below is still there as the **block view**, at
 `/?view=blocks` (a link in the header goes each way). Rename, pin, assign, fold,
 hold, the boss nesting and the routines block exist only on the block view for
