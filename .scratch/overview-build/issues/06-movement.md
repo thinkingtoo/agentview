@@ -4,7 +4,9 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Claimed by:** Bettina 2026-10-19 00:44
+
+**Status:** in-progress
 
 - [ ] Reader facts tested on fixture transcripts (writes per minute, subagent writes, background tasks)
 - [ ] A session with a live background job reads as moving, never idle or stuck
