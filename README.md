@@ -36,7 +36,7 @@ The page this README describes below is still there as the **block view**, at
 hold, the boss nesting and the routines block exist only on the block view for
 now; the overview retires it later.
 
-## Movement: is this session alive
+## Movement: what shows a session is working
 
 A tile says whether its session is alive, in its own words: `writing · 8s ago`,
 `waiting on: Run the unit tests, 12 min`, `idle 14 min`, or nothing. A session
@@ -51,11 +51,17 @@ Code already writes, never from a model:
   whose command line names `shell-snapshots`, so MCP servers and their helpers
   never count);
 - it started a background command (a background Bash or a Monitor) and has not
-  been told it ended (a `task-notification`, or its own `TaskStop`), and a shell
-  of its own is still alive behind it.
+  been told it ended (a `task-notification`, or its own `TaskStop`), and the
+  shell writing to that task's own output file is still alive. A shell that
+  belongs to something else does not stand in for it, which is why a resumed
+  session's tasks from the process that died are not running.
 
 The peer `status` is never evidence: it is written when it changes and has no
-heartbeat. CPU with no call in flight is a shell left behind and proves nothing.
+heartbeat. For a provider that reports no writes at all, the moment the status
+changed to busy counts like a write, for `hung_after_minutes` and no longer.
+An idle session is idle whatever its subagents wrote before it stopped, and a
+session waiting on a dialog is not "writing". CPU with no call in flight is a
+shell left behind and proves nothing.
 Any command or job counts for at most six hours (`WAIT_MAX_MINUTES` in
 `fleet.py`); past that the tile still says what it waits on, and the session
 stops counting as moving.
@@ -954,6 +960,13 @@ roster and every POST are answered from fixtures by `page.route`, so no jump,
 reopen, revive or rename can reach a terminal, and the smoke writes nothing. The
 one unrouted pass loads the test server's own roster read-only (no clicks, any
 non-GET request aborted, no screenshot) and asserts that columns render.
+
+The movement tests (`tests/test_movement_*.py`) run on invented transcripts, a
+fake `/proc` and fake providers, never on a real session: writes per minute and
+the cold-start window, subagents counted once under their parent, background
+tasks opened and closed, which shells and CPU count (and which never do), a
+process vanishing mid-walk, the sign on each tile and the strip and mix on each
+card.
 
 The unit tests cover the things worth covering: route selection for each
 terminal (including tmux-inside-WezTerm and a headless session with nowhere to

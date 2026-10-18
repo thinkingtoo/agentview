@@ -106,8 +106,26 @@ class Sign(Base):
     def test_a_busy_session_that_has_gone_quiet_with_nothing_running_has_no_sign(self):
         self.assertEqual(self.movement(status="busy", quietFor=15.0), (None, False))
 
-    def test_a_provider_that_says_nothing_about_a_busy_session_does_not_make_it_stuck(self):
-        self.assertEqual(self.movement(status="busy"), (None, True))
+    def test_a_provider_that_says_nothing_about_a_session_that_just_began_work_is_given_the_time(self):
+        # The status changing to busy a few minutes ago is an event, and the
+        # only one there is. It is not evidence for ever.
+        self.assertEqual(self.movement(status="busy", updatedAt=ago(3)), (None, True))
+
+    def test_and_a_busy_status_nobody_has_heard_from_in_ten_minutes_proves_nothing(self):
+        # The peer status has no heartbeat: busy for an hour is not movement.
+        self.assertEqual(self.movement(status="busy", updatedAt=ago(60)), (None, False))
+        self.assertEqual(self.movement(status="busy", updatedAt=0), (None, False))
+
+    def test_a_finished_session_is_not_moving_because_a_subagent_wrote_a_minute_ago(self):
+        # Every subagent run ends with the parent going idle seconds later.
+        self.assertEqual(self.movement(status="idle", updatedAt=ago(3), quietFor=3.0, subQuiet=1.0),
+                         ({"kind": "idle", "text": "idle 3 min"}, False))
+
+    def test_a_session_waiting_on_a_dialog_is_not_writing(self):
+        # Its last record is the question. The tile says Needs you in its own
+        # way; the movement sign does not contradict it.
+        self.assertEqual(self.movement(status="waiting", waitingFor="input needed", quietFor=0.2,
+                                       updatedAt=ago(1)), (None, False))
 
 
 class WhatTheSignCarries(Base):

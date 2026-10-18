@@ -5,6 +5,7 @@ Fixtures are invented records with a timestamp and nothing else the reader
 needs; no real text, no real paths. `NOW` is passed in, so no test depends on
 the clock or on where in a minute it happens to run.
 """
+import contextlib
 import datetime
 import json
 import os
@@ -37,6 +38,16 @@ def write(path, records, mode="a"):
             fh.write(json.dumps(r) + "\n")
 
 
+@contextlib.contextmanager
+def reads_of_files():
+    """Every read of a file while the block runs, as (path, offset) pairs."""
+    got = []
+    original = base.read_from
+    with mock.patch.object(base, "read_from",
+                           lambda path, offset: (got.append((str(path), offset)), original(path, offset))[1]):
+        yield got
+
+
 class Base(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
@@ -45,7 +56,7 @@ class Base(unittest.TestCase):
         claude.SUBS.cache.clear()
 
     def scan(self):
-        return claude.scan_cached(self.path, now=NOW.timestamp())
+        return claude.scan_session(self.path, now=NOW.timestamp())
 
 
 class WritesPerMinute(Base):
@@ -72,26 +83,21 @@ class WritesPerMinute(Base):
     def test_a_second_scan_adds_only_what_was_appended(self):
         write(self.path, [record(50), record(40)], "w")
         self.assertEqual(sum(self.scan()["writes"]), 2)
-        reads = []
-        original = base.read_from
-        base.read_from = lambda p, off: (reads.append(off), original(p, off))[1]
-        try:
-            write(self.path, [record(5)])
+        write(self.path, [record(5)])
+        with reads_of_files() as reads:
             writes = self.scan()["writes"]
-        finally:
-            base.read_from = original
         self.assertEqual(sum(writes), 3)
         # No extra full-file read: the counter rides on the one tail read, and
         # that read starts where the last one stopped.
         self.assertEqual(len(reads), 1)
-        self.assertGreater(reads[0], 0)
+        self.assertGreater(reads[0][1], 0)
 
     def test_a_session_quiet_for_an_hour_has_a_strip_of_zeros(self):
         write(self.path, [record(3600)], "w")
         self.assertEqual(self.scan()["writes"], [0] * 30)
 
     def test_no_transcript_yet_reports_no_strip_rather_than_zeros(self):
-        self.assertIsNone(claude.scan_cached(self.dir / "missing.jsonl", now=NOW.timestamp())["writes"])
+        self.assertIsNone(claude.scan_session(self.dir / "missing.jsonl", now=NOW.timestamp())["writes"])
 
 
 class ColdStart(Base):
@@ -142,15 +148,9 @@ class ColdStart(Base):
         # One read of the tail, and nothing else: the counters ride on it.
         records = self.big_transcript()
         write(self.path, [{"type": "ai-title", "aiTitle": "Checkout form"}] + records[-3:], "a")
-        reads = []
-        original = base.read_from
-        base.read_from = lambda p, off: (reads.append(off), original(p, off))[1]
-        try:
-            with mock.patch.object(base, "COLD_BYTES", 6000):
-                self.scan()
-        finally:
-            base.read_from = original
-        self.assertEqual(reads, [self.path.stat().st_size - 6000])
+        with reads_of_files() as reads, mock.patch.object(base, "COLD_BYTES", 6000):
+            self.scan()
+        self.assertEqual([offset for _, offset in reads], [self.path.stat().st_size - 6000])
 
     def test_a_small_transcript_is_read_whole_so_nothing_in_it_is_unknown(self):
         write(self.path, [record(10)], "w")
@@ -167,8 +167,8 @@ class ColdStart(Base):
     def test_the_unknown_minutes_age_out_as_the_clock_moves_on(self):
         self.big_transcript()
         with mock.patch.object(base, "COLD_BYTES", 6000):
-            first = claude.scan_cached(self.path, now=NOW.timestamp())["writes"]
-        later = claude.scan_cached(self.path, now=NOW.timestamp() + 40 * 60)["writes"]
+            first = claude.scan_session(self.path, now=NOW.timestamp())["writes"]
+        later = claude.scan_session(self.path, now=NOW.timestamp() + 40 * 60)["writes"]
         self.assertGreater(first.count(None), 0)
         self.assertEqual(later.count(None), 0)       # the unseen minutes are over 30 minutes old by then
 
@@ -210,17 +210,21 @@ class Subagents(Base):
         touch(sub, 3)
         self.assertEqual(sum(self.scan()["writes"]), 3)
 
+    def test_the_archive_scan_does_not_look_into_subagent_folders(self):
+        # snapshot.py wants a title and calls scan_cached for every transcript
+        # it keeps; a folder of subagents is for a session that is running.
+        write(self.path, [record(10)], "w")
+        self.subagent("agent-a1", [record(12), record(13)])
+        got = claude.scan_cached(self.path, now=NOW.timestamp())
+        self.assertEqual(sum(got["writes"]), 1)
+        self.assertNotIn("subQuiet", got)
+
     def test_a_subagent_file_that_did_not_change_is_not_read_again(self):
         write(self.path, [record(10)], "w")
         self.subagent("agent-a1", [record(12)])
         self.scan()
-        reads = []
-        original = base.read_from
-        base.read_from = lambda p, off: (reads.append(str(p)), original(p, off))[1]
-        try:
+        with reads_of_files() as reads:
             self.scan()
-        finally:
-            base.read_from = original
         self.assertEqual(reads, [])
 
     def test_when_a_subagent_last_wrote_is_reported_in_minutes(self):
@@ -236,15 +240,10 @@ class Subagents(Base):
     def test_a_subagent_that_stopped_long_ago_is_neither_read_nor_counted(self):
         write(self.path, [record(10)], "w")
         self.subagent("agent-old", [record(3 * 3600)], seconds_ago=3 * 3600)
-        reads = []
-        original = base.read_from
-        base.read_from = lambda p, off: (reads.append(str(p)), original(p, off))[1]
-        try:
+        with reads_of_files() as reads:
             writes = self.scan()["writes"]
-        finally:
-            base.read_from = original
         self.assertEqual(sum(writes), 1)
-        self.assertEqual([r for r in reads if "agent-old" in r], [])
+        self.assertEqual([path for path, _ in reads if "agent-old" in path], [])
 
     def test_a_subagent_file_that_is_not_a_transcript_is_ignored(self):
         write(self.path, [record(10)], "w")

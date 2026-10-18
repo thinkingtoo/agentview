@@ -466,10 +466,10 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
     sub_quiet = _minutes(raw.get("subQuiet"))
     tasks = tasks_of(raw.get("bgTasks"))
     sign, moving = movement_of(
-        status, quiet, sub_quiet, in_flight, _text(raw.get("doing")),
-        bool(raw.get("shellCpu")), tasks,
-        (now * 1000 - updated) / 60000 if updated else None,
-        thresholds.get("hung_after", 10))
+        status=status, quiet=quiet, sub_quiet=sub_quiet, in_flight=in_flight,
+        doing=_text(raw.get("doing")), cpu=bool(raw.get("shellCpu")), tasks=tasks,
+        status_for=(now * 1000 - updated) / 60000 if updated else None,
+        hung_after=thresholds.get("hung_after", 10))
     moves = {"writes": writes_of(raw.get("writes")), "subQuiet": sub_quiet,
              "bgTasks": tasks, "shellCpu": bool(raw.get("shellCpu")),
              "movement": sign, "moving": moving}
@@ -711,6 +711,9 @@ def suggest_project(paths, shelves):
 
 STRIP_SLOTS = 30
 
+# Open background jobs kept per session. More than this is a runaway, not a list.
+MAX_JOBS = 8
+
 # A write this recent is "writing"; older and still moving, it says how long.
 WRITING_SECS = 60
 
@@ -739,7 +742,7 @@ def tasks_of(value):
         if since is not None:
             out.append({"label": " ".join(_text(t.get("label")).split())[:80]
                         or "a background job", "since": round(since, 1)})
-    return out[:MAX_EXTRAS]
+    return out[:MAX_JOBS]
 
 
 def ago_text(minutes):
@@ -757,7 +760,7 @@ def span_text(minutes):
     return "<1 min" if minutes < 1 else ago_text(minutes)
 
 
-def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, idle_for, hung_after):
+def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after):
     """What shows that a session is alive: (the sign for its tile, moving).
 
     Moving is any of: it or a subagent wrote recently; a command it is
@@ -770,9 +773,13 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, idle_for
     when, or idle since when. A session that wrote nothing it can show and
     waits on nothing has none.
     """
-    # An idle session's last record is the one that ended its turn: it says
-    # the session stopped, not that it is working.
-    own = quiet if status != "idle" else None
+    # An idle session's last records ended its turn, and a subagent that wrote
+    # before that is history: both say the session stopped. A session waiting
+    # on a dialog last wrote its question. Only a busy session's own writes
+    # are the session working.
+    if status == "idle":
+        sub_quiet = None
+    own = quiet if status == "busy" else None
     latest = min((m for m in (own, sub_quiet) if m is not None), default=None)
     call = in_flight is not None
     jobs = sorted(tasks, key=lambda t: -t["since"])
@@ -780,9 +787,11 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, idle_for
     evidence = ((call and cpu and in_flight <= WAIT_MAX_MINUTES)
                 or any(t["since"] <= WAIT_MAX_MINUTES for t in jobs)
                 or subagent)
-    # A provider that says nothing about a busy session cannot be
-    # contradicted: that is not the same as it having been quiet.
-    unknown = status == "busy" and quiet is None and sub_quiet is None
+    # A provider that says nothing about a busy session has only the moment
+    # the status changed to go on: that counts for `hung_after` minutes, like
+    # a write would, and no longer. The status has no heartbeat.
+    unknown = (status == "busy" and quiet is None and sub_quiet is None
+               and status_for is not None and status_for < hung_after)
     recent = status == "busy" and latest is not None and latest < hung_after
     moving = bool(evidence or unknown or recent)
 
@@ -805,8 +814,8 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, idle_for
     if recent:
         return writing(latest), moving
     if status == "idle":
-        return {"kind": "idle", "since": round(idle_for, 1) if idle_for is not None else None,
-                "text": "idle" if idle_for is None else f"idle {span_text(idle_for)}"}, moving
+        return {"kind": "idle", "since": round(status_for, 1) if status_for is not None else None,
+                "text": "idle" if status_for is None else f"idle {span_text(status_for)}"}, moving
     return None, moving
 
 

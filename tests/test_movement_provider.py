@@ -13,9 +13,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from providers import claude, procs
-from test_movement_procs import BASH, NODE, FakeProc
+from test_movement_procs import BASH, NODE, OUT, FakeProc
 
-PTS_54 = 34870
+PTS_54 = 34870          # `/dev/pts/54` as the kernel numbers it: the session is on a terminal
 SID = "11111111-aaaa-bbbb-cccc-222222222222"
 
 
@@ -74,10 +74,11 @@ class Provider(unittest.TestCase):
     def live(self):
         return self.provider.live()
 
-    def shell(self, *, ticks=10):
-        """A command the session runs, with something under it."""
-        shell = self.fake.add(200, 100, cmd=BASH)
-        return self.fake.add(300, shell, cmd="python3\0-m\0pytest\0", ticks=ticks)
+    def shell(self, *, ticks=10, task=None, number=200):
+        """A command the session runs, with something under it. With `task`,
+        it is that background task's shell: its output is the task's file."""
+        shell = self.fake.add(number, 100, cmd=BASH, out=OUT % task if task else None)
+        return self.fake.add(number + 100, shell, cmd="python3\0-m\0pytest\0", ticks=ticks)
 
 
 class Writes(Provider):
@@ -136,9 +137,9 @@ class WhatItWaitsOn(Provider):
         self.assertFalse(got["shellCpu"])
         self.assertEqual(looks, [])
 
-    def test_a_background_task_with_a_live_shell_behind_it_is_reported(self):
+    def test_a_background_task_with_its_own_shell_alive_is_reported(self):
         self.session([call(300), accepted(299, "toolu_1", "bk7q2m9xa")], status="idle")
-        self.shell()
+        self.shell(task="bk7q2m9xa")
         got = self.live()[0]
         self.assertEqual([t["label"] for t in got["bgTasks"]], ["Run the unit tests"])
         self.assertAlmostEqual(got["bgTasks"][0]["since"], 299 / 60, delta=0.05)
@@ -147,6 +148,22 @@ class WhatItWaitsOn(Provider):
         # The shell died and no notice came: nothing runs, whatever the file says.
         self.session([call(300), accepted(299, "toolu_1", "bk7q2m9xa")], status="idle")
         self.assertEqual(self.live()[0]["bgTasks"], [])
+
+    def test_a_task_a_resumed_session_never_heard_the_end_of_is_not_running(self):
+        # R16: the previous process died with its shells and no notice was
+        # written. The new process runs shells of its own, but none of them
+        # writes to that task's output.
+        self.session([call(300), accepted(299, "toolu_1", "bk7q2m9xa")], status="busy")
+        self.shell()                                   # a foreground command, stdout a pipe
+        self.shell(task="bz0other00", number=250)      # and some other task's shell
+        self.assertEqual(self.live()[0]["bgTasks"], [])
+
+    def test_of_two_open_tasks_only_the_one_whose_shell_lives_is_reported(self):
+        self.session([call(300, tool_id="toolu_1"), accepted(299, "toolu_1", "bk7q2m9xa"),
+                      call(200, tool_id="toolu_2", description="Watch the deploy"),
+                      accepted(199, "toolu_2", "bm1x2y3z4")], status="idle")
+        self.shell(task="bm1x2y3z4")
+        self.assertEqual([t["label"] for t in self.live()[0]["bgTasks"]], ["Watch the deploy"])
 
     def test_a_shell_left_behind_by_a_task_that_ended_is_not_a_job(self):
         # R16: the notice closed the task; the shell that outlived it proves nothing.

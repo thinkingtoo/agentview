@@ -11,6 +11,7 @@ Nothing here guesses. A process that exits mid-walk, one that is not ours to
 read, a `stat` that makes no sense: each is the absence of evidence, never
 evidence. The caller gets `None` when `/proc` cannot answer at all.
 """
+import os
 import time
 
 SHELL_MARK = b"shell-snapshots"
@@ -23,6 +24,9 @@ MAX_WALK = 200
 # while it is recent: the poll comes every few seconds, and a session that was
 # not looked at for an hour has no baseline at all.
 STALE = 10.0
+
+# How long a look is remembered at all. Longer than a poll can be late.
+FORGET = STALE * 6
 
 # How long CPU counts as seen after the last tick moved. A download or a test
 # that waits on disk burns nothing for a second or two between bursts, and the
@@ -48,6 +52,25 @@ def _children(proc, pid):
         return [int(token) for token in raw.split()]
     except ValueError:
         return None
+
+
+def _task_of(proc, pid):
+    """The id of the background task whose output file this process writes to
+    as its standard output, or None.
+
+    A background command runs in a shell of its own with stdout on
+    `.../tasks/<id>.output`, so the id ties a task in the transcript to the
+    very process running it. A shell that belongs to something else has some
+    other output, and cannot stand in for it.
+    """
+    try:
+        target = os.readlink(f"{proc}/{pid}/fd/1")
+    except OSError:
+        return None             # the descriptor is gone, or not ours to read
+    folder, name = os.path.split(target)
+    if name.endswith(".output") and os.path.basename(folder) == "tasks":
+        return name[:-len(".output")]
+    return None
 
 
 def _stat(proc, pid):
@@ -83,8 +106,9 @@ class Shells:
 
     def look(self, pid, now=None):
         """{"shells": how many commands it is running, "cpu": whether any of
-        them, or anything they started, used CPU since the last look}, or
-        None when `/proc` cannot say."""
+        them, or anything they started, used CPU since the last look, "tasks":
+        the background tasks whose shells are alive}, or None when `/proc`
+        cannot say."""
         now = time.time() if now is None else now
         kids = _children(self.proc, pid)
         if kids is None:
@@ -107,8 +131,9 @@ class Shells:
                 moved = True
             queue.extend(_children(self.proc, at) or [])
         self.last = {key: value for key, value in {**self.last, **seen}.items()
-                     if now - value[1] <= STALE * 6}
+                     if now - value[1] <= FORGET}
         if moved:
             self.cpu_at[pid] = now
         self.cpu_at = {p: t for p, t in self.cpu_at.items() if now - t <= GRACE}
-        return {"shells": len(shells), "cpu": pid in self.cpu_at}
+        tasks = [t for t in (_task_of(self.proc, shell) for shell in shells) if t]
+        return {"shells": len(shells), "cpu": pid in self.cpu_at, "tasks": tasks}

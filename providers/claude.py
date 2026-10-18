@@ -154,12 +154,16 @@ STRIP_MINUTES = 30
 KEEP_MINUTES = STRIP_MINUTES + 10
 
 
-def _minute_of(stamp):
+def _seconds_of(stamp):
     try:
-        return int(datetime.datetime.fromisoformat(
-            stamp.replace("Z", "+00:00")).timestamp() // 60)
+        return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
     except (ValueError, AttributeError, OverflowError):
         return None
+
+
+def _minute_of(stamp):
+    seconds = _seconds_of(stamp)
+    return None if seconds is None else int(seconds // 60)
 
 
 def _blank_counts():
@@ -215,13 +219,6 @@ def _strip(state, now):
 MAX_TASKS = 32
 TASK_ID = re.compile(r"<task-id>([^<]+)</task-id>")
 TASK_STATUS = re.compile(r"<status>(completed|failed|killed|stopped)</status>")
-
-
-def _seconds_of(stamp):
-    try:
-        return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
-    except (ValueError, AttributeError, OverflowError):
-        return None
 
 
 def _tasks(state, rec):
@@ -505,8 +502,9 @@ def _view(state, now):
             "pending": pending,
             "writes": _strip(state, now),
             # Open background shells, oldest first, with how long each has run.
-            "tasks": sorted(({"label": t["label"], "since": max(0.0, (now - started) / 60)}
-                             for t in state["tasks"].values()
+            "tasks": sorted(({"id": tid, "label": t["label"],
+                              "since": max(0.0, (now - started) / 60)}
+                             for tid, t in state["tasks"].items()
                              if (started := _seconds_of(t["stamp"])) is not None),
                             key=lambda t: -t["since"])}
 
@@ -554,8 +552,17 @@ def scan_cached(path, now=None):
         path.stat()
     except OSError:
         return dict(EMPTY)
+    return _view(TAIL.scan(path), time.time() if now is None else now)
+
+
+def scan_session(path, now=None):
+    """A live session's transcript, and its subagents' writes counted in. The
+    archive only wants a title and calls `scan_cached`; looking into a
+    subagent folder is for a session that is running."""
+    view = scan_cached(path, now)
+    if view["writes"] is None:
+        return view
     now = time.time() if now is None else now
-    view = _view(TAIL.scan(path), now)
     subs, view["subQuiet"] = _subagents(path, now)
     for state in subs:
         view["writes"] = _add(view["writes"], _strip(state, now))
@@ -577,9 +584,10 @@ def _processes(rec, summary, status, shells):
     Only looked at when the session has something a process could belong to:
     a call that has not come back, or a background task it was not told had
     ended. A session with neither has nothing to wait on, and a shell burning
-    CPU under it is somebody else's. A task counts only with a Bash shell of
-    the session still alive behind it: a task whose shell died and sent no
-    notice is not running.
+    CPU under it is somebody else's. A task counts only while the shell that
+    writes to its own output file is alive: a task whose shell died and sent
+    no notice (the session was resumed, say) is not running, and another
+    command's shell does not make it so.
     """
     tasks = summary["tasks"]
     if shells is None or not rec.get("pid") or not (
@@ -588,7 +596,7 @@ def _processes(rec, summary, status, shells):
     seen = shells.look(rec["pid"])
     if seen is None:
         return [], False
-    return (tasks if seen["shells"] else []), seen["cpu"]
+    return [t for t in tasks if t["id"] in seen["tasks"]], seen["cpu"]
 
 
 def session(rec, cfg=None, light=False, shells=None):
@@ -600,7 +608,7 @@ def session(rec, cfg=None, light=False, shells=None):
     cwd = rec.get("cwd") or ""
     sid = rec.get("sessionId") or ""
     transcript = transcript_for(sid, cwd, cfg) if sid and not light else None
-    summary = scan_cached(transcript) if transcript else EMPTY
+    summary = scan_session(transcript) if transcript else EMPTY
     quiet = None
     if transcript:
         try:
