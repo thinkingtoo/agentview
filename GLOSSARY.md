@@ -46,6 +46,10 @@ _Avoid_: waiting, ready, your turn
 **Jump**:
 One click that puts a session's own terminal in front of the person.
 
+**Finished**:
+A session that has been idle for hours with nothing left for the person and its handover read. It stays one click away, because finished sessions are often picked up again.
+_Avoid_: dead, forgotten, closed
+
 **Movement**:
 Visible evidence that a session is still making progress, including while it waits on CI or tests.
 _Avoid_: activity, liveness
