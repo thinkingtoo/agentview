@@ -28,11 +28,11 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 - [Which kinds of stuck does the overview name, and how is each detected?](issues/06-stuck-kinds.md): four kinds, Needs you (question, permission prompt or things left on the session line, all one level), Limit, Error, Hung (busy, not moving for 10 min); waiting on jobs is movement, idle is neutral; flags stay for the chime.
 - [What does the "working on" line of a session say?](issues/07-working-on-line.md): the job, not the minute: own line, then `did` (kept while busy), then `title`, else the last prompt greyed; skips repeats of the project line; `doing`, `ask` and `said` move into the movement sign, Needs you and the unseen handover.
 - [Where does one click land, for each kind of stuck?](issues/09-jump-target.md): the stuck session's own pane for every kind, `n` > 1 included; background sessions open with `claude attach` in a new tab; no terminal shows greyed before the click, and a failed jump keeps its reason on the row.
+- [How should the overview look?](issues/08-layout.md): one column per project, tracks first, scrolling sideways; a project card on top, always coloured by its most urgent session, with a combined 30-minute movement strip; session tiles under it with no strip of their own; a copy button on commands; header counts that light up their sessions.
 
 ## Not yet specified
 
-- **Finished and forgotten sessions.** Sessions idle for hours (13 of 24 on 2026-10-17): shown, folded or dimmed. Decide after the stuck kinds and the layout.
-- **Codex parity.** Which movement and stuck signals Codex sessions can give at all.
+Nothing left in the fog: "Finished and forgotten sessions" became [When is a session finished and forgotten, and how does it show?](issues/10-finished-sessions.md), and "Codex parity" became [Which movement and stuck signals can Codex sessions give?](issues/11-codex-parity.md).
 
 ## Out of scope
 
