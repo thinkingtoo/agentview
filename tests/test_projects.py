@@ -190,6 +190,13 @@ class Tracks(TrackFixtures):
                          ("track:checkout", "track", "checkout"))
         self.assertEqual(self.keys(column), ["claude:b", "claude:w"])
 
+    def test_a_track_column_counts_the_movement_of_every_repository_it_spans(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        got = self.claude(self.boss("b", loom, "checkout", writes=[0] * 29 + [2]),
+                          self.worker("w", orchard, "checkout", name="Mateo", writes=[0] * 29 + [5]))
+        column = got["columns"][0]
+        self.assertEqual((column["strip"][-1], sum(column["summary"].values())), (7, 2))
+
     def test_one_repository_holding_two_tracks_is_two_projects(self):
         loom = self.repo("loom")
         got = self.claude(self.boss("b1", loom, "checkout", name="Ilse"),
