@@ -14,7 +14,16 @@ key is `provider:id`, so a provider name may not contain a colon.
 Optional: `pid`, `name`, `branch`, `title`, `prompt`, `said` (the raw text of
 the last thing the agent said -- the core shapes it), `waitingFor`,
 `startedAt`, `kind`, `tmux`, `bg`, `routine`, `boss`, `team`, `paths`,
-`doing`, `quietFor`, `toolFor`, `canJump`, `extras`.
+`doing`, `quietFor`, `toolFor`, `canJump`, `extras`, `asking`.
+
+`asking` is what the session is stopped on right now, or absent. Two shapes:
+`{"kind": "question", "questions": [{"question", "header", "multi",
+"options": [{"label", "description"}]}]}` for an open question, and
+`{"kind": "permission", "tool", "command", "target"}` for an open permission
+prompt. `command` is present only when the prompt is for a shell command
+(`COMMAND_LIMIT` characters, plus one if it was cut); `target` names a file or
+address for any other tool. The provider decides what is open; the core only
+prints what it is told.
 """
 import os
 
@@ -24,6 +33,19 @@ import os
 # field is data that is absent or data that will never exist.
 CAPABILITIES = frozenset({"jump", "branch", "waiting", "name", "status"})
 STATUSES = ("busy", "idle", "waiting")
+
+# The longest command a provider hands over whole. A permission prompt's
+# command is copied from the page, and a cut one must not be copied: the
+# provider sends one character more than this when it had to cut.
+COMMAND_LIMIT = 4000
+
+# How much of a dialog a tile can hold. The reader keeps no more than this of
+# what a session wrote into a question, and the core cuts to it again.
+MAX_QUESTIONS = 4        # what AskUserQuestion allows
+MAX_OPTIONS = 6
+QUESTION_LEN = 600
+LABEL_LEN = 120
+HINT_LEN = 240
 
 
 class Provider:
