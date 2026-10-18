@@ -197,6 +197,39 @@
   .strip i.u { height:1px; background:none; border-top:1px dotted var(--faint); }
   .mix { margin-top:5px; font-variant-numeric:tabular-nums; }
   .tile .mv { color:var(--dim); font-size:12px; }
+  /* The card's state is its second line: the name first, then one coloured
+     word. The card is coloured by it -- top edge, a light tint, the word and
+     the strip's bars -- so the page can be scanned by colour. */
+  .ov-name, .ov-state { display:block; }
+  .ov-state { margin-top:1px; font-size:10.5px; font-weight:700; letter-spacing:.09em; color:var(--faint); }
+  .ov-head.st-needs { border-top-color:var(--wait); background:color-mix(in srgb,var(--wait) 9%,var(--card)); }
+  .ov-head.st-needs .ov-state { color:var(--wait); }
+  .ov-head.st-needs .strip i { background:var(--wait); }
+  .ov-head.st-moving { border-top-color:var(--busy); background:color-mix(in srgb,var(--busy) 7%,var(--card)); }
+  .ov-head.st-moving .ov-state { color:var(--busy); }
+  .ov-head.st-idle { border-top-color:var(--idle); }
+  .ov-head.st-idle .strip i { background:var(--idle); }
+  /* Needs you. The reason, then what the person needs to decide before they
+     jump: the question with its options, the tool and its command, or what
+     the session left. All of it is text a session wrote. */
+  .tile.needs { border-color:var(--wait); }
+  .flag.needs { color:var(--wait); border:1px solid color-mix(in srgb,var(--wait) 45%,transparent); }
+  .stuck-box { margin-top:3px; display:flex; flex-direction:column; gap:4px; font-size:13px; }
+  .stuck-box .why { color:var(--wait); font-weight:600; }
+  .stuck-box .qh { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.05em; margin-right:6px; }
+  .stuck-box .qtext { overflow-wrap:anywhere; white-space:pre-wrap;
+                      display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; }
+  .stuck-box ul { margin:2px 0 0; padding-left:16px; color:var(--dim); }
+  .stuck-box li { overflow-wrap:anywhere; }
+  .stuck-box .ol { color:var(--ink); }
+  .stuck-box .od { color:var(--dim); }
+  .stuck-box .say { overflow-wrap:anywhere; }
+  .stuck-box .cmd { display:flex; flex-wrap:wrap; align-items:flex-start; gap:4px 8px; }
+  .stuck-box .tool { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.05em; padding-top:2px; }
+  .stuck-box code { flex:1 1 100%; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap;
+                    overflow-wrap:anywhere; max-height:5.6em; overflow:hidden; background:var(--bg);
+                    border:1px solid var(--line); border-radius:6px; padding:3px 6px; }
+  .stuck-box button.copy { margin-left:auto; font-size:12px; padding:2px 9px; }
   .tile.jumped { animation:flash .7s ease-out; }
   .tile.failed { animation:flash-bad 1.4s ease-out; }
   .viewlink { color:var(--faint); font-size:12px; text-decoration:none; white-space:nowrap; }
@@ -886,9 +919,16 @@ function overview(cols) {
   main.scrollLeft = x;
 }
 
+// The card's state word. The server decides the state (the most urgent of its
+// sessions); this is only how each is said.
+const STATE_WORD = { needs: "NEEDS YOU", moving: "MOVING", idle: "ALL IDLE" };
+
 function column(c) {
+  // The state is always the card's second line, never above the name.
+  const word = STATE_WORD[c.state] || (c.state ? String(c.state).toUpperCase() : "");
+  const st = STATE_WORD[c.state] ? c.state : "other";
   return `<section class="ov-col" data-project="${esc(c.project)}">
-    <div class="ov-head"><span class="ov-name">${esc(c.name)}</span>${movementOf(c)}</div>
+    <div class="ov-head st-${st}"><span class="ov-name">${esc(c.name)}</span>${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${movementOf(c)}</div>
     ${c.sessions.map(tile).join("")}
   </section>`;
 }
@@ -910,7 +950,8 @@ function movementOf(c) {
 }
 
 function tile(t) {
-  const alarm = ["waiting", "stuck", "ready"].includes(t.flag) ? t.flag : "";
+  const needs = t.stuck?.kind === "needs" ? " needs" : "";
+  const alarm = (["waiting", "stuck", "ready"].includes(t.flag) ? t.flag : "") + needs;
   const can = t.jump?.via === "pane";
   const tags = (t.tags || []).map(g =>
     `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
@@ -920,11 +961,78 @@ function tile(t) {
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
-    ${t.need ? `<div class="need">${esc(t.need)}</div>` : ""}
+    ${stuckBox(t)}
   </div>`;
 }
 
+// Why a session is stopped, and what you need to know before you go to it.
+// Every word here was written by a session or a person: it goes into the page
+// as text, through esc(), and nowhere else.
+function stuckBox(t) {
+  const s = t.stuck;
+  // No kind: a session that only asked something in its last words still
+  // shows it, the way the tile always has.
+  if (!s) return t.need ? `<div class="need">${esc(t.need)}</div>` : "";
+  const c = s.context || {};
+  let body = "";
+  if (s.source === "question") {
+    body = (c.questions || []).map(q => `<div>
+      <div class="qtext">${q.header ? `<span class="qh">${esc(q.header)}${q.multi ? " · several" : ""}</span>` : ""}${esc(q.question)}</div>
+      <ul>${(q.options || []).map(o => `<li><span class="ol">${esc(o.label)}</span>${o.description ? `<span class="od"> — ${esc(o.description)}</span>` : ""}</li>`).join("")}</ul>
+    </div>`).join("");
+  } else if (s.source === "permission") {
+    const what = c.command || c.target;
+    body = `<div class="cmd"><span class="tool">${esc(c.tool || "a tool")}</span>${c.copy ? copyButton(t.key) : ""}${what ? `<code>${esc(what)}</code>` : ""}</div>`;
+  } else if (c.text) {
+    body = `<div class="say">${esc(c.text)}</div>`;
+  }
+  return `<div class="stuck-box ${esc(s.kind)}"><div class="why">${esc(s.reason)}</div>${body}</div>`;
+}
+
+// The copy button is on a command and nowhere else. It puts the command on
+// the clipboard and does nothing to the session: answering stays in its pane.
+let COPIED = { key: "", until: 0, ok: true };
+
+function copyButton(key) {
+  const now = COPIED.key === key && Date.now() < COPIED.until;
+  return `<button type="button" class="copy" data-sid="${esc(key)}" title="Copy the command. This does not answer the session.">${now ? (COPIED.ok ? "copied" : "not copied") : "copy"}</button>`;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* no clipboard API here */ }
+  try {
+    const box = document.createElement("textarea");
+    box.value = text;
+    box.style.cssText = "position:fixed;opacity:0;top:0;left:0";
+    document.body.appendChild(box);
+    box.select();
+    const ok = document.execCommand("copy");
+    box.remove();
+    return ok;
+  } catch (e) { return false; }
+}
+
+// Registered before the tile's own click below, and it stops there: a click on
+// copy is not a click on the tile, so it neither jumps nor marks it seen.
+document.getElementById("main").addEventListener("click", async ev => {
+  const button = ev.target.closest("button.copy");
+  if (!button) return;
+  ev.stopImmediatePropagation();
+  ev.preventDefault();
+  // The command comes from the roster, not from the page's text: what is
+  // copied is what the server sent, character for character.
+  const sent = COLUMNS.flatMap(c => c.sessions).find(x => x.key === button.dataset.sid);
+  const command = sent?.stuck?.context?.copy ? sent.stuck.context.command : "";
+  if (!command) return;
+  const ok = await copyText(command);
+  COPIED = { key: sent.key, until: Date.now() + 1500, ok };
+  button.textContent = ok ? "copied" : "not copied";
+  setTimeout(() => { if (button.isConnected) button.textContent = "copy"; }, 1500);
+});
+
 function tileFlag(t) {
+  // Needs you says what the flag would, and says it once.
+  if (t.stuck?.kind === "needs") return `<span class="flag needs">needs you</span>`;
   // `flagNote` is finished by the server: what a waiting session is blocked
   // on, or the minutes a stuck session has been quiet and a tool call has run.
   return t.flag === "waiting"
