@@ -34,19 +34,24 @@ PANE_ROUTE = {"steps": [["wezterm", "cli", "--no-auto-start", "activate-pane", "
               "window_pid": 99816}
 
 
-class Attach(unittest.TestCase):
+class AttachBase(unittest.TestCase):
+    """The places a route would be run and a tab opened are recorders."""
+    fake_route = True           # `route_for` answers from `self.routes`; False: the real one
+
     def setUp(self):
         self.proc = Path(tempfile.mkdtemp())
         self.opened, self.ran, self.routes = [], [], {}
         self.delay = 0
         jump._ATTACHING.clear()
-        for target, new in (
-                ("jump.open_tab", self.open_tab),
-                ("jump._run", self.run_step),
-                ("jump.route_for", lambda pid, tmux="": self.routes.get(pid)),
-                ("jump._x_windows", lambda: []),
-                ("subprocess.run", self.refuse),
-                ("subprocess.Popen", self.refuse)):
+        fakes = [
+            ("jump.open_tab", self.open_tab),
+            ("jump._run", self.run_step),
+            ("jump._x_windows", lambda: []),
+            ("subprocess.run", self.refuse),
+            ("subprocess.Popen", self.refuse)]
+        if self.fake_route:
+            fakes.append(("jump.route_for", lambda pid, tmux="": self.routes.get(pid)))
+        for target, new in fakes:
             patch = mock.patch(target, new)
             patch.start()
             self.addCleanup(patch.stop)
@@ -72,6 +77,8 @@ class Attach(unittest.TestCase):
     def attach(self, job=JOB, **kw):
         return jump.attach(job, sid=SID, name=kw.pop("name", "Harbor review"), proc=self.proc, **kw)
 
+
+class Attach(AttachBase):
     def test_a_session_nobody_is_attached_to_gets_one_new_tab(self):
         done = self.attach()
         self.assertTrue(done["ok"])
@@ -204,6 +211,81 @@ class Attach(unittest.TestCase):
         self.routes[700] = PANE_ROUTE
         self.assertTrue(self.attach(name=7, rivals=[None, 3, ["x"]])["ok"])
         self.assertEqual(len(self.opened), 1)
+
+
+class TmuxViewer(AttachBase):
+    """A `claude attach` started by hand inside a tmux pane. Its pty belongs to
+    tmux, so no WezTerm pane has it: what leads to a window is the tmux session
+    the pane is in and the client attached to that. The real `route_for` runs;
+    the terminals it would ask are described, not asked."""
+    fake_route = False
+    PANE_SHELL = 650            # the pane's own shell, an ancestor of the viewer
+    ASKED = ["tmux", "display-message", "-p", "-t", "%7",
+             "#{pane_pid}\t#{session_name}:#{window_id}.#{pane_id}"]
+
+    def setUp(self):
+        super().setUp()
+        self.said = {tuple(self.ASKED): f"{self.PANE_SHELL}\tmain:@3.%7\n"}
+        self.ancestry = [("claude", 700), ("bash", self.PANE_SHELL), ("tmux: server", 600)]
+        for target, new in (
+                ("jump.tty_of", lambda pid: "/dev/pts/9"),
+                ("jump.ancestry_of", lambda pid, depth=12: self.ancestry),
+                ("jump.wezterm_panes", lambda: [{"pane_id": 42, "tty_name": "/dev/pts/3", "term_pid": 99816}]),
+                ("jump.tmux_clients", lambda: [{"client_tty": "/dev/pts/3", "session": "main"}]),
+                ("jump.konsole_apps", lambda: [])):
+            patch = mock.patch(target, new)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def run_step(self, argv, timeout=4):
+        self.ran.append(argv)
+        return mock.Mock(returncode=0, stdout=self.said.get(tuple(argv), ""), stderr="")
+
+    def environ(self, pid, **env):
+        (self.proc / str(pid)).mkdir(exist_ok=True)
+        (self.proc / str(pid) / "environ").write_bytes(
+            b"".join(f"{k}={v}".encode() + b"\0" for k, v in env.items()))
+
+    def test_a_viewer_in_a_tmux_pane_is_reached_through_tmux_and_its_client(self):
+        self.viewer(700, JOB)
+        self.environ(700, HOME="/home/alice", TMUX_PANE="%7")
+        done = self.attach()
+        self.assertTrue(done["ok"])
+        self.assertEqual(self.opened, [])
+        self.assertEqual(self.ran, [
+            self.ASKED,
+            ["tmux", "select-window", "-t", "@3"], ["tmux", "select-pane", "-t", "%7"],
+            ["wezterm", "cli", "--no-auto-start", "activate-pane", "--pane-id", "42"]])
+
+    def test_a_pane_whose_shell_is_not_above_the_viewer_is_not_believed(self):
+        # Pane ids repeat from one tmux server to the next: %7 here may be some
+        # other pane than the one the viewer is in.
+        self.viewer(700, JOB)
+        self.environ(700, TMUX_PANE="%7")
+        self.said[tuple(self.ASKED)] = "777\tother:@1.%7\n"
+        done = self.attach()
+        self.assertFalse(done["ok"])
+        self.assertIn("already attached", done["reason"])
+        self.assertEqual((self.opened, self.ran), ([], [self.ASKED]))
+
+    def test_a_viewer_outside_tmux_asks_tmux_nothing(self):
+        self.viewer(700, JOB)
+        self.environ(700, HOME="/home/alice")
+        self.assertFalse(self.attach()["ok"])
+        self.assertEqual((self.opened, self.ran), ([], []))
+
+    def test_a_pane_id_that_is_not_one_reaches_no_command_line(self):
+        self.viewer(700, JOB)
+        for bad in ("-x", "%7;x", "%", "7", ""):
+            self.environ(700, TMUX_PANE=bad)
+            self.assertFalse(self.attach()["ok"], bad)
+        self.assertEqual((self.opened, self.ran), ([], []))
+
+    def test_a_viewer_whose_environment_cannot_be_read_is_still_never_duplicated(self):
+        self.viewer(700, JOB)
+        done = self.attach()
+        self.assertFalse(done["ok"])
+        self.assertEqual(self.opened, [])
 
 
 PTS_54 = 34870          # `/dev/pts/54` as the kernel numbers it

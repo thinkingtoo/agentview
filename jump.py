@@ -273,6 +273,37 @@ def route_for(pid, tmux=""):
         konsole=konsole_apps(), **args)
 
 
+PANE_ID = re.compile(r"%[0-9]+")
+
+
+def tmux_target(pid, proc="/proc"):
+    """`session:@window.%pane` for a process that runs in a tmux pane, or "".
+
+    A session at a terminal says it in its peer file. A `claude attach` that
+    somebody started by hand says it only through the `TMUX_PANE` in its
+    environment, and the pane is then asked of tmux. Pane ids repeat from one
+    tmux server to the next, so the answer is believed only when the shell tmux
+    started in that pane is an ancestor of the process.
+    """
+    try:
+        with open(os.path.join(proc, str(pid), "environ"), "rb") as fh:
+            env = fh.read().split(b"\0")
+    except OSError:
+        return ""
+    pane = next((e[len(b"TMUX_PANE="):].decode(errors="replace")
+                 for e in env if e.startswith(b"TMUX_PANE=")), "")
+    if not PANE_ID.fullmatch(pane):
+        return ""
+    res = _run(["tmux", "display-message", "-p", "-t", pane,
+                "#{pane_pid}\t#{session_name}:#{window_id}.#{pane_id}"])
+    if not res or res.returncode != 0:
+        return ""
+    shell, _, target = res.stdout.strip().partition("\t")
+    if not shell.isdigit() or int(shell) not in {p for _, p in ancestry_of(pid)}:
+        return ""
+    return target
+
+
 def jump(pid, tmux=""):
     """Put that session's terminal in front of the user. Returns a report."""
     route = route_for(pid, tmux)
@@ -401,7 +432,7 @@ def attach(job, sid="", name="", proc="/proc", rivals=()):
         running = attaches(proc)
         seen = viewers(job, sid, name, proc, running, rivals)
         for pid in seen:
-            route = route_for(pid)
+            route = route_for(pid, tmux_target(pid, proc))
             if route:
                 return _follow(route)
         if seen:

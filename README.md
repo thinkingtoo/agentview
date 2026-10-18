@@ -586,15 +586,26 @@ tile says which way before you click:
 |---|---|---|
 | `open ↗` | the session is at a terminal, or a `claude attach` already shows it in one | raises that window |
 | `attach ↗` | a background session nobody is attached to | opens a new WezTerm tab running `claude attach <job id>` |
-| `no terminal` (greyed, the reason on hover) | nothing could be raised: a headless session, or an attach in a window no route reaches | nothing; the click only marks it read |
+| `no terminal` (greyed, the reason on hover) | nothing could be raised: a headless session, an attach in a window no route reaches, or an attach on a name two background sessions share | nothing; the click only marks it read |
 
 The page never opens a second copy of a running session. `claude attach` is
 found by its command line, whether it was given the job id, the session id or
 part of the name, and a click after the first one, or a second click while the
-new tab has not yet become a process, waits instead of opening another. What
+new tab has not yet become a process, waits instead of opening another (five
+seconds when WezTerm was running, thirty when its window had to start first).
+A `claude attach` inside a tmux pane is followed through tmux to the window
+that shows the pane. What
 reaches the command line is the job id from the peer file, and only if it is
 eight hex digits; nothing in the request does. It is the same guard as every
 other action (a local page, the `X-Fleet` header).
+
+Two things the page cannot see. A name that fits two background sessions
+(`claude attach harbor` while "Harbor review" and "Harbor build" both run)
+could mean either, so both tiles say `no terminal` instead of guessing; give
+`claude attach` the job id and the page knows. And a session renamed with
+`/rename` after it was attached by name cannot be told from one that is not
+attached: its tile offers `attach ↗` while the old name is the only thing the
+viewer's command line holds.
 
 A jump marks the session read only once its terminal was reached. When it
 fails, the reason shows on the tile until the next poll and what the session
