@@ -31,10 +31,11 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 - [How should the overview look?](issues/08-layout.md): one column per project, tracks first, scrolling sideways; a project card on top, always coloured by its most urgent session, with a combined 30-minute movement strip; session tiles under it with no strip of their own; a copy button on commands; header counts that light up their sessions.
 - [When is a session finished and forgotten, and how does it show?](issues/10-finished-sessions.md): idle 2 h with its handover seen and nothing left for you; a pill at the foot of its column, left out of the card state and the counts; back to a tile on any sign of life, or pinned open by hand.
 - [Which movement and stuck signals can Codex sessions give?](issues/11-codex-parity.md): writes, busy/idle, Limit and Error come from the rollout; background work only from output text; Needs you is never written and can only be inferred; Codex has `stop` and `permissionRequest` hooks after all; Codex here is almost all `codex exec` runs.
+- [How do Codex runs appear on the overview?](issues/12-codex-runs.md): an exec run is movement inside the Claude tile that started it, or its own `exec` tile when no starter is found; no Codex hooks for now; a Codex usage limit is one banner across the page.
 
 ## Not yet specified
 
-Nothing left in the fog.
+Nothing left in the fog, and no open tickets (2026-10-18): the way to the spec is clear. Next: write `docs/specs/<date>-overview.md` from Decisions so far, then `/to-spec` and `/to-tickets`.
 
 ## Out of scope
 
