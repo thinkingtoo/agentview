@@ -316,3 +316,17 @@ def place_all(members, folder_rule, assigned):
 
 def _own(assigned, key):
     return isinstance(assigned.get(key), str) and bool(assigned[key].strip())
+
+
+COLUMN_RANK = {"track": 0, "repository": 1, "folder": 2, "none": 3}
+
+
+def pin_rank(place, pinned):
+    """Where the person pinned this project, or None. A pin names the
+    identity; one written before projects had identities names the raw name,
+    which a project of any kind may carry."""
+    for i, pin in enumerate(pinned):
+        if isinstance(pin, str) and pin and (
+                pin == place["id"] or (from_identity(pin) is None and pin == place["raw"])):
+            return i
+    return None

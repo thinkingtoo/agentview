@@ -350,6 +350,49 @@ class Bosses(TrackFixtures):
         self.assertEqual(self.keys(got["columns"][0]), ["claude:b"])
 
 
+class Order(TrackFixtures):
+    def mixed(self):
+        """A track pair, two repositories, a folder and a session with no project."""
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        return [self.boss("b1", loom, "checkout", name="Ilse"),
+                self.boss("b2", loom, "docs", name="Saskia"),
+                sess("r1", loom, name="Femi"), sess("r2", orchard, name="Odile"),
+                sess("f", "/home/alice/Projects/maple", name="Rania"),
+                sess("n", "", name="Kasper")]
+
+    def test_tracks_then_repositories_then_folders_then_no_project(self):
+        self.assertEqual(self.names(self.claude(*self.mixed())),
+                         ["checkout", "docs", "loom", "orchard", "maple", "No project"])
+
+    def test_pinned_projects_lead_in_the_order_they_were_pinned(self):
+        self.config = {"pinned": ["repo:example.com/alice/orchard", "folder:maple", "track:docs"]}
+        self.assertEqual(self.names(self.claude(*self.mixed())),
+                         ["orchard", "maple", "docs", "checkout", "loom", "No project"])
+
+    def test_a_pin_from_before_projects_had_identities_still_pins_by_name(self):
+        self.config = {"pinned": ["orchard", "checkout"]}
+        self.assertEqual(self.names(self.claude(*self.mixed()))[:2], ["orchard", "checkout"])
+
+    def test_a_pin_by_identity_pins_only_that_project(self):
+        # A repository named like a track is not the track.
+        loom = self.repo("loom")
+        acme = self.repo("acme")
+        self.config = {"pinned": ["repo:example.com/alice/acme"]}
+        got = self.claude(self.boss("b", loom, "acme"), sess("r", acme))
+        self.assertEqual([c["project"] for c in got["columns"]],
+                         ["repo:example.com/alice/acme", "track:acme"])
+
+    def test_no_project_stays_last_even_when_it_is_pinned(self):
+        self.config = {"pinned": [""]}
+        self.assertEqual(self.names(self.claude(*self.mixed()))[-1], "No project")
+
+    def test_of_two_projects_of_a_kind_the_one_waiting_on_you_comes_first(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        got = self.claude(sess("a", loom, status="busy", updatedAt=1790000900000),
+                          sess("b", orchard, status="waiting", waitingFor="input needed"))
+        self.assertEqual(self.names(got), ["orchard", "loom"])
+
+
 class OwnSetting(Placed):
     def test_a_session_you_assigned_by_name_joins_the_project_that_carries_that_name(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")

@@ -603,6 +603,7 @@ def columns_of(blocks):
     grouped = {}
     for m in members:
         grouped.setdefault(places[m["key"]]["id"], []).append(m)
+    pinned = config_value("pinned", [])
     out = []
     for rows in grouped.values():
         place = places[rows[0]["key"]]
@@ -610,12 +611,24 @@ def columns_of(blocks):
         # who works. The rest are in the order the blocks have always used.
         rows = order_members(list(rows))
         rows.sort(key=lambda s: not s["boss"])
-        out.append({
+        pin = projects.pin_rank(place, pinned) if place is not NO_PROJECT else None
+        out.append(({
             "project": place["id"], "raw": place["raw"], "kind": place["kind"],
             "name": projects.display_name(place, names) if place["raw"] else "No project",
             "sessions": [tile_of(m, _suggestion(m, place, folder_rule, names)) for m in rows],
-        })
-    return out
+        }, (
+            # Your pins lead, in your order; then the tracks, the repositories
+            # and the folders; No project last whatever. Inside each, what
+            # wants you comes before what is only running, as the blocks do.
+            place is NO_PROJECT,
+            len(pinned) if pin is None else pin,
+            projects.COLUMN_RANK[place["kind"]],
+            -sum(1 for s in rows if s["flag"] in ("waiting", "stuck") or s["blocked"]),
+            -sum(1 for s in rows if s["flag"] == "ready"),
+            -sum(1 for s in rows if s["status"] == "busy"),
+            -max(s["updatedAt"] for s in rows),
+            place["raw"])))
+    return [column for column, _ in sorted(out, key=lambda pair: pair[1])]
 
 
 def _suggestion(m, place, folder_rule, names):
