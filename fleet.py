@@ -347,9 +347,13 @@ def look(key):
     hit = find(key)
     if not hit:
         return None
-    p, s = hit
-    seen.mark(key, _int(s.get("updatedAt")))
+    mark_seen(key, hit[1])
     return hit
+
+
+def mark_seen(key, s):
+    """Note that you have seen this session as it is now."""
+    seen.mark(key, _int(s.get("updatedAt")))
 
 
 def jump_to(p, s):
@@ -375,7 +379,7 @@ def jump_to(p, s):
 DEFAULTS = {
     "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "",
     "waitingFor": "", "boss": False, "bg": False, "title": "", "prompt": "",
-    "branch": "",
+    "branch": "", "attach": "", "noJump": "",
 }
 
 MAX_EXTRAS = 8
@@ -501,6 +505,8 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         "flag": flag,
         **moves,
         "canJump": can_jump,
+        # A provider that cannot jump has no terminal to attach to: the field is emptied.
+        "attach": row["attach"] if "jump" in caps else "",
         "extras": extras_of(raw.get("extras")),
         # What it is doing while it works, and what it left you with when it
         # stopped. Never both: a busy session has no line of its own.
@@ -625,7 +631,7 @@ def tile_of(m):
         "status": m["status"],
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
         "line": "" if line.strip() == m["name"].strip() else line,
-        "jump": {"via": "pane" if m["canJump"] else "none"},
+        "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
         "movement": m["movement"], "moving": m["moving"],
         # The chime rings for a blocked session whatever its flag says, so the
@@ -636,6 +642,17 @@ def tile_of(m):
         "find": "\n".join(m[k] for k in ("name", "title", "did", "ask", "prompt",
                                          "cwd", "branch")).lower(),
     }
+
+
+def jump_of(m):
+    """How the tile reaches its session: a pane that already shows it, a new
+    tab that attaches to it, or nothing -- and then why, so the tile can say
+    so before anyone clicks."""
+    if m["canJump"]:
+        return {"via": "pane"}
+    if m.get("attach"):
+        return {"via": "attach"}
+    return {"via": "none", "reason": m.get("noJump") or "no terminal"}
 
 
 def need_of(m):
