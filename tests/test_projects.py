@@ -144,12 +144,15 @@ class TrackFixtures(Placed):
         """A worker claude-boss launched into the tmux session of its track."""
         return sess(sid, cwd, tmux=f"boss-{track}:@3.%5", **over)
 
-    def tracker(self, track, *workers, prose=""):
-        """`pm/<track>.md` as claude-boss writes it: a Roster table of workers."""
+    def tracker(self, track, *workers, prose="", elsewhere=()):
+        """`pm/<track>.md` as claude-boss writes it: a Roster table of workers,
+        and any other table (`elsewhere`) a boss keeps in the same file."""
         rows = "".join(f"| {w} | 13:0.1 %31 | `src/`, notes |\n" for w in workers)
+        other = "".join(f"| {w} | waiting on review |\n" for w in elsewhere)
         (self.pm / f"{track}.md").write_text(
             f"# PM Tracker \u2014 {track}\n\n{prose}\n## Roster\n"
-            f"| Worker | Pane | Perimetro |\n|---|---|---|\n{rows}\n## Open blockers\nnone\n")
+            f"| Worker | Pane | Perimetro |\n|---|---|---|\n{rows}\n"
+            f"## Pending\n| Who | What |\n|---|---|\n{other}\n## Open blockers\nnone\n")
 
 
 class Tracks(TrackFixtures):
@@ -235,11 +238,12 @@ class Tracks(TrackFixtures):
 
     def test_a_retired_worker_and_a_name_in_passing_do_not_count_as_named(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
-        self.tracker("checkout", "~~Mateo~~", "Mateo2",
+        self.tracker("checkout", "~~Mateo~~", "Mateo2", elsewhere=["Femi"],
                      prose="Not claimed: Odile (idle), the owner's planning session.\n")
         got = self.claude(self.boss("b", loom, "checkout"),
                           sess("w1", orchard, name="Mateo"),
-                          sess("w2", orchard, name="Odile"))
+                          sess("w2", orchard, name="Odile"),
+                          sess("w3", orchard, name="Femi"))
         self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b"])
 
     def test_the_boss_that_messaged_a_worker_beats_a_tracker_that_names_it(self):
@@ -312,6 +316,13 @@ class Bosses(TrackFixtures):
         got = self.claude(sess("w", loom, name="Mateo"),
                           sess("b", loom, name="Ilse", boss=True))
         self.assertEqual(self.keys(got["columns"][0]), ["claude:b", "claude:w"])
+
+    def test_a_boss_with_no_track_is_not_filed_as_a_worker_of_one(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("docs", "Ilse")
+        got = self.claude(self.boss("b1", loom, "docs", name="Saskia"),
+                          sess("b2", orchard, name="Ilse", boss=True))
+        self.assertEqual(self.keys(self.column(got, "repo:example.com/alice/orchard")), ["claude:b2"])
 
     def test_a_boss_that_other_signals_point_at_shows_once_and_first(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
