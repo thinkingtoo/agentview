@@ -4,7 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Claimed by:** Joaquin 2026-10-19 00:03
+
+**Status:** in-progress
 
 - [ ] `roster()` returns `columns` in display order next to the unchanged `blocks`; tested with fake providers
 - [ ] The page renders columns from `columns` only, with no grouping or ordering logic in the browser
