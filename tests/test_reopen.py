@@ -261,6 +261,8 @@ class Endpoint(unittest.TestCase):
             got = self.reopen()
         self.assertEqual((got["ok"], got["did"]), (True, "opening"))
         self.assertEqual(self.events("jumped")[0]["did"], "opening")
+        # Nothing was reached, so what the session said is still unread.
+        self.assertTrue(seen.ready(f"claude:{SID}", 1790000000000, seen.load()))
 
     def test_a_closed_one_older_than_every_snapshot_opens_from_its_transcript_under_its_name(self):
         self.conversation()
