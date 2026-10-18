@@ -384,7 +384,10 @@ def attach(job, sid="", name="", proc="/proc", rivals=()):
                 return _follow(route)
         if seen:
             return {"ok": False, "reason": "already attached, and no window showing it can be raised"}
-        if _now() - _ATTACHING.get(job, float("-inf")) < ATTACH_GRACE:
+        now = _now()
+        for old in [j for j, at in _ATTACHING.items() if now - at >= ATTACH_GRACE]:
+            del _ATTACHING[old]
+        if job in _ATTACHING:
             return {"ok": True, "did": "opening"}
         route = choose_route(tty="", ancestry=[], tmux="", panes=[], clients=[],
                              konsole=[], job=job)

@@ -497,7 +497,8 @@ class ClaudeProvider(Provider):
         if any(rec.get("kind") == "bg" for rec in recs):
             import jump
             running = jump.attaches(self.proc)
-        return [session(rec, cfg, proc=self.proc, running=running, rivals=_rivals(rec, recs))
+        return [session(rec, cfg, proc=self.proc, running=running,
+                        rivals=_rivals(rec, recs) if rec.get("kind") == "bg" else ())
                 for rec in recs]
 
     def find(self, session_id):

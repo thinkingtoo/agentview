@@ -157,6 +157,11 @@ class Attach(unittest.TestCase):
         self.assertTrue(self.attach()["ok"])
         self.assertEqual(len(self.opened), 1)
 
+    def test_a_tab_opened_long_ago_is_forgotten(self):
+        jump._ATTACHING["aaaaaaaa"] = jump._now() - 3600
+        self.attach()
+        self.assertEqual(list(jump._ATTACHING), [JOB])
+
     def test_the_wait_for_a_new_tab_ends(self):
         with mock.patch("jump.ATTACH_GRACE", 0.05):
             self.attach()
