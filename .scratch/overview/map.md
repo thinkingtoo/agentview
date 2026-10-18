@@ -26,6 +26,7 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 - [How does a session get its project?](issues/04-project-assignment.md): person's setting, then boss track (spans repos), then repository with worktrees folded and each client its own project, then folder; launch folder fixes it; leftovers in "No project"; overrides in `config.json` by track or repo.
 - [Where does a project's "what is this about" line come from?](issues/05-project-context.md): a track uses its goal's Outcome, status tag and "N of M"; a repository its README then CLAUDE.md; the person's own line wins; otherwise greyed session titles; names are prettified slugs; the brain only behind an on-click "notes" link.
 - [Which kinds of stuck does the overview name, and how is each detected?](issues/06-stuck-kinds.md): four kinds, Needs you (question, permission prompt or things left on the session line, all one level), Limit, Error, Hung (busy, not moving for 10 min); waiting on jobs is movement, idle is neutral; flags stay for the chime.
+- [What does the "working on" line of a session say?](issues/07-working-on-line.md): the job, not the minute: own line, then `did` (kept while busy), then `title`, else the last prompt greyed; skips repeats of the project line; `doing`, `ask` and `said` move into the movement sign, Needs you and the unseen handover.
 
 ## Not yet specified
 

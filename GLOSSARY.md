@@ -25,6 +25,13 @@ The line of work a boss leads, with its workers. When a session belongs to a tra
 A short line under a project's name that reminds the person what the project is about.
 _Avoid_: description, summary
 
+**Working-on line**:
+A short line under a session's name that says what job the session is on, not what it is doing this minute.
+_Avoid_: subject, status line
+
+**Session line**:
+What a session writes about itself at the end of each turn: where the work stands, and what is left for the person.
+
 **Overview**:
 The main page: every running project, separated, with its sessions.
 _Avoid_: dashboard, roster
