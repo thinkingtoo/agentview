@@ -27,6 +27,7 @@ A spec at `docs/specs/<date>-overview.md` for a redesign of agentview's main pag
 - [Where does a project's "what is this about" line come from?](issues/05-project-context.md): a track uses its goal's Outcome, status tag and "N of M"; a repository its README then CLAUDE.md; the person's own line wins; otherwise greyed session titles; names are prettified slugs; the brain only behind an on-click "notes" link.
 - [Which kinds of stuck does the overview name, and how is each detected?](issues/06-stuck-kinds.md): four kinds, Needs you (question, permission prompt or things left on the session line, all one level), Limit, Error, Hung (busy, not moving for 10 min); waiting on jobs is movement, idle is neutral; flags stay for the chime.
 - [What does the "working on" line of a session say?](issues/07-working-on-line.md): the job, not the minute: own line, then `did` (kept while busy), then `title`, else the last prompt greyed; skips repeats of the project line; `doing`, `ask` and `said` move into the movement sign, Needs you and the unseen handover.
+- [Where does one click land, for each kind of stuck?](issues/09-jump-target.md): the stuck session's own pane for every kind, `n` > 1 included; background sessions open with `claude attach` in a new tab; no terminal shows greyed before the click, and a failed jump keeps its reason on the row.
 
 ## Not yet specified
 

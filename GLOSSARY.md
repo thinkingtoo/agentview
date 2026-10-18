@@ -43,6 +43,9 @@ A session that cannot move on without something changing, of a kind the overview
 A kind of stuck: the session cannot go on until the person answers, approves, or does something themselves, such as running a command, sending a mail or buying something.
 _Avoid_: waiting, ready, your turn
 
+**Jump**:
+One click that puts a session's own terminal in front of the person.
+
 **Movement**:
 Visible evidence that a session is still making progress, including while it waits on CI or tests.
 _Avoid_: activity, liveness
