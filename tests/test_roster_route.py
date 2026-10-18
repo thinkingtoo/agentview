@@ -55,6 +55,15 @@ class Poll(unittest.TestCase):
         self.assertEqual(sorted(got), ["blocks", "chime", "closed", "columns", "hold",
                                        "providers", "restore", "saved"])
 
+    def test_the_page_is_served_with_a_query_on_it(self):
+        # `?view=blocks` is how the old block view stays reachable; the page
+        # reads it, the server only has to not call it a different path.
+        base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        for path in ("/", "/?view=blocks", "/index.html?view=blocks"):
+            with urllib.request.urlopen(base + path, timeout=10) as r:
+                self.assertEqual(r.status, 200, path)
+                self.assertIn(b'<main id="main">', r.read(), path)
+
 
 if __name__ == "__main__":
     unittest.main()

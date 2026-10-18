@@ -500,7 +500,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_error(404, f"{repo} is not under ticket_repos in config.json")
             self._send(tickets.page(repo, number, tickets.fetch(repo, number), ticket_status(repo, number)),
                        "text/html; charset=utf-8")
-        elif self.path in ("/", "/index.html"):
+        elif urllib.parse.urlsplit(self.path).path in ("/", "/index.html"):
+            # The query is the page's own (`?view=blocks`); the server has none.
             self._send(page(), "text/html; charset=utf-8")
         else:
             self.send_error(404)

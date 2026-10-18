@@ -883,11 +883,21 @@ Silence is the normal state of the file.
 python3 -m unittest discover -s tests
 ```
 
-`tests/ui_smoke.py` is separate: it drives the real page with Playwright
-against a running server — rename, line override, drag-to-pin, unpin, folding,
-the routines block — and is not part of `unittest discover`. Run it with
-`python3 tests/ui_smoke.py`. It puts back everything it touched, **including
-the tab titles it renamed**: an override does not only live in `config.json`.
+`tests/ui_smoke.py` is separate: it drives the page with Playwright (the
+overview's columns, the chime, the filter, search, the closed list, and the old
+block view at `/?view=blocks` with its rename, pin, assign, fold and hold) and is
+not part of `unittest discover`. Run it by hand against a throwaway server, never
+the one on 8765:
+
+```bash
+python3 tests/ui_smoke.py http://127.0.0.1:PORT/ /path/to/that/server/config.json SERVER_PID
+```
+
+All three arguments are required. Every pass but one is routed: the page, the
+roster and every POST are answered from fixtures by `page.route`, so no jump,
+reopen, revive or rename can reach a terminal, and the smoke writes nothing. The
+one unrouted pass loads the test server's own roster read-only (no clicks, any
+non-GET request aborted, no screenshot) and asserts that columns render.
 
 The unit tests cover the things worth covering: route selection for each
 terminal (including tmux-inside-WezTerm and a headless session with nowhere to

@@ -165,7 +165,33 @@
            font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .empty { color:var(--dim); padding:30px 20px; }
-#restore[hidden], #closed[hidden], #closedlist[hidden] { display: none; }
+  /* The overview: one column per project, side by side. Each column is as
+     tall as its own sessions and no taller (`main` aligns to flex-start), and
+     when there are more projects than fit the row scrolls, not the page. */
+  main.ov { overflow-x:auto; gap:12px; }
+  .ov-col { flex:1 0 230px; max-width:330px; display:flex; flex-direction:column; gap:8px; }
+  .ov-head { background:var(--card); border:1px solid var(--line); border-top:3px solid var(--line);
+             border-radius:10px; padding:10px 12px; font-weight:650; font-size:15px; overflow-wrap:anywhere; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 11px;
+          display:flex; flex-direction:column; gap:3px; }
+  .tile.can { cursor:pointer; }
+  .tile.can:hover { border-color:var(--accent); }
+  .tile.can:hover .go { opacity:1; }
+  .tile .rhead { flex-wrap:wrap; gap:6px 8px; }
+  .tile .nm { overflow-wrap:anywhere; }
+  .tile .go { margin-left:auto; }
+  .tile .tline { color:var(--dim); font-size:13px; overflow-wrap:anywhere;
+                 display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .tile.waiting { border-color:var(--wait); }
+  .tile.stuck { border-color:var(--bad); }
+  .tile.ready { border-color:color-mix(in srgb,var(--accent) 55%,var(--line)); }
+  .tile.waiting .dot { animation:nudge 2.2s ease-in-out infinite; background:var(--wait); }
+  .tile.stuck .dot { animation:nudge 1.8s ease-in-out infinite; background:var(--bad); }
+  .tile.jumped { animation:flash .7s ease-out; }
+  .tile.failed { animation:flash-bad 1.4s ease-out; }
+  .viewlink { color:var(--faint); font-size:12px; text-decoration:none; white-space:nowrap; }
+  .viewlink:hover { color:var(--accent); }
+#restore[hidden], #closed[hidden], #closedlist[hidden], #hold[hidden] { display: none; }
 #save.unsafe { color: var(--wait); }
 /* Conversations this boot had that no longer run. A drop-down under the
    header, so opening it never moves the cards you were reading. */
@@ -245,13 +271,19 @@ header button { white-space: nowrap; }
   <button id="save"></button>
   <button id="sound"></button>
   <button id="hold" title="stop the cards moving while you read them"></button>
+  <a id="view" class="viewlink"></a>
 </header>
 <div id="closedlist" hidden></div>
 <div id="found" hidden></div>
 <main id="main"><div class="empty">loading…</div></main>
 <script>
+// Two views while the overview is built: the columns are the page, and the
+// old block view (every control it ever had) is still here at `?view=blocks`
+// until the ticket that retires it.
+const VIEW = new URLSearchParams(location.search).get("view") === "blocks" ? "blocks" : "overview";
 let PINNED = [];
 let LATEST = [];            // the last roster the server sent, to repaint from
+let COLUMNS = [];           // and its `columns`, which the overview prints as they come
 let HOLD = false;           // is the order frozen where you last saw it?
 let CHIME = true;           // does a session that starts waiting ring?
 let WAITING = null;         // who was waiting last poll -- null before the first
@@ -742,7 +774,7 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { blocks: all, hold, chime, providers, restore, saved, closed } = await r.json();
+    const { blocks: all, columns, hold, chime, providers, restore, saved, closed } = await r.json();
     drawRestore(restore);
     drawClosed(closed);
     drawSave(saved);
@@ -755,6 +787,7 @@ async function load() {
     drawSound();
     announce(all);
     LATEST = all;
+    COLUMNS = columns || [];
     paint();
   } catch (e) {
     document.getElementById("stamp").textContent = "server unreachable";
@@ -765,8 +798,9 @@ async function load() {
 // Folding repaints from the roster already in hand: waiting for the next
 // poll would make the click feel like it missed.
 function paint() {
-  const all = ordered(LATEST);
-  PINNED = all.filter(b => b.pinned).map(b => b.project);
+  // The count, the alarms and the tab title below are the chime's numbers and
+  // read `blocks` in either view; only what is drawn depends on the view.
+  const all = VIEW === "blocks" ? ordered(LATEST) : LATEST;
   const blocks = filtered(all);
   const total = blocks.reduce((a, b) => a + b.members.length, 0);
   const everyone = all.reduce((a, b) => a + b.members.length, 0);
@@ -800,15 +834,106 @@ function paint() {
         ` &nbsp;·&nbsp; <span class="alarm" title="${esc(p.error)}">${esc(name)} down</span>`).join("");
   const wants = waiting + stuck + asking;
   document.title = wants ? `(${wants}) agentview` : "agentview";
-  // Kept for the drag handlers: the DOM is now packed by height, so its
-  // order is a layout detail and no longer the order you see.
-  PAINTED = blocks.filter(b => !b.orphan && !b.routines).map(b => b.project);
-  place(blocks.length ? blocks.map(block).join("")
-    : `<div class="empty">${query.trim().length >= 3
-         ? `Nothing matches “${esc(query.trim())}”.` : "No sessions running."}</div>`);
+  if (VIEW === "blocks") {
+    PINNED = all.filter(b => b.pinned).map(b => b.project);
+    // Kept for the drag handlers: the DOM is now packed by height, so its
+    // order is a layout detail and no longer the order you see.
+    PAINTED = blocks.filter(b => !b.orphan && !b.routines).map(b => b.project);
+    place(blocks.length ? blocks.map(block).join("") : nothing());
+  } else {
+    overview(filteredColumns(COLUMNS));
+  }
   document.getElementById("stamp").textContent =
     "updated " + new Date().toLocaleTimeString();
 }
+
+function nothing() {
+  return `<div class="empty">${query.trim().length >= 3
+    ? `Nothing matches “${esc(query.trim())}”.` : "No sessions running."}</div>`;
+}
+
+// The overview prints `columns` as the server sent them: which sessions share
+// a column, and in what order, was decided there. Everything below is text
+// going into text positions through esc() -- a name or a line is whatever a
+// session called itself, and never markup.
+function filteredColumns(cols) {
+  // The same rule as the block filter: from three characters, and a project
+  // that matches keeps all its sessions.
+  const q = query.trim().toLowerCase();
+  if (q.length < 3) return cols;
+  const hit = s => String(s || "").toLowerCase().includes(q);
+  return cols.map(c => {
+    if (hit(c.name) || hit(c.raw)) return c;
+    const sessions = c.sessions.filter(t => hit(t.find));
+    return sessions.length ? { ...c, sessions } : null;
+  }).filter(Boolean);
+}
+
+function overview(cols) {
+  const main = document.getElementById("main");
+  const x = main.scrollLeft;          // a repaint every poll must not send you back to the first column
+  main.innerHTML = cols.length ? cols.map(column).join("") : nothing();
+  main.scrollLeft = x;
+}
+
+function column(c) {
+  return `<section class="ov-col" data-project="${esc(c.project)}">
+    <div class="ov-head">${esc(c.name)}</div>
+    ${c.sessions.map(tile).join("")}
+  </section>`;
+}
+
+function tile(t) {
+  const alarm = ["waiting", "stuck", "ready"].includes(t.flag) ? t.flag : "";
+  const can = t.jump?.via === "pane";
+  const tags = (t.tags || []).map(g =>
+    `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
+  return `<div class="tile ${can ? "can" : ""} ${alarm}" data-sid="${esc(t.key)}">
+    <div class="rhead">
+      ${mark(t)}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${can ? `<span class="go">open ↗</span>` : ""}
+    </div>
+    ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
+  </div>`;
+}
+
+function tileFlag(t) {
+  // `flagNote` is finished by the server: what a waiting session is blocked
+  // on, or the minutes a stuck session has been quiet and a tool call has run.
+  return t.flag === "waiting"
+    ? `<span class="flag waiting">waiting</span>` + (t.flagNote ? `<span class="wf">${esc(t.flagNote)}</span>` : "")
+    : t.flag === "stuck" || t.flag === "tool"
+      ? `<span class="flag ${t.flag}">${t.flag} ${esc(t.flagNote)}</span>`
+      : t.flag === "ready" ? `<span class="flag ready">ready</span>` : "";
+}
+
+// A tile is a session you can go to, the way a row is. The click is
+// acknowledged first for the reason given on the row's handler below.
+document.getElementById("main").addEventListener("click", async ev => {
+  const el = ev.target.closest(".tile");
+  if (!el) return;
+  const post = (path, body) => fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify(body),
+  });
+  if (!el.classList.contains("can")) {
+    post("/api/seen", { key: el.dataset.sid }).then(load).catch(() => {});
+    return;
+  }
+  el.classList.remove("jumped", "failed");
+  void el.offsetWidth;
+  el.classList.add("jumped");
+  try {
+    const out = await (await post("/api/jump", { key: el.dataset.sid })).json();
+    if (!out.ok) {
+      el.classList.remove("jumped");
+      el.classList.add("failed");
+      document.getElementById("stamp").textContent = out.reason || "jump failed";
+    }
+  } catch (e) {
+    el.classList.add("failed");
+  }
+});
 
 // Click a row and its terminal comes to the front. The page never guesses
 // how: the server works out whether that means WezTerm, tmux or Konsole.
@@ -1351,6 +1476,13 @@ const unmuzzle = async () => {
 };
 addEventListener("pointerdown", unmuzzle);
 
+// Which view this is, and the way to the other. Holding the order means
+// nothing in the overview: the order is the server's.
+if (VIEW === "overview") document.getElementById("main").classList.add("ov");
+document.getElementById("hold").hidden = VIEW !== "blocks";
+const viewLink = document.getElementById("view");
+viewLink.href = VIEW === "blocks" ? "./" : "?view=blocks";
+viewLink.textContent = VIEW === "blocks" ? "overview" : "blocks view";
 drawSound();
 drawHold();
 load();
