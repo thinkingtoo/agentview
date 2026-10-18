@@ -309,6 +309,14 @@ class Tracks(TrackFixtures):
                           sess("w", orchard, name="Mateo"))
         self.assertEqual(self.keys(self.column(got, "track:docs")), ["claude:b2", "claude:w"])
 
+    def test_two_bosses_of_one_track_that_both_messaged_a_worker_file_it_under_that_track(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        got = self.claude(self.boss("b1", loom, "checkout", team=["Mateo"]),
+                          self.boss("b2", loom, "checkout", name="Saskia", team=["Mateo"]),
+                          sess("w", orchard, name="Mateo"))
+        self.assertEqual(sorted(self.keys(self.column(got, "track:checkout"))),
+                         ["claude:b1", "claude:b2", "claude:w"])
+
     def test_a_stale_pane_name_falls_back_to_the_boss_that_messaged_the_worker(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         got = self.claude(self.boss("b", loom, "checkout", team=["Mateo"]),
