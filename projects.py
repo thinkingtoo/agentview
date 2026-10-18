@@ -108,7 +108,9 @@ def place_of(cwd, folder_rule):
     A folder that only holds several repositories is nobody's project --
     sessions there are looking for one -- so the folder rule is not asked.
     """
-    if not cwd:
+    # A launch folder that is not a full path would be read against wherever
+    # the server happens to run.
+    if not cwd or not os.path.isabs(cwd):
         return None
     found = _repository(cwd)
     if not found:
@@ -260,8 +262,9 @@ class Trackers:
     def naming(self, name):
         """The running tracks whose roster lists this worker."""
         name = name.casefold()
-        return {t for t in sorted(self.live)
-                if name in self._read.setdefault(t, _named_in(t))}
+        for track in self.live - self._read.keys():
+            self._read[track] = _named_in(track)
+        return {t for t in sorted(self.live) if name in self._read[t]}
 
 
 def _teams(members, held):

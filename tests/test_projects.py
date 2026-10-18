@@ -90,6 +90,10 @@ class Placed(Base):
 
 
 class Folders(Placed):
+    def test_a_launch_folder_that_is_not_absolute_is_nowhere(self):
+        # It would be read against wherever the server runs, which is a repository.
+        self.assertEqual(self.names(self.roster(sess("a", "src/app"))), ["No project"])
+
     def test_a_folder_that_is_no_repository_is_a_project_by_the_folder_rule(self):
         column = self.roster(sess("a", "/home/alice/Projects/orchard"))["columns"][0]
         self.assertEqual({k: column[k] for k in ("project", "kind", "name", "raw")},
@@ -103,7 +107,7 @@ class Folders(Placed):
         self.assertEqual({c["kind"] for c in got["columns"]}, {"repository", "folder"})
         self.assertEqual(len({c["project"] for c in got["columns"]}), 2)
 
-    def shelved(self, *repos_in_each):
+    def shelved(self):
         """`<disk>/Projects` as the shelf, with a plain folder holding repositories."""
         shelf = self.folder("Projects")
         self.config = {"shelves": [str(shelf)]}
@@ -117,6 +121,16 @@ class Folders(Placed):
         got = self.roster(sess("a", suite), sess("b", shelf))
         self.assertEqual(self.names(got), ["No project"])
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["fake:a", "fake:b"])
+
+    def test_two_client_folders_on_a_shelf_never_share_a_column(self):
+        self.shelved()
+        clients = self.folder("Projects", "clients")
+        self.config = {"shelves": [str(self.disk / "Projects"), str(clients)]}
+        got = self.roster(sess("a", self.folder("Projects", "clients", "acme")),
+                          sess("b", self.folder("Projects", "clients", "bravo")),
+                          sess("c", self.folder("Projects", "clients", "acme")))
+        self.assertEqual(sorted(self.names(got)), ["acme", "bravo"])
+        self.assertEqual(sorted(len(c["sessions"]) for c in got["columns"]), [1, 2])
 
     def test_a_folder_holding_one_repository_is_still_a_project(self):
         self.shelved()
@@ -277,6 +291,17 @@ class Tracks(TrackFixtures):
         got = self.claude(sess("b", loom, name="Ilse"), sess("w", orchard, name="Mateo"))
         self.assertEqual(sorted(self.names(got)), ["loom", "orchard"])
 
+    def test_each_running_tracker_is_read_once_however_many_sessions_ask(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.tracker("checkout", "Odile")
+        reads = []
+        real = projects._named_in
+        projects._named_in = lambda track: reads.append(track) or real(track)
+        self.addCleanup(setattr, projects, "_named_in", real)
+        self.claude(self.boss("b", loom, "checkout"),
+                    *[sess(f"w{i}", orchard, name=f"Worker{i}") for i in range(5)])
+        self.assertEqual(reads, ["checkout"])
+
     def test_a_marker_that_is_a_path_makes_no_track(self):
         loom = self.repo("loom")
         got = self.claude(self.boss("b", loom, "../../elsewhere"))
@@ -349,6 +374,16 @@ class Bosses(TrackFixtures):
         got = self.claude(self.boss("b", loom, "checkout"),
                           self.worker("r", loom, "checkout", name="Mateo", routine="nightly-report"))
         self.assertEqual(self.keys(got["columns"][0]), ["claude:b"])
+
+
+class Renames(TrackFixtures):
+    def test_a_project_renamed_to_the_name_of_another_stays_a_project_of_its_own(self):
+        loom, acme = self.repo("loom"), self.repo("acme")
+        self.config = {"names": {"repo:example.com/alice/loom": "acme"}}
+        got = self.claude(sess("a", loom), sess("b", acme),
+                          self.boss("c", self.repo("orchard"), "acme"))
+        self.assertEqual(self.names(got), ["acme", "acme", "acme"])
+        self.assertEqual(len({c["project"] for c in got["columns"]}), 3)
 
 
 class Order(TrackFixtures):

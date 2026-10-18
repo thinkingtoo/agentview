@@ -589,9 +589,11 @@ def roster(providers=None):
 def columns_of(blocks):
     """What the overview page draws: one column per project, in display order.
 
-    Made from the blocks, so grouping and order are today's for now. The page
-    reads these and decides nothing of its own. Routines are not on the page;
-    their sessions stay in `blocks`, which the chime reads.
+    The sessions come from the blocks, but the grouping is the overview's own
+    (`projects.place_all`): a project is what the person thinks of, not the
+    folder a block was keyed by. The page reads these and decides nothing of
+    its own. Routines are not on the page; their sessions stay in `blocks`,
+    which the chime reads.
     """
     shelves = config()
     names = config_value("names", {})
