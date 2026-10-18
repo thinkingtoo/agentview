@@ -14,23 +14,22 @@ import re
 JOB_ID = re.compile(r"[a-f0-9]{8}")
 
 
-def choose_route(*, tty, ancestry, tmux, panes, clients, konsole, bg="", viewed=False):
+def choose_route(*, tty, ancestry, tmux, panes, clients, konsole, job=""):
     """Return {"steps": [argv, ...], "window_pid": pid} or None.
 
-    A background session has no terminal of its own: `bg` is its job id, and
-    `tty` and `ancestry` are those of the `claude attach` already showing it,
-    if any (`viewed`). A viewer in a reachable terminal is jumped to. One in a
-    place no route reaches is no reason to attach a second -- two windows
-    would write one conversation -- so that is None, like any other session
-    with nowhere to go. Only with no viewer at all is a new tab asked for.
+    A background session has no terminal of its own: `job` is its job id, and
+    when no terminal route is found a new tab that attaches to it is asked
+    for. Whoever calls with a job has already ruled out that a `claude attach`
+    is showing it (`attach()` does), because two windows on one conversation
+    would both write to it.
 
     Pure on purpose: the awkward part is deciding, not executing, so deciding
     is what the tests can reach.
     """
     route = _terminal_route(tty, ancestry, tmux, panes, clients, konsole)
-    if route or viewed or not JOB_ID.fullmatch(bg or ""):
+    if route or not JOB_ID.fullmatch(job or ""):
         return route
-    return {"steps": [], "window_pid": None, "open": ["claude", "attach", bg]}
+    return {"steps": [], "window_pid": None, "open": ["claude", "attach", job]}
 
 
 def _terminal_route(tty, ancestry, tmux, panes, clients, konsole):
@@ -302,7 +301,7 @@ def _follow(route):
 
 # ------------------------------------------------- background sessions
 
-ATTACH_GRACE = 15            # seconds a new tab is given to show up as a process
+ATTACH_GRACE = 5             # seconds a new tab is given to show up as a process
 _ATTACH = threading.Lock()   # asking whether it is attached and attaching are one step
 _ATTACHING = {}              # job id -> when a tab was last opened to attach it
 
@@ -324,19 +323,20 @@ def attaches(proc="/proc"):
     return found
 
 
-def viewers(job, sid="", name="", proc="/proc", running=None):
+def viewers(job, sid="", name="", proc="/proc", running=None, rivals=()):
     """Pids of `claude attach` processes showing this background session.
 
     `claude attach` takes the job id, the session id or part of the name, and
     a person attaching by hand may have used any of them: every one counts,
     because a missed viewer means a second window on the same conversation.
-    `running` is `attaches()` when the caller has it already.
+    `running` is `attaches()` when the caller has it already; `rivals` are the
+    names of the other background sessions.
     """
     running = attaches(proc) if running is None else running
-    return [pid for pid, token in running if _names(token, job, sid, name)]
+    return [pid for pid, token in running if _names(token, job, sid, name, rivals)]
 
 
-def _names(token, job, sid, name):
+def _names(token, job, sid, name, rivals):
     token = token.strip().lower()
     if not token:
         return False
@@ -344,10 +344,14 @@ def _names(token, job, sid, name):
         return True
     if len(token) >= 8 and sid and sid.lower().startswith(token):
         return True
-    return bool(name) and token in name.lower()
+    # Part of a name only means this session when no other one has it too: a
+    # fragment two sessions share names neither, and raising a window that
+    # shows the wrong one would be worse than opening none.
+    return bool(name) and token in name.lower() \
+        and not any(token in (other or "").lower() for other in rivals)
 
 
-def attach(job, sid="", name="", proc="/proc"):
+def attach(job, sid="", name="", proc="/proc", rivals=()):
     """Put a background session in front of the user, attaching it only once.
 
     Someone is already attached: their window is raised. Nobody is: a new tab
@@ -359,7 +363,7 @@ def attach(job, sid="", name="", proc="/proc"):
     if not JOB_ID.fullmatch(job or ""):
         return {"ok": False, "reason": "no background job id is known for this session"}
     with _ATTACH:
-        seen = viewers(job, sid, name, proc)
+        seen = viewers(job, sid, name, proc, rivals=rivals)
         for pid in seen:
             route = route_for(pid)
             if route:
@@ -369,7 +373,7 @@ def attach(job, sid="", name="", proc="/proc"):
         if time.monotonic() - _ATTACHING.get(job, float("-inf")) < ATTACH_GRACE:
             return {"ok": True, "did": "opening"}
         route = choose_route(tty="", ancestry=[], tmux="", panes=[], clients=[],
-                             konsole=[], bg=job)
+                             konsole=[], job=job)
         done = _follow(route)
         if done["ok"]:
             _ATTACHING[job] = time.monotonic()

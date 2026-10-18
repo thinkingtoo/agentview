@@ -120,6 +120,15 @@ class Attach(unittest.TestCase):
         self.attach()
         self.assertEqual(self.opened, [])
 
+    def test_a_name_fragment_two_sessions_share_names_neither(self):
+        # `harbor` could be this session or the other; a window raised for the
+        # wrong one is worse than a tab for the right one.
+        self.viewer(700, "harbor")
+        self.routes[700] = PANE_ROUTE
+        self.attach(rivals=["Harbor build"])
+        self.assertEqual(self.ran, [])
+        self.assertEqual(len(self.opened), 1)
+
     def test_a_viewer_started_with_the_session_id_counts(self):
         self.viewer(700, SID[:13])
         self.routes[700] = PANE_ROUTE
@@ -223,12 +232,45 @@ class BackgroundSessions(FakeRegistry):
         got = self.only()
         self.assertEqual((got["attach"], got["canJump"]), ("", True))
 
-    def test_clicking_a_background_session_attaches_it_by_its_job(self):
-        self.background()
-        with mock.patch("jump.attach", return_value={"ok": True}) as attach:
+    def click(self):
+        """What the provider does for a click, with the tab and any process stopped."""
+        opened = []
+        jump._ATTACHING.clear()
+        with mock.patch("jump.open_tab", lambda argv, cwd=None: opened.append(argv) or {"ok": True, "ran": []}), \
+                mock.patch("jump._run", lambda argv, timeout=4: self.fail(f"ran {argv}")), \
+                mock.patch("jump.route_for", lambda pid, tmux="": PANE_ROUTE), \
+                mock.patch("subprocess.run", side_effect=AssertionError("a real process")):
             done = self.provider.jump(self.provider.find(SID))
-        self.assertEqual(done, {"ok": True})
-        attach.assert_called_once_with(JOB, sid=SID, name="Harbor review", proc=self.proc)
+        return done, opened
+
+    def test_clicking_a_background_session_opens_a_tab_attached_to_its_job(self):
+        self.background()
+        done, opened = self.click()
+        self.assertTrue(done["ok"])
+        (argv,) = opened
+        self.assertEqual((Path(argv[0]).name, argv[1:]), ("claude", ["attach", JOB]))
+
+    def test_a_fragment_both_background_sessions_share_is_nobodys_viewer(self):
+        self.background(10, JOB, name="Harbor review")
+        self.background(11, "9d8c7b6a", name="Harbor build", sessionId="7a7a7a7a-0000-0000-0000-000000000002")
+        self.process(700, PTS_54, "/home/alice/.local/bin/claude", "attach", "harbor")
+        got = {s["name"]: s["attach"] for s in self.provider.live()}
+        self.assertEqual(got, {"Harbor review": JOB, "Harbor build": "9d8c7b6a"})
+
+    def test_a_fragment_only_one_has_is_that_ones_viewer(self):
+        self.background(10, JOB, name="Harbor review")
+        self.background(11, "9d8c7b6a", name="Orchard build", sessionId="7a7a7a7a-0000-0000-0000-000000000002")
+        self.process(700, PTS_54, "/home/alice/.local/bin/claude", "attach", "harbor")
+        got = {s["name"]: (s["attach"], s["canJump"]) for s in self.provider.live()}
+        self.assertEqual(got, {"Harbor review": ("", True), "Orchard build": ("9d8c7b6a", False)})
+
+    def test_a_session_with_no_name_is_nobodys_fragment_match(self):
+        # The page calls it "(unnamed)"; that is not a name anyone can type.
+        self.background(name="")
+        self.process(700, PTS_54, "/home/alice/.local/bin/claude", "attach", "named")
+        self.assertEqual(self.only()["attach"], JOB)
+        done, opened = self.click()
+        self.assertEqual(len(opened), 1)
 
     def test_a_session_at_a_terminal_is_left_to_the_pane_search(self):
         self.process(10)
@@ -360,6 +402,15 @@ class Click(FakeRegistry):
             c.join()
         self.assertEqual(len(self.opened), 1)
         self.assertEqual([status for status, _ in got], [200, 200])
+
+    def test_a_click_that_only_waited_for_a_tab_reached_nothing_and_marks_nothing(self):
+        # The first tab may have died; this click did not reach a terminal.
+        self.background(statusUpdatedAt=1790000000000)
+        jump._ATTACHING[JOB] = time.monotonic()
+        status, done = self.post({"key": f"claude:{SID}"})
+        self.assertEqual((status, done["ok"], done["did"]), (200, True, "opening"))
+        self.assertTrue(self.unread())
+        self.assertEqual(self.opened, [])
 
     def test_the_guard_is_todays_a_local_page_with_the_fleet_header(self):
         self.background()

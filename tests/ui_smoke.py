@@ -185,6 +185,8 @@ class Fake:
         self.posts = []        # (path, body) for every POST the page made
         self.stray = []        # anything the routes do not know
         self.answer = {}       # path -> the reply to give instead of {"ok": true}
+        self.hold = False      # keep /api/jump unanswered, in `held`, until the test answers it
+        self.held = []
 
     def of(self, path):
         return [b for p, b in self.posts if p == path]
@@ -234,6 +236,9 @@ class Fake:
             self.posts.append((url.path, body))
             posted.append(body)
             self.apply(url.path, body)
+            if self.hold and url.path == "/api/jump":
+                self.held.append(route)
+                return
             json_(self.answer.get(url.path, {"ok": True, "did": "opened", "changed": False}))
         else:
             self.stray.append(f"{req.method} {req.url}")
@@ -496,6 +501,44 @@ def jump_pass(browser):
     poll_now(page)
     page.wait_for_function("document.querySelectorAll('.tile .why').length === 0", timeout=3000)
     check("until the next poll", t("h2").locator(".why").count() == 0 and t("h2").locator(".tick").count() == 1)
+
+    # A successful retry takes the old reason away.
+    t("h2").click()
+    t("h2").locator(".why").wait_for(timeout=3000)
+    fake.answer["/api/jump"] = {"ok": True, "ran": []}
+    t("h2").click()
+    page.wait_for_timeout(300)
+    check("a jump that works clears the reason an earlier one left", t("h2").locator(".why").count() == 0)
+
+    # A slow jump is answered after a poll has replaced every node. The reason
+    # goes to the tile that is on the page now, not the one that was clicked.
+    fake.answer["/api/jump"] = {"ok": False, "reason": "wezterm cli spawn failed"}
+    fake.hold = True
+    page.evaluate("window.clicked = document.querySelector('.tile[data-sid=\"h2\"]')")
+    t("h2").click()
+    for _ in range(30):
+        if fake.held:
+            break
+        page.wait_for_timeout(100)
+    poll_now(page)
+    page.wait_for_timeout(300)
+    check("a poll while the jump is out replaces the tile that was clicked",
+          page.evaluate("window.clicked.isConnected") is False)
+    fake.held.pop().fulfill(status=200, content_type="application/json", body=json.dumps(fake.answer["/api/jump"]))
+    fake.hold = False
+    t("h2").locator(".why").wait_for(timeout=3000)
+    check("the reason of a slow jump still lands on the tile that is shown",
+          t("h2").locator(".why").inner_text() == "wezterm cli spawn failed")
+
+    # A click that only waited for a tab already being opened says so, and is not a failure.
+    poll_now(page)
+    page.wait_for_timeout(300)
+    fake.answer["/api/jump"] = {"ok": True, "did": "opening"}
+    t("h2").click()
+    t("h2").locator(".why.note").wait_for(timeout=3000)
+    check("a click that waited says it is opening a tab, without a failure",
+          t("h2").locator(".why.note").inner_text().startswith("opening")
+          and "failed" not in t("h2").get_attribute("class"))
 
     n = len(fake.of("/api/jump"))
     t("h3").click()

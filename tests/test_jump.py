@@ -76,32 +76,16 @@ NOWHERE = dict(tty="", ancestry=[], tmux="", panes=PANES, clients=CLIENTS, konso
 
 class BackgroundRoute(unittest.TestCase):
     def test_a_background_session_with_no_viewer_is_attached_in_a_new_tab(self):
-        route = jump.choose_route(bg="3f9a0c2e", **NOWHERE)
+        route = jump.choose_route(job="3f9a0c2e", **NOWHERE)
         self.assertEqual(route["steps"], [])
         self.assertIsNone(route["window_pid"])
         self.assertEqual(route["open"], ["claude", "attach", "3f9a0c2e"])
-
-    def test_a_viewer_already_in_a_pane_is_jumped_to_not_attached_again(self):
-        # `claude attach` runs on pts/2, which WezTerm shows as pane 42.
-        route = jump.choose_route(
-            bg="3f9a0c2e", viewed=True, tty="/dev/pts/2",
-            ancestry=[("claude", 1036831), ("wezterm-gui", 99816)],
-            tmux="", panes=PANES, clients=CLIENTS, konsole=KONSOLE)
-        self.assertNotIn("open", route)
-        self.assertEqual(route["steps"],
-                         [["wezterm", "cli", "--no-auto-start", "activate-pane", "--pane-id", "42"]])
-
-    def test_a_viewer_that_no_window_shows_is_not_a_reason_to_attach_a_second_one(self):
-        self.assertIsNone(jump.choose_route(
-            bg="3f9a0c2e", viewed=True, tty="/dev/pts/77",
-            ancestry=[("claude", 5551), ("bash", 5550)],
-            tmux="", panes=PANES, clients=CLIENTS, konsole=KONSOLE))
 
     def test_only_a_job_id_can_reach_the_command_line(self):
         # The id comes from a peer file; whatever it holds must never be able
         # to pass as an option or a second argument.
         for bad in ("", "--help", "3f9a0c2e --x", "3F9A0C2E", "3f9a0c2", "3f9a0c2e0"):
-            self.assertIsNone(jump.choose_route(bg=bad, **NOWHERE), bad)
+            self.assertIsNone(jump.choose_route(job=bad, **NOWHERE), bad)
 
 
 class TitleSteps(unittest.TestCase):

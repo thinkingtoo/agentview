@@ -379,8 +379,8 @@ def _peers(cfg):
     return registry.records(cfg)
 
 
-def reach(rec, proc="/proc", running=None):
-    """How a click gets to this session: (canJump, jobId, attach, noJump).
+def reach(rec, proc="/proc", running=None, rivals=()):
+    """How a click gets to this session: `canJump`, `jobId`, `attach`, `noJump`.
 
     A session at a terminal has a pane to raise. A background session
     (`claude --bg`) has none of its own: what shows it is a `claude attach`
@@ -389,22 +389,28 @@ def reach(rec, proc="/proc", running=None):
     attached somewhere nothing can raise is neither: attaching again would
     put two windows on one conversation, so `noJump` says why.
     """
+    # Imported here: jump -> scope -> log -> this module would be a cycle.
     import jump
+    way = {"canJump": False, "jobId": "", "attach": "", "noJump": ""}
     if rec.get("kind") != "bg":
-        return (rec.get("kind") == "interactive" and on_a_terminal(rec.get("pid"), proc),
-                "", "", "")
+        way["canJump"] = rec.get("kind") == "interactive" and on_a_terminal(rec.get("pid"), proc)
+        return way
     job = rec.get("jobId")
     if not isinstance(job, str) or not jump.JOB_ID.fullmatch(job):
-        return False, "", "", ""
-    shown = jump.viewers(job, rec.get("sessionId") or "", rec.get("name") or "", proc, running)
+        return way
+    way["jobId"] = job
+    shown = jump.viewers(job, rec.get("sessionId") or "", rec.get("name") or "", proc,
+                         running, rivals)
     if not shown:
-        return False, job, job, ""
-    if any(on_a_terminal(pid, proc) for pid in shown):
-        return True, job, "", ""
-    return False, job, "", "attached, but in no window that can be raised"
+        way["attach"] = job
+    elif any(on_a_terminal(pid, proc) for pid in shown):
+        way["canJump"] = True
+    else:
+        way["noJump"] = "attached, but in no window that can be raised"
+    return way
 
 
-def session(rec, cfg=None, light=False, proc="/proc", running=None):
+def session(rec, cfg=None, light=False, proc="/proc", running=None, rivals=()):
     """The facts about one live peer, with its transcript summary attached.
 
     `light` skips the transcript: a click only needs to know the session is
@@ -426,7 +432,6 @@ def session(rec, cfg=None, light=False, proc="/proc", running=None):
     bg = status == "shell"
     routine = routine_of(rec, cfg)
     boss = is_boss(sid, cfg)
-    can_jump, job, attach, no_jump = reach(rec, proc, running)
     return {
         "id": sid,
         "name": rec.get("name") or "(unnamed)",
@@ -455,15 +460,19 @@ def session(rec, cfg=None, light=False, proc="/proc", running=None):
         # Cheap: a session on a pty is hosted by some emulator, so a route
         # exists. Working out which one costs subprocesses, so that waits
         # until you actually click.
-        "canJump": can_jump,
-        "jobId": job,
-        "attach": attach,
-        "noJump": no_jump,
+        **reach(rec, proc, running, rivals),
         "title": summary["title"],
         "prompt": summary["prompt"],
         "branch": summary["branch"],
         "doing": summary["doing"],
     }
+
+
+def _rivals(rec, live):
+    """The names of the other background sessions, so that a fragment of a
+    name both share is not taken for either."""
+    return [r.get("name") or "" for r in live
+            if r.get("kind") == "bg" and r.get("pid") != rec.get("pid")]
 
 
 class ClaudeProvider(Provider):
@@ -482,13 +491,15 @@ class ClaudeProvider(Provider):
         if any(rec.get("kind") == "bg" for rec in recs):
             import jump
             running = jump.attaches(self.proc)
-        return [session(rec, cfg, proc=self.proc, running=running) for rec in recs]
+        return [session(rec, cfg, proc=self.proc, running=running, rivals=_rivals(rec, recs))
+                for rec in recs]
 
     def find(self, session_id):
         cfg = self.cfg or claude_dir()
         rec = registry.by_sid(session_id, cfg, self.proc)
         if rec and registry.is_live(rec, self.proc):
-            return session(rec, cfg, light=True, proc=self.proc)
+            rivals = _rivals(rec, registry.live(cfg, self.proc)) if rec.get("kind") == "bg" else ()
+            return session(rec, cfg, light=True, proc=self.proc, rivals=rivals)
         return None
 
     def jump(self, session):
@@ -496,5 +507,9 @@ class ClaudeProvider(Provider):
         if session.get("kind") != "bg":
             return None
         import jump
-        return jump.attach(session.get("jobId") or "", sid=session.get("id") or "",
-                           name=session.get("name") or "", proc=self.proc)
+        # The record's own name, not the page's "(unnamed)" stand-in for none.
+        cfg = self.cfg or claude_dir()
+        rec = registry.by_sid(session.get("id") or "", cfg, self.proc) or {}
+        return jump.attach(session.get("jobId") or "", sid=rec.get("sessionId") or "",
+                           name=rec.get("name") or "", proc=self.proc,
+                           rivals=_rivals(rec, registry.live(cfg, self.proc)))

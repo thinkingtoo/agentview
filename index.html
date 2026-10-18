@@ -182,6 +182,7 @@
   .tile .go { margin-left:auto; }
   .tile .go.none { opacity:1; color:var(--faint); }
   .tile .why { color:var(--bad); font-size:12px; overflow-wrap:anywhere; }
+  .tile .why.note { color:var(--dim); }
   .tile .tline { color:var(--dim); font-size:13px; overflow-wrap:anywhere;
                  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .tile.waiting { border-color:var(--wait); }
@@ -934,27 +935,35 @@ document.getElementById("main").addEventListener("click", async ev => {
     return;
   }
   el.classList.remove("jumped", "failed");
+  el.querySelector(".why")?.remove();
   void el.offsetWidth;
   el.classList.add("jumped");
+  const key = el.dataset.sid;
   try {
-    const out = await (await post("/api/jump", { key: el.dataset.sid })).json();
-    if (!out.ok) failed(el, out.reason || "jump failed");
+    const out = await (await post("/api/jump", { key })).json();
+    if (!out.ok) say(key, out.reason || "jump failed", true);
+    else if (out.did === "opening") say(key, "opening a tab for it…", false);
   } catch (e) {
-    failed(el, "jump failed");
+    say(key, "jump failed", true);
   }
 });
 
-// A jump that did not reach its terminal says why on the tile itself, and
-// keeps saying it until the next poll repaints the page.
-function failed(el, reason) {
+// What a jump has to say sits on the tile itself until the next poll repaints
+// the page. The tile is found again by its key: a slow jump is answered after
+// a poll has replaced every node, and the one that was clicked is gone.
+function say(key, text, bad) {
+  const el = [...document.querySelectorAll(".tile")].find(t => t.dataset.sid === key);
+  if (!el) return;
   el.classList.remove("jumped");
-  el.classList.add("failed");
   el.querySelector(".why")?.remove();
   const why = document.createElement("div");
-  why.className = "why";
-  why.textContent = reason;
+  why.className = bad ? "why" : "why note";
+  why.textContent = text;
   el.append(why);
-  document.getElementById("stamp").textContent = reason;
+  if (bad) {
+    el.classList.add("failed");
+    document.getElementById("stamp").textContent = text;
+  }
 }
 
 // Click a row and its terminal comes to the front. The page never guesses

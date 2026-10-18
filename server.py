@@ -149,10 +149,12 @@ def reopen(sid):
 
 def _reopen(sid):
     key = f"claude:{sid}"
-    hit = fleet.look(key)
+    hit = fleet.find(key)
     if hit:
         provider, session = hit
         done = fleet.jump_to(provider, session)
+        if done.get("ok") and done.get("did") != "opening":
+            fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"), name=session.get("name"),
                   source="search", **done)
         return {**done, "did": "jumped"}
@@ -316,7 +318,7 @@ class Handler(BaseHTTPRequestHandler):
         # Seen once the terminal was reached, not when the click arrived: a
         # jump that failed leaves what the session said unread, with the
         # reason on its tile, until the next poll.
-        if done.get("ok"):
+        if done.get("ok") and done.get("did") != "opening":
             fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"),
                   name=session.get("name"), **done)
