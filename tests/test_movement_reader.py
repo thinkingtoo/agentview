@@ -132,6 +132,20 @@ class ColdStart(Base):
         # ... and the minute after it is whole: three records, 20 s apart.
         self.assertEqual(writes[first_seen], 3)
 
+    def test_the_counters_add_no_read_to_a_cold_start(self):
+        # One read of the tail, and nothing else: the counters ride on it.
+        records = self.big_transcript()
+        write(self.path, [{"type": "ai-title", "aiTitle": "Checkout form"}] + records[-3:], "a")
+        reads = []
+        original = base.read_from
+        base.read_from = lambda p, off: (reads.append(off), original(p, off))[1]
+        try:
+            with mock.patch.object(base, "COLD_BYTES", 6000):
+                self.scan()
+        finally:
+            base.read_from = original
+        self.assertEqual(reads, [self.path.stat().st_size - 6000])
+
     def test_a_small_transcript_is_read_whole_so_nothing_in_it_is_unknown(self):
         write(self.path, [record(10)], "w")
         self.assertNotIn(None, self.scan()["writes"])
@@ -189,6 +203,19 @@ class Subagents(Base):
         write(sub, [record(3)])
         touch(sub, 3)
         self.assertEqual(sum(self.scan()["writes"]), 3)
+
+    def test_a_subagent_file_that_did_not_change_is_not_read_again(self):
+        write(self.path, [record(10)], "w")
+        self.subagent("agent-a1", [record(12)])
+        self.scan()
+        reads = []
+        original = base.read_from
+        base.read_from = lambda p, off: (reads.append(str(p)), original(p, off))[1]
+        try:
+            self.scan()
+        finally:
+            base.read_from = original
+        self.assertEqual(reads, [])
 
     def test_when_a_subagent_last_wrote_is_reported_in_minutes(self):
         write(self.path, [record(600)], "w")

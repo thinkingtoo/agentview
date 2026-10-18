@@ -61,9 +61,15 @@ def sha(path):
 # which the chime and the counts also read) and the tile the overview prints
 # (`columns`), so the two never disagree about who is waiting.
 
-def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=True, need="", **extra):
+def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=True, need="",
+      mv=None, moving=None, **extra):
+    """`mv` is the movement sign's text, `moving` whether the server counts the
+    session as moving (by default: busy and not stuck)."""
+    if moving is None:
+        moving = status == "busy" and flag != "stuck"
     return {"key": key, "name": name, "status": status, "flag": flag, "note": note,
-            "line": line, "tags": list(tags), "can": can, "need": need, "extra": extra}
+            "line": line, "tags": list(tags), "can": can, "need": need, "mv": mv,
+            "moving": moving, "extra": extra}
 
 
 def member(s, project):
@@ -83,11 +89,29 @@ def member(s, project):
 
 
 def tile(s):
+    # The overview never gets the `tool` flag: the movement sign says it.
+    flag = None if s["flag"] == "tool" else s["flag"]
+    sign = s["mv"] or (f"waiting on: Running the full suite, {s['note'][:-1]} min"
+                       if s["flag"] == "tool" else None)
     return {"key": s["key"], "name": s["name"], "provider": "claude", "status": s["status"],
-            "tags": s["tags"], "line": s["line"], "flag": s["flag"], "flagNote": s["note"],
+            "tags": s["tags"], "line": s["line"], "flag": flag,
+            "flagNote": "" if flag is None else s["note"],
+            "movement": sign and {"kind": "waiting", "text": sign}, "moving": s["moving"],
             "blocked": bool(s["need"]), "need": s["need"],
             "jump": {"via": "pane" if s["can"] else "none"},
             "find": f"{s['name']}\n{s['line']}".lower()}
+
+
+# 30 per-minute counts, oldest first; None is a minute the server did not see.
+STRIPS = {"maple": [None] * 6 + [0, 0, 1, 3, 2, 0, 0, 0, 4, 9, 6, 2, 0, 0, 1, 1, 5, 7, 8, 3, 2, 4, 6, 1]}
+
+
+def mix(sessions):
+    out = {"moving": 0, "stuck": 0, "idle": 0}
+    for s in sessions:
+        stuck = s["flag"] in ("waiting", "stuck") or s["need"] or (s["status"] == "busy" and not s["moving"])
+        out["stuck" if stuck else "moving" if s["moving"] else "idle"] += 1
+    return out
 
 
 def roster(projects, **top):
@@ -103,7 +127,9 @@ def roster(projects, **top):
             "alarms": sum(s["flag"] in ("waiting", "stuck") for s in sessions),
             "ready": sum(s["flag"] == "ready" for s in sessions), "members": members})
         columns.append({"project": key, "name": name, "raw": key,
-                        "kind": "none" if orphan else "folder", "sessions": [tile(s) for s in sessions]})
+                        "kind": "none" if orphan else "folder",
+                        "strip": STRIPS.get(key, [0] * 29 + [2]), "summary": mix(sessions),
+                        "sessions": [tile(s) for s in sessions]})
     return {"blocks": blocks, "columns": columns, "hold": False, "chime": True, "providers": {},
             "restore": None, "closed": [], "saved": None, **top}
 
@@ -122,9 +148,9 @@ MAPLE = ("maple", "maple", [
     S("m3", "Nour", "idle", "ready", line="Two had no composer — guess or skip?",
       need="Which table should I drop?"),
     S("m4", "Aziz", "busy", "tool", note="34m", line="Running the full suite"),
-    S("m5", "Dmitri", "idle", can=False)])
+    S("m5", "Dmitri", "idle", can=False, moving=True, mv="waiting on: Run the tests, 5 min")])
 PMD = ("pmd", "pmd", [S("p1", "Lennart", "idle", tags=["boss", "codex"], line="Plan the cutover"),
-                      S("p2", "Kasper", "busy", line="Schema migration")])
+                      S("p2", "Kasper", "busy", line="Schema migration", mv="writing · 8s ago")])
 LOOSE = ("", "No project", [S("o1", "Rosalie", "idle", line="a loose end")])
 
 
@@ -307,7 +333,7 @@ def overview_pass(browser):
     open_at(page)
     page.wait_for_selector(".ov-col")
     cols = lambda: page.locator(".ov-col").count()
-    names = lambda: [t.strip() for t in page.locator(".ov-head").all_inner_texts()]
+    names = lambda: [t.strip() for t in page.locator(".ov-name").all_inner_texts()]
 
     check("one column per project", cols() == 3, cols())
     check("columns in the order the server sent, not the blocks' or a sort",
@@ -316,8 +342,9 @@ def overview_pass(browser):
     check("sessions in the order the server sent",
           page.locator('.ov-col[data-project="maple"] .tile').evaluate_all("els => els.map(e => e.dataset.sid)")
           == ["m1", "m2", "m3", "m4", "m5"])
-    check("the project card is its name and nothing else",
-          page.locator(".ov-head *").count() == 0)
+    check("the project card is its name, then its movement strip and mix",
+          page.locator('.ov-col[data-project="maple"] .ov-head > *')
+          .evaluate_all("els => els.map(e => e.className)") == ["ov-name", "ov-mv"])
     check("one tile per session", page.locator(".tile").count() == 8, page.locator(".tile").count())
 
     t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
@@ -325,9 +352,29 @@ def overview_pass(browser):
           t("m1").locator(".flag.waiting").count() == 1 and t("m1").locator(".wf").inner_text() == "input needed"
           and "waiting" in t("m1").get_attribute("class"))
     check("a stuck tile says for how long", "17m" in t("m2").locator(".flag.stuck").inner_text().lower())
-    check("a long tool call is news: its minutes, no alarm tint",
-          "34m" in t("m4").locator(".flag.tool").inner_text().lower()
+    check("a long tool call is a movement sign now, not a flag, and no alarm tint",
+          t("m4").locator(".mv").inner_text() == "waiting on: Running the full suite, 34 min"
+          and t("m4").locator(".flag").count() == 0
           and not any(c in t("m4").get_attribute("class") for c in ("waiting", "stuck")))
+    check("a writing session says so", t("p2").locator(".mv").inner_text() == "writing · 8s ago")
+    check("a session with no sign has no sign line", t("m5").locator(".mv").count() == 1
+          and t("m3").locator(".mv").count() == 0)
+    check("an idle session with a job running has the moving dot, not the idle one",
+          t("m5").locator(".dot.busy").count() == 1 and t("m5").locator(".dot.idle").count() == 0)
+    maple = page.locator('.ov-col[data-project="maple"]')
+    bars = maple.locator(".strip i")
+    check("the card draws 30 bars", bars.count() == 30, bars.count())
+    check("minutes the server did not see are dotted stubs, not empty bars",
+          maple.locator(".strip i.u").count() == 6 and maple.locator(".strip i.z").count() == 7,
+          (maple.locator(".strip i.u").count(), maple.locator(".strip i.z").count()))
+    heights = bars.evaluate_all("els => els.map(e => e.offsetHeight)")
+    check("the busiest minute is the tallest bar, within the strip's height",
+          max(heights) == heights[bars.evaluate_all("els => els.map(e => e.title)").index("9 writes")]
+          and 20 <= max(heights) <= 28, heights)
+    check("the card counts moving, stuck and idle",
+          maple.locator(".mix").inner_text() == "2 moving · 3 stuck · 0 idle", maple.locator(".mix").inner_text())
+    check("a project that counts nothing still draws a strip of 30",
+          page.locator('.ov-col[data-project=""] .strip i').count() == 30)
     check("finished and unread is a tick, not a dot",
           t("m3").locator(".tick").count() == 1 and t("m3").locator(".dot").count() == 0)
     check("a busy session has the breathing dot", t("m2").locator(".dot.busy").count() == 1
@@ -451,7 +498,7 @@ def overview_pass(browser):
 
 def hostile_pass(browser, view):
     """R7 at the page: markup in a project, a name and a line is text."""
-    s = S("h1", BOMB, "idle", line="line: " + BOMB)
+    s = S("h1", BOMB, "idle", line="line: " + BOMB, mv="waiting on: " + BOMB + ", 3 min")
     fake = Fake(roster([(BOMB, BOMB, [s])]))
     seen = len(errors)
     page = new_page(browser, fake)
@@ -459,8 +506,10 @@ def hostile_pass(browser, view):
     page.wait_for_selector(".block" if view == "blocks" else ".tile")
     page.wait_for_timeout(500)
     text = page.locator("#main").inner_text()
-    check(f"{view}: markup in a project, a name and a line is shown as text",
-          text.count(BOMB) >= 3, text[:200])
+    # The overview also prints what the session is waiting on, which is the
+    # words of its own tool call.
+    check(f"{view}: markup in a project, a name, a line and a sign is shown as text",
+          text.count(BOMB) >= (3 if view == "blocks" else 4), text[:200])
     check(f"{view}: and builds no element from it",
           page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0)
     check(f"{view}: no dialog, no page error", len(errors) == seen, errors[seen:])
