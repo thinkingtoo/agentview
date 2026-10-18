@@ -20,18 +20,28 @@ def pm_dir():
 def _repository(cwd):
     """The repository a folder is in, worktrees folded onto their parent:
     (the shared `.git` folder, the folder's path inside its checkout), or None.
+
+    The walk stops at home: a repository there is a dotfiles repository, and
+    would otherwise be the project of every plain folder under it.
     """
-    here = Path(cwd)
+    here, home = Path(cwd), Path.home()
     for d in (here, *here.parents):
+        if d == home:
+            return None
         git = d / ".git"
         if git.is_dir():
             return git, here.relative_to(d)
         if git.is_file():
             try:
-                admin = Path(git.read_text(encoding="utf-8").split(":", 1)[1].strip())
-                common = (admin / (admin / "commondir").read_text(encoding="utf-8").strip()).resolve()
+                admin = d / git.read_text(encoding="utf-8").split(":", 1)[1].strip()
             except (OSError, IndexError):
                 return None
+            # A worktree names its parent's `.git`; a submodule's own folder
+            # is the repository.
+            try:
+                common = (admin / (admin / "commondir").read_text(encoding="utf-8").strip()).resolve()
+            except OSError:
+                common = admin.resolve()
             return common, here.relative_to(d)
     return None
 
@@ -297,13 +307,18 @@ def place_all(members, folder_rule, assigned):
     live = set(held.values())
     teams = _teams(members, held)
     trackers = Trackers(live)
+    folders = {}        # workers of one track share a launch folder, often
     places = {}
     for m in members:
         if _own(assigned, m["key"]):
             continue
         track = held.get(m["key"]) or _worker_track(m, live, teams, trackers)
-        places[m["key"]] = (_track_place(track) if track
-                            else place_of(m["cwd"], folder_rule) or NO_PROJECT)
+        if track:
+            places[m["key"]] = _track_place(track)
+            continue
+        if m["cwd"] not in folders:
+            folders[m["cwd"]] = place_of(m["cwd"], folder_rule) or NO_PROJECT
+        places[m["key"]] = folders[m["cwd"]]
     carried = {}
     for place in places.values():
         if place is not NO_PROJECT:

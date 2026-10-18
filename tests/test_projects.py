@@ -13,6 +13,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import projects
@@ -468,6 +469,28 @@ class Guess(Placed):
         orchard = self.repo("orchard")
         got = self.roster(self.lost(paths=[str(orchard / "a.py")]))
         self.assertNotIn("paths", got["blocks"][0]["members"][0])
+
+
+class Edges(Placed):
+    def test_a_repository_at_home_does_not_swallow_the_folders_under_it(self):
+        home = self.folder("home")
+        (home / ".git").mkdir()
+        (home / ".git" / "config").write_text('[remote "origin"]\n\turl = git@example.com:alice/dotfiles.git\n')
+        shelf = self.folder("home", "Projects")
+        self.config = {"shelves": [str(shelf)]}
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            got = self.roster(sess("a", self.folder("home", "Projects", "maple")))
+        self.assertEqual(self.names(got), ["maple"])
+
+    def test_a_submodule_is_a_repository_of_its_own(self):
+        parent = self.repo("suite")
+        inner = self.folder("suite", "vendor", "lib")
+        admin = parent / ".git" / "modules" / "lib"
+        admin.mkdir(parents=True)
+        (admin / "config").write_text('[remote "origin"]\n\turl = https://example.com/bob/lib.git\n')
+        (inner / ".git").write_text("gitdir: ../../.git/modules/lib\n")
+        column = self.roster(sess("a", inner))["columns"][0]
+        self.assertEqual((column["project"], column["kind"]), ("repo:example.com/bob/lib", "repository"))
 
 
 class Clients(Placed):
