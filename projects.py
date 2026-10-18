@@ -176,14 +176,64 @@ def _named(value, carried):
     return {"id": f"folder:{value}", "kind": "folder", "raw": value}
 
 
+# Only claude-boss makes bosses and tracks, and it does so for Claude Code.
+# Codex sessions reach the repository, the folder and the guess, nothing above.
+TRACKED = ("claude",)
+TRACK_NAME = re.compile(r"^\w[\w.-]{0,79}$")
+BOSS_PANE = "boss-"
+
+
+def _tmux_track(tmux):
+    """The track a pane's tmux session is named for -- claude-boss calls the
+    session `boss-<track>` -- or ""."""
+    name = tmux.split(":", 1)[0]
+    return name[len(BOSS_PANE):] if name.startswith(BOSS_PANE) else ""
+
+
+def _track_place(track):
+    return {"id": f"track:{track}", "kind": "track", "raw": track}
+
+
+def _boss_tracks(members):
+    """`{session key: track}` for each boss that has one. A boss's marker
+    names it; the tmux session it runs in is only the fallback, because a
+    renamed track keeps its old pane."""
+    out = {}
+    for m in members:
+        if m["boss"] and m["provider"] in TRACKED:
+            track = m.get("track") or ""
+            if not TRACK_NAME.match(track):
+                track = _tmux_track(m.get("tmux") or "")
+            if TRACK_NAME.match(track):
+                out[m["key"]] = track
+    return out
+
+
+def _worker_track(m, live):
+    """The track a worker belongs to, from what points at a boss that is
+    running -- or "". A pointer at a track nobody leads any more is stale and
+    files nobody."""
+    if m["provider"] not in TRACKED or m["boss"]:
+        return ""
+    tmux = _tmux_track(m.get("tmux") or "")
+    return tmux if tmux in live else ""
+
+
 def place_all(members, folder_rule, assigned):
     """Every session's project: `{session key: place}`.
 
     First match wins, in the order the person thinks of it: their own setting,
-    then the repository, then the folder, then nowhere.
+    then the boss's track, then the repository, then the folder, then nowhere.
     """
-    places = {m["key"]: place_of(m["cwd"], folder_rule) or NO_PROJECT
-              for m in members if not _own(assigned, m["key"])}
+    held = _boss_tracks(members)
+    live = set(held.values())
+    places = {}
+    for m in members:
+        if _own(assigned, m["key"]):
+            continue
+        track = held.get(m["key"]) or _worker_track(m, live)
+        places[m["key"]] = (_track_place(track) if track
+                            else place_of(m["cwd"], folder_rule) or NO_PROJECT)
     carried = {}
     for place in places.values():
         if place is not NO_PROJECT:

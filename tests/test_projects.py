@@ -29,6 +29,11 @@ class Codex(Fake):
     name = "codex"
 
 
+def fleet_roster(*providers):
+    import fleet
+    return fleet.roster(providers=list(providers))
+
+
 def sess(sid, cwd, **over):
     return minimal(id=sid, cwd=str(cwd), **over)
 
@@ -123,6 +128,71 @@ class LaunchFolder(Placed):
         touched = [str(elsewhere / "src" / f"{n}.py") for n in "abcd"]
         got = self.roster(sess("a", home, paths=touched))
         self.assertEqual(self.names(got), ["loom"])
+
+
+class Tracks(Placed):
+    def claude(self, *sessions):
+        return self.roster(provider=Claude(sessions))
+
+    def boss(self, sid, cwd, track, **over):
+        return sess(sid, cwd, name=over.pop("name", "Ilse"), boss=True, track=track, **over)
+
+    def worker(self, sid, cwd, track, **over):
+        """A worker claude-boss launched into the tmux session of its track."""
+        return sess(sid, cwd, tmux=f"boss-{track}:@3.%5", **over)
+
+    def column(self, got, project):
+        return next(c for c in got["columns"] if c["project"] == project)
+
+    def test_a_worker_in_another_repository_than_its_boss_sits_in_the_boss_track_column(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        got = self.claude(self.worker("w", orchard, "checkout", name="Mateo"),
+                          self.boss("b", loom, "checkout"))
+        self.assertEqual(self.names(got), ["checkout"])
+        column = got["columns"][0]
+        self.assertEqual((column["project"], column["kind"], column["raw"]),
+                         ("track:checkout", "track", "checkout"))
+        self.assertEqual(self.keys(column), ["claude:b", "claude:w"])
+
+    def test_one_repository_holding_two_tracks_is_two_projects(self):
+        loom = self.repo("loom")
+        got = self.claude(self.boss("b1", loom, "checkout", name="Ilse"),
+                          self.worker("w1", loom, "checkout", name="Mateo"),
+                          self.boss("b2", loom, "docs", name="Saskia"),
+                          self.worker("w2", loom, "docs", name="Odile"),
+                          sess("p", loom, name="Femi"))
+        self.assertEqual(sorted(self.names(got)), ["checkout", "docs", "loom"])
+        self.assertEqual(self.keys(self.column(got, "track:docs")), ["claude:b2", "claude:w2"])
+        self.assertEqual(self.keys(self.column(got, "repo:example.com/alice/loom")), ["claude:p"])
+
+    def test_a_track_a_repository_a_client_and_a_folder_with_one_name_are_four_projects(self):
+        acme_repo = self.repo("acme")
+        mono = self.repo("mono")
+        (mono / "clients" / "acme").mkdir(parents=True)
+        got = self.claude(self.boss("b", self.repo("loom"), "acme"),
+                          sess("r", acme_repo),
+                          sess("c", mono / "clients" / "acme"),
+                          sess("f", "/home/alice/Projects/acme"))
+        self.assertEqual(self.names(got), ["acme"] * 4)
+        self.assertEqual(len({c["project"] for c in got["columns"]}), 4)
+        self.assertEqual(sorted(c["kind"] for c in got["columns"]),
+                         ["folder", "folder", "repository", "track"])
+
+    def test_a_track_whose_boss_is_gone_files_nobody(self):
+        # The pane still says `boss-old` and a marker for the departed boss
+        # is still on disk. Neither is a boss that is running.
+        (self.pm / ".boss-sessions").mkdir()
+        (self.pm / ".boss-sessions" / "gone-session").write_text("old\n")
+        orchard = self.repo("orchard")
+        got = self.claude(self.worker("w", orchard, "old", name="Mateo"))
+        self.assertEqual(self.names(got), ["orchard"])
+
+    def test_only_claude_sessions_belong_to_a_track(self):
+        # Codex sessions reach the repository, the folder and the guess only.
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        got = fleet_roster(Claude([self.boss("b", loom, "checkout")]),
+                           Codex([self.worker("x", orchard, "checkout", name="Mateo")]))
+        self.assertEqual(sorted(self.names(got)), ["checkout", "orchard"])
 
 
 class OwnSetting(Placed):

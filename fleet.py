@@ -373,7 +373,7 @@ def jump_to(p, s):
 DEFAULTS = {
     "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "",
     "waitingFor": "", "boss": False, "bg": False, "title": "", "prompt": "",
-    "branch": "",
+    "branch": "", "track": "",
 }
 
 MAX_EXTRAS = 8
@@ -594,19 +594,31 @@ def columns_of(blocks):
         return resolve_project(cwd, shelves)
     members = [m for b in blocks if not b["routines"] for m in b["members"]]
     places = projects.place_all(members, folder_rule, config_value("assign", {}))
-    out = {}
+    grouped = {}
     for m in members:
-        place = places[m["key"]]
-        col = out.setdefault(place["id"], {
+        grouped.setdefault(places[m["key"]]["id"], []).append(m)
+    out = []
+    for rows in grouped.values():
+        place = places[rows[0]["key"]]
+        # A boss leads its column, whatever the activity: who leads before
+        # who works. The rest are in the order the blocks have always used.
+        rows = order_members(list(rows))
+        rows.sort(key=lambda s: not s["boss"])
+        out.append({
             "project": place["id"], "raw": place["raw"], "kind": place["kind"],
             "name": projects.display_name(place, names) if place["raw"] else "No project",
-            "sessions": []})
-        guessed = None if place is not NO_PROJECT else projects.guess(
-            m.get("paths") or [], folder_rule)
-        col["sessions"].append(tile_of(m, {
-            "project": guessed["id"], "name": projects.display_name(guessed, names)
-        } if guessed else None))
-    return list(out.values())
+            "sessions": [tile_of(m, _suggestion(m, place, folder_rule, names)) for m in rows],
+        })
+    return out
+
+
+def _suggestion(m, place, folder_rule, names):
+    """Where a session with no project probably belongs, as the one click
+    that puts it there -- or None."""
+    guessed = projects.guess(m.get("paths") or [], folder_rule) if place is NO_PROJECT else None
+    if not guessed:
+        return None
+    return {"project": guessed["id"], "name": projects.display_name(guessed, names)}
 
 
 def tile_of(m, suggestion=None):
