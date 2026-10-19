@@ -18,6 +18,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import localenv
 import notes
 from test_notes_route import Route
 
@@ -381,6 +382,56 @@ class Settings(unittest.TestCase):
                 notes.settings(path)
             self.assertIn("BRAIN_URL", str(caught.exception))
             self.assertNotIn(bad, str(caught.exception))
+
+
+class Pipe(unittest.TestCase):
+    """A named pipe where the config file should be: opening it to read waits
+    for a writer that may never come, and the click's request would wait with it."""
+
+    def pipe(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = tmp / "agentview-brain.env"
+        os.mkfifo(path, 0o600)
+
+        def release():          # the writer a reader left waiting by a failing test needs
+            try:
+                os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+        self.addCleanup(release)
+        return path
+
+    def outcome(self, call, seconds=5):
+        """What `call()` raised or returned, or None if it is still waiting."""
+        got = []
+
+        def run():
+            try:
+                got.append(call())
+            except Exception as err:
+                got.append(err)
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(seconds)
+        return got[0] if got else None
+
+    def test_a_config_that_is_a_named_pipe_is_no_config_and_no_wait(self):
+        path = self.pipe()
+        got = self.outcome(lambda: notes.settings(path))
+        self.assertIsInstance(got, notes.Unavailable, "settings() is still waiting for the pipe")
+        self.assertEqual(str(got), "the notes config file is not a regular file")
+
+    def test_the_shared_env_reader_does_not_wait_for_a_named_pipe_either(self):
+        path = self.pipe()
+        got = self.outcome(lambda: localenv.read_env(path))
+        self.assertIsInstance(got, OSError, "read_env() is still waiting for the pipe")
+
+    def test_the_notes_link_with_a_named_pipe_as_config_answers_that_it_is_not_set_up(self):
+        path = self.pipe()
+        with mock.patch.dict(os.environ, {notes.ENV_VAR: str(path)}):
+            got = self.outcome(lambda: notes.searcher())
+        self.assertIsInstance(got, notes.Unavailable, "searcher() is still waiting for the pipe")
 
 
 if __name__ == "__main__":

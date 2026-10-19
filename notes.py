@@ -28,6 +28,7 @@ service said: reasons reach the page and the log.
 import http.client
 import json
 import os
+import stat
 import urllib.parse
 from pathlib import Path, PurePosixPath
 
@@ -62,6 +63,8 @@ def settings(path=None):
         mode = path.stat().st_mode
     except OSError:
         raise Unavailable(NOT_SET_UP) from None
+    if not stat.S_ISREG(mode):
+        raise Unavailable("the notes config file is not a regular file")
     if mode & 0o077:
         raise Unavailable("the notes config file is readable by others; chmod 600 it")
     try:

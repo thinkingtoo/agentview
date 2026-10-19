@@ -382,7 +382,9 @@ def wordless(raw):
     code span inside a sentence makes it prose."""
     marked = CODE.sub("", HTML_LINK.sub(LINK_MARK, LINK.sub(LINK_MARK, IMAGE.sub("", raw))))
     links = plain_items = 0
-    for item in map(squash, ITEM_BREAK.split(re.sub(r"[*_]+", "", ENTITY.sub(" ", TAGS.sub("", marked))))):
+    # Squashed first: the break pattern costs the square of a run of blanks.
+    text = squash(re.sub(r"[*_]+", "", ENTITY.sub(" ", TAGS.sub("", marked))))
+    for item in map(squash, ITEM_BREAK.split(text)):
         linked = LINK_MARK in item
         worded = re.search(r"\w", item) is not None
         if linked and worded:

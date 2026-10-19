@@ -497,6 +497,13 @@ class Repositories(Cards):
             self.put("README.md", f"# tool\n\n{block}\n\nTool bundles modules.\n")
             self.assertEqual(self.line()["line"], "Tool bundles modules.")
 
+    def test_a_hundred_kilobytes_of_badge_lines_with_long_trailing_blanks_cost_nothing(self):
+        badge = "[![build](https://ci.example/badge.svg)](https://ci.example)"
+        self.put("README.md", (badge + " " * 1440 + "\n\n") * 66 + "A tool that does a thing.\n")
+        started = time.monotonic()
+        self.assertEqual(self.line()["line"], "A tool that does a thing.")
+        self.assertLess(time.monotonic() - started, 2.0)
+
     def test_a_paragraph_over_the_limit_is_not_cut_inside_a_link(self):
         filler = " ".join(["reports"] * 184)
         text = f"{filler} See [the documentation](https://example.com/docs/index.html) for more."
