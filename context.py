@@ -123,8 +123,8 @@ def read(path, limit=READ, base=None):
     (resolved). A cloned repository's files can change under a poll, so the
     path is not trusted between a look and an open: the file is opened once (a
     pipe returns at once, a terminal does not become the process's own), and
-    what is open is judged, a regular file that lies
-    in `base` and in no `.git` folder. What is read is that same descriptor. A
+    what is open is judged, a regular file that `inside` accepts: in `base`,
+    in no `.git` folder, and named as a card looks for. What is read is that same descriptor. A
     goal or a tracker, which lies in the owner's own folder, is read by its
     path. A timeout that reaches this is the caller's and is let through."""
     try:
@@ -441,20 +441,28 @@ LINKS_LOOKED_AT = 12     # per folder: a repository holds the names above, and n
 
 
 def inside(end, base):
-    """Whether a resolved path lies in the folder `base` (resolved) and not in
-    a `.git` folder of any case."""
+    """Whether a resolved path is a file a repository may describe itself by: it
+    lies in the folder `base` (resolved), in no `.git` folder of any case, and
+    it has the name of one of the files a card looks for. A cloned repository
+    chooses what its links point at, and a checkout holds files the owner fills
+    in after cloning and that are in no repository (`.env`, `config/master.key`,
+    `terraform.tfstate`): a link to one is no README. The name is what says what
+    a file is, and a link to a file of the kind a card reads anyway shows nothing
+    more than that file would. A file whose name was removed or replaced while it
+    was open is told by the kernel as `<path> (deleted)`: it is judged by the
+    path it had."""
     try:
-        target = Path(end).relative_to(base)
+        target = Path(end.removesuffix(" (deleted)")).relative_to(base)
     except ValueError:
         return False
-    return ".git" not in {part.casefold() for part in target.parts}
+    return ".git" not in {part.casefold() for part in target.parts} and target.name.casefold() in WANTED
 
 
 def stays_inside(path, base):
-    """Whether a link ends up in the folder `base` (already resolved), and not
-    in a `.git` folder of any case: `AGENTS.md -> CLAUDE.md` does, `README.md ->
-    ~/.ssh/id_ed25519` does not. A cloned repository chooses what its links
-    point at. The kernel follows the link (a path-only descriptor: nothing is
+    """Whether a link ends up in `base` (already resolved) at a file of a name a
+    card looks for, and not in a `.git` folder of any case: `AGENTS.md ->
+    CLAUDE.md` does, `README.md -> ~/.ssh/id_ed25519` and `README.md -> .env` do
+    not. The kernel follows the link (a path-only descriptor: nothing is
     read, a named pipe is no trouble) and says where it ends; walking a chain
     of long links in Python costs fifty milliseconds a link. This is a look at
     the listing, to pass over a link out; `read` judges the file it opens."""

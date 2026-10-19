@@ -611,8 +611,8 @@ class Repositories(Cards):
         self.assertLess(took, 1.0)
 
     def test_a_link_with_a_long_chain_of_targets_is_followed_in_the_kernel(self):
-        (self.loom / "f.txt").write_text("Prints reports.\n")
-        (self.loom / "README.md").symlink_to(self.chain(self.loom, "../f.txt"))
+        (self.loom / "CLAUDE.md").write_text("Prints reports.\n")
+        (self.loom / "README.md").symlink_to(self.chain(self.loom, "../CLAUDE.md"))
         started = time.monotonic()
         for _ in range(40):
             self.assertEqual(self.line()["line"], "Prints reports.")
@@ -635,15 +635,76 @@ class Repositories(Cards):
         (self.loom / "README.md").symlink_to(".GIT/description")
         self.assertEqual(self.line()["source"], "guess")
 
-    def test_a_link_to_a_file_in_the_checkout_is_read(self):
+    def test_a_link_to_a_file_the_card_reads_anyway_is_followed_wherever_it_lies(self):
         (self.loom / "docs").mkdir()
-        self.put("docs/about.md", "Prints reports.\n")
-        (self.loom / "README.md").symlink_to("docs/about.md")
+        self.put("docs/README.md", "Prints reports.\n")
+        (self.loom / "README.md").symlink_to("docs/README.md")
         self.assertEqual(self.line()["line"], "Prints reports.")
         (self.loom / "README.md").unlink()
         (self.loom / "AGENTS.md").symlink_to("CLAUDE.md")               # as the owner's checkouts have it
         self.put("CLAUDE.md", "Notes for Claude.\n")
         self.assertEqual(self.line()["line"], "Notes for Claude.")
+        (self.loom / "AGENTS.md").unlink()
+        (self.loom / "CLAUDE.md").unlink()
+        (self.loom / ".claude").mkdir()                                 # only `.git` is a folder to keep out of
+        self.put(".claude/CLAUDE.md", "Notes in a hidden folder.\n")
+        (self.loom / "CLAUDE.md").symlink_to(".claude/CLAUDE.md")
+        self.assertEqual(self.line()["line"], "Notes in a hidden folder.")
+
+    # -- a link inside the checkout: only to a file of the kind a card reads (hunt 12) --
+    # A cloned repository can hold a link to a file the owner fills in after cloning, and that is in
+    # no repository: `.env`, `config/master.key`, `terraform.tfstate`. It is the file's name that says
+    # what it is, so a link counts when it ends at one of the names a card looks for.
+
+    def test_a_readme_that_is_a_link_to_a_secret_in_the_checkout_does_not_show_it(self):
+        (self.loom / "config").mkdir()
+        for link, target in (("README.md", ".env"), ("AGENTS.md", "config/master.key"),
+                             ("CLAUDE.md", "terraform.tfstate"), ("readme.txt", "credentials.txt"),
+                             ("README", "notes/private.md")):
+            with self.subTest(link=link, target=target):
+                (self.loom / target).parent.mkdir(exist_ok=True)
+                (self.loom / target).write_text(self.KEY)
+                (self.loom / link).symlink_to(target)
+                got = self.line()
+                self.assertEqual(got["source"], "guess")
+                self.assertNotIn("KEY", got["line"] + got["full"])
+                (self.loom / link).unlink()
+
+    def test_a_readme_swapped_for_a_link_to_a_secret_in_the_checkout_after_the_listing_is_not_read(self):
+        (self.loom / ".env").write_text(self.KEY)
+        self.put("README.md", "Prints reports.\n")
+        with self.after_the_listing(self.put_a_link_over_the_readme(".env")):
+            got = self.context(sess("a", self.loom))
+        self.assertEqual(got["source"], "guess")
+        self.assertNotIn("KEY", got["line"] + got["full"])
+
+    def test_a_file_that_is_not_one_of_the_names_a_card_looks_for_is_not_read(self):
+        (self.loom / ".env").write_text(self.KEY)
+        self.put("notes.md", "Not a readme.\n")
+        self.assertEqual(self.read_in_the_checkout(self.loom / ".env"), "")
+        self.assertEqual(self.read_in_the_checkout(self.loom / "notes.md"), "")
+
+    def test_a_link_to_a_wanted_name_inside_a_git_folder_is_not_read(self):
+        for folder in (".git", ".GIT", "sub/.git"):
+            with self.subTest(folder=folder):
+                (self.loom / folder).mkdir(parents=True, exist_ok=True)
+                (self.loom / folder / "CLAUDE.md").write_text(self.KEY)
+                (self.loom / "README.md").symlink_to(f"{folder}/CLAUDE.md")
+                self.assertEqual(self.line()["source"], "guess")
+                (self.loom / "README.md").unlink()
+
+    def test_a_file_that_was_deleted_while_it_was_open_is_judged_by_the_path_it_had(self):
+        # What `/proc/self/fd` says of an open file whose name was removed is "<path> (deleted)":
+        # a README is still one, and a `.git` file or a secret is not made one by the suffix.
+        base = self.loom.resolve()
+        self.assertTrue(context.inside(f"{base}/README.md", base))
+        self.assertTrue(context.inside(f"{base}/docs/readme.MD", base))
+        self.assertTrue(context.inside(f"{base}/README.md (deleted)", base))
+        self.assertFalse(context.inside(f"{base}/.git (deleted)", base))
+        self.assertFalse(context.inside(f"{base}/.env (deleted)", base))
+        self.assertFalse(context.inside(f"{base}/.git/CLAUDE.md", base))
+        self.assertFalse(context.inside(f"{base}/.git/CLAUDE.md (deleted)", base))
+        self.assertFalse(context.inside(str(base), base))
 
     def test_a_readme_that_links_to_itself_does_not_hide_the_other_files(self):
         (self.loom / "README.md").symlink_to("README.md")
