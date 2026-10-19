@@ -161,7 +161,17 @@ def _hits(result):
         if not isinstance(content, list):           # neither: not "no hits", an answer not understood
             raise Unavailable(UNKNOWN)
         found = _from_text(content)
-    return [_hit(h) for h in found if isinstance(h, dict)]
+    hits = [h for h in found if _is_hit(h)]
+    if found and not hits:                          # something came back and none of it is a hit
+        raise Unavailable(UNKNOWN)
+    return [_hit(h) for h in hits]
+
+
+def _is_hit(item):
+    """An object with a location or a text. Anything else the service sent in
+    a list of hits (an empty object, a wrapper under another name) is not one."""
+    return isinstance(item, dict) and (isinstance(item.get("original_location"), str)
+                                       or isinstance(item.get("chunk_text"), str))
 
 
 def _from_text(content):

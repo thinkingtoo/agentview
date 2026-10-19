@@ -195,9 +195,28 @@ class Search(unittest.TestCase):
         self.service.hits = ["not a hit", None, 5, service_hit(1)]
         self.assertEqual([h["path"] for h in notes.search("Loom")["hits"]], ["Clients/acme/kickoff-notes-1.md"])
 
+    def test_an_empty_list_is_no_hits_in_every_shape_it_comes_in(self):
+        for odd in ({"content": [{"type": "text", "text": "[]"}], "isError": False},
+                    {"content": [{"type": "text", "text": '{"result": []}'}], "isError": False},
+                    {"content": [], "structuredContent": {"result": []}, "isError": False},
+                    {"content": [{"type": "text", "text": "[]"}, {"type": "text", "text": "[]"}], "isError": False}):
+            with self.subTest(odd=odd):
+                self.service.odd = odd
+                self.assertEqual(notes.search("Loom"), {"ok": True, "hits": []})
+
+    def test_a_hit_among_objects_that_are_none_is_still_found(self):
+        self.service.odd = {"content": [{"type": "text", "text": json.dumps([{}, {"score": 1}, service_hit(1)])}],
+                            "isError": False}
+        self.assertEqual([h["path"] for h in notes.search("Loom")["hits"]], ["Clients/acme/kickoff-notes-1.md"])
+
     def test_a_hit_without_a_location_is_still_a_hit(self):
         self.service.hits = [{"score": 0.5, "chunk_text": "Words."}]
         self.assertEqual(notes.search("Loom")["hits"], [{"title": "", "path": "", "snippet": "Words."}])
+
+    def test_a_hit_without_a_text_is_still_a_hit(self):
+        self.service.hits = [{"score": 0.5, "original_location": "Clients/acme/kickoff-notes-9.md"}]
+        self.assertEqual(notes.search("Loom")["hits"],
+                         [{"title": "kickoff-notes-9", "path": "Clients/acme/kickoff-notes-9.md", "snippet": ""}])
 
     def test_the_session_is_carried_and_ended(self):
         notes.search("Loom")
@@ -269,6 +288,22 @@ class Trouble(unittest.TestCase):
         for text in ("Nothing matched, sorry.", "5", '"x"'):
             with self.subTest(text=text):
                 self.service.odd = {"content": [{"type": "text", "text": text}], "isError": False}
+                self.assertEqual(self.refused(), "the notes service gave an answer this code does not know")
+
+    def test_an_object_that_is_no_hit_is_an_answer_not_understood_not_one_blank_hit(self):
+        # A hit has a location or a text. An empty object, a wrapper under another name, or a
+        # location that is not text is something this code does not know.
+        wrapped = json.dumps({"results": [service_hit(1)], "total": 1})
+        for text in ("{}", wrapped, '{"result": "x"}', '[{}, {"score": 1}]', '{"original_location": 5}'):
+            with self.subTest(text=text):
+                self.service.odd = {"content": [{"type": "text", "text": text}], "isError": False}
+                self.assertEqual(self.refused(), "the notes service gave an answer this code does not know")
+
+    def test_structured_content_with_nothing_that_is_a_hit_is_an_answer_not_understood(self):
+        for found in ([{}], ["a", 5], [{"results": []}]):
+            with self.subTest(found=found):
+                self.service.odd = {"structuredContent": {"result": found},
+                                    "content": [{"type": "text", "text": "{}"}], "isError": False}
                 self.assertEqual(self.refused(), "the notes service gave an answer this code does not know")
 
     def test_a_first_answer_that_is_not_the_service_ends_it_there(self):
