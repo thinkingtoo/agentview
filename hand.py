@@ -52,13 +52,13 @@ def _shown(shown):
 
 
 def _spread(pinned, shown, touched):
-    """A pin written by plain name, from before projects had identities (the
-    block view still writes them), pins every project that carries the name --
+    """A pin written by plain name, from before projects had identities (an old
+    config.json may still hold them), pins every project that carries the name --
     a track and a folder can share one. Where the page shows more than one of
     them and one is the project being corrected (`touched`), the pin is written
     out as one pin each, in the order the page shows them, so that each can be
     moved, unpinned or merged on its own. Any other plain pin is left as it is:
-    the block view and a project with no session yet still read the name.
+    a project with no session yet still reads the name.
 
     A card the plain pin held keeps its place when it is also pinned by identity
     further on: the page shows it at the first of its pins."""
@@ -128,10 +128,10 @@ def _current(config, *named):
     request would do to it lands on a project with no card, or on nothing, or
     -- an arrow, a pin -- against what the click said. All of it is refused,
     here, once, for every route. A name that is not a project's identity (a
-    session's key, a block view's plain name) is not looked at. What the page
-    says it shows (`shown`) is a list of names like any other: one that has gone
-    means the view is old, and the click that came with it -- an unpin names its
-    block only there, by leaving it out of `pinned` -- cannot be trusted."""
+    session's key, a plain name from an old config) is not looked at. What the
+    page says it shows (`shown`) is a list of names like any other: one that has
+    gone means the view is old, and the click that came with it cannot be
+    trusted."""
     for ident in named:
         if isinstance(ident, str) and projects.from_identity(ident) and _moved_to(config, ident):
             raise Stale("changed in another tab")

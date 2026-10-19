@@ -804,8 +804,9 @@ identity settles what an age could only estimate.
 **A read ask fills the words and does not raise the count.** Extraction can see
 a question. It cannot tell one that stops the session from one that offers to do
 more, and a tab that says `(6)` has to mean six. Every line records who wrote
-it; only a session speaking for itself joins `waiting` and `stuck` in the block
-view's header and the tab title, and leads its block.
+it; only a session speaking for itself joins `waiting` and `stuck` in the header's
+**need you** count and the tab title, which is the same number, and carries
+`blocked` in its `flags` row.
 
 **While it works, the line is the call in flight** — *Editing fleet.py*,
 *Reading 3 files*, or, for a Bash call, the description the caller already
@@ -893,37 +894,24 @@ the window stayed where it was. Also needs whichever of `wezterm`, `tmux` and
 
 ## Arranging it yourself
 
-*Block view (`/?view=blocks`).*
+The columns hold still. Your pins lead, in your order; then the tracks, the
+repositories and the folders; `No project` is always last. Inside a kind they go
+by name, so a column never jumps sideways because a session woke up.
 
-The order is recomputed every few seconds: whichever project has someone
-**busy** leads, ties broken by most recent activity, and `No project` always
-sits at the bottom.
+The controls are in *The overview*, under **By hand**: the ☆ and ★ pin and
+unpin a project, the ‹ › move a pinned card, **merge…** puts one project into
+another, the ⋯ on a tile moves that one session. Two more facts belong here:
 
-That is right until it isn't — the two or three projects you check every day
-should be where you left them, not where today's activity puts them. So:
-
-- **`auto-arrange`** in the header stops the shuffling altogether. Held, the
-  content still updates — status, titles, flags — and only the positions
-  freeze, so a card cannot walk out from under the sentence you are reading.
-  Anything that arrives while it is held joins the end rather than pushing into
-  the middle. It replaced a Refresh button, which solved nothing: the page
-  polls anyway. *Held* is remembered in `config.json`, but the order it froze
-  is not — so a reload adopts whatever it paints first and holds **that**.
-- **Drag a block** to place it. Everything down to where you dropped it becomes
-  **pinned** and stops moving; the rest keeps sorting itself underneath.
-- **Click the ✳** on a pinned block to let it go again.
-- **Click a project name** to rename it. The name you type is a label —
-  the real key underneath does not change, so a rename never orphans its pin.
-- **Click the line under a session** to write your own. It replaces
-  Claude's generated title *and retitles that terminal tab*, so the page and
-  the tab never disagree.
-
-Clicking anywhere *else* in a session still raises its terminal — the two
-never overlap, because a terminal arriving in front steals the focus and would
-close the field you are typing in.
+- **Click a project name** to rename it. The name you type is a label — the
+  real key underneath does not change, so a rename never orphans its pin.
+- **Your own line for a session** is `/api/line`: it replaces Claude's
+  generated title *and retitles that terminal tab*, so the page and the tab
+  never disagree. The overview has no control for it yet, so nothing in the
+  page calls it; the server side is intact and tested.
 
 All of it lands in `config.json`, so it survives restarts and you can edit it
-by hand.
+by hand. (`hold`, from the days of the block view, may still be in yours;
+nothing reads it.)
 
 **An override on a session dies with the session.** It is keyed by `sessionId`,
 which is gone once you close that Claude. A project rename is keyed by the
@@ -931,28 +919,19 @@ project and lives forever.
 
 ## A boss and its team
 
-*Block view (`/?view=blocks`); on the overview a boss is a tile with a `boss` tag.*
-
 A session registered as a boss by the claude-boss plugin coordinates other
-sessions and does no implementation work itself. On the page it **leads its
-project block** whatever the activity, carries a `boss` badge, and names the
-team it dispatches to; that team renders indented beneath it, so the block has
-the shape of the team instead of being a flat list of eight equals. A worker
-whose boss sits in another block cannot be nested there, so it says `↳ Lennart`
-in words instead.
-
-**A worker's `ready` stays folded.** It keeps the blue tick, so the boss's
-block shows at a glance which of his team have reported back, but it does not
-open a card: that ✓ is his to act on, not yours. `waiting` and `stuck` still
-open on a worker — a permission prompt is answered by you, whoever dispatched
-the work.
+sessions and does no implementation work itself. On the overview it **leads its
+column** whatever the activity and carries a `boss` tag. The team it dispatches
+to is known to the server (`team` on the session, never shown as nesting: a
+tile belongs to the column of its own project) and decides one thing, that a
+worker listed under a boss sorts right after it when they share a column.
 
 Neither fact is a guess:
 
 - **Boss**: the marker claude-boss writes when a boss registers,
   `pm/.boss-sessions/<session id>` under the Claude config dir — a regular
   file of yours, never a symlink or a directory. Every claude-boss hook acts on
-  that file alone, so the badge means what the hooks mean. A session that
+  that file alone, so the tag means what the hooks mean. A session that
   typed `/boss` but never registered is not marked; neither is one that only
   reads the skill's files.
 - **Team**, from the transcript: the `to` of every `SendMessage` that session
@@ -965,18 +944,16 @@ marker says who is running the team.
 
 ## Routines keep to themselves
 
-*Block view (`/?view=blocks`); the overview leaves routines out.*
-
 A systemd timer firing `claude -p` is a session like any other, and there are
 six of them here — `nightly-report` every 20 minutes, `gpu-watch`
 every 10, and the daily ones. They run from `~`, which is no project, so they
-used to land in **No project**: the pile that means *assign me*, which is the
+would land in **No project**: the pile that means *assign me*, which is the
 one thing a routine never needs.
 
-So they get a block of their own, at the very bottom — below `No project`,
-because that pile is asking you for something and a routine is asking for
-nothing. Each row is badged with the routine that started it, and the block
-takes no pin, no rename and no drop.
+So they are on no column at all. They stay in `flags`, the list the chime and
+the server's marks read, so a routine that stops to ask still rings; it has no
+tile, because it asks nothing a person answers from this page. Each is named
+for the routine that started it.
 
 Two signals are needed to call one, and both must agree. The peer file says
 `entrypoint: sdk-cli` where a terminal says `cli` — that only proves it is
@@ -986,7 +963,7 @@ hand is headless too, and calling that a routine would be a guess.
 
 **Nothing has to clean them up.** A run lasts three or four minutes — twenty
 when a transcription is in flight — and the page lists a session only while
-its pid answers, so the card goes on its own the moment the run ends.
+its pid answers, so it goes on its own the moment the run ends.
 
 ## Which transcripts are kept
 
@@ -1186,7 +1163,7 @@ at the wrong size first and then jumps.
 The hard part is that a working directory is not a project name.
 
 `~/Projects/clients/harbor` is the **harbor** project, but its git root is
-`clients` — which would collapse every client into one block. Its basename
+`clients` — which would collapse every client into one project. Its basename
 works, until `~/Projects/clients/acme/site` shows up as `site` and collides
 with the unrelated site project.
 
@@ -1197,24 +1174,11 @@ projects without being one.
 { "shelves": ["~", "~/Projects", "~/Projects/clients"] }
 ```
 
-## Filling the columns
-
-Blocks are packed, not flowed: each one is measured at the width it will have
-and handed to whichever column is currently shortest. A CSS grid gave every
-block in a row the height of the tallest one in it; CSS columns balanced by
-their own rules and left slack that a block could not break into. Packing
-keeps the bottom edges roughly level, and a project that appears while you are
-watching lands in the gap rather than at the foot of the last column.
-
-The DOM order is therefore a layout detail, not the order you read — so
-dragging a block to pin it works off the painted order the page kept, never
-off `querySelectorAll`.
-
 A project is the first directory below the deepest shelf containing the cwd.
 Anything deeper becomes a breadcrumb, which is exactly the client/project
 distinction: **acme › site**. A session sitting *on* a shelf has no project
-and lands in the `No project` block near the bottom — ad-hoc work, and it is
-not hidden. Routines sit lower still, in a block of their own.
+and lands in the `No project` column at the far right — ad-hoc work, and it is
+not hidden. Routines are on no column at all.
 
 Add a shelf whenever a directory starts holding projects instead of being one.
 
@@ -1251,9 +1215,8 @@ python3 -m unittest discover -s tests
 ```
 
 `tests/ui_smoke.py` is separate: it drives the page with Playwright (the
-overview's columns and the by-hand controls, the chime, the filter, search, the closed list, and the old
-block view at `/?view=blocks` with its rename, pin, assign, fold and hold) and is
-not part of `unittest discover`. Run it by hand against a throwaway server, never
+overview's columns and the by-hand controls, the chime, the filter, search and
+the closed list) and is not part of `unittest discover`. Run it by hand against a throwaway server, never
 the one on 8765:
 
 ```bash

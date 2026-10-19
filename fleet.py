@@ -396,9 +396,9 @@ def look(key, shown=None):
     terminal comes to the front -- or exists: the chime hears of it.
 
     The handover is read only when the overview's tile put it in front of you,
-    and then only the stop that tile showed (`shown`): the block view says no
-    stop, and a session that stopped again since the page's last poll has a
-    handover nobody has shown you.
+    and then only the stop that tile showed (`shown`): a look with no stop
+    reads nothing, and a session that stopped again since the page's last poll
+    has a handover nobody has shown you.
     """
     hit = find(key)
     if not hit:

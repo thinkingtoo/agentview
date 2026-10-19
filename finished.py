@@ -11,8 +11,8 @@ file is yours to hand-edit, and this one changes every time you click.
   them or the session closes.
 
 Why `read` is not `seen.json`: a session may become a pill only on a handover
-that was shown to you on the new page. The seen marks the block view left
-behind say "you clicked this row", which a jump that failed used to write as
+that was shown to you on the new page. The seen marks from before the
+overview say "you clicked this row", which a jump that failed used to write as
 well, and the old row said nothing of what the session had told you. They keep
 driving the chime and the `ready` flag exactly as before; they just do not
 count as having read the handover here. `fleet.mark_seen` writes both.

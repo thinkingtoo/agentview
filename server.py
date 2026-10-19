@@ -306,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
         and it is enough: the tick goes, the count comes down."""
         key, stop = body.get("key"), body.get("stop")
         # `stop` is the overview's tile saying which stop's handover it showed;
-        # the block view sends none, and reads nothing.
+        # a click without one only looks, and reads nothing.
         if not isinstance(key, str) or (stop is not None and (isinstance(stop, bool) or not isinstance(stop, int))):
             return self.send_error(400, "expected {key, stop?}")
         if not fleet.look(key, stop):
