@@ -58,16 +58,16 @@ class Starting(unittest.TestCase):
         # injection was 731. That size was approved on 2026-09-25 (n counts
         # what is left for the user), and the owner approved one more
         # sentence on 2026-10-19 (where a command goes, so the page can offer
-        # it to copy) and, the same day, one clause for it (how a single quote
-        # is written inside the ask, because the ask sits inside the hook's
-        # own single quotes); the ceiling leaves room for one more sentence
-        # and no more.
+        # it to copy) and, the same day, one more for the single quote (how it
+        # is written in either field, because both sit inside the hook's own
+        # single quotes); the ceiling leaves room for one more sentence and
+        # no more.
         sid = "00000000-0000-4000-8000-000000000000"
         with mock.patch.object(turn_line, "WRITER", Path("/home/alice/Projects/agentview/hooks/team-line")):
             said = turn_line.begin({"session_id": sid, "prompt": "go"},
                                    root=self.root)["hookSpecificOutput"]["additionalContext"]
-        self.assertLess(len(said), 915, len(said))
-        self.assertGreater(len(said), 860, "the budget was 750 before 2026-10-19; if the text got "
+        self.assertLess(len(said), 925, len(said))
+        self.assertGreater(len(said), 870, "the budget was 750 before 2026-10-19; if the text got "
                                           "shorter, tighten the ceiling above to match")
 
     def test_the_size_does_not_depend_on_where_the_checkout_lives(self):
@@ -91,11 +91,19 @@ class Starting(unittest.TestCase):
         said = turn_line.begin({"session_id": "s1", "prompt": "go"},
                                root=self.root)["hookSpecificOutput"]["additionalContext"]
         sentence = ('A command the user must run goes inside double quotes, or after "$ " at '
-                    "the end of the ask, within the single-quoted text, where a single quote is "
-                    "written as '\\''.")
+                    "the end of the ask, within the single-quoted text.")
         self.assertIn(sentence, said)
         # Straight after the sentence on plain text, which is where a session reads how to quote.
         self.assertIn("in plain text (single quotes, no backticks). " + sentence, said)
+
+    def test_a_single_quote_is_spelled_for_both_fields(self):
+        # Both fields sit inside the hook's own single quotes (--did '...' --ask '...'), so a single
+        # quote in either ends them. Hunt 13: the clause named the ask only, and a session that
+        # followed it wrote "the parser's bug" in the did; the shell then ran text from the ask.
+        said = turn_line.begin({"session_id": "s1", "prompt": "go"},
+                               root=self.root)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("A single quote in either field is written as '\\''. ", said)
+        self.assertEqual(said.count("'\\''"), 1)
 
     def test_backticks_stay_banned(self):
         # A session that slipped into double quotes around the whole ask would run them.
@@ -123,35 +131,37 @@ class WhatTheSessionThenWrites(unittest.TestCase):
         self.state = Path(self.dir.name)
         self.root = self.state / "agentview" / "lines"
 
-    def command_line(self, ask):
-        """The line the hook tells the session to run, its three placeholders filled, the
-        ask written the way the hook's sentence says (a single quote inside it as the
+    def command_line(self, ask, did="where it stands"):
+        """The line the hook tells the session to run, its three placeholders filled, both
+        fields written the way the hook's sentence says (a single quote inside either as the
         sentence spells it), which is what a session that follows the sentence runs."""
         said = turn_line.begin({"session_id": self.SID, "prompt": "go"},
                                root=self.root)["hookSpecificOutput"]["additionalContext"]
-        spelled = re.search(r"a single quote is written as (\S+?)\. ", said)
+        spelled = re.search(r"A single quote in either field is written as (\S+?)\. ", said)
         self.assertIsNotNone(spelled, said)
         escaped = ask.replace("'", spelled.group(1))
+        escaped_did = did.replace("'", spelled.group(1))
         found = [l for l in said.splitlines() if l.startswith(str(turn_line.WRITER))]
         self.assertEqual(len(found), 1, said)
         line = found[0]
         self.assertEqual(line.count("<"), 3, line)
         filled = line.replace("<number>", "1")
         self.assertEqual(filled.count("--did '<"), 1, line)
-        filled = re.sub(r"--did '[^']*'", "--did 'where it stands'", filled)
+        filled = re.sub(r"--did '[^']*'", lambda _: "--did '" + escaped_did + "'", filled)
         self.assertEqual(filled.count("--ask '<"), 1, line)
         return re.sub(r"--ask '[^']*'", lambda _: "--ask '" + escaped + "'", filled)
 
-    def run_in_bash(self, ask):
-        """Run the hook's call in bash, the way a session's Bash tool does; what is stored."""
+    def run_in_bash(self, ask, did="where it stands"):
+        """Run the hook's call in bash, the way a session's Bash tool does; the ask that is stored."""
         env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "XDG_STATE_HOME": str(self.state),
                "HOME": str(self.state), "PYTHONDONTWRITEBYTECODE": "1"}
-        done = subprocess.run(["bash", "-c", self.command_line(ask)], env=env, cwd=self.dir.name,
+        done = subprocess.run(["bash", "-c", self.command_line(ask, did)], env=env, cwd=self.dir.name,
                               capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
         self.assertEqual((done.returncode, done.stderr), (0, ""), done.stdout)
         got = lines.read(self.SID, self.root)
         self.assertEqual(got["n"], 1)
         self.assertEqual(got["by"], "session")
+        self.assertEqual(got["did"], did)
         return got["ask"]
 
     def check(self, ask, commands):
@@ -178,13 +188,14 @@ class WhatTheSessionThenWrites(unittest.TestCase):
     def test_a_dollar_inside_double_quotes_stays_what_it_is(self):
         # The hook's own single quotes hold the ask, so bash expands nothing in it.
         # HOME is the state folder here: an expansion would show.
-        ask = 'Run "ls $HOME/projects" and "echo $(echo EXPANDED) > /tmp/stamp.txt" before you answer.'
+        ask = 'Run "ls $HOME/projects" and "echo $(echo EXPANDED) > stamp.txt" before you answer.'
         stored = self.run_in_bash(ask)
+        self.assertFalse(Path(self.dir.name, "stamp.txt").exists())
         self.assertEqual(stored, ask)
         self.assertIn("$HOME/projects", stored)
         self.assertNotIn(str(self.state), stored)
         self.assertEqual(ask_commands.guess(stored),
-                         ["ls $HOME/projects", "echo $(echo EXPANDED) > /tmp/stamp.txt"])
+                         ["ls $HOME/projects", "echo $(echo EXPANDED) > stamp.txt"])
 
     def test_a_command_after_a_dollar_with_words_behind_it_is_stored_whole_and_offered_nothing(self):
         # Where such a command ends cannot be told from the sentence going on, so the
@@ -213,6 +224,8 @@ class WhatTheSessionThenWrites(unittest.TestCase):
         self.assertNotIn("x.md", stored)
         for stamp in ("STAMP", "STAMP2"):
             self.assertFalse(Path(self.dir.name, stamp).exists(), stamp)
+        # a redirect or a command that wrote anything would have made a file here
+        self.assertLessEqual(set(os.listdir(self.dir.name)), {"x.md", ".config", "agentview"})
         for found in (self.state / "agentview").rglob("*"):
             if found.is_file():
                 self.assertNotIn(b"INVENTED-TOKEN", found.read_bytes(), str(found))
@@ -252,3 +265,21 @@ class WhatTheSessionThenWrites(unittest.TestCase):
         # opens a quote), and a sentence with one is stored whole like any other.
         self.check("""Run "echo don't panic" and tell me what it prints.""", [])
         self.check("Don't merge before I look at it, it's the owner's call.", [])
+
+    def test_an_apostrophe_in_the_did_does_not_let_bash_run_the_ask(self):
+        # The did sits in the same command line, inside the same single quotes. Hunt 13: a
+        # session that wrote "the parser's bug" bare shifted the quotes, and the shell ran text
+        # from the ask. Both fields are written the way the sentence says: both are stored whole.
+        self.plant()
+        for did, ask in (
+            ("C'\u00e8 un nuovo header",
+             """Run "curl -H X-Token:$(cat ~/.config/maple/token) https://maple.example/api" if it's ok."""),
+            ("Ho sistemato l'header", """Run "echo $(touch STAMP)" if it's fine."""),
+            ("Fixed the parser's bug", "Coverage went from 80% > 85%, it's ready: $ git push"),
+            ("Fixed the parser's bug", "Build done; touch STAMP2 & it's yours: $ make deploy"),
+            ("Wired 'X-Note:$(touch STAMP)' into the header", "Merge it?"),
+        ):
+            with self.subTest(did=did):
+                stored = self.run_in_bash(ask, did=did)
+                self.assertEqual(stored, ask)
+                self.nothing_ran(stored)
