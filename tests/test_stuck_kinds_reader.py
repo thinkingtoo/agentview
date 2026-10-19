@@ -238,6 +238,13 @@ class LocalCommands(Base):
             with self.subTest(words=words[:30]):
                 self.assertIsNone(self.failure([api_error(120), local(60, words)]))
 
+    def test_the_models_own_reply_is_never_a_local_command_whatever_it_begins_with(self):
+        # Only the person's records are local. A reply from the model that
+        # happens to begin with one of the tags is the model speaking again.
+        reply = {"type": "assistant", "timestamp": stamp(60),
+                 "message": {"content": [{"type": "text", "text": NAME + " is what I ran"}]}}
+        self.assertIsNone(self.failure([api_error(120), reply]))
+
     def test_a_tool_result_in_list_form_is_not_a_local_command(self):
         result = {"type": "user", "timestamp": stamp(60),
                   "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": STDOUT}]}}

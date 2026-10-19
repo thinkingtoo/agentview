@@ -189,6 +189,16 @@ class Hung(Kind):
             with self.subTest(junk=junk):
                 self.assertEqual(self.stuck(hung(quiet=40.0, turnOver=junk))["kind"], "hung")
 
+    def test_only_a_busy_session_has_a_time_it_has_not_been_moving(self):
+        # `silentFor` is how long a busy session has shown no sign of life. One
+        # waiting on the person, or idle, has none, whatever its subagents did.
+        def silent(row):
+            return self.roster(row)["blocks"][0]["members"][0]["silentFor"]
+        for status in ("waiting", "idle"):
+            with self.subTest(status=status):
+                self.assertIsNone(silent(session("a", status=status, quietFor=500.0, subQuiet=15.0)))
+        self.assertEqual(silent(hung(quiet=14.0)), 14.0)
+
     def test_a_session_with_a_menu_open_is_never_hung(self):
         self.assertIsNone(self.stuck(session("a", status="waiting", waitingFor="dialog open",
                                              quietFor=500.0)))
