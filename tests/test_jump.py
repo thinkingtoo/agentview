@@ -69,6 +69,25 @@ class ChooseRoute(unittest.TestCase):
             tmux="", panes=PANES, clients=CLIENTS, konsole=KONSOLE))
 
 
+# A background session (`claude --bg`) has no terminal of its own. Its job id
+# is eight hex digits; the terminal that shows it is a separate `claude attach`.
+NOWHERE = dict(tty="", ancestry=[], tmux="", panes=PANES, clients=CLIENTS, konsole=KONSOLE)
+
+
+class BackgroundRoute(unittest.TestCase):
+    def test_a_background_session_with_no_viewer_is_attached_in_a_new_tab(self):
+        route = jump.choose_route(job="3f9a0c2e", **NOWHERE)
+        self.assertEqual(route["steps"], [])
+        self.assertIsNone(route["window_pid"])
+        self.assertEqual(route["open"], ["claude", "attach", "3f9a0c2e"])
+
+    def test_only_a_job_id_can_reach_the_command_line(self):
+        # The id comes from a peer file; whatever it holds must never be able
+        # to pass as an option or a second argument.
+        for bad in ("", "--help", "3f9a0c2e --x", "3F9A0C2E", "3f9a0c2", "3f9a0c2e0", None, 12345678, ["3f9a0c2e"]):
+            self.assertIsNone(jump.choose_route(job=bad, **NOWHERE), bad)
+
+
 class TitleSteps(unittest.TestCase):
     def test_wezterm_gets_an_explicit_tab_title(self):
         # Verified: `tab_title` is a separate field that survives the OSC

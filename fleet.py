@@ -7,6 +7,7 @@ The provider gives the facts; the core gives the voice.
 """
 import collections
 import concurrent.futures
+import functools
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from pathlib import Path
 
 import jump
 import lines
+import projects
 import providers
 import seen
 from providers.base import CAPABILITIES, STATUSES, on_a_terminal
@@ -301,6 +303,9 @@ def sessions(providers=None):
             "after": config_value("stuck_after_minutes", 5),
             "tool_after": config_value("long_tool_minutes", 20),
             "waiting_after": config_value("waiting_after_seconds", 20) / 60,
+            # How long a busy session may go without a sign of life before
+            # it counts as not moving.
+            "hung_after": config_value("hung_after_minutes", 10),
         }
         now = time.time()
         out, failed, answered = [], {}, set()
@@ -344,9 +349,13 @@ def look(key):
     hit = find(key)
     if not hit:
         return None
-    p, s = hit
-    seen.mark(key, _int(s.get("updatedAt")))
+    mark_seen(key, hit[1])
     return hit
+
+
+def mark_seen(key, s):
+    """Note that you have seen this session as it is now."""
+    seen.mark(key, _int(s.get("updatedAt")))
 
 
 def jump_to(p, s):
@@ -372,7 +381,7 @@ def jump_to(p, s):
 DEFAULTS = {
     "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "",
     "waitingFor": "", "boss": False, "bg": False, "title": "", "prompt": "",
-    "branch": "",
+    "branch": "", "track": "", "attach": "", "noJump": "",
 }
 
 MAX_EXTRAS = 8
@@ -460,6 +469,16 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
             waiting_for=(now * 1000 - updated) / 60000,
             waiting_after=thresholds["waiting_after"],
             named=bool(waiting_for), unseen=unseen)
+    sub_quiet = _minutes(raw.get("subQuiet"))
+    tasks = tasks_of(raw.get("bgTasks"))
+    sign, moving = movement_of(
+        status=status, quiet=quiet, sub_quiet=sub_quiet, in_flight=in_flight,
+        doing=_text(raw.get("doing")), cpu=bool(raw.get("shellCpu")), tasks=tasks,
+        status_for=(now * 1000 - updated) / 60000 if updated else None,
+        hung_after=thresholds.get("hung_after", 10))
+    moves = {"writes": writes_of(raw.get("writes")), "subQuiet": sub_quiet,
+             "bgTasks": tasks, "shellCpu": bool(raw.get("shellCpu")),
+             "movement": sign, "moving": moving}
     row = {}
     for k, default in DEFAULTS.items():
         got = raw.get(k)
@@ -476,6 +495,9 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         "project": project, "routine": routine,
         "assigned": key in assigned,
         "suggestion": guess,
+        # Only the round needs them, for the guess; `roster()` drops them
+        # before the rows go anywhere.
+        "paths": paths,
         "quietFor": round(quiet, 1) if quiet is not None else None,
         "toolFor": round(in_flight, 1) if in_flight is not None else None,
         "waitingFor": waiting_for,
@@ -486,7 +508,10 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         "team": [x for x in (raw.get("team") or []) if isinstance(x, str)],
         "bg": bool(raw.get("bg")),
         "flag": flag,
+        **moves,
         "canJump": can_jump,
+        # A provider that cannot jump has no terminal to attach to: the field is emptied.
+        "attach": row["attach"] if "jump" in caps else "",
         "extras": extras_of(raw.get("extras")),
         # What it is doing while it works, and what it left you with when it
         # stopped. Never both: a busy session has no line of its own.
@@ -499,6 +524,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
 # ---------------------------------------------------------------- roster
 
 ROUTINES = "Routines"
+NO_PROJECT = projects.NO_PROJECT
 
 
 def sessions_in(groups):
@@ -507,7 +533,8 @@ def sessions_in(groups):
 
 
 def roster(providers=None):
-    """Sessions grouped into project blocks, liveliest project first.
+    """The page's data: `blocks` (sessions grouped into project blocks,
+    liveliest project first) and `columns` (the overview, made from them).
 
     Project-first: the question is what is happening, and who is on it.
 
@@ -519,7 +546,15 @@ def roster(providers=None):
     swallowed into it.
     """
     groups = {}
+    listed = {}
     for s in sessions(providers):
+        # A session is one `provider:id`. A provider that lists it twice has
+        # still only one session to show, and one to count for the chime --
+        # and if only one of the records knows it leads a track, that one.
+        first = listed.get(s["key"])
+        if first is None or (s["boss"] and not first["boss"]):
+            listed[s["key"]] = s
+    for s in listed.values():
         key = (True, ROUTINES) if s["routine"] else (False, s["project"] or "")
         groups.setdefault(key, []).append(s)
 
@@ -567,11 +602,141 @@ def roster(providers=None):
     pinned = config_value("pinned", [])
     for b in blocks:
         b["pinned"] = b["project"] in pinned
-    return order_blocks(blocks, pinned)
+    blocks = order_blocks(blocks, pinned)
+    columns = columns_of(blocks)
+    for s in everyone:
+        s.pop("paths", None)
+    return {"blocks": blocks, "columns": columns}
 
 
-MIN_VOTES = 3          # below this it is noise, not a habit
-LEAD = 1.5             # the winner has to be clearly ahead of the runner-up
+def columns_of(blocks):
+    """What the overview page draws: one column per project, in display order.
+
+    The sessions come from the blocks, but the grouping is the overview's own
+    (`projects.assign_all`): a project is what the person thinks of, not the
+    folder a block was keyed by. The page reads these and decides nothing of
+    its own. Routines are not on the page; their sessions stay in `blocks`,
+    which the chime reads.
+    """
+    folder_rule = functools.partial(resolve_project, shelves=config())
+    names = config_value("names", {})
+    pinned = config_value("pinned", [])
+    members = [m for b in blocks if not b["routines"] for m in b["members"]]
+    by_key = projects.assign_all(members, folder_rule, config_value("assign", {}))
+    grouped = {}
+    for m in members:
+        grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names),
+                _column_order(rows, by_key[rows[0]["key"]], names, pinned))
+               for rows in grouped.values()]
+    return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
+
+
+def _column_name(project, names):
+    return (projects.display_name(project, names) if project["raw"]
+            else names.get("No project") or "No project")
+
+
+def _column(rows, project, folder_rule, names):
+    # A boss leads its column, whatever the activity: who leads before who
+    # works. The rest are in the order the blocks have always used.
+    rows = order_members(list(rows))
+    rows.sort(key=lambda s: not s["boss"])
+    tiles = [tile_of(m, _suggestion(m, project, folder_rule, names)) for m in rows]
+    return {
+        "project": project["id"], "raw": project["raw"], "kind": project["kind"],
+        "name": _column_name(project, names),
+        "strip": strip_of(rows), "summary": mix_of(tiles),
+        "sessions": tiles,
+    }
+
+
+def _column_order(rows, project, names, pinned):
+    """Your pins lead, in your order; then the tracks, the repositories and
+    the folders; No project last whatever. Inside a kind they go by name and
+    stay put: a column that jumps sideways because a session woke up is the
+    reshuffling this page exists to stop."""
+    pin = None if project is NO_PROJECT else projects.pin_rank(project, pinned)
+    return (project is NO_PROJECT,
+            len(pinned) if pin is None else pin,
+            projects.COLUMN_RANK[project["kind"]],
+            _column_name(project, names).casefold(), project["id"])
+
+
+def _suggestion(m, project, folder_rule, names):
+    """Where a session with no project probably belongs, as the one click
+    that puts it there -- or None."""
+    guessed = projects.guess(m.get("paths") or [], folder_rule) if project is NO_PROJECT else None
+    if not guessed:
+        return None
+    return {"project": guessed["id"], "name": projects.display_name(guessed, names)}
+
+
+def tile_of(m, suggestion=None):
+    """One session as a tile: today's data, finished for the page to print.
+
+    The page never has to decide which of the session's words to show.
+    """
+    # Your words first, then the session's, then Claude Code's title -- and
+    # nothing at all when that only says the name again.
+    line = m["title"] if m["overridden"] else (m["did"] or m["title"])
+    # The chime keeps reading the flag. The tile says it through the movement
+    # sign instead where the sign is the better word: a long call is a wait,
+    # and a session that is moving is not stuck.
+    flag = None if m["flag"] == "tool" or (m["flag"] == "stuck" and m["moving"]) else m["flag"]
+    return {
+        "key": m["key"], "name": m["name"], "provider": m["provider"],
+        "status": m["status"], "suggestion": suggestion,
+        "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
+        "line": "" if line.strip() == m["name"].strip() else line,
+        "jump": jump_of(m),
+        "flag": flag, "flagNote": flag_note(m) if flag else "",
+        "movement": m["movement"], "moving": m["moving"],
+        # The chime rings for a blocked session whatever its flag says, so the
+        # tile carries what it is asking, the way the old row did.
+        "blocked": m["blocked"], "need": need_of(m),
+        # What the filter box looks through, so the page does not have to know
+        # which of a session's words are searchable.
+        "find": "\n".join(m[k] for k in ("name", "title", "did", "ask", "prompt",
+                                         "cwd", "branch")).lower(),
+    }
+
+
+def jump_of(m):
+    """How the tile reaches its session: a pane that already shows it, a new
+    tab that attaches to it, or nothing -- and then why, so the tile can say
+    so before anyone clicks."""
+    if m["canJump"]:
+        return {"via": "pane"}
+    if m.get("attach"):
+        return {"via": "attach"}
+    return {"via": "none", "reason": m.get("noJump") or "no terminal"}
+
+
+def need_of(m):
+    """What a session wants from you: its own words when it asks one thing,
+    a count when it asks several -- quoting the first of four misrepresents
+    the size of the job."""
+    if m["n"] <= 0:
+        return ""
+    return m["ask"] if m["n"] == 1 and m["ask"] else f"{m['n']} answers needed"
+
+
+def flag_note(m):
+    """What a flag adds to its word: what a waiting session is blocked on, or
+    the minutes a stuck session has been quiet and a tool call has run."""
+    if m["flag"] == "waiting":
+        return m["waitingFor"]
+    if m["flag"] == "stuck":
+        return f"{int(m['quietFor'] + 0.5)}m"
+    if m["flag"] == "tool":
+        minutes = m["toolFor"] if m["toolFor"] is not None else m["quietFor"]
+        return f"{int(minutes + 0.5)}m"
+    return ""
+
+
+MIN_VOTES = projects.MIN_VOTES
+LEAD = projects.LEAD
 
 
 def order_members(members):
@@ -615,6 +780,145 @@ def suggest_project(paths, shelves):
     if len(ranked) > 1 and count < ranked[1][1] * LEAD:
         return None
     return top
+
+
+# --------------------------------------------------------------- movement
+
+STRIP_SLOTS = 30
+
+# Open background jobs kept per session. More than this is a runaway, not a list.
+MAX_JOBS = 8
+
+# A write this recent is "writing"; older and still moving, it says how long.
+WRITING_SECS = 60
+
+# A command, or a background job, is evidence of movement for this long and
+# no longer. Past it the sign is still shown, the evidence is not: a session
+# whose last tool never came back, with something left running under it, is
+# not made to look alive for as long as that something runs.
+WAIT_MAX_MINUTES = 360
+
+
+def writes_of(value):
+    """A provider's strip, if it is one: 30 counts, each a whole number or
+    None for a minute it could not see. Anything else is not believed."""
+    if (isinstance(value, list) and len(value) == STRIP_SLOTS
+            and all(v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0)
+                    for v in value)):
+        return list(value)
+    return None
+
+
+def tasks_of(value):
+    """Open background jobs a provider reports: a label and minutes running."""
+    out = []
+    for t in value if isinstance(value, list) else ():
+        since = _minutes(t.get("since")) if isinstance(t, dict) else None
+        if since is not None:
+            out.append({"label": " ".join(_text(t.get("label")).split())[:80]
+                        or "a background job", "since": round(since, 1)})
+    return out[:MAX_JOBS]
+
+
+def ago_text(minutes):
+    """'8s', '3 min', '2 h', '3 d': the way a short time is said."""
+    if minutes * 60 < 60:
+        return f"{int(round(minutes * 60))}s"
+    if minutes < 60:
+        return f"{int(minutes)} min"
+    if minutes < 48 * 60:
+        return f"{int(minutes // 60)} h"
+    return f"{int(minutes // 1440)} d"
+
+
+def span_text(minutes):
+    return "<1 min" if minutes < 1 else ago_text(minutes)
+
+
+def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after):
+    """What shows that a session is alive: (the sign for its tile, moving).
+
+    Moving is any of: it or a subagent wrote recently; a command it is
+    waiting on has CPU under its shell; a background job it started is open
+    with a shell behind it (the provider only reports those); a busy session
+    that wrote within `hung_after` minutes. The peer `status` alone is never
+    evidence, and CPU with no call in flight is a shell left behind.
+
+    The sign is for the person: writing, waiting on something and since
+    when, or idle since when. A session that wrote nothing it can show and
+    waits on nothing has none.
+    """
+    # An idle session's last records ended its turn, and a subagent that wrote
+    # before that is history: both say the session stopped. A session waiting
+    # on a dialog last wrote its question. Only a busy session's own writes
+    # are the session working.
+    if status == "idle":
+        sub_quiet = None
+    own = quiet if status == "busy" else None
+    latest = min((m for m in (own, sub_quiet) if m is not None), default=None)
+    call = in_flight is not None
+    jobs = sorted(tasks, key=lambda t: -t["since"])
+    subagent = sub_quiet is not None and sub_quiet < hung_after
+    evidence = ((call and cpu and in_flight <= WAIT_MAX_MINUTES)
+                or any(t["since"] <= WAIT_MAX_MINUTES for t in jobs)
+                or subagent)
+    # A provider that says nothing about a busy session has only the moment
+    # the status changed to go on: that counts for `hung_after` minutes, like
+    # a write would, and no longer. The status has no heartbeat.
+    unknown = (status == "busy" and quiet is None and sub_quiet is None
+               and status_for is not None and status_for < hung_after)
+    recent = status == "busy" and latest is not None and latest < hung_after
+    moving = bool(evidence or unknown or recent)
+
+    def writing(minutes):
+        return {"kind": "writing", "ago": int(round(minutes * 60)),
+                "text": f"writing · {ago_text(minutes)} ago"}
+
+    if latest is not None and latest * 60 <= WRITING_SECS:
+        return writing(latest), moving
+    if call or jobs or subagent:
+        if call:
+            on, since = doing or "a command", in_flight
+        elif jobs:
+            on = jobs[0]["label"] if len(jobs) == 1 else f"{len(jobs)} background jobs"
+            since = jobs[0]["since"]
+        else:
+            on, since = "a subagent", quiet if quiet is not None else sub_quiet
+        return {"kind": "waiting", "on": on, "since": round(since, 1),
+                "text": f"waiting on: {on}, {span_text(since)}"}, moving
+    if recent:
+        return writing(latest), moving
+    if status == "idle":
+        return {"kind": "idle", "since": round(status_for, 1) if status_for is not None else None,
+                "text": "idle" if status_for is None else f"idle {span_text(status_for)}"}, moving
+    return None, moving
+
+
+def strip_of(members):
+    """The project's strip: the writes of every session in it, minute by
+    minute, oldest first. A minute any of them could not see is unknown for
+    the project too. A session whose provider does not count writes is left
+    out rather than counted as quiet."""
+    counted = [m["writes"] for m in members if m.get("writes") is not None]
+    if not counted:
+        return [None] * STRIP_SLOTS
+    return [None if any(w[i] is None for w in counted) else sum(w[i] for w in counted)
+            for i in range(STRIP_SLOTS)]
+
+
+def mix_of(tiles):
+    """'2 moving · 1 stuck · 0 idle' as counts. Stuck wins over moving: a
+    session that needs you needs you even with a job running. A busy session
+    nothing proves is moving is stuck, the way the design calls hung."""
+    mix = {"moving": 0, "stuck": 0, "idle": 0}
+    for t in tiles:
+        if t["blocked"] or t["flag"] in ("waiting", "stuck") or (t["status"] == "busy" and not t["moving"]):
+            mix["stuck"] += 1
+        elif t["moving"]:
+            mix["moving"] += 1
+        else:
+            mix["idle"] += 1
+    return mix
 
 
 def classify(status, quiet, after, in_flight=None, tool_after=20,

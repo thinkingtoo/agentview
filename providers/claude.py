@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 import lines
-from providers import registry
+from providers import procs, registry
 from providers.base import (Provider, Tailed, on_a_terminal,
                             read_from as _read_from)
 
@@ -132,15 +132,39 @@ PATH_IN_TEXT = re.compile(r"(?:~|/home/[\w.-]+)/[\w./@-]+")
 SID_RE = re.compile(r"^[\w-]{1,80}$")
 
 
-def is_boss(sid, cfg=None):
-    """Has claude-boss registered this session? A regular file of this user."""
+MARKER_READ = 256
+
+
+def boss_marker(sid, cfg=None):
+    """The track a registered boss's marker names -- "" when it names none --
+    or None for a session that is no boss.
+
+    A regular file of this user, opened without following a link: the marker
+    is read and checked through the one descriptor, so it cannot be swapped
+    between the check and the read.
+    """
     if not sid or not SID_RE.match(sid):
-        return False
+        return None
+    path = Path(cfg or claude_dir()) / "pm" / ".boss-sessions" / sid
     try:
-        st = os.lstat(Path(cfg or claude_dir()) / "pm" / ".boss-sessions" / sid)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
-        return False
-    return stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid()
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            return None
+        text = os.read(fd, MARKER_READ).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return (text.splitlines() or [""])[0].strip()
+
+
+def is_boss(sid, cfg=None):
+    """Has claude-boss registered this session?"""
+    return boss_marker(sid, cfg) is not None
 
 
 # How many outstanding calls to remember. Only the newest matters, but a
@@ -148,8 +172,127 @@ def is_boss(sid, cfg=None):
 MAX_USES = 64
 
 
+# Movement is counted per minute, 30 of them, as the records go by. A minute
+# is a whole number of minutes since the epoch; the strip is read off it.
+STRIP_MINUTES = 30
+KEEP_MINUTES = STRIP_MINUTES + 10
+
+
+def _seconds_of(stamp):
+    try:
+        return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except (ValueError, AttributeError, OverflowError):
+        return None
+
+
+def _minute_of(stamp):
+    seconds = _seconds_of(stamp)
+    return None if seconds is None else int(seconds // 60)
+
+
+def _blank_counts():
+    # `seen_from` is the first minute this reader saw from its beginning. 0
+    # means the file was read from the top, so every minute is known; a larger
+    # number means a cold start began mid-file, and earlier minutes are
+    # unknown rather than empty.
+    return {"offset": 0, "ino": None, "head": b"",
+            "minutes": collections.Counter(), "first": None, "seen_from": 0}
+
+
+def _count(state, rec):
+    """One more write, in the minute its record is stamped with. A record with
+    no stamp (a title, a mode switch) is bookkeeping, not the session at work."""
+    minute = _minute_of(rec.get("timestamp"))
+    if minute is None:
+        return
+    state["minutes"][minute] += 1
+    if state["first"] is None or minute < state["first"]:
+        state["first"] = minute
+
+
+def _prune(state):
+    """Minutes the strip can no longer show are not kept. Measured from the
+    newest write, not the clock, so a session quiet for a day keeps its last
+    few minutes and nothing older."""
+    minutes = state["minutes"]
+    if minutes:
+        edge = max(minutes) - KEEP_MINUTES
+        for minute in [m for m in minutes if m < edge]:
+            del minutes[minute]
+
+
+def _cold_counts(state):
+    """The first sight of a big file read only its tail. The first minute in
+    that tail may be cut short, so what is known starts one minute after it."""
+    first = state["first"]
+    state["seen_from"] = (first + 1 if first is not None
+                          else int(time.time() // 60) + 1)
+
+
+def _strip(state, now):
+    """30 per-minute write counts, oldest first, newest (this minute) last.
+    None where this reader was not yet looking."""
+    newest = int(now // 60)
+    return [None if minute < state["seen_from"] else state["minutes"].get(minute, 0)
+            for minute in range(newest - STRIP_MINUTES + 1, newest + 1)]
+
+
+# Background commands the session started and has not been told are over.
+# Only an id that starts with `b` is a shell task (a background Bash, or a
+# Monitor); an `a` is a background agent, whose evidence is its own transcript.
+MAX_TASKS = 32
+TASK_ID = re.compile(r"<task-id>([^<]+)</task-id>")
+TASK_STATUS = re.compile(r"<status>(completed|failed|killed|stopped)</status>")
+
+
+def _tasks(state, rec):
+    """Open and close background tasks from one record.
+
+    A task opens when a tool result hands back its id. It closes when the
+    session is told it ended (a task-notification, which reaches the file as
+    a queued command, an attachment or a typed turn) or when it stops it
+    itself. A notice quoted inside a tool result is somebody else's text, not
+    the session being told.
+    """
+    tasks = state["tasks"]
+    result = rec.get("toolUseResult")
+    if isinstance(result, dict):
+        stopped = result.get("task_id")
+        if isinstance(stopped, str):
+            tasks.pop(stopped, None)
+        opened = result.get("backgroundTaskId") or result.get("taskId")
+        stamp = rec.get("timestamp")
+        if (isinstance(opened, str) and opened.startswith("b")
+                and isinstance(stamp, str) and opened not in tasks):
+            label = "a background job"
+            content = (rec.get("message") or {}).get("content")
+            for part in content if isinstance(content, list) else ():
+                call = state["uses"].get(part.get("tool_use_id")) if isinstance(part, dict) else None
+                if call:
+                    label = activity([(call[1], call[2])]) or label
+                    break
+            tasks[opened] = {"stamp": stamp, "label": label}
+            while len(tasks) > MAX_TASKS:
+                del tasks[next(iter(tasks))]
+    kind = rec.get("type")
+    if kind == "queue-operation":
+        text = rec.get("content")
+    elif kind == "attachment":
+        text = (rec.get("attachment") or {}).get("prompt")
+    elif kind == "user":
+        text = (rec.get("message") or {}).get("content")
+    else:
+        text = None
+    if isinstance(text, str) and "<task-id>" in text:
+        for notice in text.split("</task-notification>"):
+            task, status = TASK_ID.search(notice), TASK_STATUS.search(notice)
+            if task and status:
+                tasks.pop(task.group(1), None)
+
+
 def _blank_state():
-    return {"offset": 0, "ino": None, "head": b"", "title": "", "prompt": "", "branch": "",
+    return {**_blank_counts(),
+            "title": "", "prompt": "", "branch": "", "tasks": {},
             "uses": {}, "done": set(), "said": "", "spoke": "",
             "sent": collections.Counter(),
             "paths": collections.deque(maxlen=400)}
@@ -163,6 +306,8 @@ def _absorb(state, text):
             rec = json.loads(line)
         except ValueError:
             continue
+        _count(state, rec)
+        _tasks(state, rec)
         kind = rec.get("type")
         if kind == "ai-title" and rec.get("aiTitle"):
             state["title"] = rec["aiTitle"]
@@ -228,11 +373,13 @@ def _absorb(state, text):
     for tid in list(state["uses"])[:-MAX_USES]:
         state["uses"].pop(tid, None)
         state["done"].discard(tid)
+    _prune(state)
     return state
 
 
 def _cold(state, path):
     """What the tail of a big transcript cannot answer, read once."""
+    _cold_counts(state)
     if not state["title"]:
         # A title set early and never again needs the whole file.
         head_text, _ = _read_from(path, 0)
@@ -245,8 +392,22 @@ def _cold(state, path):
                 state["title"] = rec["aiTitle"]
 
 
+def _absorb_counts(state, text):
+    """A subagent's file: nothing is read out of it but when it wrote."""
+    for line in text.splitlines():
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(rec, dict):
+            _count(state, rec)
+    _prune(state)
+    return state
+
+
 TAIL = Tailed(_blank_state, _absorb, _cold)
 _cache = TAIL.cache
+SUBS = Tailed(_blank_counts, _absorb_counts, lambda state, path: _cold_counts(state))
 
 
 # What each tool is, said the way you would say it. Anything not here says
@@ -336,7 +497,7 @@ def _fit(text):
     return text if len(text) <= ASK_LIMIT else text[:ASK_LIMIT - 1].rstrip() + "…"
 
 
-def _view(state):
+def _view(state, now):
     # Only calls in the session's newest message. An unanswered call the
     # session has since talked past is not running -- and because this file
     # is read incrementally, it would otherwise be remembered forever and
@@ -349,8 +510,8 @@ def _view(state):
         try:
             started = max(datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
                           for s in stamps)
-            now = datetime.datetime.now(datetime.timezone.utc)
-            pending = max(0.0, (now - started).total_seconds() / 60)
+            current = datetime.datetime.fromtimestamp(now, datetime.timezone.utc)
+            pending = max(0.0, (current - started).total_seconds() / 60)
         except ValueError:
             pending = None
     return {"title": state["title"], "prompt": state["prompt"],
@@ -362,16 +523,78 @@ def _view(state):
             # Liveliest correspondent first: a boss's team, in the order it
             # actually deals with them.
             "sent": [name for name, _ in state["sent"].most_common()],
-            "pending": pending}
+            "pending": pending,
+            "writes": _strip(state, now),
+            # Open background shells, oldest first, with how long each has run.
+            "tasks": sorted(({"id": tid, "label": t["label"],
+                              "since": max(0.0, (now - started) / 60)}
+                             for tid, t in state["tasks"].items()
+                             if (started := _seconds_of(t["stamp"])) is not None),
+                            key=lambda t: -t["since"])}
 
 
-def scan_cached(path):
+def _subagents(path, now):
+    """The session's subagents: their transcript states, and how many minutes
+    ago the newest of them wrote (None when it has none).
+
+    They are files under the session's own folder, so they are read here, as
+    part of the session they work for, and are never sessions of their own:
+    nothing lists them as peers. A file untouched for longer than the strip
+    shows cannot add to it, and is not even opened.
+    """
+    folder = path.with_suffix("") / "subagents"
+    states, quiet = [], None
+    try:
+        entries = list(os.scandir(folder))
+    except OSError:
+        return states, quiet
+    for entry in entries:
+        if not entry.name.endswith(".jsonl"):
+            continue
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        age = max(0.0, (now - mtime) / 60)
+        quiet = age if quiet is None else min(quiet, age)
+        if age > KEEP_MINUTES:
+            SUBS.cache.pop(("state", entry.path), None)
+            continue
+        states.append(SUBS.scan(Path(entry.path)))
+    return states, quiet
+
+
+def _add(strip, other):
+    """Two strips summed, minute by minute. A minute either of them did not
+    see is a minute nobody saw."""
+    return [None if a is None or b is None else a + b for a, b in zip(strip, other)]
+
+
+def scan_cached(path, now=None):
     """What the page needs from a transcript, reading only what is new."""
-    return _view(TAIL.scan(path))
+    try:
+        path.stat()
+    except OSError:
+        return dict(EMPTY)
+    return _view(TAIL.scan(path), time.time() if now is None else now)
+
+
+def scan_session(path, now=None):
+    """A live session's transcript, and its subagents' writes counted in. The
+    archive only wants a title and calls `scan_cached`; looking into a
+    subagent folder is for a session that is running."""
+    view = scan_cached(path, now)
+    if view["writes"] is None:
+        return view
+    now = time.time() if now is None else now
+    subs, view["subQuiet"] = _subagents(path, now)
+    for state in subs:
+        view["writes"] = _add(view["writes"], _strip(state, now))
+    return view
 
 
 EMPTY = {"title": "", "prompt": "", "branch": "", "paths": [], "said": "",
-         "sent": [], "pending": None, "doing": ""}
+         "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": []}
 
 
 def _peers(cfg):
@@ -379,7 +602,70 @@ def _peers(cfg):
     return registry.records(cfg)
 
 
-def session(rec, cfg=None, light=False):
+def _str(rec, key):
+    """A peer file field that must be text, or "" -- a hand-edited or newer
+    file with something else in it must not be able to stop a poll."""
+    got = rec.get(key)
+    return got if isinstance(got, str) else ""
+
+
+def reach(rec, proc="/proc", running=None, rivals=()):
+    """How a click gets to this session: `canJump`, `jobId`, `attach`, `noJump`.
+
+    A session at a terminal has a pane to raise. A background session
+    (`claude --bg`) has none of its own: what shows it is a `claude attach`
+    in some window, so it is that window's pane when there is one, and
+    otherwise a new tab that attaches (`attach` is the job id then). One
+    attached somewhere nothing can raise, or by a name another session has
+    too, is neither: attaching again could put two windows on one
+    conversation, so `noJump` says why.
+    """
+    # Imported here: jump -> scope -> log -> this module would be a cycle.
+    import jump
+    way = {"canJump": False, "jobId": "", "attach": "", "noJump": ""}
+    if rec.get("kind") != "bg":
+        way["canJump"] = rec.get("kind") == "interactive" and on_a_terminal(rec.get("pid"), proc)
+        return way
+    job = rec.get("jobId")
+    if not jump.is_job(job):
+        return way
+    way["jobId"] = job
+    sid, name = _str(rec, "sessionId"), _str(rec, "name")
+    running = jump.attaches(proc) if running is None else running
+    shown = jump.viewers(job, sid, name, proc, running, rivals)
+    if not shown and jump.doubtful(job, sid, name, proc, running, rivals):
+        way["noJump"] = jump.MAY_BE_SHOWN
+    elif not shown:
+        way["attach"] = job
+    elif any(on_a_terminal(pid, proc) for pid in shown):
+        way["canJump"] = True
+    else:
+        way["noJump"] = "attached, but in no window that can be raised"
+    return way
+
+
+def _processes(rec, summary, status, shells):
+    """Open background shells and CPU under the session, from `/proc`.
+
+    Only looked at when the session has something a process could belong to:
+    a call that has not come back, or a background task it was not told had
+    ended. A session with neither has nothing to wait on, and a shell burning
+    CPU under it is somebody else's. A task counts only while the shell that
+    writes to its own output file is alive: a task whose shell died and sent
+    no notice (the session was resumed, say) is not running, and another
+    command's shell does not make it so.
+    """
+    tasks = summary["tasks"]
+    if shells is None or not rec.get("pid") or not (
+            tasks or (status == "busy" and summary["pending"] is not None)):
+        return [], False
+    seen = shells.look(rec["pid"])
+    if seen is None:
+        return [], False
+    return [t for t in tasks if t["id"] in seen["tasks"]], seen["cpu"]
+
+
+def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None, rivals=()):
     """The facts about one live peer, with its transcript summary attached.
 
     `light` skips the transcript: a click only needs to know the session is
@@ -388,7 +674,7 @@ def session(rec, cfg=None, light=False):
     cwd = rec.get("cwd") or ""
     sid = rec.get("sessionId") or ""
     transcript = transcript_for(sid, cwd, cfg) if sid and not light else None
-    summary = scan_cached(transcript) if transcript else EMPTY
+    summary = scan_session(transcript) if transcript else EMPTY
     quiet = None
     if transcript:
         try:
@@ -400,7 +686,9 @@ def session(rec, cfg=None, light=False):
     # over either way. The contract has no such status: it is idle, flagged.
     bg = status == "shell"
     routine = routine_of(rec, cfg)
-    boss = is_boss(sid, cfg)
+    track = boss_marker(sid, cfg)
+    boss = track is not None
+    background, cpu = _processes(rec, summary, status, shells)
     return {
         "id": sid,
         "name": rec.get("name") or "(unnamed)",
@@ -422,6 +710,10 @@ def session(rec, cfg=None, light=False):
         "waitingFor": rec.get("waitingFor") or "",
         "said": summary["said"],
         "boss": boss,
+        # The name of the boss's tracker, which is the project its workers
+        # share. Read from the marker; the core falls back to the pane's name
+        # when the marker names none.
+        "track": track or "",
         "team": summary["sent"] if boss else [],
         # A routine is never guessed for: it belongs to the routine that
         # started it, whatever files it happens to touch on the way.
@@ -429,13 +721,26 @@ def session(rec, cfg=None, light=False):
         # Cheap: a session on a pty is hosted by some emulator, so a route
         # exists. Working out which one costs subprocesses, so that waits
         # until you actually click.
-        "canJump": (rec.get("kind") == "interactive"
-                    and on_a_terminal(rec.get("pid"))),
+        **reach(rec, proc, running, rivals),
         "title": summary["title"],
         "prompt": summary["prompt"],
         "branch": summary["branch"],
         "doing": summary["doing"],
+        # Movement: writes per minute (own and subagents', oldest first, None
+        # where unseen), minutes since a subagent wrote, open background
+        # tasks with a live shell behind them, and CPU under a shell.
+        "writes": summary["writes"],
+        "subQuiet": summary["subQuiet"],
+        "bgTasks": background,
+        "shellCpu": cpu,
     }
+
+
+def _rivals(rec, live):
+    """The names of the other background sessions, so that a fragment of a
+    name both share is not taken for either."""
+    return [_str(r, "name") for r in live
+            if r.get("kind") == "bg" and r.get("pid") != rec.get("pid")]
 
 
 class ClaudeProvider(Provider):
@@ -445,15 +750,36 @@ class ClaudeProvider(Provider):
     def __init__(self, cfg=None, proc="/proc"):
         self.cfg = cfg
         self.proc = proc
+        self.shells = procs.Shells(proc)
 
     def live(self):
         cfg = self.cfg or claude_dir()
-        return [session(rec, cfg) for rec in registry.live(cfg, self.proc)
-                if not is_helper(rec, cfg)]
+        recs = [rec for rec in registry.live(cfg, self.proc) if not is_helper(rec, cfg)]
+        # Who is attached to a background session is read once for the poll.
+        running = None
+        if any(rec.get("kind") == "bg" for rec in recs):
+            import jump
+            running = jump.attaches(self.proc)
+        return [session(rec, cfg, shells=self.shells, proc=self.proc, running=running,
+                        rivals=_rivals(rec, recs) if rec.get("kind") == "bg" else ())
+                for rec in recs]
 
     def find(self, session_id):
         cfg = self.cfg or claude_dir()
         rec = registry.by_sid(session_id, cfg, self.proc)
         if rec and registry.is_live(rec, self.proc):
-            return session(rec, cfg, light=True)
+            rivals = _rivals(rec, registry.live(cfg, self.proc)) if rec.get("kind") == "bg" else ()
+            return session(rec, cfg, light=True, proc=self.proc, rivals=rivals)
         return None
+
+    def jump(self, session):
+        """A background session is attached to; every other is the core's pane search."""
+        if session.get("kind") != "bg":
+            return None
+        import jump
+        # The record's own name, not the page's "(unnamed)" stand-in for none.
+        cfg = self.cfg or claude_dir()
+        rec = registry.by_sid(session.get("id") or "", cfg, self.proc) or {}
+        return jump.attach(session.get("jobId") or "", sid=_str(rec, "sessionId"),
+                           name=_str(rec, "name"), proc=self.proc,
+                           rivals=_rivals(rec, registry.live(cfg, self.proc)))
