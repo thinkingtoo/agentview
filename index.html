@@ -967,6 +967,7 @@ function tile(t) {
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
     ${stuckBox(t)}
+    ${t.suggestion ? suggestionChip(t) : ""}
   </div>`;
 }
 
@@ -1035,6 +1036,13 @@ document.getElementById("main").addEventListener("click", async ev => {
   setTimeout(() => { if (button.isConnected) button.textContent = "copy"; }, 1500);
 });
 
+// In No project: where the roster thinks this session belongs, one click away.
+// The click is the page's existing `.guess` handler, which assigns it.
+function suggestionChip(t) {
+  return `<div class="assign"><span class="guess" data-sid="${esc(t.key)}"
+    data-project="${esc(t.suggestion.project)}">→ ${esc(t.suggestion.name)}</span></div>`;
+}
+
 // The jump is worked out by the server before anyone clicks: a pane to raise,
 // a new tab that attaches, or none -- and then it says so, greyed, instead of
 // leaving you to click for nothing.
@@ -1060,7 +1068,7 @@ function tileFlag(t) {
 // acknowledged first for the reason given on the row's handler below.
 document.getElementById("main").addEventListener("click", async ev => {
   const el = ev.target.closest(".tile");
-  if (!el) return;
+  if (!el || ev.target.closest(".guess")) return;      // the chip assigns; it does not jump
   const post = (path, body) => fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },

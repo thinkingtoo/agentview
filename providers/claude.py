@@ -132,15 +132,39 @@ PATH_IN_TEXT = re.compile(r"(?:~|/home/[\w.-]+)/[\w./@-]+")
 SID_RE = re.compile(r"^[\w-]{1,80}$")
 
 
-def is_boss(sid, cfg=None):
-    """Has claude-boss registered this session? A regular file of this user."""
+MARKER_READ = 256
+
+
+def boss_marker(sid, cfg=None):
+    """The track a registered boss's marker names -- "" when it names none --
+    or None for a session that is no boss.
+
+    A regular file of this user, opened without following a link: the marker
+    is read and checked through the one descriptor, so it cannot be swapped
+    between the check and the read.
+    """
     if not sid or not SID_RE.match(sid):
-        return False
+        return None
+    path = Path(cfg or claude_dir()) / "pm" / ".boss-sessions" / sid
     try:
-        st = os.lstat(Path(cfg or claude_dir()) / "pm" / ".boss-sessions" / sid)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
-        return False
-    return stat.S_ISREG(st.st_mode) and st.st_uid == os.getuid()
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+            return None
+        text = os.read(fd, MARKER_READ).decode("utf-8", errors="replace")
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    return (text.splitlines() or [""])[0].strip()
+
+
+def is_boss(sid, cfg=None):
+    """Has claude-boss registered this session?"""
+    return boss_marker(sid, cfg) is not None
 
 
 # How many outstanding calls to remember. Only the newest matters, but a
@@ -732,7 +756,8 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
     # over either way. The contract has no such status: it is idle, flagged.
     bg = status == "shell"
     routine = routine_of(rec, cfg)
-    boss = is_boss(sid, cfg)
+    track = boss_marker(sid, cfg)
+    boss = track is not None
     background, cpu = _processes(rec, summary, status, shells)
     return {
         "id": sid,
@@ -756,6 +781,10 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         "asking": asking_of(status, rec.get("waitingFor") or "", summary["calls"]),
         "said": summary["said"],
         "boss": boss,
+        # The name of the boss's tracker, which is the project its workers
+        # share. Read from the marker; the core falls back to the pane's name
+        # when the marker names none.
+        "track": track or "",
         "team": summary["sent"] if boss else [],
         # A routine is never guessed for: it belongs to the routine that
         # started it, whatever files it happens to touch on the way.

@@ -7,6 +7,7 @@ The provider gives the facts; the core gives the voice.
 """
 import collections
 import concurrent.futures
+import functools
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from pathlib import Path
 
 import jump
 import lines
+import projects
 import providers
 import seen
 from providers import base
@@ -380,7 +382,7 @@ def jump_to(p, s):
 DEFAULTS = {
     "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "",
     "waitingFor": "", "boss": False, "bg": False, "title": "", "prompt": "",
-    "branch": "", "attach": "", "noJump": "",
+    "branch": "", "track": "", "attach": "", "noJump": "",
 }
 
 MAX_EXTRAS = 8
@@ -494,6 +496,9 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         "project": project, "routine": routine,
         "assigned": key in assigned,
         "suggestion": guess,
+        # Only the round needs them, for the guess; `roster()` drops them
+        # before the rows go anywhere.
+        "paths": paths,
         "quietFor": round(quiet, 1) if quiet is not None else None,
         "toolFor": round(in_flight, 1) if in_flight is not None else None,
         "waitingFor": waiting_for,
@@ -521,6 +526,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
 # ---------------------------------------------------------------- roster
 
 ROUTINES = "Routines"
+NO_PROJECT = projects.NO_PROJECT
 
 
 def sessions_in(groups):
@@ -542,7 +548,15 @@ def roster(providers=None):
     swallowed into it.
     """
     groups = {}
+    listed = {}
     for s in sessions(providers):
+        # A session is one `provider:id`. A provider that lists it twice has
+        # still only one session to show, and one to count for the chime --
+        # and if only one of the records knows it leads a track, that one.
+        first = listed.get(s["key"])
+        if first is None or (s["boss"] and not first["boss"]):
+            listed[s["key"]] = s
+    for s in listed.values():
         key = (True, ROUTINES) if s["routine"] else (False, s["project"] or "")
         groups.setdefault(key, []).append(s)
 
@@ -591,29 +605,33 @@ def roster(providers=None):
     for b in blocks:
         b["pinned"] = b["project"] in pinned
     blocks = order_blocks(blocks, pinned)
-    return {"blocks": blocks, "columns": columns_of(blocks)}
+    columns = columns_of(blocks)
+    for s in everyone:
+        s.pop("paths", None)
+    return {"blocks": blocks, "columns": columns}
 
 
 def columns_of(blocks):
     """What the overview page draws: one column per project, in display order.
 
-    Made from the blocks, so grouping and order are today's for now. The page
-    reads these and decides nothing of its own. Routines are not on the page;
-    their sessions stay in `blocks`, which the chime reads.
+    The sessions come from the blocks, but the grouping is the overview's own
+    (`projects.assign_all`): a project is what the person thinks of, not the
+    folder a block was keyed by. The page reads these and decides nothing of
+    its own. Routines are not on the page; their sessions stay in `blocks`,
+    which the chime reads.
     """
-    return [column_of(b) for b in blocks if not b["routines"]]
-
-
-def column_of(block):
-    """One block as a column. `project` is the key your own settings are
-    stored against, `name` what the card says, `raw` what the folder rule
-    called it. A session with no project is the one column that has none."""
-    raw = "" if block["orphan"] else block["project"]
-    tiles = [tile_of(m) for m in block["members"]]
-    return {"project": raw, "name": block["label"], "raw": raw,
-            "kind": "none" if block["orphan"] else "folder",
-            "strip": strip_of(block["members"]), "summary": mix_of(tiles),
-            "state": state_of(tiles), "sessions": tiles}
+    folder_rule = functools.partial(resolve_project, shelves=config())
+    names = config_value("names", {})
+    pinned = config_value("pinned", [])
+    members = [m for b in blocks if not b["routines"] for m in b["members"]]
+    by_key = projects.assign_all(members, folder_rule, config_value("assign", {}))
+    grouped = {}
+    for m in members:
+        grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names),
+                _column_order(rows, by_key[rows[0]["key"]], names, pinned))
+               for rows in grouped.values()]
+    return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
 
 
 def state_of(tiles):
@@ -625,7 +643,47 @@ def state_of(tiles):
     return "moving" if any(t["moving"] for t in tiles) else "idle"
 
 
-def tile_of(m):
+def _column_name(project, names):
+    return (projects.display_name(project, names) if project["raw"]
+            else names.get("No project") or "No project")
+
+
+def _column(rows, project, folder_rule, names):
+    # A boss leads its column, whatever the activity: who leads before who
+    # works. The rest are in the order the blocks have always used.
+    rows = order_members(list(rows))
+    rows.sort(key=lambda s: not s["boss"])
+    tiles = [tile_of(m, _suggestion(m, project, folder_rule, names)) for m in rows]
+    return {
+        "project": project["id"], "raw": project["raw"], "kind": project["kind"],
+        "name": _column_name(project, names),
+        "strip": strip_of(rows), "summary": mix_of(tiles),
+        "state": state_of(tiles), "sessions": tiles,
+    }
+
+
+def _column_order(rows, project, names, pinned):
+    """Your pins lead, in your order; then the tracks, the repositories and
+    the folders; No project last whatever. Inside a kind they go by name and
+    stay put: a column that jumps sideways because a session woke up is the
+    reshuffling this page exists to stop."""
+    pin = None if project is NO_PROJECT else projects.pin_rank(project, pinned)
+    return (project is NO_PROJECT,
+            len(pinned) if pin is None else pin,
+            projects.COLUMN_RANK[project["kind"]],
+            _column_name(project, names).casefold(), project["id"])
+
+
+def _suggestion(m, project, folder_rule, names):
+    """Where a session with no project probably belongs, as the one click
+    that puts it there -- or None."""
+    guessed = projects.guess(m.get("paths") or [], folder_rule) if project is NO_PROJECT else None
+    if not guessed:
+        return None
+    return {"project": guessed["id"], "name": projects.display_name(guessed, names)}
+
+
+def tile_of(m, suggestion=None):
     """One session as a tile: today's data, finished for the page to print.
 
     The page never has to decide which of the session's words to show.
@@ -639,7 +697,7 @@ def tile_of(m):
     flag = None if m["flag"] == "tool" or (m["flag"] == "stuck" and m["moving"]) else m["flag"]
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
-        "status": m["status"],
+        "status": m["status"], "suggestion": suggestion,
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
         "line": "" if line.strip() == m["name"].strip() else line,
         "jump": jump_of(m),
@@ -718,8 +776,8 @@ def flag_note(m):
     return ""
 
 
-MIN_VOTES = 3          # below this it is noise, not a habit
-LEAD = 1.5             # the winner has to be clearly ahead of the runner-up
+MIN_VOTES = projects.MIN_VOTES
+LEAD = projects.LEAD
 
 
 def order_members(members):
