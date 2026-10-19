@@ -28,29 +28,35 @@ QUOTES = (
     (re.compile(r"\u00ab([^\u00bb\n]+)\u00bb"), None),
     (re.compile(r"(?<!\w)\u2018([^\u2019\n]+)\u2019(?!\w)"), None),
 )
-# A straight mark that is no part of a pair (or an apostrophe inside a word)
-# means the session's pairing cannot be trusted: which marks open and which
-# close is not for a guess to settle, so nothing of that kind is offered.
-STRAY = {
-    '"': re.compile(r'(?<!\\)"'),
-    "`": re.compile(r"(?<!\\)`"),
-    "'": re.compile(r"(?<!\w)'|'(?!\w)"),
-}
+# A mark that no pair claims, outside every claimed region, means the pairing
+# cannot be trusted: a line cut inside a quote, a quote never closed, a mark the
+# session forgot. A quote left open may hold the quotes of every other kind, so
+# with one on the line nothing quoted is offered. An apostrophe at the end of a
+# word (`users'`, `po'`) is a weaker sign: only the single quotes are doubted.
+STRONG_STRAY = re.compile(r"""(?<!\\)["`]|[\u201c\u201d\u00ab\u00bb\u2018]|(?<!\w)'""")
+WEAK_STRAY = re.compile(r"(?<=\w)'(?!\w)")
 ESCAPED_QUOTE = re.compile(r"\\[\"`]")
 # A quote that comes right after a flag is the argument of that flag (`sh -c
 # "rm -rf x"`, `--command "sudo reboot"`), not a command of its own.
 AFTER_A_FLAG = re.compile(r"(?:^|\s)--?[\w-]+\s+$")
 NESTED_OPENER = re.compile(r"[\u201c\u00ab\u2018]")
+# Programs that run what they are given: a quote after one of them, in the same
+# clause, is meant for the other shell (`ssh maple "sudo reboot"`), not for the
+# person's own.
+RUNNERS = frozenset("""
+ssh watch timeout xargs eval tmux docker kubectl nohup parallel runuser flock gcloud aws heroku fly
+vagrant doas
+""".split())
+CLAUSE_END = re.compile(r"[.!?;:,]\s|[(\[{\u2014\u2013]")
 
 # `$ ` as a shell prompt: after a space, a colon or an opening bracket, then a
-# command word. `$5`
-# and `$HOME` have no space after the sign, `$ 5` no command word, and `20 $`
-# is an amount. A quoted argument is one unit, so the comma in `-m "one, two"`
+# command word. `$5` and `$HOME` have no space after the sign, `$ 5` no command
+# word, and `20 $` is an amount. A quoted argument is one unit, so the comma in `-m "one, two"`
 # does not end the command; the end of the line does, so the match can never
 # fail and the engine never has to try the quoted and the plain way of reading
 # each quote.
 DOLLAR_COMMAND = re.compile(
-    r"(?<!\d)(?:^|[\s:(\[{])\$ +([A-Za-z./~]"
+    r"(?<!\d)(?:^|[\s:(\[{])\$ +([A-Za-z./~(\[{]"
     r"(?:\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\\n])*`|(?<!\w)'[^'\n]*'(?!\w)"
     # A flag with a comma stuck to it (`-F,`) belongs to the command when a
     # quote or another flag comes after it; "-d, then tell me" is a clause.
@@ -61,16 +67,18 @@ DOLLAR_COMMAND = re.compile(
     # a word or a closing quote or bracket, or as a run of dots before a
     # capital letter, but not as part of `find .`, `cd ..` or `go test ./...`
     # (what is left of a command that ends in dots is judged by
-    # `ends_in_a_stray_dot`). A `?` after a space is French typography; a `!`
+    # `ends_in_a_stray_mark`). A `?` after a space is French typography; a `!`
     # after a space is that too at the end or before a capital letter, and
     # otherwise the shell's negation (`find ! -name x`).
-    r"(?=\s\$ |,\s|(?<=[\w\"'`)\]}>])\.(?:\s|$)|\.+\s+(?=[A-Z])"
-    r"|(?<!\s)[?!](?:\s|$)|\s\?(?:\s|$)|\s!(?:\s*$|\s+(?=[A-Z]))"
+    r"(?=\s\$(?:\s|$)|,\s|(?<=[\w\"'`)\]}>])\.(?:\s|$)|\.+\s+(?=[A-Z])"
+    r"|(?<![\s!])[?!](?:\s|$)|\s\?(?:\s|$)|\s!(?:\s*$|\s+(?=[A-Z]))"
+    r"|(?<=[\w\"'`)\]}>])(?:\*\*|__)(?=\s|$|[.,;:!?)])"
     r"|\s[\u2014\u2013]\s|\s\(|[\u00bb\u201d]|\n|$)")
 # What may follow a command for it to be the whole of its line: the full stop,
-# question mark or exclamation mark that ends the sentence. Another prompt does
-# not count: what stands between two prompts could be an argument of the first.
-COMPLETE = re.compile(r"\s*[.?!]*\s*$")
+# question mark or exclamation mark that ends the sentence, and the mark that
+# closes a markdown bold. Another prompt does not count: what stands between
+# two prompts could be an argument of the first.
+COMPLETE = re.compile(r"\s*(?:\*\*|__)?[.?!]*\s*$")
 
 PATHS = ("./", "../", "~/")
 SCRIPT = re.compile(r"\.(sh|bash|py|js|mjs|rb|pl)$")
@@ -154,7 +162,7 @@ def reads_as_command(text):
     if pathlike:
         return bool(SCRIPT.search(first)) or any(FLAG.match(w) for w in rest)
     if ENV_ASSIGNMENT.match(first):
-        return True
+        return reads_as_command(" ".join(rest))
     if first in WRAPPERS:
         return reads_as_command(" ".join(rest))
     if first in KNOWN and any(ARGUMENT_SIGN.search(w) for w in rest):
@@ -170,40 +178,48 @@ OWN_PROGRAM = re.compile(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+|[a-z][\w-]*\.(?:sh|b
 
 
 def reads_as_prompted(text):
-    """What follows a `$ `: the sign says it is a command, so one word is
-    enough, but it must still be a program and not a word of the sentence
-    ("in $ or euros")."""
-    words = text.split()
+    """What follows a `$ `: the same evidence as in quotes (a subcommand, a
+    sign), because `$` is also money and maths in a sentence ("the $ diff or the
+    % diff", "in $ per-seat"). A path is a program by itself; a program of the
+    project's own needs a script name or a sign after it."""
+    words = [w for w in text.split() if w != "$"]
     if not words:
         return False
-    first = words[0]
-    return (first in KNOWN or first.startswith(PATHS)
-            or (first.startswith("/") and first.count("/") > 1 and re.search(r"[A-Za-z]", first) is not None)
-            or ENV_ASSIGNMENT.match(first) is not None or OWN_PROGRAM.fullmatch(first) is not None)
+    first, rest = words[0], words[1:]
+    if first.startswith(PATHS) or (first.startswith("/") and first.count("/") > 1
+                                   and re.search(r"[A-Za-z]", first) is not None):
+        return True
+    return reads_as_command(" ".join(words)) or (
+        OWN_PROGRAM.fullmatch(first) is not None
+        and (bool(SCRIPT.search(first)) or any(ARGUMENT_SIGN.search(w) for w in rest)))
 
 
-QUOTED_RUN = re.compile(r"\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\\n])*`|(?<!\w)'[^'\n]*'(?!\w)")
-QUOTE_OPENER = re.compile(r"[\"`]|(?<!\w)'")
+# What a shell sees: a quote of any kind runs to the next one of its kind, so
+# an apostrophe inside a word ("it's") opens one too.
+SHELL_RUN = re.compile(r"\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\\n])*`|'[^'\n]*'")
+SHELL_QUOTE = re.compile(r"[\"'`]")
 CLOSERS = (("(", ")"), ("[", "]"), ("{", "}"))
 
 
 def cut_or_broken(command):
     """Half a command pasted into a terminal is worse than none: the line was
     cut with an ellipsis, a quote opened in it was never closed, or it holds a
-    bracket that closes something outside it ("(run $ make test)"). An
-    apostrophe inside a word ("it's") does not open a quote."""
+    bracket that closes something outside it ("(run $ make test)"). The shell
+    takes an apostrophe inside a word ("it's") for an open quote, so it counts."""
     return (command.endswith("\u2026")
-            or QUOTE_OPENER.search(QUOTED_RUN.sub(" ", command)) is not None
+            or SHELL_QUOTE.search(SHELL_RUN.sub(" ", command)) is not None
             or any(command.count(close) > command.count(open_) for open_, close in CLOSERS))
 
 
-def ends_in_a_stray_dot(command):
-    """A command that ends in a `.` the session may have meant as the end of
-    its sentence: `rm -rf ~/.cache/maple/*.`, `cd ~.`, `go test ./....`,
-    `pip install -e ..`. The dot is the command's own only as a word by itself
+def ends_in_a_stray_mark(command):
+    """A command that ends in a mark the session may have meant as part of its
+    sentence: a `.` (`rm -rf ~/.cache/maple/*.`, `cd ~.`, `go test ./....`,
+    `pip install -e ..`) or the `**` that closes a markdown bold
+    (`rm -rf cache/***`). The dot is the command's own only as a word by itself
     (`pip install -e .`) or as Go's `/...`."""
     last = command.split()[-1]
-    return command.endswith(".") and last != "." and not last.endswith("/...")
+    return ((command.endswith(".") and last != "." and not last.endswith("/..."))
+            or command.endswith(("**", "__")))
 
 
 def quoted_command(said):
@@ -214,6 +230,14 @@ def quoted_command(said):
     return (reads_as_command(said) and not cut_or_broken(said)
             and not ESCAPED_QUOTE.search(said) and "`" not in said
             and not NESTED_OPENER.search(said) and not said.endswith((",", ";", ":")))
+
+
+def argument_of_a_runner(before):
+    """Whether the words just before a quote, in the same clause, hold a
+    program that runs what it is given: `ssh maple "df -h"`, `timeout 30 ssh
+    maple "df -h"`, `watch -n 5 "kubectl get pods"`."""
+    clause = CLAUSE_END.split(before)[-1]
+    return any(w.strip("()[]{}\"'`,.:;").lower() in RUNNERS for w in clause.split()[-6:])
 
 
 def guess(text):
@@ -231,7 +255,7 @@ def guess(text):
         # backtick would run what it holds when pasted.
         if (reads_as_prompted(command) and COMPLETE.match(text, m.end())
                 and not cut_or_broken(command) and "`" not in command
-                and not ends_in_a_stray_dot(command)):
+                and not ends_in_a_stray_mark(command)):
             found.append(Hit(m.start(1), m.end(), command))
     spans = sorted(((m, mark) for pattern, mark in QUOTES for m in pattern.finditer(text)),
                    key=lambda s: (s[0].start(), -s[0].end()))
@@ -241,15 +265,28 @@ def guess(text):
             continue
         taken.append((m.start(), m.end()))
         claimed.append((m, mark))
-    # A mark outside every claimed region has no partner the session meant.
-    untrusted = {mark for mark, stray in STRAY.items()
-                 if any(not any(start <= s.start() < end for start, end in taken)
-                        for s in stray.finditer(text))}
-    for m, mark in claimed:
+    def claimed_at(position):
+        return any(start <= position < end for start, end in taken)
+
+    # With a quote left open anywhere, which pairs are real is not known.
+    trusted = not any(not claimed_at(s.start()) for s in STRONG_STRAY.finditer(text))
+    single_quotes = not any(not claimed_at(s.start()) for s in WEAK_STRAY.finditer(text))
+    masked = list(text)
+    for start, end in taken:
+        masked[start:end] = "\0" * (end - start)
+    masked = "".join(masked)
+    for m, mark in claimed if trusted else ():
         said = m.group(1)
-        # A quote that hugs a space inside (`"git commit -m "`) is the closing
-        # quote of one phrase paired with the opening of the next.
-        if mark in untrusted or said != said.strip() or AFTER_A_FLAG.search(text[:m.start()]):
+        if mark is None:
+            # « make test » is how French sets it, with a space inside.
+            said = said.strip()
+        elif said != said.strip():
+            # A quote that hugs a space inside (`"git commit -m "`) is the
+            # closing quote of one phrase paired with the opening of the next.
+            continue
+        if (mark == "'" and not single_quotes) or AFTER_A_FLAG.search(text[:m.start()]):
+            continue
+        if argument_of_a_runner(masked[:m.start()]):
             continue
         said = re.sub(r"^\$ +", "", said)
         if quoted_command(said):

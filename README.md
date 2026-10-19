@@ -142,10 +142,11 @@ needs a sign no plain sentence has after it: a flag, a path, a dot between
 letters, a bare number, a string, an `@` or `=`. `sudo` and its kind are
 judged by the command after them. A path starts a command only when it names a
 script (`./deploy.sh`) or a flag follows, because a path with spaces in it
-(`~/Google Drive/My Drive`) is a name. `VAR=1 cmd` counts too. After a `$` one
-word is enough if it is a known program, a path, a script by its name, or a
-lowercase name joined by hyphens or underscores (`maple-sync`); "A/B", "N/A"
-and "Node.js" after a `$` are words of a sentence.
+(`~/Google Drive/My Drive`) is a name. `VAR=1 cmd` counts when a command follows it ("N=12 users" does not). After a
+`$` the same evidence is needed, because `$` is also money and maths in a
+sentence ("the $ diff or the % diff", "in $ per-seat"); a path is a program by
+itself, and a program of the project's own (`maple-sync`) needs a script name or
+a flag, path or other sign after it.
 
 A `$` command is offered only when it is the whole of its line: nothing but
 the sentence's own full stop, `?` or `!` stands after it. Where it ends is read
@@ -166,9 +167,14 @@ command of its own.
 
 A quote opens after a space, a bracket, a colon or a comma and closes before a
 space or punctuation: one glued to a word or an `=` (`--title="x"`) is part of
-an argument. When a straight mark (`"`, `'` or a backtick) stands somewhere
-that no pair claims, which marks open and which close is not known, and no
-quote of that kind is offered on the line.
+an argument. When a quote mark stands somewhere that no pair claims (a quote
+never closed, a line cut inside one), which marks open and which close is not
+known, and no quoted command is offered on the line; an apostrophe at the end
+of a word (`users'`, `po'`) only doubts the single quotes. A quote after a
+program that runs what it is given (`ssh`, `watch`, `timeout`, `docker`,
+`tmux` ...) in the same clause is that program's argument, meant for another
+shell, and so is one right after a flag; neither is a command of its own.
+Between `« »` a space each side is how French sets it.
 
 Known limits, accepted: a program the lists do not know (`tiroir-work next` in
 quotes) gets no button; a title that starts with a tool's name and a sign
@@ -177,11 +183,13 @@ quotes) gets no button; a title that starts with a tool's name and a sign
 with no sentence end after it runs on into the words that close the sentence
 (`Run $ make test now?` offers `make test now`; a colon or a semicolon after
 it does the same, and languages that put the verb last, Dutch above all,
-always do: `Kun je $ make test draaien?` offers `make test draaien`).
+always do: `Kun je $ make test draaien?` offers `make test draaien`). A word
+that is both a program and a word of a sentence after a `$` (`$ diff` as in
+"$ diff or % diff") is judged like a quoted one: it needs a sign.
 
 What is not offered, so that half a command is never one click away: a command
 cut by the line's length, one with a quote left open, a bracket that closes
-something outside it, a backtick (pasted, it would run what it holds), a quote
+something outside it, an apostrophe (to a shell, `it's` opens a quote), a backtick (pasted, it would run what it holds), a quote
 that holds an escaped quote or a quote of its own kind, a quote with a space
 inside against its marks (two phrases mispaired), a quoted command that ends in
 a comma, a quote right after a flag (`sh -c "rm -rf x"`: the argument of that

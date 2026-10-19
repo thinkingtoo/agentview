@@ -173,8 +173,8 @@ class Guess(Base):
         self.assertEqual(self.commands("Is 20 $ . a month fine?"), [])
 
     def test_a_dollar_command_may_be_a_program_of_the_projects_own(self):
-        self.assertEqual(self.commands("Run $ maple-sync next."), ["maple-sync next"])
-        self.assertEqual(self.commands("Could you type $ ls ?"), ["ls"])
+        self.assertEqual(self.commands("Run $ maple-sync --next."), ["maple-sync --next"])
+        self.assertEqual(self.commands("Could you type $ ls -l ?"), ["ls -l"])
 
     def test_a_script_alone_is_a_command_when_its_name_says_it_is_a_script(self):
         self.assertEqual(self.commands("Run `./scripts/deploy-maple.sh` on the server?"),
@@ -293,8 +293,7 @@ class Guess(Base):
         self.assertTrue(tile["stuck"]["context"]["text"].endswith("\u2026"))
         self.assertEqual(tile["guessedCommands"], [])
 
-    def test_an_apostrophe_inside_a_dollar_command_is_not_an_open_quote(self):
-        self.assertEqual(self.commands("Run $ echo it's done."), ["echo it's done"])
+    def test_a_quote_pair_inside_a_dollar_command_keeps_its_apostrophes(self):
         self.assertEqual(self.commands("Run $ git commit -m 'wip' --author 'Alice <a@maple.example>'."),
                          ["git commit -m 'wip' --author 'Alice <a@maple.example>'"])
 
@@ -480,9 +479,9 @@ class Guess(Base):
                     "Is it $ and/or euros?", "Prices in $ e.g. for the US?", "Is $ Node.js the stack?"):
             with self.subTest(ask=ask):
                 self.assertEqual(self.commands(ask), [])
-        for ask, command in (("Run $ maple-sync next.", "maple-sync next"), ("Run $ deploy.sh --dry-run.", "deploy.sh --dry-run"),
+        for ask, command in (("Run $ maple-sync --next.", "maple-sync --next"), ("Run $ deploy.sh --dry-run.", "deploy.sh --dry-run"),
                              ("Run $ /usr/local/bin/maple next.", "/usr/local/bin/maple next"),
-                             ("Run $ tiroir_work next.", "tiroir_work next")):
+                             ("Run $ tiroir_work --next.", "tiroir_work --next")):
             with self.subTest(ask=ask):
                 self.assertEqual(self.commands(ask), [command])
 
@@ -508,6 +507,97 @@ class Guess(Base):
                         "ls ~/maple", "chmod +x deploy.sh"):
             with self.subTest(command=command):
                 self.assertEqual(self.commands(f"Could you run `{command}` for me?"), [command])
+
+
+    def test_a_quoted_command_cut_by_the_length_limit_hides_the_quotes_inside_it(self):
+        # The cut leaves the outer mark open, so the pair inside looks like a
+        # command of its own: `rm -rf` meant for the VPS would run here.
+        lead = "The cache on the VPS is stale after the deploy, and I have no ssh key for it. "
+        for ask in (lead + 'Please run `ssh maple "rm -rf /srv/maple/cache/*" && ssh maple sudo systemctl '
+                           'restart maple-notes` and tell me.',
+                    "Deploy is done, but the restart needs your ssh key. Please run `ssh root@maple.example "
+                    '"sudo systemctl restart maple-notes" && ssh root@maple.example journalctl -u maple-notes`.',
+                    "Il deploy e finito ma il riavvio richiede la tua chiave ssh. Puoi lanciare 'ssh maple "
+                    "\"rm -rf /srv/maple/cache/*\" && ssh maple sudo systemctl restart maple-notes' per favore?",
+                    lead + 'Please run “ssh maple "rm -rf /srv/maple/cache/*" && ssh maple sudo systemctl '
+                           'restart maple-notes” and tell me.'):
+            with self.subTest(ask=ask):
+                self.line("a", ask)
+                tile = self.tile(session("a"))
+                self.assertTrue(tile["stuck"]["context"]["text"].endswith("…"))
+                self.assertEqual(tile["guessedCommands"], [])
+
+    def test_a_dollar_command_that_starts_with_a_bracket_claims_the_quotes_inside_it(self):
+        for ask in ('Run $ [ -f ~/.ssh/maple ] && ssh maple "rm -rf /srv/maple/cache/*"?',
+                    'Could you run $ (cd /srv/maple && ssh maple "sudo systemctl restart maple-notes")?',
+                    'Run $ { cd /srv/maple; ssh maple "sudo reboot"; }?'):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+
+    def test_a_quote_after_a_program_that_runs_commands_is_its_argument(self):
+        for ask in ('Run ssh maple "sudo systemctl restart maple-notes" for me?',
+                    'Run timeout 30 ssh maple "df -h" for me?',
+                    'Run watch -n 5 "kubectl get pods" and tell me when they are all ready?',
+                    'Run ssh -p 2222 maple "df -h" for me?',
+                    'Run tmux send-keys -t maple "make test" Enter and tell me?',
+                    'Run $ make deploy && (ssh maple "sudo systemctl restart maple-notes")?',
+                    'Run docker exec maple-notes "ls -la" for me?'):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+        # Another clause, or a quote that stands before the program, is not its argument.
+        self.assertEqual(self.commands('Run "make test", then ssh maple and tell me.'), ["make test"])
+        self.assertEqual(self.commands('Run "ssh maple" and then "df -h" on it?'), ["df -h"])
+
+    def test_money_with_a_space_after_the_sign_is_not_a_prompt(self):
+        for ask in ("Should the table show the $ diff or the % diff?", "Is the plan billed in $ per-seat?",
+                    "Should prices be shown in $ pre-tax or tax-included?", "Is it the $ source column?",
+                    "Is the bound $ n-1 $?", "The cost is $ cat food per month, right?"):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+
+    def test_a_dollar_command_needs_the_evidence_a_quoted_one_needs(self):
+        # A path is a program by itself; a program of the project's own needs a
+        # script name or a sign; a lone known word is a word.
+        for ask, command in (("Run $ ./deploy-maple.", "./deploy-maple"), ("Run $ ~/bin/maple-sync.", "~/bin/maple-sync"),
+                             ("Run $ maple-sync --next.", "maple-sync --next"), ("Run $ deploy.sh.", "deploy.sh")):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [command])
+        for ask in ("Run $ maple-sync next.", "Could you type $ ls ?", "Run $ make.", "Run $ pytest."):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+
+    def test_an_assignment_in_prose_is_not_a_command(self):
+        for ask in ('The sample is small ("N=12 users"), keep going?',
+                    'Should the label say "CTR=2.1% (was 1.8%)"?', 'Is "A=1 and B=2" the condition you meant?'):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+        self.assertEqual(self.commands('Run "MAPLE_ENV=test make test" for me?'), ["MAPLE_ENV=test make test"])
+
+    def test_a_double_bang_is_the_shells_not_a_sentence_end(self):
+        self.assertEqual(self.commands("If it says permission denied, run $ sudo !!"), [])
+        self.assertEqual(self.commands("If it says permission denied, run $ sudo !!?"), [])
+
+    def test_a_markdown_bold_around_a_command_is_not_part_of_it(self):
+        self.assertEqual(self.commands("**Run $ make test**"), ["make test"])
+        self.assertEqual(self.commands("Run **$ make test**."), [])
+        self.assertEqual(self.commands("Please run $ make test**, then tell me."), [])
+        # A glob that ends in `*` and a bold that closes after it cannot be told apart.
+        self.assertEqual(self.commands("**Run $ rm -rf /srv/maple/cache/***"), [])
+
+    def test_an_apostrophe_in_a_dollar_command_is_an_open_quote_to_the_shell(self):
+        self.assertEqual(self.commands("Run $ make test if that's ok?"), [])
+        self.assertEqual(self.commands("Run $ git commit -m \"it's done\"."), ["git commit -m \"it's done\""])
+
+    def test_french_guillemets_may_hold_a_space_each_side(self):
+        for ask in ("Lance « make test » ?", "Lance « make test » ?",
+                    "Lance « make test » ?"):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), ["make test"])
+
+    def test_an_apostrophe_at_the_end_of_a_word_only_doubts_the_single_quotes(self):
+        self.assertEqual(self.commands('Run "make test" for the users\' notes?'), ["make test"])
+        self.assertEqual(self.commands('Lancia "make test" tra un po\' di tempo?'), ["make test"])
+        self.assertEqual(self.commands("Run 'make test' for the users' notes?"), [])
 
 
 
@@ -571,6 +661,44 @@ class GuessGrid(unittest.TestCase):
                     wrong.append((line, offered))
         self.assertGreater(seen, 10000)
         self.assertEqual(wrong[:12], [], f"{len(wrong)} of {seen} lines offer a wrong text")
+
+    def test_a_line_cut_at_any_position_never_offers_a_piece_of_a_command(self):
+        # The hook cuts a line at 160 characters wherever that falls: inside the
+        # command, inside a quote, between two quotes. Whatever is left must
+        # offer the command whole or nothing.
+        inner = ('ssh maple "rm -rf /srv/maple/cache/*" && ssh maple sudo systemctl restart maple-notes',
+                 "ssh root@maple.example 'sudo systemctl restart maple-notes' && ssh root@maple.example journalctl -u maple-notes",
+                 'docker exec -it maple-notes sh -c "rm -rf /srv/maple/cache/*"',
+                 'git commit -m "Ticket 14: copy buttons, tests" && git push origin feature/maple-notes',
+                 "psql -A -F, -c 'select id, name from notes' notes | tee /tmp/notes.csv",
+                 "MAPLE_ENV=test make test && make build", "find . -name '*.md' -mtime -1 -delete")
+        leads = ("Please run ", "Puoi lanciare ")
+        wrong, seen = [], 0
+        for command in inner:
+            for lead in leads:
+                forms = [f"{lead}$ {command}"] + [f"{lead}{opening}{command}{closing}" for opening, closing in self.QUOTES]
+                for form in forms:
+                    for end in ("?", ".", ""):
+                        line = form + end
+                        for k in range(len(lead), len(line) + 1):
+                            cut = line[:k].rstrip() + "\u2026" if k < len(line) else line
+                            seen += 1
+                            offered = ask_commands.guess(cut)
+                            if not set(offered) <= {command}:
+                                wrong.append((cut, offered))
+        self.assertGreater(seen, 20000)
+        self.assertEqual(wrong[:8], [], f"{len(wrong)} of {seen} cut lines offer a piece")
+
+    def test_money_with_a_space_after_the_dollar_never_offers_a_button(self):
+        leads = ("Is the price in ", "Should the table show the ", "Billed in ", "Le prix en ", "Prezzo in ", "Prijs in ")
+        words = sorted(ask_commands.KNOWN) + ["per-seat", "pre-tax", "net-30", "n-1", "x_1", "tax-included",
+                                              "year-over-year", "A/B", "N/A", "e.g.", "vs", "per", "user"]
+        rests = ("?", " or the % diff?", " per month?", " column?", " and euros?", " vs EUR?", " (net)?",
+                 ", right?", ".", " $?", " $ per year?")
+        offered = [(line, ask_commands.guess(line)) for line in (f"{lead}$ {word}{rest}" for lead in leads
+                                                                   for word in words for rest in rests)
+                   if ask_commands.guess(line)]
+        self.assertEqual(offered[:8], [])
 
     def test_a_command_with_a_plain_end_is_offered_whole(self):
         missing, seen = [], 0
