@@ -599,6 +599,11 @@ class Scripts(Fixture):
         said = 'echo \'"sandbox_permissions":"require_escalated"\' && echo sandbox_permissions: "require_escalated"'
         self.assertEqual(self.asked(code_of(said, escalate=False)), ("busy", None))
 
+    def test_a_call_that_asks_for_something_other_than_to_leave_the_sandbox_is_not_a_question(self):
+        code = code_of("ls", escalate=False).replace(
+            '"yield_time_ms"', '"sandbox_permissions":"use_default","yield_time_ms"')
+        self.assertEqual(self.asked(code), ("busy", None))
+
     def test_the_words_in_a_comment_are_not_a_question(self):
         code = ('// sandbox_permissions: "require_escalated" is what the next one would say\n'
                 + code_of("ls", escalate=False))
