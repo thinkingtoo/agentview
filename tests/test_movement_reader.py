@@ -54,6 +54,7 @@ class Base(unittest.TestCase):
         self.path = self.dir / "proj" / "sid.jsonl"
         claude._cache.clear()
         claude.SUBS.cache.clear()
+        claude._teams.clear()
 
     def scan(self):
         return claude.scan_session(self.path, now=NOW.timestamp())
@@ -251,6 +252,133 @@ class Subagents(Base):
         stray.parent.mkdir(parents=True)
         stray.write_text("not json\n")
         self.assertEqual(sum(self.scan()["writes"]), 1)
+
+
+class Workflows(Base):
+    """A workflow's agents write one folder deeper than a background agent:
+    `<session>/subagents/workflows/<run>/agent-*.jsonl`. A session waiting on
+    the workflow is waiting on subagents (ticket 08, box 2)."""
+
+    def agent(self, run, name, records, seconds_ago=5):
+        agent = self.path.with_suffix("") / "subagents" / "workflows" / run / f"{name}.jsonl"
+        write(agent, records, "w")
+        touch(agent, seconds_ago)
+        return agent
+
+    def test_a_workflow_agents_writes_are_added_to_the_sessions_strip(self):
+        write(self.path, [record(600)], "w")
+        self.agent("wf_one", "agent-a1", [record(15), record(16)])
+        writes = self.scan()["writes"]
+        self.assertEqual((writes[29], sum(writes)), (2, 3))      # the session's own write is 10 minutes back
+
+    def test_when_a_workflow_agent_last_wrote_is_the_subagent_time(self):
+        write(self.path, [record(900)], "w")
+        self.agent("wf_one", "agent-a1", [record(130)], seconds_ago=130)
+        self.agent("wf_two", "agent-b2", [record(400)], seconds_ago=400)
+        self.assertAlmostEqual(self.scan()["subQuiet"], 130 / 60)
+
+    def test_a_background_agent_and_a_workflow_agent_are_one_sum(self):
+        write(self.path, [record(600)], "w")
+        sub = self.path.with_suffix("") / "subagents" / "agent-a1.jsonl"
+        write(sub, [record(12)], "w")
+        touch(sub, 12)
+        self.agent("wf_one", "agent-b2", [record(14)])
+        self.assertEqual(self.scan()["writes"][29], 2)
+
+    def test_a_workflow_agent_that_stopped_long_ago_is_neither_read_nor_counted(self):
+        write(self.path, [record(10)], "w")
+        old = self.agent("wf_one", "agent-old", [record(3 * 3600)], seconds_ago=3 * 3600)
+        with reads_of_files() as reads:
+            writes = self.scan()["writes"]
+        self.assertEqual(sum(writes), 1)
+        self.assertEqual([path for path, _ in reads if path == str(old)], [])
+
+    def test_a_file_in_a_workflow_folder_that_is_not_a_transcript_is_ignored(self):
+        write(self.path, [record(10)], "w")
+        meta = self.path.with_suffix("") / "subagents" / "workflows" / "wf_one" / "agent-a1.meta.json"
+        meta.parent.mkdir(parents=True)
+        meta.write_text("{}\n")
+        self.assertEqual(sum(self.scan()["writes"]), 1)
+        self.assertIsNone(self.scan()["subQuiet"])
+
+
+LEAD = "6f0c91aa-1111-4222-8333-444455556666"
+HEADER = [{"type": "agent-setting", "agentSetting": "general-purpose", "sessionId": "m"},
+          {"type": "mode", "mode": "normal", "sessionId": "m"}]
+
+
+class Teammates(Base):
+    """A named teammate is not under the session's folder: it writes a transcript
+    of its own next to the session's, and says whose team it is in its first
+    message, `teamName: session-<first 8 of the session's id>`. A session
+    waiting on one is waiting on a subagent (ticket 08, box 2)."""
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.dir / "proj" / f"{LEAD}.jsonl"
+        write(self.path, [record(600)], "w")
+
+    def mate(self, name, records, team=f"session-{LEAD[:8]}", seconds_ago=5, header=HEADER):
+        """A transcript beside the session's: header lines, then the messages,
+        each stamped with the team when it has one."""
+        extra = {"teamName": team, "agentName": name} if team else {}
+        path = self.path.parent / f"{name}.jsonl"
+        write(path, header + [{**r, **extra} for r in records], "w")
+        touch(path, seconds_ago)
+        return path
+
+    def test_a_teammates_writes_are_added_to_the_sessions_strip(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user"), record(16)])
+        writes = self.scan()["writes"]
+        self.assertEqual((writes[29], sum(writes)), (2, 3))      # the session's own write is 10 minutes back
+
+    def test_when_a_teammate_last_wrote_is_the_subagent_time(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(130, "user")], seconds_ago=130)
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(400, "user")], seconds_ago=400)
+        self.assertAlmostEqual(self.scan()["subQuiet"], 130 / 60)
+
+    def test_a_transcript_of_another_sessions_team_or_of_no_team_is_not_a_teammate(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], team="session-99999999")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], team=None)
+        got = self.scan()
+        self.assertEqual(sum(got["writes"]), 1)
+        self.assertIsNone(got["subQuiet"])
+
+    def test_a_teammate_that_stopped_long_ago_is_not_counted(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(3 * 3600, "user")], seconds_ago=3 * 3600)
+        got = self.scan()
+        self.assertEqual(sum(got["writes"]), 1)
+        self.assertIsNone(got["subQuiet"])
+
+    def test_a_teammate_whose_first_message_is_not_written_yet_counts_once_it_is(self):
+        mate = self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [])
+        self.assertIsNone(self.scan()["subQuiet"])
+        write(mate, [{**record(3, "user"), "teamName": f"session-{LEAD[:8]}"}])
+        touch(mate, 3)
+        self.assertAlmostEqual(self.scan()["subQuiet"], 3 / 60)
+
+    def test_a_teammate_is_not_read_again_for_what_team_it_is_in(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")])
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], team=None)
+        self.scan()
+        looked = []
+        with mock.patch.object(claude, "_team_of", lambda path: looked.append(path)):
+            self.assertAlmostEqual(self.scan()["subQuiet"], 5 / 60)
+        self.assertEqual(looked, [])
+
+    def test_what_team_a_file_is_in_is_kept_for_a_bounded_number_of_files(self):
+        for n in range(5):
+            self.mate(f"33333333-aaaa-4bbb-8ccc-00000000000{n}", [record(15, "user")], team=None)
+        with mock.patch.object(claude, "MAX_TEAMS", 3):
+            self.scan()
+        self.assertLessEqual(len(claude._teams), 3)
+
+    def test_the_sessions_own_transcript_is_not_its_teammate(self):
+        # Its first message says it is in its own team, so only the exclusion
+        # of its own file keeps it from being its own subagent.
+        write(self.path, [{**record(5, "user"), "teamName": f"session-{LEAD[:8]}"}], "w")
+        touch(self.path, 5)
+        self.assertIsNone(self.scan()["subQuiet"])
 
 
 def started(seconds_ago, tool_id, command="pytest -q", description="Run the unit tests"):

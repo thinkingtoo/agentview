@@ -13,6 +13,7 @@ of them is the session moving on.
 R17: /proc that cannot answer is not proof that nothing runs.
 """
 import json
+import os
 import shutil
 import sys
 import time
@@ -20,7 +21,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import fleet
 from providers import base, claude, procs
+import test_columns
 import test_movement_provider as mp
 from test_movement_provider import stamp, text, call, accepted
 
@@ -521,3 +524,71 @@ class Baseline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OtherSubagents(Base):
+    """Box 2, from the files up to the tile: a session waiting on a named
+    teammate or on the agents of a workflow is waiting on subagents, and is not
+    Hung. They write where a background agent does not: a teammate a transcript
+    of its own beside the session's, a workflow's agents one folder deeper than
+    `subagents/`. Found on a live session, 2026-10-19: its turn over, its
+    teammate writing every few seconds, and the tile said Hung."""
+
+    def setUp(self):
+        super().setUp()
+        test_columns.Base.setUp(self)
+
+    def tile(self):
+        fleet.CONFIG.write_text("{}")
+        return fleet.roster(providers=[self.provider])["columns"][0]["sessions"][0]
+
+    def lead(self, silent):
+        """A busy session whose transcript was last written `silent` seconds ago."""
+        self.session([text(silent)], status="busy")
+        then = time.time() - silent
+        os.utime(self.transcript, (then, then))
+
+    def teammate(self, seconds_ago=5, team=f"session-{mp.SID[:8]}"):
+        mate = self.transcript.parent / "22222222-aaaa-4bbb-8ccc-333333333333.jsonl"
+        mate.write_text("".join(json.dumps(r) + "\n" for r in (
+            {"type": "agent-setting", "agentSetting": "general-purpose"},
+            {**text(seconds_ago), "type": "user", "teamName": team, "agentName": "hunt"})))
+        then = time.time() - seconds_ago
+        os.utime(mate, (then, then))
+
+    def workflow_agent(self, seconds_ago=5):
+        agent = self.transcript.with_suffix("") / "subagents" / "workflows" / "wf_1" / "agent-a1.jsonl"
+        agent.parent.mkdir(parents=True)
+        agent.write_text(json.dumps(text(seconds_ago)) + "\n")
+        then = time.time() - seconds_ago
+        os.utime(agent, (then, then))
+
+    def test_a_busy_session_that_wrote_fifteen_minutes_ago_and_nothing_else_is_hung(self):
+        self.lead(900)
+        got = self.tile()
+        self.assertEqual((got["stuck"]["kind"], got["stuck"]["reason"]), ("hung", "Not moving for 15 min"))
+
+    def test_the_same_session_waiting_on_a_teammate_that_writes_is_not_hung(self):
+        self.lead(900)
+        self.teammate()
+        got = self.tile()
+        self.assertIsNone(got["stuck"])
+        self.assertTrue(got["moving"])
+
+    def test_the_same_session_waiting_on_a_workflows_agent_that_writes_is_not_hung(self):
+        self.lead(900)
+        self.workflow_agent()
+        got = self.tile()
+        self.assertIsNone(got["stuck"])
+        self.assertTrue(got["moving"])
+
+    def test_a_teammate_that_went_quiet_is_a_sign_of_life_only_for_as_long_as_a_write_is(self):
+        self.lead(1800)
+        self.teammate(seconds_ago=900)
+        got = self.tile()
+        self.assertEqual((got["stuck"]["kind"], got["stuck"]["reason"]), ("hung", "Not moving for 15 min"))
+
+    def test_another_sessions_teammate_beside_it_is_not_this_sessions(self):
+        self.lead(900)
+        self.teammate(team="session-99999999")
+        self.assertEqual(self.tile()["stuck"]["kind"], "hung")

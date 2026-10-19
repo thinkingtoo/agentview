@@ -655,6 +655,85 @@ def _last_tool(call):
             "at": int(_seconds_of(call[0]) * 1000)}
 
 
+def _entries(folder):
+    try:
+        return list(os.scandir(folder))
+    except OSError:
+        return []
+
+
+# A named teammate does not write under the session's folder. It writes a
+# transcript of its own beside the session's, and its first message says whose
+# team it is in: `teamName: session-<first 8 characters of the session's id>`.
+# What team a file is in is read once, from its first lines, and kept.
+TEAM_LINES = 24
+MAX_TEAMS = 4096
+_UNDECIDED = object()
+_teams = {}
+
+
+def _team_of(path):
+    """The team a transcript says it is in, in its first message: its name; None
+    for a session of its own; `_UNDECIDED` while the file has no message yet."""
+    try:
+        with open(path, "rb") as fh:
+            for _ in range(TEAM_LINES):
+                line = fh.readline()
+                if not line:
+                    return _UNDECIDED
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and rec.get("type") in ("user", "assistant"):
+                    team = rec.get("teamName")
+                    return team if isinstance(team, str) else None
+    except OSError:
+        return _UNDECIDED
+    return None
+
+
+def _team(entry, now):
+    """The team of a transcript beside the session's. A file is looked into
+    while it is being written, which is how a teammate is met; one first seen
+    untouched for longer than the strip shows is not looked into at all, so
+    the many old transcripts in a project folder cost a stat and no more."""
+    key = (entry.path, entry.inode())
+    if key in _teams:
+        return _teams[key]
+    try:
+        if (now - entry.stat().st_mtime) / 60 > KEEP_MINUTES:
+            return None
+    except OSError:
+        return None
+    team = _team_of(entry.path)
+    if team is _UNDECIDED:
+        return None
+    if len(_teams) >= MAX_TEAMS:
+        _teams.clear()
+    _teams[key] = team
+    return team
+
+
+def _subagent_files(path, now):
+    """The transcripts the session's subagents write. A background agent writes
+    `<session>/subagents/agent-*.jsonl`, the agents of a workflow one folder
+    deeper, `<session>/subagents/workflows/<run>/agent-*.jsonl`, and a named
+    teammate a transcript of its own in the session's project folder."""
+    found = []
+    for entry in _entries(path.with_suffix("") / "subagents"):
+        if entry.name == "workflows" and entry.is_dir():
+            for run in _entries(entry.path):
+                if run.is_dir():
+                    found.extend(e for e in _entries(run.path) if e.name.endswith(".jsonl"))
+        elif entry.name.endswith(".jsonl"):
+            found.append(entry)
+    team = f"session-{path.stem[:8]}"
+    found.extend(e for e in _entries(path.parent)
+                 if e.name.endswith(".jsonl") and e.name != path.name and _team(e, now) == team)
+    return found
+
+
 def _subagents(path, now):
     """The session's subagents: their transcript states, and how many minutes
     ago the newest of them wrote (None when it has none).
@@ -664,15 +743,8 @@ def _subagents(path, now):
     nothing lists them as peers. A file untouched for longer than the strip
     shows cannot add to it, and is not even opened.
     """
-    folder = path.with_suffix("") / "subagents"
     states, quiet = [], None
-    try:
-        entries = list(os.scandir(folder))
-    except OSError:
-        return states, quiet
-    for entry in entries:
-        if not entry.name.endswith(".jsonl"):
-            continue
+    for entry in _subagent_files(path, now):
         try:
             mtime = entry.stat().st_mtime
         except OSError:
