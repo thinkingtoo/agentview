@@ -12,6 +12,7 @@ import io
 import itertools
 import json
 import os
+import select
 import shutil
 import subprocess
 import sys
@@ -45,6 +46,22 @@ def script(path, body):
 
 def done(returncode=0, stdout="", stderr=""):
     return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def running_child(case, run):
+    """A child with `AVSC_RUN=<run>` in its environment, returned once it is running its own code.
+    Popen returns while exec is still finishing, and until it is over /proc/<pid>/environ reads empty.
+    The shell prints from user space, then waits on a builtin: no second exec.
+    A child that stays silent fails the test after 10 s instead of hanging the suite."""
+    proc = subprocess.Popen(["sh", "-c", "echo up; read ignored"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            env={"PATH": "/usr/bin:/bin", "AVSC_RUN": run})
+    case.addCleanup(proc.wait)
+    case.addCleanup(proc.kill)
+    case.addCleanup(proc.stdout.close)
+    case.addCleanup(proc.stdin.close)
+    case.assertTrue(select.select([proc.stdout], [], [], 10)[0], "the child did not print `up` within 10 s")
+    case.assertEqual(proc.stdout.readline(), b"up\n")
+    return proc
 
 
 class Box(unittest.TestCase):
@@ -197,9 +214,7 @@ class Reading(unittest.TestCase):
         self.assertEqual(sc.parse_stat("123 (a b) c) " + " ".join(after)), ("S", "987654"))
 
     def test_marked_finds_a_process_by_its_run_and_only_by_its_run(self):
-        proc = subprocess.Popen(["sleep", "30"], env={"PATH": "/usr/bin:/bin", "AVSC_RUN": "unit-test-run"})
-        self.addCleanup(proc.wait)
-        self.addCleanup(proc.kill)
+        proc = running_child(self, "unit-test-run")
         self.assertIn(proc.pid, sc.marked("unit-test-run"))
         self.assertNotIn(proc.pid, sc.marked("unit-test-run-2"))
         self.assertNotIn(proc.pid, sc.marked("unit-test"))
@@ -577,9 +592,7 @@ class Scopes(unittest.TestCase):
         self.stop_with([7], {7: True}, [self.OURS, {**self.OURS, "InvocationID": "i2"}]).assert_not_called()
 
     def test_a_process_is_ours_only_if_its_own_environment_says_so(self):
-        proc = subprocess.Popen(["sleep", "30"], env={"PATH": "/usr/bin:/bin", "AVSC_RUN": "unit-test-run"})
-        self.addCleanup(proc.wait)
-        self.addCleanup(proc.kill)
+        proc = running_child(self, "unit-test-run")
         self.assertTrue(sc.carries(proc.pid, "unit-test-run"))
         self.assertFalse(sc.carries(proc.pid, "unit-test"))
         self.assertFalse(sc.carries(2 ** 22 + 1, "unit-test-run"))

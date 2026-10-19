@@ -21,6 +21,10 @@ A session that a boss leads.
 **Track**:
 The line of work a boss leads, with its workers. When a session belongs to a track, the track is its project, whichever repositories the work touches.
 
+**Project identity**:
+The key a project is known by, namespaced by what it is (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track, a repository, a client folder and a folder that share a name are never one project.
+_Avoid_: project name (the name is what the person calls it, and changes)
+
 **Context line**:
 A short line under a project's name that reminds the person what the project is about.
 _Avoid_: description, summary
@@ -44,7 +48,10 @@ A kind of stuck: the session cannot go on until the person answers, approves, or
 _Avoid_: waiting, ready, your turn
 
 **Jump**:
-One click that puts a session's own terminal in front of the person.
+One click that puts the terminal showing a session in front of the person. A session at a terminal has its own pane; a background session has none, so the click opens a new tab attached to it.
+
+**Attached**:
+A background session that a `claude attach` already shows in some window. The jump then goes to that window, never to a second copy, because two windows would write one conversation.
 
 **Finished**:
 A session that has been idle for hours with nothing left for the person and its handover read. It stays one click away, because finished sessions are often picked up again.

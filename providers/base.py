@@ -11,10 +11,20 @@ Required on every session: `id` (stable within the provider), `cwd`,
 of the moment the status last changed, not the last activity. The global
 key is `provider:id`, so a provider name may not contain a colon.
 
+`cwd` is the folder the session was launched in, not where it is now: the
+project a session belongs to is decided by it, and a session that `cd`s
+elsewhere must stay where it started.
+
 Optional: `pid`, `name`, `branch`, `title`, `prompt`, `said` (the raw text of
 the last thing the agent said -- the core shapes it), `waitingFor`,
-`startedAt`, `kind`, `tmux`, `bg`, `routine`, `boss`, `team`, `paths`,
-`doing`, `quietFor`, `toolFor`, `canJump`, `extras`.
+`startedAt`, `kind`, `tmux`, `bg`, `routine`, `boss`, `track` (a boss's
+track: the name of its tracker), `team`, `paths`, `doing`, `quietFor`,
+`toolFor`, `canJump`, `attach`, `noJump`, `extras`.
+
+`canJump` says a pane shows the session. `attach` is what to attach to when no
+pane does but a new tab can show it (a background session; the provider's own
+`jump` does the attaching). `noJump` is why neither, when the provider has more
+to say than "no terminal".
 """
 import os
 
