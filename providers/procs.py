@@ -96,6 +96,55 @@ def _stat(proc, pid):
         return None
 
 
+# How far up the walk goes. A shell inside a terminal inside a window manager is
+# ten levels at most; a longer chain is a loop or a runaway, not an answer.
+MAX_UP = 64
+
+
+def _parent(proc, pid):
+    """(parent pid, start time) of a process, or None. As for `_stat`, the
+    fields are counted from the last parenthesis."""
+    raw = _read(f"{proc}/{pid}/stat")
+    if raw is None:
+        return None
+    text = raw.decode("utf-8", "replace")
+    try:
+        fields = text[text.rindex(")") + 2:].split()
+        return int(fields[1]), int(fields[19])
+    except (ValueError, IndexError):
+        return None
+
+
+def ancestors(proc, pid):
+    """The processes above `pid`, nearest first, init left out: who started it.
+
+    The walk goes up one parent at a time and ends, with what it has, at the
+    first thing it cannot vouch for -- never at a guess:
+
+    - a parent that is gone, or not ours to read;
+    - a parent that started after its child, which is a number the kernel
+      handed to somebody else once the real parent had exited;
+    - a child whose own parent changed while the parent was being read, which
+      is the same exit seen from the other side;
+    - a process met twice (a loop), and a walk longer than `MAX_UP`.
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return []
+    at, found = pid, []
+    here, seen = _parent(proc, at), {pid}
+    while here is not None and len(found) < MAX_UP:
+        parent, start = here
+        if parent <= 1 or parent in seen:
+            break
+        above = _parent(proc, parent)
+        if above is None or above[1] > start or _parent(proc, at) != here:
+            break
+        found.append(parent)
+        seen.add(parent)
+        at, here = parent, above
+    return found
+
+
 class Shells:
     """Looks under session pids and remembers the last look at each process.
 

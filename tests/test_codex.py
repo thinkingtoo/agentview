@@ -88,6 +88,13 @@ class Home:
         os.symlink(self.rollout(tid, [], "a"), d / "fd" / str(fd))
         os.symlink(self.codex / "thread-writer-locks" / f"{tid}.lock", d / "fd" / "41")
 
+    def stat(self, pid, parent, start=1000):
+        """The `stat` line of a process: who its parent is and when it started."""
+        folder = self.proc / str(pid)
+        folder.mkdir(exist_ok=True)
+        (folder / "stat").write_text(
+            f"{pid} (codex) S {parent} 1 1 0 -1 4194304 1 0 0 0 5 0 0 0 20 0 1 0 {start} 0 0\n")
+
     def provider(self):
         return CodexProvider(home=self.codex, proc=self.proc)
 
@@ -495,6 +502,52 @@ class Approvals(Fixture):
         hostile = '<img src=x onerror=alert(1)> "; rm -rf / #'
         s = self.turn(call(T1, "c1", cmd=hostile, escalate=True))
         self.assertEqual(s["asking"]["command"], hostile)
+
+
+class Runs(Fixture):
+    """A `codex exec` run is started by something -- usually a Claude session --
+    and the roster folds it into that session's tile. The provider says which
+    process it is and which processes are above it; it does not know Claude."""
+
+    def setUp(self):
+        super().setUp()
+        self.home.stat(100, 1, 900)             # a session
+        self.home.stat(200, 100, 950)           # its shell
+        self.home.stat(4242, 200, 1000)         # the run
+
+    def test_a_run_says_which_processes_are_above_it_nearest_first(self):
+        s = self.one(meta())
+        self.assertEqual((s["kind"], s["ancestors"]), ("exec", [200, 100]))
+
+    def test_a_review_run_says_so_and_a_plain_run_does_not(self):
+        plain = self.one(meta())
+        review = self.one(meta(), rec(T0, "event_msg", type="entered_review_mode"))
+        self.assertEqual((plain["run"], review["run"]), ("codex exec", "codex review"))
+
+    def test_a_review_thread_is_a_review_run_too(self):
+        self.home.thread(source='{"subagent":"review"}')
+        s = self.one(meta(source={"subagent": "review"}))
+        self.assertEqual((s["kind"], s["run"], s["ancestors"]), ("review", "codex review", [200, 100]))
+
+    def test_an_interactive_session_is_nobody_s_run(self):
+        self.home.thread(source="cli")
+        s = self.one(meta(source="cli"))
+        self.assertNotIn("ancestors", s)
+        self.assertNotIn("run", s)
+
+    def test_a_run_whose_process_cannot_be_looked_into_has_no_ancestors_to_name(self):
+        os.chmod(self.home.proc / "4242" / "fd", 0)
+        self.addCleanup(os.chmod, self.home.proc / "4242" / "fd", 0o755)
+        s = self.one(meta())
+        self.assertEqual((s.get("pid"), s["ancestors"]), (None, []))
+
+    def test_a_run_whose_parents_cannot_be_read_has_the_ones_it_could(self):
+        os.remove(self.home.proc / "100" / "stat")
+        self.assertEqual(self.one(meta())["ancestors"], [200])
+
+    def test_a_run_started_a_moment_ago_has_the_moment_it_started(self):
+        s = self.one(meta())
+        self.assertEqual(s["startedAt"], T0_MS)
 
 
 class Hung(test_columns.Base):

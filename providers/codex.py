@@ -31,12 +31,14 @@ import subprocess
 import time
 from pathlib import Path
 
-from providers import base, minutes
+from providers import base, minutes, procs
 from providers.base import Provider, Tailed
 
 # `source` in the thread table, said the page's way. `exec` is `codex exec`,
 # a one-shot like `claude -p`; a review subagent is the JSON-ish third one.
 KINDS = {"cli": "interactive", "exec": "exec"}
+# The kinds that are one-shot runs, started by something else.
+RUNS = ("exec", "review")
 TITLE_LEN = 80
 
 
@@ -185,7 +187,7 @@ def _source(value):
 def _blank():
     return {**minutes.blank_counts(), "status": "", "statusAt": 0,
             "said": "", "prompt": "", "cwd": "", "startedAt": 0, "source": "",
-            "failure": None, "policy": "", "calls": {}}
+            "failure": None, "policy": "", "calls": {}, "review": False}
 
 
 def _absorb(state, text):
@@ -224,6 +226,8 @@ def _absorb(state, text):
             state["calls"].clear()
             if what == "task_complete":
                 state["failure"] = _failure(payload.get("error"), rec.get("timestamp"))
+        elif what == "entered_review_mode":
+            state["review"] = True
         elif what == "agent_message" and isinstance(payload.get("message"), str):
             state["said"] = payload["message"]
         elif what == "user_message" and isinstance(payload.get("message"), str):
@@ -417,6 +421,10 @@ class CodexProvider(Provider):
         }
         if asked:
             out["asking"] = {"kind": "permission", "tool": "exec_command", "command": asked[1], "target": ""}
+        if out["kind"] in RUNS:
+            # A one-shot: somebody started it, and the processes above it say who.
+            out["run"] = "codex review" if state["review"] or out["kind"] == "review" else "codex exec"
+            out["ancestors"] = procs.ancestors(self.proc, held[0]) if held else []
         if held:
             out["pid"] = held[0]
         return out
