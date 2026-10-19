@@ -1007,7 +1007,9 @@ function paint() {
     + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
     + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "")
     + down;
-  const wants = waiting + stuck + asking;
+  // The tab title is the header's "need you" count, read from the same place,
+  // so the two cannot differ.
+  const wants = countOf("needs");
   document.title = wants ? `(${wants}) agentview` : "agentview";
   if (VIEW === "blocks") {
     PINNED = all.filter(b => b.pinned).map(b => b.project);

@@ -259,6 +259,11 @@ idle session is in none. Routines are not on the overview, so they are in none.
 Each tile carries the count it is in (`counted`), so the page counts nothing and
 decides nothing.
 
+The browser tab's title is that same "need you" count, read from the same place:
+`(3) agentview` while three need you, plain `agentview` at none. It no longer
+counts the chime's `waiting`, `stuck` and `blocked`, so the title and the header
+cannot say different numbers.
+
 A click on a count lights up those sessions, fades the rest and shrinks every
 column with none to its card (the column keeps its width). A second click on the
 same count clears it; a click on another count moves the light. A count of

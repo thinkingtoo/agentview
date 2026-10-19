@@ -680,8 +680,8 @@ def overview_pass(browser):
     # header is the roster's counts (`header_pass`), not the chime's alarms.
     check("the overview's header counts what the roster counted, not the chime's alarms",
           head_counts(page) == ["2 need you", "1 other stuck", "3 moving"], head_line(page))
-    check("the tab title counts what wants you: waiting, stuck and blocked",
-          page.title().startswith("(3)"), page.title())
+    check("the tab title is the header's \"need you\" count, not the chime's alarms",
+          page.title() == "(2) agentview", (page.title(), head_counts(page)))
     check("the overview has no hold button and a way to the block view",
           page.locator("#hold").is_hidden() and page.locator("#view").get_attribute("href") == "?view=blocks")
     check("overview: nothing stray reached the routes", not fake.stray, fake.stray)
@@ -759,6 +759,8 @@ def finished_pass(browser):
     check("the header counts the tiles and none of the pills",
           head_line(page).split(" · ")[:2] == ["4 sessions", "4 projects"] and head_counts(page)
           == ["0 need you", "0 other stuck", "2 moving"], head_line(page))
+    check("with none needing you the tab title carries no count",
+          page.title() == "agentview", page.title())
     check("a tile with an unread handover quotes it and says unread",
           tile_("m2").locator(".said").inner_text() == "“Release notes drafted; the docs page links to it.”"
           and tile_("m2").locator(".flag.unread").inner_text().lower() == "unread")
@@ -2023,7 +2025,6 @@ def blocks_pass(browser):
     check("non ripete il titolo uguale al nome", p.locator('.row[data-sid="s5"] .title').count() == 0)
     head = p.locator("#count").inner_text()
     check("la testata avvisa", "waiting" in head and "stuck" in head, head)
-    check("il titolo della scheda conta", p.title().startswith("(2)"), p.title())
     check("chi è fermo o in attesa non si piega mai", p.locator(".row.stub.stuck, .row.stub.waiting").count() == 0)
     p.close()
 
