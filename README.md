@@ -49,8 +49,8 @@ and a repository that share a name stay two projects; `pinned`, `names` and
 `assign` take an identity, or a plain name as they did before.
 
 **By hand**, on the overview: click a project's name to rename it (its raw name
-stays on hover); the ✳ on its card pins it, and the ‹ › on a pinned card move
-it along the pinned ones, the ✳ again unpins; **merge…** puts all of the
+stays on hover); the ☆ on its card pins it, and the ‹ › on a pinned card move
+it along the pinned ones, the ★ again unpins; **merge…** puts all of the
 project into another and carries its pin and its context line with it; the ⋯
 on a tile moves that one session, which lasts as long as the session does.
 Merge and move of a whole project are `assign` keyed by the project's identity

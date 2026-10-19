@@ -980,7 +980,7 @@ function headOf(c) {
       ${c.pinned ? arrow(pins[at - 1], "‹", "before") + arrow(pins[at + 1], "›", "after") : ""}
       <button class="ov-pin ${c.pinned ? "on" : ""}" data-act="${c.pinned ? "unpin" : "pin"}"
         title="${c.pinned ? "pinned: click to unpin" : "pin to the front"}"
-        aria-pressed="${c.pinned ? "true" : "false"}">✳</button>
+        aria-pressed="${c.pinned ? "true" : "false"}">${c.pinned ? "★" : "☆"}</button>
       <button class="ov-merge" data-act="merge-form"
         title="merge all of it into another project; holds for sessions that start later">merge…</button>
     </span>
