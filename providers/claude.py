@@ -322,6 +322,18 @@ def _local(rec):
     return rec.get("type") == "user" and _first_words(rec).lstrip().startswith(LOCAL_RECORDS)
 
 
+def _api_error(rec):
+    """Is this Claude Code's synthetic reply for an API error?"""
+    return rec.get("type") == "assistant" and rec.get("isApiErrorMessage") is True
+
+
+def _compaction(rec):
+    """Is this the summary Claude Code writes when it compacts a session, by
+    itself while the session is idle or at the person's /compact? A user record
+    in form only: the model was asked to summarise, not to go on."""
+    return rec.get("type") == "user" and rec.get("isCompactSummary") is True
+
+
 def _failure(state, rec):
     """Is the session's last turn an API error?
 
@@ -337,7 +349,7 @@ def _failure(state, rec):
     """
     if rec.get("type") not in ("user", "assistant") or rec.get("isSidechain") or _local(rec):
         return
-    if rec.get("type") != "assistant" or rec.get("isApiErrorMessage") is not True:
+    if not _api_error(rec):
         state["failure"] = None
         return
     name, status = rec.get("error"), rec.get("apiErrorStatus")
@@ -368,11 +380,13 @@ TURN_ENDS = ("turn_duration", "stop_hook_summary")
 def _turn(state, rec):
     """Is the session's last word the end of a turn?
 
-    `state["over"]` is set by a turn-end record the session itself wrote and
-    cleared by anything that asks the model something (a prompt, a message to
-    it, a tool result, its own reply). Bookkeeping, a notice, and a user record
-    that asks the model nothing (a slash command run locally) leave it as it
-    is. A subagent's records are not the session's.
+    `state["over"]` is set by a turn-end record the session itself wrote, or by
+    an API error that is its reply (the model could not answer, and Claude Code
+    writes no turn end after that), and cleared by anything that asks the model
+    something (a prompt, a message to it, a tool result, its own reply).
+    Bookkeeping, a notice, a user record that asks the model nothing (a slash
+    command run locally) and the summary of a compaction leave it as it is. A
+    subagent's records are not the session's.
 
     The peer registry may go on saying `busy` once a turn is over -- it does for
     a session that has teammates, until the session ends -- so this is what
@@ -384,8 +398,8 @@ def _turn(state, rec):
     if kind == "system":
         if rec.get("subtype") in TURN_ENDS:
             state["over"] = True
-    elif kind in ("user", "assistant") and not _local(rec):
-        state["over"] = False
+    elif kind in ("user", "assistant") and not _local(rec) and not _compaction(rec):
+        state["over"] = _api_error(rec)
 
 
 def _places(state, rec):

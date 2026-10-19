@@ -666,3 +666,61 @@ class OtherSubagents(Base):
     def test_a_subagents_turn_end_in_the_sessions_file_is_not_the_sessions(self):
         self.over(900, text(905), turn_end(900, isSidechain=True))
         self.assertEqual(self.tile()["stuck"]["kind"], "hung")
+
+    # Hunt 08-3, finding 1. A session whose turn ended on a rate limit has no
+    # turn end after the error, and the registry goes on saying busy. It read
+    # Limit for ten minutes and Hung after that, with the reset time and the
+    # time held gone (034f15b5, e9f2fc08 and 04f28c2b, 2026-10-17 and 18).
+
+    def test_a_busy_session_held_by_a_rate_limit_is_a_limit_however_long_it_is_held(self):
+        for silent in (300, 900, 3600, 4 * 3600):
+            with self.subTest(minutes=silent // 60):
+                claude._cache.clear()
+                self.over(silent, text(silent + 400), turn_end(silent + 380), prompt(silent + 100, "carry on"),
+                          api_error(silent))
+                got = self.tile()["stuck"]
+                self.assertEqual((got["kind"], got["reason"]), ("limit", "Rate limit"))
+                self.assertEqual(got["context"]["resetsAt"], RESET * 1000)
+                self.assertAlmostEqual(got["context"]["held"], silent / 60, delta=0.2)
+
+    def test_a_busy_session_that_ended_on_another_api_error_is_an_error_all_the_same(self):
+        self.over(3600, text(3700), api_error(3600, "server_error", 529, "An invented failure", None))
+        self.assertEqual(self.tile()["stuck"]["kind"], "error")
+
+    def test_the_card_of_such_a_session_is_not_moving_and_not_hung(self):
+        self.over(3600, text(3700), api_error(3600))
+        tile = self.tile()
+        self.assertFalse(tile["moving"])
+        self.assertNotEqual(tile["stuck"]["kind"], "hung")
+
+    def test_a_session_that_is_asked_something_after_an_error_and_goes_quiet_is_hung(self):
+        self.over(900, text(1000), api_error(950), prompt(900, "carry on"))
+        self.assertEqual(self.tile()["stuck"]["kind"], "hung")
+
+    # Hunt 08-3, finding 2. Claude Code compacts an idle session, or the person
+    # runs /compact; the summary is a user record with `isCompactSummary` and
+    # nothing after it ends a turn. 35578b72, 2026-10-15: turn over at 12:25,
+    # compacted idle at 13:20, registry busy until 13:36, Hung from 13:30.
+
+    def compaction(self, seconds_ago):
+        return [{"type": "system", "subtype": "compact_boundary", "timestamp": stamp(seconds_ago),
+                 "isSidechain": False},
+                prompt(seconds_ago, "This session is being continued from a previous conversation.",
+                       isCompactSummary=True),
+                {"type": "system", "subtype": "informational", "timestamp": stamp(seconds_ago - 1),
+                 "content": "Compacted while idle, before the prompt cache expired"}]
+
+    def test_a_lead_compacted_while_idle_after_its_turn_ended_is_not_hung(self):
+        self.over(900, text(3700), turn_end(3600), *self.compaction(900))
+        self.teammate(seconds_ago=3600)
+        got = self.tile()
+        self.assertIsNone(got["stuck"])
+        self.assertFalse(got["moving"])
+
+    def test_a_compaction_in_the_middle_of_a_turn_does_not_hide_a_hang_after_it(self):
+        self.over(900, text(3700), *self.compaction(1000))
+        self.assertEqual(self.tile()["stuck"]["kind"], "hung")
+
+    def test_a_session_that_is_asked_something_after_a_compaction_and_goes_quiet_is_hung(self):
+        self.over(900, text(3700), turn_end(3600), *self.compaction(1800), prompt(900, "carry on"))
+        self.assertEqual(self.tile()["stuck"]["kind"], "hung")

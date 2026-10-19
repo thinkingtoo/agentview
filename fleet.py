@@ -1092,9 +1092,9 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     to read) gives None, and the session is not called Hung. `cpu_ago` is how
     many minutes ago a provider last saw that CPU move, if it knows.
 
-    A busy session whose last word ended its turn (`turn_over`) has nothing
-    running of its own: its own writes are not signs of life, and it has no
-    clock to be Hung by. It is moving only while a subagent writes, the way a
+    A busy session whose last word ended its turn (`turn_over`: a turn end, or an
+    API error as the reply) has nothing running of its own: its own writes are
+    not signs of life, and it has no clock to be Hung by. It is moving only while a subagent writes, the way a
     lead waits on its team. The status may go on saying busy for hours, as it
     does for a lead with teammates, and that is not a hang.
     """

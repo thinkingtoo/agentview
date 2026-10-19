@@ -67,9 +67,11 @@ ago is one.
 
 `turnOver` is True when the session's own last word ended its turn although it
 still says `busy`: some agents go on saying so for as long as their helpers
-live. Such a session has nothing running of its own, so the core never calls it
-hung; it moves only while a subagent writes. Leaving it out, or anything but
-True, says the status is believed.
+live. A turn ends with a turn-end record, or with an API error as the reply,
+and a compaction of the session does not open it again. Such a session has
+nothing running of its own, so the core never calls it hung; it moves only
+while a subagent writes. Leaving it out, or anything but True, says the status
+is believed.
 """
 import os
 

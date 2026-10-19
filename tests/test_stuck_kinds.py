@@ -163,6 +163,13 @@ class Hung(Kind):
         self.assertIsNone(tile["movement"])
         self.assertEqual(self.tile(hung(quiet=0.03))["movement"]["kind"], "writing")
 
+    def test_a_session_whose_turn_ended_on_a_rate_limit_is_a_limit_not_hung(self):
+        # Hunt 08-3: the reader says the turn is over when the last word is an
+        # API error, so the silence behind a limit has no clock to be Hung by.
+        got = self.stuck(hung(quiet=40.0, turnOver=True, failure=failure("limit", held=40.0)))
+        self.assertEqual((got["kind"], got["reason"]), ("limit", "Rate limit"))
+        self.assertAlmostEqual(got["context"]["held"], 40.0, delta=0.2)
+
     def test_such_a_session_makes_its_card_idle_and_counts_idle_in_the_mix(self):
         column = self.roster(hung(quiet=190.0, turnOver=True))["columns"][0]
         self.assertEqual((column["state"], column["summary"]), ("idle", {"moving": 0, "stuck": 0, "idle": 1}))

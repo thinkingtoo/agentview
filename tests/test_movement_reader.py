@@ -478,6 +478,62 @@ class TurnEnd(Base):
         self.assertTrue(self.over(record(30), end, notice))
         self.assertFalse(self.over(record(30), notice))
 
+    # Hunt 08-3, finding 1. A turn can end on an API error: Claude Code writes the
+    # error as the synthetic reply and no turn end after it, and the registry of a
+    # session that has teammates goes on saying busy (034f15b5, e9f2fc08 and
+    # 04f28c2b on a rate limit, 2026-10-17 and 18: busy for 12 to 74 minutes).
+
+    def api_error(self, seconds_ago, **extra):
+        return {"type": "assistant", "timestamp": at(seconds_ago), "isApiErrorMessage": True,
+                "error": "rate_limit", "apiErrorStatus": 429,
+                "message": {"content": [{"type": "text", "text": "x"}]}, **extra}
+
+    def test_an_api_error_as_the_last_word_is_the_end_of_a_turn(self):
+        self.assertTrue(self.over(record(30), self.api_error(29)))
+        self.assertTrue(self.over(record(30), self.api_error(29, error="server_error", apiErrorStatus=529)))
+
+    def test_what_is_said_after_an_api_error_opens_the_turn_again(self):
+        self.assertFalse(self.over(record(30), self.api_error(29), record(20, "user")))
+        self.assertFalse(self.over(record(30), self.api_error(29), record(20)))
+
+    def test_an_api_error_that_is_not_marked_as_one_is_an_ordinary_reply(self):
+        self.assertFalse(self.over(record(30), self.api_error(29, isApiErrorMessage=False)))
+        self.assertFalse(self.over(record(30), self.api_error(29, isApiErrorMessage="yes")))
+
+    def test_a_subagents_api_error_in_the_sessions_file_is_not_the_sessions(self):
+        self.assertFalse(self.over(record(30), self.api_error(29, isSidechain=True)))
+
+    # Hunt 08-3, finding 2. Claude Code compacts a session by itself while it is
+    # idle (98 times on this machine), or the person runs /compact; it writes a
+    # user record with `isCompactSummary` and no turn end after it. The model is
+    # asked to summarise, not to go on with the work.
+
+    def compaction(self, seconds_ago):
+        return [{"type": "system", "subtype": "compact_boundary", "timestamp": at(seconds_ago)},
+                record(seconds_ago, "user", isCompactSummary=True),
+                {"type": "system", "subtype": "informational", "timestamp": at(seconds_ago - 1)}]
+
+    def test_a_compaction_does_not_open_a_turn_that_is_over(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(3000)}
+        self.assertTrue(self.over(record(3001), end, *self.compaction(60)))
+
+    def test_nor_does_it_end_a_turn_that_is_open(self):
+        self.assertFalse(self.over(record(3001), *self.compaction(60)))
+
+    def test_the_model_speaking_after_a_compaction_opens_the_turn(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(3000)}
+        self.assertFalse(self.over(record(3001), end, *self.compaction(60), record(30)))
+        self.assertFalse(self.over(record(3001), end, *self.compaction(60), record(30, "user")))
+
+    def test_only_a_summary_marked_as_one_is_a_compaction(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(3000)}
+        for flag in (False, "yes", 1, None):
+            with self.subTest(flag=flag):
+                self.assertFalse(self.over(record(3001), end, record(60, "user", isCompactSummary=flag)))
+
+    def test_a_compaction_after_an_api_error_leaves_the_turn_over(self):
+        self.assertTrue(self.over(record(3001), self.api_error(3000), *self.compaction(60)))
+
 
 def started(seconds_ago, tool_id, command="pytest -q", description="Run the unit tests"):
     """The session asked for a command to run in the background."""
