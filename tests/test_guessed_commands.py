@@ -671,6 +671,28 @@ class GuessEdges(unittest.TestCase):
             with self.subTest(end=end):
                 self.assertEqual(ask_commands.guess(f'Then run "git push origin dev{end}" now?'), [])
 
+    def test_half_a_command_is_never_offered(self):
+        # A quote the shell would wait on to close, whether the apostrophe is the
+        # session's or part of a word.
+        for ask in ('Then run $ git commit -m "fix the notes', "Then run $ echo it's done > /tmp/x",
+                    'Run "echo it\'s done > /tmp/maple-note" now?'):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_a_quote_that_holds_an_escaped_quote_or_a_quote_of_its_own_kind_is_not_offered(self):
+        self.assertEqual(ask_commands.guess("""Then run 'echo "a\\" b" > /tmp/x' please?"""), [])
+        self.assertEqual(ask_commands.guess('Then run "echo \u201chi\u201d > /tmp/maple-x" please?'), [])
+
+    def test_twenty_dollars_is_an_amount_and_a_slash_command_is_not_a_path(self):
+        self.assertEqual(ask_commands.guess("Is the price 20 $ per-seat for 12 users?"), [])
+        self.assertEqual(ask_commands.guess('Type "/compact --keep-tools" in that pane?'), [])
+
+    def test_a_comma_ends_the_clause_a_runner_was_named_in(self):
+        self.assertEqual(ask_commands.guess('Once ssh works, run "make test" for me?'), ["make test"])
+
+    def test_an_escaped_quote_in_the_sentence_outside_the_quotes_does_not_doubt_them(self):
+        self.assertEqual(ask_commands.guess('Run "make test" and keep the \\" in the notes?'), ["make test"])
+
     def test_a_tool_with_a_subcommand_the_list_lacks_and_the_bang_prefix_get_no_button(self):
         # The safe direction: a missing button costs a selection with the mouse.
         for ask in ('Try "npm login" or "git lfs pull"?', 'Run "! ssh-add ~/.ssh/id_maple" in this pane?'):

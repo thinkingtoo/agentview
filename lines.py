@@ -21,6 +21,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import tempfile
 import time
 from pathlib import Path
@@ -32,6 +33,37 @@ LIMIT = 160
 # The id comes from a hook payload and it names a file. Claude Code writes
 # uuids; anything that is not one has no business creating a path.
 SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
+
+
+# What the hook writes is two clipped strings and a few numbers, under a kilobyte
+# even when every character is escaped. A file bigger than this is not one of its
+# lines, and nothing is read past it.
+MAX_BYTES = 64 * 1024
+
+
+def _small_bytes(path, limit):
+    """The first `limit` bytes of a plain file, or None.
+
+    The folder is anyone's to write in, and the poll that reads it holds the lock
+    every poll takes: a pipe would be waited on for ever (and deleting it does not
+    free the wait), a device or a link to one has no end, and a file of any size
+    is read whole. So the file is opened without waiting, looked at once opened
+    (the file, not the name: a link is followed and the thing it points to is
+    judged), and only a regular file is read, and only up to the bound.
+    """
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except (OSError, ValueError):       # ValueError: a NUL in the path
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as fh:
+            return fh.read(limit)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
 
 
 def store():
@@ -55,9 +87,11 @@ def current_turn(session_id, root=None):
     path = _turn_file(session_id, root)
     if path is None:
         return ""
+    # A turn id is 8 hex digits; 64 characters at most, 4 bytes each, is all there is to read.
+    data = _small_bytes(path, 256)
     try:
-        return path.read_text(encoding="utf-8").strip()[:64]
-    except (OSError, ValueError):
+        return "" if data is None else data.decode("utf-8").strip()[:64]
+    except ValueError:
         return ""
 
 
@@ -102,12 +136,15 @@ def read(session_id, root=None):
     path = _file(session_id, root)
     if path is None:
         return {}
+    data = _small_bytes(path, MAX_BYTES + 1)
+    if data is None or len(data) > MAX_BYTES:
+        return {}
     try:
-        with path.open(encoding="utf-8") as fh:
-            got = json.load(fh)
-    except (OSError, ValueError, RecursionError):
-        # RecursionError is a file nested deeper than json can read: no hook
-        # writes one, a hand does, and "never raises" is what keeps the page up.
+        got = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError):
+        # RecursionError: a Python whose json stops at its recursion limit, on a
+        # file of nothing but brackets. No hook writes one, a hand does, and
+        # "never raises" is what keeps the page up.
         return {}
     if not isinstance(got, dict):
         return {}

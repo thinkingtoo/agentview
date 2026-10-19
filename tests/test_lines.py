@@ -4,7 +4,11 @@ Two fields and a count: where the work stands (`did`), and the one thing it
 is blocked on (`ask`), or how many things there are (`n`). The file is
 written by a Stop hook running inside the session, and read by the page.
 """
+import contextlib
 import json
+import os
+import resource
+import signal
 import sys
 import unittest
 from pathlib import Path
@@ -92,6 +96,92 @@ class WhatIsKept(unittest.TestCase):
     def test_a_count_that_is_not_a_number_reads_as_none_wanted(self):
         (self.root / "abc.json").write_text(
             json.dumps({"did": "x", "ask": "", "n": "four", "at": 1}), encoding="utf-8")
+        self.assertEqual(lines.read("abc", self.root)["n"], 0)
+
+
+class HandWritten(unittest.TestCase):
+    """The folder is anyone's to write in. Whatever is at a session's path, the
+    page's poll neither waits on it, nor raises, nor reads without end: one such
+    file would otherwise hold the lock every poll takes, until a restart."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        self.addCleanup(self.dir.cleanup)
+
+    @contextlib.contextmanager
+    def guarded(self, seconds=5, megabytes=400):
+        """Fail, rather than hang or eat the machine, if reading does either."""
+        def hung(*_):
+            raise AssertionError(f"still reading after {seconds} s")
+        old = signal.signal(signal.SIGALRM, hung)
+        soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+        with open("/proc/self/statm") as fh:
+            size = int(fh.read().split()[0]) * resource.getpagesize()
+        resource.setrlimit(resource.RLIMIT_AS, (size + megabytes * 1024 * 1024, hard))
+        signal.alarm(seconds)
+        try:
+            yield
+        finally:
+            signal.alarm(0)
+            resource.setrlimit(resource.RLIMIT_AS, (soft, hard))
+            signal.signal(signal.SIGALRM, old)
+
+    def test_a_pipe_where_the_line_should_be_reads_as_no_line(self):
+        os.mkfifo(self.root / "abc.json")
+        with self.guarded():
+            self.assertEqual(lines.read("abc", self.root), {})
+            self.assertEqual(lines.fresh("abc", self.root), {})
+
+    def test_a_pipe_where_the_turn_should_be_reads_as_no_turn(self):
+        os.mkfifo(self.root / "abc.turn")
+        with self.guarded():
+            self.assertEqual(lines.current_turn("abc", self.root), "")
+
+    def test_a_file_that_has_no_end_reads_as_nothing(self):
+        for name in ("abc.json", "abc.turn"):
+            (self.root / name).symlink_to("/dev/zero")
+        with self.guarded():
+            self.assertEqual(lines.read("abc", self.root), {})
+            self.assertEqual(lines.current_turn("abc", self.root), "")
+
+    def test_a_file_far_larger_than_any_line_reads_as_no_line(self):
+        record = {"did": "x", "ask": "y", "n": 1, "at": 1, "pad": "z" * lines.MAX_BYTES}
+        (self.root / "abc.json").write_text(json.dumps(record), encoding="utf-8")
+        with self.guarded():
+            self.assertEqual(lines.read("abc", self.root), {})
+        # A whole line followed by more than a line can be is not one either.
+        (self.root / "abc.json").write_text(
+            json.dumps({"did": "x", "ask": "y", "n": 1, "at": 1}) + " " * (lines.MAX_BYTES + 1), encoding="utf-8")
+        with self.guarded():
+            self.assertEqual(lines.read("abc", self.root), {})
+
+    def test_a_value_nested_deep_inside_the_bound_is_no_ask(self):
+        depth = 30000        # 60 KB: under the bound, so json reads it (or an older Python stops at its limit)
+        (self.root / "abc.json").write_text(
+            '{"ask": ' + "[" * depth + "]" * depth + ', "n": 1, "at": 1}', encoding="utf-8")
+        got = lines.read("abc", self.root)
+        self.assertEqual(got.get("ask", ""), "")
+
+    def test_what_the_hook_writes_is_far_below_the_bound(self):
+        lines.write("abc", did="\u00e9" * 400, ask="\U0001f600" * 400, n=1, root=self.root)
+        self.assertLess((self.root / "abc.json").stat().st_size, lines.MAX_BYTES // 4)
+        self.assertEqual(lines.read("abc", self.root)["n"], 1)
+
+    def test_a_directory_where_the_line_should_be_reads_as_no_line(self):
+        (self.root / "abc.json").mkdir()
+        (self.root / "abc.turn").mkdir()
+        with self.guarded():
+            self.assertEqual((lines.read("abc", self.root), lines.current_turn("abc", self.root)), ({}, ""))
+
+    def test_json_that_is_not_an_object_reads_as_no_line(self):
+        for body in ("[]", '"text"', "5", "null", "true"):
+            with self.subTest(body=body):
+                (self.root / "abc.json").write_text(body, encoding="utf-8")
+                self.assertEqual(lines.read("abc", self.root), {})
+
+    def test_a_count_of_true_is_not_one_thing_left(self):
+        (self.root / "abc.json").write_text(json.dumps({"did": "x", "ask": "y", "n": True, "at": 1}), encoding="utf-8")
         self.assertEqual(lines.read("abc", self.root)["n"], 0)
 
 
