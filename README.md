@@ -279,6 +279,13 @@ default `~/.claude`), where transcripts are written. It says "Disk full: 212 MB
 left where sessions write". A disk that cannot be read is no banner. The page
 prints a banner's words as text and looks for nothing of its own.
 
+A provider may say the whole account is held (`Provider.limit()`: `name`, when
+the refusal came, when it lifts): a Codex usage limit is the banner "Codex usage
+limit reached, resets at 14:20" (with the day when it is not today), until that
+time. A limit that names no time is believed for five hours after the refusal.
+The banner follows the provider only while it answers; a tile of a session that
+was itself refused is still Limit.
+
 ## Finished sessions: pills
 
 A session that has been **idle for `finished_after_minutes`** (default 120, a
@@ -584,6 +591,7 @@ class Provider:
 
     def live(self) -> list[dict]: ...     # the sessions alive now
     def jump(self, session): ...          # optional; None = use the pid
+    def limit(self) -> dict | None: ...   # optional; the whole account is held
 ```
 
 A session needs five things: `id` (stable within the provider), `cwd`,
@@ -636,6 +644,56 @@ Codex knows busy from idle and nothing about waiting, so it declares neither
 `waiting` nor `status`, and a Codex row never rings. It has no hook either,
 so its two lines come from the last thing it said — the fallback that fills
 the words and never raises the count.
+
+What the overview reads from the rollout, with the same words as for Claude:
+
+- **Writes per minute**: every record is stamped, and the file is flushed on
+  each append, so the project's strip counts the records (the counting is shared
+  with Claude, `providers/minutes.py`).
+- **Limit and Error**: a turn ends with `task_complete`, and when it failed
+  `error` holds `message` and `codex_error_info`. `usage_limit_exceeded` is
+  Limit, every other value is Error with its own name. The time the limit lifts
+  is not a field: it is the end of the message ("try again at 2:35 PM", or with
+  its day), in the machine's own time zone, and is read from there (all 294 on
+  this machine parse). The next turn clears it.
+- **Needs you, inferred**: Codex never writes a request for approval, but the
+  call it is about is there: an `exec_command` with `sandbox_permissions:
+  "require_escalated"` and no output yet, in a turn of a session that can ask
+  (`approval_policy` is not `never`). The call is written two ways, both read:
+  a `function_call` with JSON `arguments` (until August 2026), and a
+  `custom_tool_call` named `exec` whose `input` is a script calling
+  `tools.exec_command({...})` (since). The script is read as far as JavaScript
+  is: a text is one thing whatever it says and a comment is nothing, so a
+  command that only mentions the words is not a request. It reads as a permission prompt with the
+  command (and a copy button), the status is `waiting`, and Hung never gets to
+  say anything about it. An escalated command the person allowed and that is
+  still running reads the same until its output arrives; the rollout cannot
+  tell them apart.
+- **Hung is not said for Codex.** Codex writes nothing while a command runs (a
+  busy stretch of 60 minutes ends in the command's output on this machine) and
+  nothing here looks at the processes under it, so silence is not known to be
+  silence.
+- **`codex exec` runs** (1,567 of 1,813 rollouts here) are not tiles: a run
+  says what it is (`codex exec`, or `codex review` when its rollout entered
+  review mode) and the processes above it, nearest first (`providers/procs.py`
+  `ancestors`: up the parents, ending at the first thing it cannot vouch for, a
+  parent that is gone or not readable, one that started after its child because
+  its number was reused, or a child whose parent changed while it was read). The
+  roster looks for a session of any provider among them (`runs.py`): the run is
+  then a job of that session ("waiting on: codex review, 2 min"), the session
+  counts as moving, and the run's writes are added to the session's own, once.
+  When the run sits under one of that session's background tasks (its shell
+  writes to `tasks/<id>.output`; `procs.task_above`), the run says which
+  (`task`) and is that job, not a second one. While a session is in the middle
+  of a call of its own, the call names what it waits on first.
+  A run with no such session (not found, not running, a routine) is a tile of
+  its own tagged `exec`, placed by the folder it was launched in. Two rollouts
+  held by one process (`codex exec review` writes one for the run and one for
+  its review thread, whose `source` is an object, not a word) are one run.
+- **The usage limit** is the account's and outlives the run that hit it, so it
+  is looked for on disk, every ten seconds, not in the live sessions: the newest
+  finished turn of the rollouts in the last eight day folders, when it is a
+  refusal. It is one banner until the time it lifts.
 
 ## Run it
 

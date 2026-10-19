@@ -7,6 +7,7 @@ The provider gives the facts; the core gives the voice.
 """
 import collections
 import concurrent.futures
+import datetime
 import functools
 import json
 import math
@@ -23,9 +24,10 @@ import jump
 import lines
 import projects
 import providers
+import runs
 import seen
 import working
-from providers import base, claude
+from providers import base, claude, minutes
 from providers.base import CAPABILITIES, STATUSES, on_a_terminal
 
 
@@ -356,17 +358,17 @@ def sessions(providers=None):
             "hung_after": positive_value("hung_after_minutes", 10),
         }
         now = time.time()
-        out, failed, answered = [], {}, set()
+        asked, failed, answered = [], {}, set()
         for p in (providers if providers is not None else _providers()):
             got, err = _ask(p)
             if err:
                 failed[p.name] = err
                 continue
             answered.add(p.name)
-            for raw in got:
-                row = normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered)
-                if row:
-                    out.append(row)
+            asked.extend((p, raw) for raw in got)
+        # Runs are folded into the tile of the session that started them (runs.py).
+        out = [row for row in (normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered)
+                               for p, raw in runs.fold(asked, now)) if row]
         ROUND["failed"], ROUND["answered"] = failed, answered
         return out
 
@@ -587,6 +589,8 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
         "key": key, "provider": p.name, "id": sid,
         "status": status, "cwd": cwd, "pid": pid,
         "updatedAt": updated, "startedAt": _int(raw.get("startedAt")),
+        # What a one-shot run is called; blank is no name, and no run (`runs.is_run`).
+        "run": _text(raw.get("run")).strip(),
         "project": project, "routine": routine,
         "assigned": key in assigned,
         "suggestion": guess,
@@ -748,7 +752,7 @@ def roster(providers=None):
     for s in everyone:
         s.pop("paths", None)
     return {"columns": columns, "counts": counts_of(columns),
-            "banners": banners_of(), "flags": flags_of(everyone)}
+            "banners": banners_of(providers), "flags": flags_of(everyone)}
 
 
 def flags_of(everyone):
@@ -826,11 +830,45 @@ MB = 1024 * 1024
 disk_usage = shutil.disk_usage
 
 
-def banners_of():
-    """What is wrong with the whole machine, said once across the top of the
-    page: each a `kind` and the `text` to print. Never a kind of stuck on a
-    tile -- every session on the machine is held by it alike. The page prints
-    these and looks for nothing of its own."""
+# A usage limit that names no time is believed for this long after the refusal.
+LIMIT_UNKNOWN_MINUTES = 300
+MONTH_NAMES = base.MONTHS
+
+
+def limit_banner(p, now):
+    """A provider's usage limit, which holds its whole account, as a banner, or
+    None. The provider says what it knows (`Provider.limit`); whether the limit
+    still stands is decided here, from the clock: until the time it lifts, or for
+    `LIMIT_UNKNOWN_MINUTES` after the refusal when it names none."""
+    try:
+        limit = p.limit()
+    except Exception:                      # a provider's bug is its own
+        return None
+    if not isinstance(limit, dict) or not isinstance(limit.get("name"), str) or not limit["name"].strip():
+        return None
+    resets = limit.get("resetsAt")
+    if resets is not None and base.milliseconds(resets) is None:
+        return None
+    name = " ".join(limit["name"].split())[:LABEL_LEN]
+    if resets is not None:
+        if resets <= now * 1000:
+            return None
+        when = datetime.datetime.fromtimestamp(resets / 1000)
+        words = f"resets at {when:%H:%M}"
+        if when.date() != datetime.datetime.fromtimestamp(now).date():
+            words += f" on {MONTH_NAMES[when.month - 1]} {when.day}"
+        return {"kind": "limit", "text": f"{name} usage limit reached, {words}"}
+    at = base.milliseconds(limit.get("at"))
+    if at is None or now * 1000 - at > LIMIT_UNKNOWN_MINUTES * 60000:
+        return None
+    return {"kind": "limit", "text": f"{name} usage limit reached"}
+
+
+def banners_of(providers=None):
+    """What is wrong with the whole machine, or with a provider's whole account,
+    said once across the top of the page: each a `kind` and the `text` to print.
+    Never a kind of stuck on a tile -- every session it concerns is held by it
+    alike. The page prints these and looks for nothing of its own."""
     banners = []
     try:
         free = disk_usage(claude.claude_dir()).free
@@ -839,6 +877,13 @@ def banners_of():
     if free is not None and free < positive_value("disk_full_mb", DISK_FULL_MB) * MB:
         banners.append({"kind": "disk",
                         "text": f"Disk full: {size_text(free)} left where sessions write"})
+    now = time.time()
+    for p in (providers if providers is not None else _providers()):
+        # What a provider that did not answer this round last said is not news.
+        if p.name in ROUND["answered"] and callable(getattr(p, "limit", None)):
+            limited = limit_banner(p, now)
+            if limited:
+                banners.append(limited)
     return banners
 
 
@@ -975,7 +1020,8 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         "pinned": m["pinned"],
         # Put where it is by hand: the page offers the way back.
         "assigned": bool(m.get("assigned")),
-        "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
+        "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex"),
+                                 ("exec", bool(m.get("run")))) if on],
         "line": line, "lineSource": source,
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
@@ -1176,7 +1222,7 @@ def suggest_project(paths, shelves):
 
 # --------------------------------------------------------------- movement
 
-STRIP_SLOTS = 30
+STRIP_SLOTS = minutes.STRIP_MINUTES
 
 # Open background jobs kept per session. More than this is a runaway, not a list.
 MAX_JOBS = 8
@@ -1192,13 +1238,9 @@ WAIT_MAX_MINUTES = 360
 
 
 def writes_of(value):
-    """A provider's strip, if it is one: 30 counts, each a whole number or
-    None for a minute it could not see. Anything else is not believed."""
-    if (isinstance(value, list) and len(value) == STRIP_SLOTS
-            and all(v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0)
-                    for v in value)):
-        return list(value)
-    return None
+    """A provider's strip, if it is one (`minutes.is_strip`); anything else is
+    not believed."""
+    return list(value) if minutes.is_strip(value) else None
 
 
 def tasks_of(value):
@@ -1401,11 +1443,7 @@ def strip_of(members):
     minute, oldest first. A minute any of them could not see is unknown for
     the project too. A session whose provider does not count writes is left
     out rather than counted as quiet."""
-    counted = [m["writes"] for m in members if m.get("writes") is not None]
-    if not counted:
-        return [None] * STRIP_SLOTS
-    return [None if any(w[i] is None for w in counted) else sum(w[i] for w in counted)
-            for i in range(STRIP_SLOTS)]
+    return minutes.added([m.get("writes") for m in members]) or [None] * STRIP_SLOTS
 
 
 def mix_of(tiles):

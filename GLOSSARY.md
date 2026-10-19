@@ -81,7 +81,7 @@ The three numbers at the top of the overview: sessions that need you, other stuc
 _Avoid_: alarms, busy
 
 **Banner**:
-A band across the top of the page for a condition of the whole machine, such as a full disk, rather than of one session. It comes from the roster's `banners` and nowhere else: a session or an error that talks about a full disk is not one.
+A band across the top of the page for a condition of the whole machine, such as a full disk, or of a provider's whole account, such as its usage limit until it lifts, rather than of one session. It comes from the roster's `banners` and nowhere else: a session or an error that talks about a full disk is not one.
 
 **Jump**:
 One click that puts the terminal showing a session in front of the person. A session at a terminal has its own pane; a background session has none, so the click opens a new tab attached to it.
