@@ -172,6 +172,27 @@
   .ov-col { flex:1 0 230px; max-width:330px; display:flex; flex-direction:column; gap:8px; }
   .ov-head { background:var(--card); border:1px solid var(--line); border-top:3px solid var(--line);
              border-radius:10px; padding:10px 12px; font-weight:650; font-size:15px; overflow-wrap:anywhere; }
+  /* The card's own text: the name and its status word, what the project is about, how far a
+     track has come. Nothing here is markup: it is all printed through esc(). */
+  .ov-name[data-raw]:hover::after { content:attr(data-raw); margin-left:7px; font-size:11px;
+                                    font-weight:400; color:var(--faint); }
+  .ov-tag { font-size:10.5px; font-weight:650; letter-spacing:.06em; padding:0 6px; border-radius:8px;
+            color:var(--dim); border:1px solid var(--line); }
+  .ov-tag.met { color:var(--busy); border-color:color-mix(in srgb,var(--busy) 45%,transparent); }
+  .ov-tag.paused { color:var(--wait); border-color:color-mix(in srgb,var(--wait) 45%,transparent); }
+  .ov-ctx { margin-top:5px; font-weight:400; font-size:13px; line-height:1.4; color:var(--dim); cursor:text;
+            overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .ov-ctx.maybe { color:var(--faint); font-style:italic; }
+  .ov-ctx .add { font-style:normal; font-size:12px; color:var(--faint); }
+  .ov-ctx:hover .add { color:var(--accent); }
+  .ov-prog { display:flex; align-items:center; gap:7px; margin-top:6px; font-weight:400; font-size:12px; color:var(--dim); }
+  .ov-bar { flex:1 1 0; max-width:90px; height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
+  .ov-bar i { display:block; height:100%; background:var(--busy); }
+  .ov-notes { margin-left:auto; color:var(--faint); text-decoration:none; }
+  .ov-notes:hover, .ov-notes.on { color:var(--accent); }
+  .ov-hits { margin-top:6px; font-weight:400; font-size:12px; color:var(--dim); display:flex; flex-direction:column; gap:5px; }
+  .ov-hits .hit-title { color:var(--ink); font-weight:600; overflow-wrap:anywhere; }
+  .ov-hits .hit-snip { overflow-wrap:anywhere; }
   /* By hand: the name edits in place, the tools sit beside it and say nothing
      until they are needed. A pinned card is lit, as a pinned block is. */
   .ov-top { display:flex; align-items:baseline; gap:6px; }
@@ -1080,9 +1101,53 @@ function column(c) {
   // Lit up: a column with none of those sessions is only its card.
   const shrunk = LIGHT && !c.sessions.some(t => t.counted === LIGHT);
   return `<section class="ov-col ${shrunk ? "shrunk" : ""}" data-project="${esc(c.project)}">
-    <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${movementOf(c)}${mergedOf(c)}</div>
+    <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${contextOf(c)}${footOf(c)}${movementOf(c)}${mergedOf(c)}</div>
     ${c.sessions.map(tile).join("")}
   </section>`;
+}
+
+// What the project is about, as the server chose it. A line of your own is
+// edited where it stands; a guess is greyed and invites a line of your own.
+function contextOf(c) {
+  const x = c.context;
+  if (!x) return "";
+  const mine = x.source === "own" ? x.full : "";
+  const add = x.guess ? `${x.line ? " " : ""}<span class="add">add a line</span>` : "";
+  return `<div class="ov-ctx edit ${x.guess ? "maybe" : ""}" data-edit="context" data-value="${esc(mine)}"
+    title="${esc(x.full)}">${esc(x.line)}${add}</div>`;
+}
+
+// A track's progress, as the server counted it.
+function progressOf(c) {
+  const p = c.track?.progress;
+  return p ? `<span class="ov-bar" aria-hidden="true"><i style="width:${
+    p.total ? Math.round(Math.min(p.done, p.total) / p.total * 100) : 100}%"></i></span><span>${esc(p.text)}</span>` : "";
+}
+
+function notesLinkOf(c) {
+  return c.notes ? `<a class="ov-notes ${NOTES.has(c.project) ? "on" : ""}" href="#"
+    data-query="${esc(c.notes.query)}">notes</a>` : "";
+}
+
+// The row under the context line: progress, the notes link, and whatever the
+// last click on that link found.
+function footOf(c) {
+  const bar = progressOf(c), note = notesLinkOf(c);
+  return bar || note ? `<div class="ov-prog">${bar}${note}</div>${hitsOf(c)}` : "";
+}
+
+// Notes are looked up when the link is clicked, and only then.
+const NOTES = new Map();      // project -> what its last click found, until clicked away
+function hitsOf(c) {
+  const n = NOTES.get(c.project);
+  if (!n) return "";
+  const hits = Array.isArray(n.hits) ? n.hits : [];
+  const body = n.wait ? "searching…"
+    : !n.ok ? esc(n.reason || "notes search failed")
+    : hits.length ? hits.map(h => `<div><div class="hit-title" title="${esc(h.path)}">${esc(h.title || h.path)}</div>
+        <div class="hit-snip">${esc(h.snippet)}</div></div>`).join("")
+    : "nothing found";
+  return `<div class="ov-hits">${body}</div>`;
 }
 
 // What you moved into this project, each with the way back. Undoing puts the
@@ -1105,8 +1170,13 @@ function headOf(c) {
   const at = pins.findIndex(x => x.project === c.project);
   const arrow = (to, glyph, word) => to ? `<button class="ov-arrow" data-act="swap" data-with="${esc(to.project)}" data-side="${word}"
       title="${word} of ${esc(to.name)}" aria-label="${word} of ${esc(to.name)}">${glyph}</button>` : "";
+  // A track's status word sits beside its name; a name that is not the raw one carries the raw
+  // for the hover, in grey after it.
+  const tag = c.track?.status
+    ? `<span class="ov-tag ${esc(c.track.status.toLowerCase())}">${esc(c.track.status)}</span>` : "";
+  const raw = c.raw && c.raw !== c.name ? ` data-raw="${esc(c.raw)}"` : "";
   return `<div class="ov-top">
-    <span class="ov-name edit" data-edit="name" title="${esc(c.raw)}: click to rename">${esc(c.name)}</span>
+    <span class="ov-name edit" data-edit="name"${raw} title="${esc(c.raw)}: click to rename">${esc(c.name)}</span>${tag}
     <span class="ov-tools">
       ${c.pinned ? arrow(pins[at - 1], "‹", "before") + arrow(pins[at + 1], "›", "after") : ""}
       <button class="ov-pin ${c.pinned ? "on" : ""}" data-act="${c.pinned ? "unpin" : "pin"}"
@@ -1421,7 +1491,8 @@ document.getElementById("main").addEventListener("click", ev => {
   // the edit is committed neither is still in the document.
   const project = cell.closest("section")?.dataset.project;
   const sid = cell.dataset.sid;
-  const before = cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
+  const before = cell.dataset.value !== undefined ? cell.dataset.value
+    : cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
   const input = document.createElement("input");
   input.className = "inline";
   input.value = before;
@@ -1437,12 +1508,15 @@ document.getElementById("main").addEventListener("click", ev => {
     // and this one is the reason it was asked to redraw.
     input.remove();
     if (commit && input.value.trim() !== before) {
-      const endpoint = { name: "/api/name", line: "/api/line", assign: "/api/assign" }[kind];
+      const endpoint = { name: "/api/name", line: "/api/line", assign: "/api/assign",
+                         context: "/api/context" }[kind];
       const body = kind === "name"
         ? { project, label: input.value }
-        : kind === "assign"
-          ? { key: sid, project: input.value }
-          : { key: sid, text: input.value };
+        : kind === "context"
+          ? { project, text: input.value }
+          : kind === "assign"
+            ? { key: sid, project: input.value }
+            : { key: sid, text: input.value };
       const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Fleet": "1" },
@@ -1463,6 +1537,32 @@ document.getElementById("main").addEventListener("click", ev => {
     if (!document.hasFocus()) return;
     finish(true);
   });
+});
+
+// The notes link on a card: one search of your notes, when it is clicked and
+// not before. Clicking again puts the answer away.
+document.getElementById("main").addEventListener("click", async ev => {
+  const link = ev.target.closest(".ov-notes");
+  if (!link) return;
+  ev.preventDefault();
+  const project = link.closest("section")?.dataset.project;
+  const query = link.dataset.query;
+  // Repainting while a field is open would take it away from you; the next poll
+  // draws what is waiting, as soon as the field is closed.
+  const show = () => { if (!busyWithUser()) paint(); };
+  if (NOTES.has(project)) { NOTES.delete(project); show(); return; }
+  NOTES.set(project, { wait: true });
+  show();
+  let found = { ok: false, reason: "notes search failed" };
+  try {
+    const r = await fetch("/api/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+      body: JSON.stringify({ query }),
+    });
+    if (r.ok) found = await r.json();
+  } catch (e) { /* the card says it failed */ }
+  if (NOTES.has(project)) { NOTES.set(project, found); show(); }      // not if you clicked it away meanwhile
 });
 
 // Drag a block to pin it; the order you drop them in is the order they keep.

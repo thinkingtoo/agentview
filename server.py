@@ -12,12 +12,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import archive
+import context
 import embedder
 import fleet
 import hand
 import jump
 import lines
 import log
+import notes
+import projects
 import providers
 import seen
 import snapshot
@@ -264,7 +267,7 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or "{}")
 
     ROUTES = ("jump", "seen", "order", "name", "line", "assign", "pin", "merge", "hold", "chime", "restore",
-              "snapshot", "revive", "dismiss", "reopen", "ticket")
+              "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes")
 
     def do_POST(self):
         if not self._local():
@@ -390,6 +393,24 @@ class Handler(BaseHTTPRequestHandler):
         except hand.Refused as why:
             return self.send_error(400, str(why))
         self._send(json.dumps({"ok": True, **answer}), "application/json")
+
+    def _context(self, body):
+        """Your own line for a project, kept under its identity. An empty one
+        takes it back, and the source the roster finds takes its place."""
+        project, text = body.get("project"), body.get("text")
+        if not isinstance(project, str) or not isinstance(text, str):
+            return self.send_error(400, "expected {project, text}")
+        if projects.from_identity(project) is None:
+            return self.send_error(400, "expected a project identity, like repo:host/owner/name")
+        text = context.squash(text)[:context.PARAGRAPH_MAX]
+        self._correct(lambda config: hand.line(config, project, text))
+
+    def _notes(self, body):
+        """A click on a card's notes link: one search of your notes."""
+        query = body.get("query")
+        if not isinstance(query, str):
+            return self.send_error(400, "expected {query}")
+        self._send(json.dumps(notes.search(query)), "application/json")
 
     def _line(self, body):
         key, text = body.get("key"), body.get("text")

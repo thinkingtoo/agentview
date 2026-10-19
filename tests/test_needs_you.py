@@ -290,7 +290,7 @@ class Card(Base):
     def test_every_card_has_a_state_and_the_no_project_one_too(self):
         got = self.roster(self.writing("a"), session("b", None, status="idle"))["columns"]
         self.assertEqual([(c["name"], c["state"]) for c in got],
-                         [("maple", "moving"), ("No project", "idle")])
+                         [("Maple", "moving"), ("No project", "idle")])
 
 
 class Literal(Base):

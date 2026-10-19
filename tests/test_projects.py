@@ -11,6 +11,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -79,8 +80,34 @@ class Placed(Base):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def pipe(self, path):
+        """A named pipe where a file is expected: opening it to read waits for
+        a writer that never comes. The cleanup is that writer, so a reader
+        left waiting by a failing test is let go."""
+        os.mkfifo(path)
+
+        def release():
+            try:
+                os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+        self.addCleanup(release)
+
+    def answers_within(self, seconds, call):
+        """What `call()` returns, or None if it has not returned by then."""
+        got = []
+        thread = threading.Thread(target=lambda: got.append(call()), daemon=True)
+        thread.start()
+        thread.join(seconds)
+        return got[0] if got else None
+
     def names(self, got):
         return [c["name"] for c in got["columns"]]
+
+    def raws(self, got):
+        """Which projects there are, by the name they have before any rename or
+        prettifying -- and "No project", which has no other."""
+        return [c["raw"] or c["name"] for c in got["columns"]]
 
     def keys(self, column):
         return [t["key"] for t in column["sessions"]]
@@ -92,18 +119,18 @@ class Placed(Base):
 class Folders(Placed):
     def test_a_launch_folder_that_is_not_absolute_is_nowhere(self):
         # It would be read against wherever the server runs, which is a repository.
-        self.assertEqual(self.names(self.roster(sess("a", "src/app"))), ["No project"])
+        self.assertEqual(self.raws(self.roster(sess("a", "src/app"))), ["No project"])
 
     def test_a_folder_that_is_no_repository_is_a_project_by_the_folder_rule(self):
         column = self.roster(sess("a", "/home/alice/Projects/orchard"))["columns"][0]
         self.assertEqual({k: column[k] for k in ("project", "kind", "name", "raw")},
                          {"project": "folder:orchard", "kind": "folder",
-                          "name": "orchard", "raw": "orchard"})
+                          "name": "Orchard", "raw": "orchard"})
 
     def test_a_repository_and_a_folder_with_the_same_name_are_two_projects(self):
         main = self.repo("orchard")
         got = self.roster(sess("a", main), sess("b", "/home/alice/Projects/orchard"))
-        self.assertEqual(self.names(got), ["orchard", "orchard"])
+        self.assertEqual(self.raws(got), ["orchard", "orchard"])
         self.assertEqual({c["kind"] for c in got["columns"]}, {"repository", "folder"})
         self.assertEqual(len({c["project"] for c in got["columns"]}), 2)
 
@@ -119,7 +146,7 @@ class Folders(Placed):
         self.repo("one", at=suite)
         self.repo("two", at=suite)
         got = self.roster(sess("a", suite), sess("b", shelf))
-        self.assertEqual(self.names(got), ["No project"])
+        self.assertEqual(self.raws(got), ["No project"])
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["fake:a", "fake:b"])
 
     def test_two_client_folders_on_a_shelf_never_share_a_column(self):
@@ -129,7 +156,7 @@ class Folders(Placed):
         got = self.roster(sess("a", self.folder("Projects", "clients", "acme")),
                           sess("b", self.folder("Projects", "clients", "bravo")),
                           sess("c", self.folder("Projects", "clients", "acme")))
-        self.assertEqual(sorted(self.names(got)), ["acme", "bravo"])
+        self.assertEqual(sorted(self.raws(got)), ["acme", "bravo"])
         self.assertEqual(sorted(len(c["sessions"]) for c in got["columns"]), [1, 2])
 
     def test_a_folder_that_holds_folders_of_repositories_is_never_a_project_either(self):
@@ -139,13 +166,13 @@ class Folders(Placed):
             for name in ("one", "two"):
                 self.repo(f"{group}-{name}", at=self.folder("Projects", "tiroir", group))
         got = self.roster(sess("a", tiroir), sess("b", tiroir / "o"))
-        self.assertEqual(self.names(got), ["No project"])
+        self.assertEqual(self.raws(got), ["No project"])
 
     def test_a_folder_holding_one_repository_is_still_a_project(self):
         self.shelved()
         wrapper = self.folder("Projects", "wrapper")
         self.repo("only", at=wrapper)
-        self.assertEqual(self.names(self.roster(sess("a", wrapper))), ["wrapper"])
+        self.assertEqual(self.raws(self.roster(sess("a", wrapper))), ["wrapper"])
 
 
 class LaunchFolder(Placed):
@@ -154,7 +181,7 @@ class LaunchFolder(Placed):
         elsewhere = self.repo("orchard")
         touched = [str(elsewhere / "src" / f"{n}.py") for n in "abcd"]
         got = self.roster(sess("a", home, paths=touched))
-        self.assertEqual(self.names(got), ["loom"])
+        self.assertEqual(self.raws(got), ["loom"])
 
 
 class TrackFixtures(Placed):
@@ -184,7 +211,7 @@ class Tracks(TrackFixtures):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         got = self.claude(self.worker("w", orchard, "checkout", name="Mateo"),
                           self.boss("b", loom, "checkout"))
-        self.assertEqual(self.names(got), ["checkout"])
+        self.assertEqual(self.raws(got), ["checkout"])
         column = got["columns"][0]
         self.assertEqual((column["project"], column["kind"], column["raw"]),
                          ("track:checkout", "track", "checkout"))
@@ -204,7 +231,7 @@ class Tracks(TrackFixtures):
                           self.boss("b2", loom, "docs", name="Saskia"),
                           self.worker("w2", loom, "docs", name="Odile"),
                           sess("p", loom, name="Femi"))
-        self.assertEqual(sorted(self.names(got)), ["checkout", "docs", "loom"])
+        self.assertEqual(sorted(self.raws(got)), ["checkout", "docs", "loom"])
         self.assertEqual(self.keys(self.column(got, "track:docs")), ["claude:b2", "claude:w2"])
         self.assertEqual(self.keys(self.column(got, "repo:example.com/alice/loom")), ["claude:p"])
 
@@ -216,7 +243,7 @@ class Tracks(TrackFixtures):
                           sess("r", acme_repo),
                           sess("c", mono / "clients" / "acme"),
                           sess("f", "/home/alice/Projects/acme"))
-        self.assertEqual(self.names(got), ["acme"] * 4)
+        self.assertEqual(self.raws(got), ["acme"] * 4)
         self.assertEqual(len({c["project"] for c in got["columns"]}), 4)
         self.assertEqual(sorted(c["kind"] for c in got["columns"]),
                          ["folder", "folder", "repository", "track"])
@@ -225,7 +252,7 @@ class Tracks(TrackFixtures):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         got = self.claude(self.boss("b", loom, "checkout", team=["Mateo"]),
                           sess("w", orchard, name="Mateo"))
-        self.assertEqual(self.names(got), ["checkout"])
+        self.assertEqual(self.raws(got), ["checkout"])
         self.assertEqual(self.keys(got["columns"][0]), ["claude:b", "claude:w"])
 
     def test_the_pane_name_beats_the_boss_that_messaged_the_worker(self):
@@ -248,7 +275,7 @@ class Tracks(TrackFixtures):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         got = self.claude(sess("b", loom, name="Ilse", boss=True, team=["Mateo"]),
                           sess("w", orchard, name="Mateo"))
-        self.assertEqual(sorted(self.names(got)), ["loom", "orchard"])
+        self.assertEqual(sorted(self.raws(got)), ["loom", "orchard"])
 
     def test_a_worker_only_the_tracker_names_is_filed_under_that_track(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
@@ -256,6 +283,14 @@ class Tracks(TrackFixtures):
         got = self.claude(self.boss("b", loom, "checkout"),
                           sess("w", orchard, name="Mateo"))
         self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b", "claude:w"])
+
+    def test_a_tracker_that_is_a_named_pipe_is_no_roster_and_no_wait(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.pipe(self.pm / "checkout.md")
+        got = self.answers_within(5, lambda: self.claude(self.boss("b", loom, "checkout"),
+                                                         sess("w", orchard, name="Mateo")))
+        self.assertIsNotNone(got, "the roster is still waiting for the tracker to be read")
+        self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b"])
 
     def test_a_roster_heading_may_carry_a_note_or_a_prefix_as_real_trackers_write_it(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
@@ -343,7 +378,7 @@ class Tracks(TrackFixtures):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         self.tracker("old", "Mateo")
         got = self.claude(sess("b", loom, name="Ilse"), sess("w", orchard, name="Mateo"))
-        self.assertEqual(sorted(self.names(got)), ["loom", "orchard"])
+        self.assertEqual(sorted(self.raws(got)), ["loom", "orchard"])
 
     def test_each_running_tracker_is_read_once_however_many_sessions_ask(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
@@ -359,7 +394,7 @@ class Tracks(TrackFixtures):
     def test_a_marker_that_is_a_path_makes_no_track(self):
         loom = self.repo("loom")
         got = self.claude(self.boss("b", loom, "../../elsewhere"))
-        self.assertEqual(self.names(got), ["loom"])
+        self.assertEqual(self.raws(got), ["loom"])
 
     def test_a_track_whose_boss_is_gone_files_nobody(self):
         # The pane still says `boss-old` and a marker for the departed boss
@@ -368,14 +403,14 @@ class Tracks(TrackFixtures):
         (self.pm / ".boss-sessions" / "gone-session").write_text("old\n")
         orchard = self.repo("orchard")
         got = self.claude(self.worker("w", orchard, "old", name="Mateo"))
-        self.assertEqual(self.names(got), ["orchard"])
+        self.assertEqual(self.raws(got), ["orchard"])
 
     def test_only_claude_sessions_belong_to_a_track(self):
         # Codex sessions reach the repository, the folder and the guess only.
         loom, orchard = self.repo("loom"), self.repo("orchard")
         got = fleet_roster(Claude([self.boss("b", loom, "checkout")]),
                            Codex([self.worker("x", orchard, "checkout", name="Mateo")]))
-        self.assertEqual(sorted(self.names(got)), ["checkout", "orchard"])
+        self.assertEqual(sorted(self.raws(got)), ["checkout", "orchard"])
 
 
 class Bosses(TrackFixtures):
@@ -389,7 +424,7 @@ class Bosses(TrackFixtures):
     def test_a_boss_with_no_marker_track_falls_back_to_the_pane_it_runs_in(self):
         loom = self.repo("loom")
         got = self.claude(self.boss("b", loom, "", tmux="boss-checkout:@1.%2"))
-        self.assertEqual(self.names(got), ["checkout"])
+        self.assertEqual(self.raws(got), ["checkout"])
 
     def test_a_boss_with_no_track_at_all_leads_the_column_of_its_repository(self):
         loom = self.repo("loom")
@@ -443,10 +478,10 @@ class Bosses(TrackFixtures):
 class Renames(TrackFixtures):
     def test_a_project_renamed_to_the_name_of_another_stays_a_project_of_its_own(self):
         loom, acme = self.repo("loom"), self.repo("acme")
-        self.config = {"names": {"repo:example.com/alice/loom": "acme"}}
+        self.config = {"names": {"repo:example.com/alice/loom": "Acme"}}
         got = self.claude(sess("a", loom), sess("b", acme),
                           self.boss("c", self.repo("orchard"), "acme"))
-        self.assertEqual(self.names(got), ["acme", "acme", "acme"])
+        self.assertEqual(self.names(got), ["Acme", "Acme", "Acme"])
         self.assertEqual(len({c["project"] for c in got["columns"]}), 3)
 
 
@@ -461,17 +496,17 @@ class Order(TrackFixtures):
                 sess("n", "", name="Kasper")]
 
     def test_tracks_then_repositories_then_folders_then_no_project(self):
-        self.assertEqual(self.names(self.claude(*self.mixed())),
+        self.assertEqual(self.raws(self.claude(*self.mixed())),
                          ["checkout", "docs", "loom", "orchard", "maple", "No project"])
 
     def test_pinned_projects_lead_in_the_order_they_were_pinned(self):
         self.config = {"pinned": ["repo:example.com/alice/orchard", "folder:maple", "track:docs"]}
-        self.assertEqual(self.names(self.claude(*self.mixed())),
+        self.assertEqual(self.raws(self.claude(*self.mixed())),
                          ["orchard", "maple", "docs", "checkout", "loom", "No project"])
 
     def test_a_pin_from_before_projects_had_identities_still_pins_by_name(self):
         self.config = {"pinned": ["orchard", "checkout"]}
-        self.assertEqual(self.names(self.claude(*self.mixed()))[:2], ["orchard", "checkout"])
+        self.assertEqual(self.raws(self.claude(*self.mixed()))[:2], ["orchard", "checkout"])
 
     def test_a_pin_by_identity_pins_only_that_project(self):
         # A repository named like a track is not the track.
@@ -484,7 +519,7 @@ class Order(TrackFixtures):
 
     def test_no_project_stays_last_even_when_it_is_pinned(self):
         self.config = {"pinned": [""]}
-        self.assertEqual(self.names(self.claude(*self.mixed()))[-1], "No project")
+        self.assertEqual(self.raws(self.claude(*self.mixed()))[-1], "No project")
 
     def test_projects_of_a_kind_keep_their_places_whatever_their_sessions_do(self):
         # A column that jumps sideways because a session woke up is the
@@ -493,13 +528,13 @@ class Order(TrackFixtures):
         quiet = [sess("a", loom, status="idle"), sess("b", orchard, status="idle")]
         busy = [sess("a", loom, status="idle"),
                 sess("b", orchard, status="waiting", waitingFor="input needed", updatedAt=1790000900000)]
-        self.assertEqual(self.names(self.claude(*quiet)), ["loom", "orchard"])
-        self.assertEqual(self.names(self.claude(*busy)), ["loom", "orchard"])
+        self.assertEqual(self.raws(self.claude(*quiet)), ["loom", "orchard"])
+        self.assertEqual(self.raws(self.claude(*busy)), ["loom", "orchard"])
 
     def test_projects_of_a_kind_go_by_name_without_regard_to_case(self):
         got = self.claude(sess("a", self.repo("Zebra")), sess("b", self.repo("apple")),
                           sess("c", self.repo("Mango")))
-        self.assertEqual(self.names(got), ["apple", "Mango", "Zebra"])
+        self.assertEqual(self.raws(got), ["apple", "Mango", "Zebra"])
 
 
 class NoProject(Placed):
@@ -515,7 +550,7 @@ class OwnSetting(Placed):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         self.config = {"assign": {"fake:a": "loom"}}
         got = self.roster(sess("a", orchard), sess("b", loom))
-        self.assertEqual(self.names(got), ["loom"])
+        self.assertEqual(self.raws(got), ["loom"])
         self.assertEqual(got["columns"][0]["kind"], "repository")
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["fake:a", "fake:b"])
 
@@ -538,7 +573,7 @@ class OwnSetting(Placed):
         got = self.roster(sess("a", orchard))
         self.assertEqual((got["columns"][0]["project"], got["columns"][0]["name"],
                           got["columns"][0]["kind"]),
-                         ("repo:example.com/alice/loom", "loom", "repository"))
+                         ("repo:example.com/alice/loom", "Loom", "repository"))
 
     def test_your_own_setting_beats_the_boss_track(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
@@ -557,7 +592,7 @@ class OwnSetting(Placed):
         self.config = {"shelves": [str(shelf)],
                        "assign": {"fake:a": "agency › lead-engine"}}
         got = self.roster(sess("a", self.repo("elsewhere")), sess("b", lead))
-        self.assertEqual(self.names(got), ["lead-engine"])
+        self.assertEqual(self.raws(got), ["lead-engine"])
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["fake:a", "fake:b"])
 
     def test_a_name_no_project_carries_starts_a_folder_project(self):
@@ -579,9 +614,9 @@ class Guess(Placed):
         orchard = self.repo("orchard")
         touched = [str(orchard / "src" / f"{n}.py") for n in "abc"]
         got = self.roster(self.lost(paths=touched))
-        self.assertEqual(self.names(got), ["No project"])
+        self.assertEqual(self.raws(got), ["No project"])
         self.assertEqual(got["columns"][0]["sessions"][0]["suggestion"],
-                         {"project": "repo:example.com/alice/orchard", "name": "orchard"})
+                         {"project": "repo:example.com/alice/orchard", "name": "Orchard"})
 
     def test_too_few_files_or_no_clear_favourite_is_no_suggestion(self):
         orchard, loom = self.repo("orchard"), self.repo("loom")
@@ -620,7 +655,26 @@ class Edges(Placed):
         self.config = {"shelves": [str(shelf)]}
         with mock.patch.dict(os.environ, {"HOME": str(home)}):
             got = self.roster(sess("a", self.folder("home", "Projects", "maple")))
-        self.assertEqual(self.names(got), ["maple"])
+        self.assertEqual(self.raws(got), ["maple"])
+
+    def test_a_gitlink_that_is_not_text_does_not_stop_the_page(self):
+        odd = self.folder("odd")
+        (odd / ".git").write_bytes(b"\xff\xfe\x00gitdir")
+        got = self.roster(sess("a", odd))
+        self.assertEqual((self.raws(got), got["columns"][0]["kind"]), (["odd"], "folder"))
+
+    def test_a_gitlink_with_a_null_byte_in_it_does_not_stop_the_page(self):
+        odd = self.folder("odd")
+        (odd / ".git").write_bytes(b"gitdir: x\x00y\n")
+        got = self.roster(sess("a", odd))
+        self.assertEqual((self.raws(got), got["columns"][0]["kind"]), (["odd"], "folder"))
+
+    def test_a_worktree_whose_commondir_is_not_text_is_still_a_project(self):
+        parent = self.repo("suite")
+        tree = self.worktree(parent, "suite-wt")
+        (parent / ".git" / "worktrees" / "suite-wt" / "commondir").write_bytes(b"\xff\xfe\x00")
+        got = self.roster(sess("a", tree))
+        self.assertEqual(len(got["columns"]), 1)
 
     def test_a_submodule_is_a_repository_of_its_own(self):
         parent = self.repo("suite")
@@ -645,8 +699,8 @@ class Clients(Placed):
         got = self.roster(sess("a", main / "clients" / "acme"),
                           sess("b", main / "clients" / "bravo"),
                           sess("c", main))
-        self.assertEqual(sorted(self.names(got)), ["acme", "bravo", "mono"])
-        by = {c["name"]: c for c in got["columns"]}
+        self.assertEqual(sorted(self.raws(got)), ["acme", "bravo", "mono"])
+        by = {c["raw"]: c for c in got["columns"]}
         self.assertEqual(self.keys(by["acme"]), ["fake:a"])
         self.assertEqual(self.keys(by["bravo"]), ["fake:b"])
         self.assertEqual(self.keys(by["mono"]), ["fake:c"])
@@ -658,7 +712,7 @@ class Clients(Placed):
         (side / "clients" / "acme").mkdir(parents=True)
         got = self.roster(sess("a", main / "clients" / "acme" / "site"),
                           sess("b", side / "clients" / "acme"))
-        self.assertEqual(self.names(got), ["acme"])
+        self.assertEqual(self.raws(got), ["acme"])
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["fake:a", "fake:b"])
 
     def test_when_the_repository_is_the_clients_folder_each_folder_in_it_is_a_client(self):
@@ -667,13 +721,13 @@ class Clients(Placed):
             (clients / client).mkdir()
         got = self.roster(sess("a", clients / "acme"), sess("b", clients / "bravo" / "site"),
                           sess("c", clients))
-        self.assertEqual(sorted(self.names(got)), ["acme", "bravo", "clients"])
+        self.assertEqual(sorted(self.raws(got)), ["acme", "bravo", "clients"])
 
     def test_a_client_folder_of_another_repository_is_another_project(self):
         one, two = self.monorepo("mono"), self.monorepo("other")
         got = self.roster(sess("a", one / "clients" / "acme"),
                           sess("b", two / "clients" / "acme"))
-        self.assertEqual(self.names(got), ["acme", "acme"])
+        self.assertEqual(self.raws(got), ["acme", "acme"])
 
 
 class Repositories(Placed):
@@ -681,7 +735,7 @@ class Repositories(Placed):
         main = self.repo("loom")
         fix = self.worktree(main, "loom-fix")
         got = self.roster(sess("a", main), sess("b", fix))
-        self.assertEqual(self.names(got), ["loom"])
+        self.assertEqual(self.raws(got), ["loom"])
         self.assertEqual(got["columns"][0]["kind"], "repository")
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["fake:a", "fake:b"])
 
@@ -689,7 +743,7 @@ class Repositories(Placed):
         one = self.repo("loom")
         again = self.repo("loom-copy", remote="https://example.com/alice/loom.git")
         got = self.roster(sess("a", one), sess("b", again))
-        self.assertEqual(self.names(got), ["loom"])
+        self.assertEqual(self.raws(got), ["loom"])
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["fake:a", "fake:b"])
 
     def test_two_repositories_with_the_same_folder_name_stay_two_columns(self):
@@ -697,7 +751,7 @@ class Repositories(Placed):
         theirs = self.repo("loom", at=self.folder("theirs"),
                            remote="git@example.com:bob/{name}.git")
         got = self.roster(sess("a", mine), sess("b", theirs))
-        self.assertEqual(self.names(got), ["loom", "loom"])
+        self.assertEqual(self.raws(got), ["loom", "loom"])
         self.assertNotEqual(got["columns"][0]["project"], got["columns"][1]["project"])
 
     def test_a_repository_reached_through_a_link_is_the_one_its_worktree_is_in(self):
@@ -706,13 +760,13 @@ class Repositories(Placed):
         link = self.disk / "shortcut"
         link.symlink_to(main)
         got = self.roster(sess("a", link), sess("b", side))
-        self.assertEqual(self.names(got), ["scratchpad"])
+        self.assertEqual(self.raws(got), ["scratchpad"])
 
     def test_a_repository_with_no_remote_is_known_by_where_its_main_checkout_is(self):
         main = self.repo("scratchpad", remote=None)
         side = self.worktree(main, "scratchpad-side")
         got = self.roster(sess("a", main), sess("b", side))
-        self.assertEqual(self.names(got), ["scratchpad"])
+        self.assertEqual(self.raws(got), ["scratchpad"])
 
 
 if __name__ == "__main__":

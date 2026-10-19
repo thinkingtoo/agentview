@@ -39,6 +39,10 @@ Putting everything of one project into another by hand, so that the first is gon
 A short line under a project's name that reminds the person what the project is about.
 _Avoid_: description, summary
 
+**Project card**:
+The top of a project's column: its name, what it is about (the context line), for a track its status and how many of its boxes are ticked, and its movement.
+_Avoid_: header, title bar
+
 **Working-on line**:
 A short line under a session's name that says what job the session is on, not what it is doing this minute.
 _Avoid_: subject, status line

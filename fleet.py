@@ -17,6 +17,7 @@ import threading
 import time
 from pathlib import Path
 
+import context
 import jump
 import lines
 import projects
@@ -694,6 +695,7 @@ def columns_of(blocks):
     """
     folder_rule = functools.partial(resolve_project, shelves=config())
     names = config_value("names", {})
+    own_lines = config_value("project_lines", {})
     pinned = config_value("pinned", [])
     members = [m for b in blocks if not b["routines"] for m in b["members"]]
     by_key, follow = projects.place(members, folder_rule, config_value("assign", {}))
@@ -701,7 +703,7 @@ def columns_of(blocks):
     for m in members:
         grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
     merged = projects.merged_into(config_value("assign", {}))
-    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, follow, names, pinned, merged),
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, follow, names, pinned, merged, own_lines),
                 _column_order(rows, by_key[rows[0]["key"]], names, pinned))
                for rows in grouped.values()]
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
@@ -786,19 +788,24 @@ def _column_name(project, names):
             else names.get("No project") or "No project")
 
 
-def _column(rows, project, folder_rule, follow, names, pinned, merged):
+def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines):
     # A boss leads its column, whatever the activity: who leads before who
     # works. The rest are in the order the blocks have always used.
     rows = order_members(list(rows))
     rows.sort(key=lambda s: not s["boss"])
     tiles = [tile_of(m, _suggestion(m, project, folder_rule, follow, names)) for m in rows]
+    name = _column_name(project, names)
+    about, track = context.card(project, rows, own_lines)
     return {
         "project": project["id"], "raw": project["raw"], "kind": project["kind"],
-        "name": _column_name(project, names),
+        "name": name,
         "pinned": _pin_rank(project, pinned) is not None,
         # What you moved into this project, which the page can take back.
         "merged": [{"project": ident, "name": projects.display_name(projects.from_identity(ident), names)}
                    for ident in merged.get(project["id"], [])],
+        "context": about, "track": track,
+        # What the card's notes link asks the brain, once someone clicks it.
+        "notes": None if about is None else {"query": context.notes_query(name, about)},
         "strip": strip_of(rows), "summary": mix_of(tiles),
         "state": state_of(tiles), "sessions": tiles,
     }
