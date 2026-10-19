@@ -327,9 +327,11 @@ provider answered no longer lists the session (so a missed poll does not unpin
 anything).
 
 A command a session leaves for you in its line gets a **copy** button. The
-session-line hook is unchanged, so `ask` is free text and `ask_commands.py`
-guesses: text in quotes (straight, curly, « » or backticks), or after a `$ `,
-that reads as a command. Two tiers keep prose out: tools with fixed
+session-line hook asks for plain text (single quotes, no backticks) and says
+where a command goes: inside double quotes, or after `$ ` at the end of the ask.
+That is a request, not a rule, so `ask` is still free text and `ask_commands.py`
+still guesses: text in quotes (straight, curly, « » or backticks), or after a
+`$ `, that reads as a command. Two tiers keep prose out: tools with fixed
 subcommands (`git`, `docker`, `npm`, `make`, `brew` ...) need one of theirs,
 so "git status" gets a button and "git history" does not; every other known
 program (`ls`, `rm`, `psql`, `find`, `cd`, `echo`, `ssh`, `python`, `claude`)
@@ -383,6 +385,11 @@ really wrote is a bug; on a shape listed here it is a known limit.
 
 Known limits, accepted:
 
+- A command named bare, with no quote and no `$` (`run git status and tell
+  me`), gets no button: a sentence that holds a command cannot be told from one
+  that does not, and the hook asks for the quotes or the `$ ` to say which it is.
+  On one day of real asks, before the hook asked for them, 76 of 1,747 distinct
+  asks named a command that way.
 - A program the lists do not know (`tiroir-work next` in quotes) gets no
   button, and neither does a known tool with a subcommand its list lacks
   (`"npm login"`, `"git lfs pull"`) or Claude Code's `!` prefix

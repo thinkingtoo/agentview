@@ -8,6 +8,9 @@ Nothing here blocks and nothing here is an error. That is the whole point:
 a Stop hook that blocks is rendered to you as `Stop hook error:` in every
 session, at every stop, and no setting changes that.
 """
+import os
+import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -17,6 +20,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE.parent / "hooks"))
+import ask_commands
 import lines
 import turn_line
 
@@ -52,14 +56,16 @@ class Starting(unittest.TestCase):
         # With "s1" and whatever path the checkout had, this passed at 697 in
         # the main checkout and failed at 703 in any worktree, while the real
         # injection was 731. That size was approved on 2026-09-25 (n counts
-        # what is left for the user); the ceiling leaves room for one more
-        # sentence and no more.
+        # what is left for the user), and the owner approved one more
+        # sentence on 2026-10-19 (where a command goes, so the page can offer
+        # it to copy); the ceiling leaves room for one more sentence and no
+        # more.
         sid = "00000000-0000-4000-8000-000000000000"
         with mock.patch.object(turn_line, "WRITER", Path("/home/alice/Projects/agentview/hooks/team-line")):
             said = turn_line.begin({"session_id": sid, "prompt": "go"},
                                    root=self.root)["hookSpecificOutput"]["additionalContext"]
-        self.assertLess(len(said), 750, len(said))
-        self.assertGreater(len(said), 700, "the budget was 700 before 2026-09-25; if the text got "
+        self.assertLess(len(said), 875, len(said))
+        self.assertGreater(len(said), 820, "the budget was 750 before 2026-10-19; if the text got "
                                           "shorter, tighten the ceiling above to match")
 
     def test_the_size_does_not_depend_on_where_the_checkout_lives(self):
@@ -78,3 +84,106 @@ class Starting(unittest.TestCase):
         got = turn_line.begin({"session_id": "s1", "prompt": "go"}, root=self.root)
         self.assertNotIn("decision", got)
         self.assertNotIn("continue", got)
+
+    def test_a_command_the_person_must_run_is_asked_for_in_double_quotes_or_after_a_dollar(self):
+        said = turn_line.begin({"session_id": "s1", "prompt": "go"},
+                               root=self.root)["hookSpecificOutput"]["additionalContext"]
+        sentence = ('A command the user must run goes inside double quotes, or after "$ " at '
+                    "the end of the ask, within the single-quoted text.")
+        self.assertIn(sentence, said)
+        # Straight after the sentence on plain text, which is where a session reads how to quote.
+        self.assertIn("in plain text (single quotes, no backticks). " + sentence, said)
+
+    def test_backticks_stay_banned(self):
+        # A session that slipped into double quotes around the whole ask would run them.
+        said = turn_line.begin({"session_id": "s1", "prompt": "go"},
+                               root=self.root)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("no backticks", said)
+        self.assertNotIn("backticks around", said)
+        self.assertNotIn("in backticks", said)
+
+
+class WhatTheSessionThenWrites(unittest.TestCase):
+    """The hook's own command line, run by real bash, and what the guesser makes of the ask.
+
+    The sentence the hook says and the guesser behind the copy button are one
+    agreement. These run the call as a session would (the placeholders of the
+    hook's own line filled in, in bash itself) so that neither can move
+    without the other: what bash hands `team-line` is what is stored, whole,
+    and the commands the guesser then offers are the ones the sentence names.
+    """
+    SID = "00000000-0000-4000-8000-000000000000"
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.state = Path(self.dir.name)
+        self.root = self.state / "agentview" / "lines"
+
+    def command_line(self, ask):
+        """The line the hook tells the session to run, its three placeholders filled."""
+        said = turn_line.begin({"session_id": self.SID, "prompt": "go"},
+                               root=self.root)["hookSpecificOutput"]["additionalContext"]
+        found = [l for l in said.splitlines() if l.startswith(str(turn_line.WRITER))]
+        self.assertEqual(len(found), 1, said)
+        line = found[0]
+        self.assertEqual(line.count("<"), 3, line)
+        filled = line.replace("<number>", "1")
+        self.assertEqual(filled.count("--did '<"), 1, line)
+        filled = re.sub(r"--did '[^']*'", "--did 'where it stands'", filled)
+        self.assertEqual(filled.count("--ask '<"), 1, line)
+        self.assertNotIn("'", ask)       # the ask sits inside the hook's single quotes
+        return re.sub(r"--ask '[^']*'", lambda _: "--ask '" + ask + "'", filled)
+
+    def run_in_bash(self, ask):
+        """Run the hook's call in bash, the way a session's Bash tool does; what is stored."""
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "XDG_STATE_HOME": str(self.state),
+               "HOME": str(self.state), "PYTHONDONTWRITEBYTECODE": "1"}
+        done = subprocess.run(["bash", "-c", self.command_line(ask)], env=env, cwd=self.dir.name,
+                              capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        self.assertEqual((done.returncode, done.stderr), (0, ""), done.stdout)
+        got = lines.read(self.SID, self.root)
+        self.assertEqual(got["n"], 1)
+        self.assertEqual(got["by"], "session")
+        return got["ask"]
+
+    def check(self, ask, commands):
+        stored = self.run_in_bash(ask)
+        self.assertEqual(stored, ask)                      # byte for byte: nothing run, nothing expanded
+        self.assertEqual(ask_commands.guess(stored), commands)
+
+    def test_a_command_in_double_quotes_is_stored_whole_and_offered(self):
+        self.check('Run "git status" or "make test" and tell me what comes out.',
+                   ["git status", "make test"])
+
+    def test_double_quotes_work_anywhere_in_the_ask(self):
+        self.check('Before anything else, "git pull origin dev" has to run here, and then say which test failed.',
+                   ["git pull origin dev"])
+
+    def test_a_command_after_a_dollar_at_the_end_is_stored_whole_and_offered(self):
+        self.check("Tests are green, and the last step is yours: $ make deploy", ["make deploy"])
+        self.check("Run this and tell me the result: $ git log --oneline.", ["git log --oneline"])
+
+    def test_both_forms_in_one_ask(self):
+        self.check('Pull first with "git pull origin dev", then run $ make test',
+                   ["git pull origin dev", "make test"])
+
+    def test_a_dollar_inside_double_quotes_stays_what_it_is(self):
+        # The hook's own single quotes hold the ask, so bash expands nothing in it.
+        # HOME is the state folder here: an expansion would show.
+        ask = 'Run "ls $HOME/projects" and "echo $(echo EXPANDED) > /tmp/stamp.txt" before you answer.'
+        stored = self.run_in_bash(ask)
+        self.assertEqual(stored, ask)
+        self.assertIn("$HOME/projects", stored)
+        self.assertNotIn(str(self.state), stored)
+        self.assertEqual(ask_commands.guess(stored),
+                         ["ls $HOME/projects", "echo $(echo EXPANDED) > /tmp/stamp.txt"])
+
+    def test_a_command_after_a_dollar_with_words_behind_it_is_stored_whole_and_offered_nothing(self):
+        # Where such a command ends cannot be told from the sentence going on, so the
+        # sentence asks for it at the end of the ask, and a mid-mention is not guessed at.
+        self.check("Run $ make test and say what it prints.", [])
+        self.check("When the build is done, run $ make test and then tell me what it printed.", [])
+
+    def test_the_two_forms_together_with_a_mid_mention_offer_only_what_the_sentence_names(self):
+        self.check('Run "git status" first and $ make test after that, then tell me.', ["git status"])
