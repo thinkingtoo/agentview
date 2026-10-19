@@ -4,7 +4,9 @@
 
 **Blocked by:** 01, 04
 
-**Status:** ready-for-agent
+**Claimed by:** Hugo 2026-10-19 18:32
+
+**Status:** in-progress
 
 - [ ] A busy session that wrote a `did` keeps showing it through its next prompt
 - [ ] `ask` and `n` still reset at each prompt
