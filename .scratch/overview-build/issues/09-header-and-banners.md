@@ -6,13 +6,15 @@
 
 **Claimed by:** Bettina 2026-10-19 17:54
 
-**Status:** in-progress
+**Status:** done
+
+Merged to origin/dev as `f73bd7a`
 
 - [x] The roster returns the three counts
 - [x] Clicking a count lights up and shrinks; clicking again clears (smoke run by hand)
 - [x] The disk banner appears from the roster's `banners` only
 
-**Evidence (Bettina, 2026-10-19, branch `overview/09-header-banners`, final head `f8356f5`: the branch merged with origin/dev `fb15469` (merge commit `bd29c0d`, so with ticket 04). Pushed; not merged, waiting for the boss's merge order). Gate: Mistral `VERDICT: GO` on `f8356f5` (round 09-4; rounds 09-1 and 09-3 were NO-GO with 18 findings, 0 real bugs, and 09-2 and 09-4 are GOs reached through replies with the code unchanged, every reply carrying a file:line or a test name; files `mistral-review-09-1.md` to `-4.md` and `mistral-replies-09-1.md`, `-3.md` in `/home/tiroir/Projects/agentview-wt/reviews/`) AND the Opus hunt `HUNT: CLEAN` on the same head: `opus-hunt-09-1.md` (CLEAN on `468bb91`, before the merge, 0 bugs, 11 notes) and `opus-hunt-09-2.md` (CLEAN on `f8356f5`, scoped to `git show --cc bd29c0d` because the merge had two conflicted files, plus the two-line commit after it, 0 bugs). No Mistral stall, so the owner's waiver is not used.**
+**Evidence (Bettina, 2026-10-19, branch `overview/09-header-banners`, final head `f8356f5`: the branch merged with origin/dev `fb15469` (merge commit `bd29c0d`, so with ticket 04). Pushed. Merged on the boss's merge order of 2026-10-19). Gate: Mistral `VERDICT: GO` on `f8356f5` (round 09-4; rounds 09-1 and 09-3 were NO-GO with 18 findings, 0 real bugs, and 09-2 and 09-4 are GOs reached through replies with the code unchanged, every reply carrying a file:line or a test name; files `mistral-review-09-1.md` to `-4.md` and `mistral-replies-09-1.md`, `-3.md` in `/home/tiroir/Projects/agentview-wt/reviews/`) AND the Opus hunt `HUNT: CLEAN` on the same head: `opus-hunt-09-1.md` (CLEAN on `468bb91`, before the merge, 0 bugs, 11 notes) and `opus-hunt-09-2.md` (CLEAN on `f8356f5`, scoped to `git show --cc bd29c0d` because the merge had two conflicted files, plus the two-line commit after it, 0 bugs). No Mistral stall, so the owner's waiver is not used.**
 
 1. Tests: `python3 -m unittest discover -s tests` on `f8356f5`, `PYTHONDONTWRITEBYTECODE=1`: 1520 tests, OK (skipped=1). Before the merge, on `468bb91`: 1299 tests OK (baseline on `bba321c` was 1283; 16 new, all in `tests/test_header.py`, plus the key list in `tests/test_roster_route.py`).
 
@@ -31,3 +33,5 @@
 8. Review fix round (`468bb91`, test-first for the keyboard bug): the focus stays on a count when the header is rebuilt; one helper (`countOf`) for the count the page shows, used by the header and by the clear-on-empty; no per-kind banner class; `BANNERS_SHOWN` like `HEAD_SHOWN`; GLOSSARY entries (Header counts, Banner). Hunt 09-1 found the banner tests leaving a temp folder each (8 per run, the class of leak behind the 2026-10-19 /tmp outage); `f8356f5` removes it: 8 left in a fresh `TMPDIR` before, 0 after.
 
 9. History check (`history-check.py`, read only) on `origin/dev..HEAD`, `f8356f5`: 6 commits, 0 identities that are not noreply, 1,320 candidates (716 titles, 567 prompt openings, 6 conversation names, 31 client folders), 732 patch lines scanned, clean. `branch_deploys.py <worktree> overview/09-header-banners`: exit 1, no workflow fires on this branch.
+
+10. The merge (2026-10-19, boss's order; worktree `/home/tiroir/Projects/agentview-wt/bettina`, detached at origin/dev `fb15469`): `git merge --no-ff overview/09-header-banners` gave `f73bd7a` (parents `fb15469` and `f8356f5`, noreply identity, no footer). R23, `git diff f8356f5 HEAD`: empty (0 bytes). Unit suite on `f73bd7a`: 1520 tests, OK (skipped=1). Smoke on `f73bd7a`: 359 checks, all green on the first run (port 53015 bound to 0, listener pid 72286 proven), the owner's `config.json` sha256 `769cd744b9dbcb57e3e749af216faa2156b52185115194b43fec4409d35fc802` before and after. History check on `origin/dev..HEAD`: 7 commits, 0 identities that are not noreply, 1,320 candidates, 733 patch lines, exit 0, clean. `branch_deploys.py <worktree> dev`: exit 1, nothing fires. Pushed `fb15469..f73bd7a` to `dev`; the branch is deleted on the remote and locally. The tab title counting the old flags goes to ticket 13 (boss).
