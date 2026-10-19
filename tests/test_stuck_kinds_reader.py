@@ -402,6 +402,22 @@ class Automated(Base):
                     got = self.failure([api_error(120), rec])
                     self.assertEqual(got and got["kind"], "limit")
 
+    def test_a_teammates_message_with_the_sentence_claude_code_puts_before_it_leaves_it(self):
+        # Hunt 08-5: Claude Code 2.1.291 to 2.1.295 writes a message from another
+        # session as a plain user record with no origin and no meta flag, its
+        # string beginning with a sentence and then the tag (340 records in 56
+        # transcripts of 14 days; 04f28c2b took one right after a rate limit).
+        words = ("Another Claude session sent a message:\n"
+                 '<teammate-message teammate_id="peer" summary="an invented summary">an invented message</teammate-message>')
+        for blank in ("", "\n  "):
+            with self.subTest(blank=blank):
+                got = self.failure([text(300), api_error(120), prompt(60, blank + words)])
+                self.assertEqual(got and got["kind"], "limit")
+        claude._cache.clear()
+        self.session([text(300), api_error(120), prompt(60, words)])
+        self.assertTrue(self.live()[0]["turnOver"])
+        self.assertIsNone(self.failure([text(300), api_error(120), prompt(60, words), text(30)]))
+
     def test_a_tool_result_after_the_error_leaves_it(self):
         # It answers a call the model made before: the model has not spoken since.
         got = self.failure([api_error(120), tool_result(60)])

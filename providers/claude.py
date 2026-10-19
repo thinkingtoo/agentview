@@ -337,9 +337,11 @@ def _compaction(rec):
 
 
 # What a user record that nobody typed begins with, in a Claude Code that does
-# not say so in `origin`: a job's notice, a teammate's message, and the notice
-# of the person's interrupt (40 records of 14 days, all in list form).
-NOT_TYPED = ("<task-notification>", "<teammate-message", "[Request interrupted by user")
+# not say so in `origin`: a job's notice, a teammate's message (bare, or after
+# the sentence Claude Code 2.1.291 to 2.1.295 puts before it: 340 records of 14
+# days), and the notice of the person's interrupt (40 records, all in list form).
+NOT_TYPED = ("<task-notification>", "<teammate-message", "Another Claude session sent a message",
+             "[Request interrupted by user")
 
 
 def _typed(rec):
@@ -352,6 +354,8 @@ def _typed(rec):
     result, a meta record (a skill's expanded prompt, a hook's text) or one of
     the notices above.
     """
+    if rec.get("type") != "user":
+        return False
     origin = rec.get("origin")
     if origin is not None:
         return _dict(origin).get("kind") == "human"
