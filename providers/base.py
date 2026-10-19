@@ -116,6 +116,14 @@ LABEL_LEN = 120
 HINT_LEN = 240
 FAILURE_LEN = 200        # what an API error says, as much as a tile holds
 
+
+def failure_text(words):
+    """What an error said, cut to `FAILURE_LEN` with an ellipsis when it is longer."""
+    return words if len(words) <= FAILURE_LEN else words[:FAILURE_LEN - 1].rstrip() + "…"
+
+# The months as a provider's messages and the page's banners name them.
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
 # The latest time a field in milliseconds can name (the year 5000). Anything
 # beyond it is a number that is not a time.
 MAX_MS = 95_000_000_000_000

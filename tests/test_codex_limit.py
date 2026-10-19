@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
-from test_codex import Home, done, meta, rec, stamp, LIMIT, TID
+from test_codex import Home, done, meta, rec, stamp, LIMIT
 from test_columns import Base, session
 from test_providers import Fake
 
@@ -207,36 +207,36 @@ class Counted(Base):
         fleet.CONFIG.write_text("{}")
         return fleet.roster(providers=[Codex([session("c", project="maple")]), *extra])["banners"]
 
-    def hold(self, resets, ago=300, **over):
+    def refusal(self, resets, ago=300, **over):
         """What a provider hands over: refused `ago` seconds back, lifting at `resets`."""
         return {"name": "Codex", "at": int((NOW - ago) * 1000),
                 "resetsAt": None if resets is None else int(resets * 1000), **over}
 
 
     def test_a_limit_that_has_not_lifted_is_one_banner_that_says_when(self):
-        self.assertEqual(self.banners(self.hold(NOW + 2 * HOUR + 1200)),
+        self.assertEqual(self.banners(self.refusal(NOW + 2 * HOUR + 1200)),
                          [{"kind": "limit", "text": "Codex usage limit reached, resets at 14:20"}])
 
     def test_a_limit_that_lifts_another_day_says_which(self):
-        self.assertEqual(self.banners(self.hold(NOW + 15 * HOUR))[0]["text"],
+        self.assertEqual(self.banners(self.refusal(NOW + 15 * HOUR))[0]["text"],
                          "Codex usage limit reached, resets at 03:00 on Oct 20")
 
     def test_once_it_has_lifted_there_is_no_banner(self):
-        self.assertEqual(self.banners(self.hold(NOW - 1)), [])
-        self.assertEqual(self.banners(self.hold(NOW)), [])
+        self.assertEqual(self.banners(self.refusal(NOW - 1)), [])
+        self.assertEqual(self.banners(self.refusal(NOW)), [])
 
     def test_a_limit_that_names_no_time_is_held_for_five_hours_from_the_refusal(self):
-        self.assertEqual(self.banners(self.hold(None, ago=4 * HOUR))[0]["text"], "Codex usage limit reached")
-        self.assertEqual(self.banners(self.hold(None, ago=5 * HOUR + 1)), [])
+        self.assertEqual(self.banners(self.refusal(None, ago=4 * HOUR))[0]["text"], "Codex usage limit reached")
+        self.assertEqual(self.banners(self.refusal(None, ago=5 * HOUR + 1)), [])
 
     def test_no_limit_is_no_banner(self):
         self.assertEqual(self.banners(), [])
 
     def test_what_a_provider_says_that_is_not_a_hold_is_no_banner_and_no_crash(self):
         for odd in ("limit", 7, [1], {}, {"name": "Codex"}, {"name": 5, "at": 1, "resetsAt": 2},
-                    self.hold(1, resetsAt="soon"), self.hold(1, resetsAt=True), self.hold(1, resetsAt=float("nan")),
-                    self.hold(1, resetsAt=10**40), self.hold(1, resetsAt=-5), self.hold(None, at="then"),
-                    self.hold(None, at=None), self.hold(None, at=True)):
+                    self.refusal(1, resetsAt="soon"), self.refusal(1, resetsAt=True), self.refusal(1, resetsAt=float("nan")),
+                    self.refusal(1, resetsAt=10**40), self.refusal(1, resetsAt=-5), self.refusal(None, at="then"),
+                    self.refusal(None, at=None), self.refusal(None, at=True)):
             with self.subTest(odd=odd):
                 self.assertEqual(self.banners(odd), [])
 
@@ -264,7 +264,7 @@ class Counted(Base):
             name = "codex"
 
             def limit(self_):
-                return self.hold(NOW + 3600)
+                return self.refusal(NOW + 3600)
         fleet.CONFIG.write_text("{}")
         got = fleet.roster(providers=[Codex([session("c", status="busy", quietFor=0.1)])])
         self.assertEqual(len(got["banners"]), 1)
@@ -274,7 +274,7 @@ class Counted(Base):
     def test_a_full_disk_and_a_limit_are_two_banners_the_disk_first(self):
         Usage = namedtuple("usage", "total used free")
         fleet.disk_usage = lambda path: Usage(10**12, 10**12, 0)
-        got = self.banners(self.hold(NOW + 3600))
+        got = self.banners(self.refusal(NOW + 3600))
         self.assertEqual([b["kind"] for b in got], ["disk", "limit"])
 
     def test_two_providers_may_each_hold_the_page(self):
@@ -283,7 +283,7 @@ class Counted(Base):
 
             def limit(self):
                 return {"name": "Other", "at": int((NOW - 60) * 1000), "resetsAt": int((NOW + 3600) * 1000)}
-        got = self.banners(self.hold(NOW + 7200), extra=[Other()])
+        got = self.banners(self.refusal(NOW + 7200), extra=[Other()])
         self.assertEqual([b["text"] for b in got],
                          ["Codex usage limit reached, resets at 14:00", "Other usage limit reached, resets at 13:00"])
 

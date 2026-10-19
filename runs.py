@@ -14,8 +14,7 @@ Two rollouts held by one process are one run: `codex exec review` writes one
 for the run and one for its review. And the run's writes go where the run goes,
 into its starter's, so they are counted once.
 """
-
-SLOTS = 30
+from providers import minutes
 
 
 def pid_of(raw):
@@ -28,20 +27,8 @@ def is_run(raw):
 
 
 def strip_of(raw):
-    """A provider's strip if it is one: 30 counts, each a whole number or None."""
-    value = raw.get("writes")
-    if (isinstance(value, list) and len(value) == SLOTS
-            and all(v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0) for v in value)):
-        return value
-    return None
-
-
-def added(strips):
-    """Strips summed minute by minute; a minute any of them did not see is unknown."""
-    strips = [s for s in strips if s is not None]
-    if not strips:
-        return None
-    return [None if any(s[i] is None for s in strips) else sum(s[i] for s in strips) for i in range(SLOTS)]
+    """A provider's strip if it is one."""
+    return raw["writes"] if minutes.is_strip(raw.get("writes")) else None
 
 
 def task_of(raw):
@@ -55,16 +42,22 @@ def ancestors_of(raw):
     return [p for p in above if isinstance(p, int) and p > 1] if isinstance(above, list) else []
 
 
+def start_of(raw):
+    start = raw.get("startedAt")
+    return start if isinstance(start, (int, float)) and not isinstance(start, bool) and start > 0 else None
+
+
 def one_run(group):
-    """The run that a process's rollouts make: the exec one to stand for it, a
-    review if any of them is, the earliest start, and every rollout's writes."""
-    stands = next((r for r in group if r.get("kind") == "exec"), group[0])
-    starts = [r["startedAt"] for r in group
-              if isinstance(r.get("startedAt"), (int, float)) and not isinstance(r.get("startedAt"), bool)
-              and r["startedAt"] > 0]
-    label = "codex review" if any(r["run"] == "codex review" for r in group) else stands["run"]
-    return dict(stands, run=label, startedAt=min(starts) if starts else 0,
-                writes=added([strip_of(r) for r in group]))
+    """The run that a process's rollouts make. The oldest rollout stands for it (it
+    is the run's own; the others are what the run started), the newest says what
+    the run is doing now, the run began when the first did, and every rollout's
+    writes are the run's. Rollouts that do not say when they began are taken in
+    the order given."""
+    dated = [r for r in group if start_of(r) is not None]
+    stands = min(dated, key=start_of) if dated else group[0]
+    latest = max(reversed(dated), key=start_of) if dated else group[-1]
+    return dict(stands, run=latest["run"], startedAt=min(map(start_of, dated)) if dated else 0,
+                writes=minutes.added([strip_of(r) for r in group]))
 
 
 def fold(pairs, now):
@@ -99,6 +92,6 @@ def fold(pairs, now):
         if held is None or not any(isinstance(job, dict) and job.get("id") == held for job in jobs):
             raw["bgTasks"] = jobs + [{"label": run["run"], "since": since}]
         if strip_of(raw) is not None and run["writes"] is not None:
-            raw["writes"] = added([strip_of(raw), run["writes"]])
+            raw["writes"] = minutes.added([strip_of(raw), run["writes"]])
         amended[starter] = out[starter] = (provider, raw)
     return [pair for pair in out if pair is not None]

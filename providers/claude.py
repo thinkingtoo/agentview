@@ -23,10 +23,10 @@ import lines
 from providers import base, procs, registry
 from providers.base import (Provider, Tailed, on_a_terminal,
                             read_from as _read_from)
-from providers.minutes import (KEEP_MINUTES, STRIP_MINUTES, blank_counts as _blank_counts,
+from providers.minutes import (KEEP_MINUTES, blank_counts as _blank_counts,
                                cold_counts as _cold_counts, count as _count,
-                               minute_of as _minute_of, prune as _prune,
-                               seconds_of as _seconds_of, strip as _strip)
+                               prune as _prune, seconds_of as _seconds_of,
+                               strip as _strip)
 
 
 def claude_dir():
@@ -363,7 +363,7 @@ def _failure(state, rec):
         "kind": "limit" if name == "rate_limit" else "error",
         "type": name if isinstance(name, str) else "",
         "status": base.whole_number(status),
-        "text": words if len(words) <= base.FAILURE_LEN else words[:base.FAILURE_LEN - 1].rstrip() + "…",
+        "text": base.failure_text(words),
         "at": None if seconds is None else int(seconds * 1000),
         "resetsAt": base.milliseconds(quota, seconds=True)}
 

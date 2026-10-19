@@ -72,3 +72,22 @@ def strip(state, now):
     newest = int(now // 60)
     return [None if minute < state["seen_from"] else state["minutes"].get(minute, 0)
             for minute in range(newest - STRIP_MINUTES + 1, newest + 1)]
+
+
+def is_strip(value):
+    """Whether a provider's strip is one: 30 counts, each a whole number or None
+    for a minute it could not see. Anything else is not believed."""
+    return (isinstance(value, list) and len(value) == STRIP_MINUTES
+            and all(v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0)
+                    for v in value))
+
+
+def added(strips):
+    """Strips summed minute by minute; a minute any of them did not see is
+    unknown. A strip that is None is left out, and None is all there is when
+    every one is."""
+    strips = [s for s in strips if s is not None]
+    if not strips:
+        return None
+    return [None if any(s[i] is None for s in strips) else sum(s[i] for s in strips)
+            for i in range(STRIP_MINUTES)]

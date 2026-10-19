@@ -182,10 +182,31 @@ class Alone(Base):
                                  run("b", 4242, above=(), label="codex review"))
         self.assertEqual(list(tiles), ["codex:a"])
 
-    def test_the_exec_thread_stands_for_a_run_that_has_none_to_show(self):
-        _, tiles = self.run_tile(run("review", 4242, above=(), kind="review", label="codex review"),
-                                 run("main", 4242, above=(), label="codex exec"))
+    def test_the_oldest_thread_stands_for_a_run_that_has_none_to_show(self):
+        _, tiles = self.run_tile(run("review", 4242, above=(), minutes=1.0, label="codex review"),
+                                 run("main", 4242, above=(), minutes=3.0, label="codex exec"))
         self.assertEqual(list(tiles), ["codex:main"])
+
+    def test_the_newest_thread_says_what_the_run_is_doing_whatever_the_provider_calls_it(self):
+        for older, newer in (("codex exec", "codex review"), ("alpha", "beta"), ("beta", "alpha")):
+            for order in (1, -1):
+                with self.subTest(older=older, newer=newer, order=order):
+                    threads = [run("a", 4242, minutes=4.0, label=older), run("b", 4242, minutes=1.0, label=newer)]
+                    _, tiles = self.run_tile(*threads[::order], claude=[starter()])
+                    self.assertEqual(tiles["claude:s"]["movement"]["text"], f"waiting on: {newer}, 4 min")
+
+    def test_threads_that_do_not_say_when_they_began_are_taken_in_the_order_given(self):
+        a, b = run("a", 4242, label="first"), run("b", 4242, label="second")
+        a["startedAt"] = b["startedAt"] = 0
+        _, tiles = self.run_tile(a, b, claude=[starter()])
+        self.assertTrue(tiles["claude:s"]["movement"]["text"].startswith("waiting on: second,"))
+
+    def test_a_tile_is_marked_exec_because_it_is_a_run_not_because_of_what_the_provider_calls_its_kind(self):
+        odd = run("o", 4242, above=(), kind="batch", label="a one-shot")
+        plain = session("p", status="busy", pid=4300, kind="exec")
+        _, tiles = self.run_tile(odd, plain)
+        self.assertEqual(tiles["codex:o"]["tags"], ["codex", "exec"])
+        self.assertEqual(tiles["codex:p"]["tags"], ["codex"])
 
     def test_an_interactive_codex_session_is_a_tile_that_is_not_exec(self):
         _, tiles = self.run_tile(session("i", status="idle", pid=4242, ancestors=[100]), claude=[starter()])

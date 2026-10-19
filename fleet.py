@@ -27,7 +27,7 @@ import providers
 import runs
 import seen
 import working
-from providers import base, claude
+from providers import base, claude, minutes
 from providers.base import CAPABILITIES, STATUSES, on_a_terminal
 
 
@@ -442,7 +442,7 @@ def jump_to(p, s):
 # has nothing to say about it. A conforming session can leave any of these
 # out and the row is still whole.
 DEFAULTS = {
-    "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "",
+    "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "", "run": "",
     "waitingFor": "", "boss": False, "bg": False, "title": "", "prompt": "",
     "branch": "", "track": "", "attach": "", "noJump": "",
 }
@@ -810,25 +810,25 @@ disk_usage = shutil.disk_usage
 
 
 # A usage limit that names no time is believed for this long after the refusal.
-HOLD_UNKNOWN_MINUTES = 300
-MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+LIMIT_UNKNOWN_MINUTES = 300
+MONTH_NAMES = base.MONTHS
 
 
-def hold_banner(p, now):
-    """A provider's hold on the whole account -- a usage limit -- as a banner, or
-    None. The provider says what it knows (`Provider.limit`); whether it still
-    holds is decided here, from the clock: until the time it lifts, or for
-    `HOLD_UNKNOWN_MINUTES` after the refusal when it names none."""
+def limit_banner(p, now):
+    """A provider's usage limit, which holds its whole account, as a banner, or
+    None. The provider says what it knows (`Provider.limit`); whether the limit
+    still stands is decided here, from the clock: until the time it lifts, or for
+    `LIMIT_UNKNOWN_MINUTES` after the refusal when it names none."""
     try:
-        hold = p.limit()
+        limit = p.limit()
     except Exception:                      # a provider's bug is its own
         return None
-    if not isinstance(hold, dict) or not isinstance(hold.get("name"), str) or not hold["name"].strip():
+    if not isinstance(limit, dict) or not isinstance(limit.get("name"), str) or not limit["name"].strip():
         return None
-    resets = hold.get("resetsAt")
+    resets = limit.get("resetsAt")
     if resets is not None and base.milliseconds(resets) is None:
         return None
-    name = " ".join(hold["name"].split())[:LABEL_LEN]
+    name = " ".join(limit["name"].split())[:LABEL_LEN]
     if resets is not None:
         if resets <= now * 1000:
             return None
@@ -837,17 +837,17 @@ def hold_banner(p, now):
         if when.date() != datetime.datetime.fromtimestamp(now).date():
             words += f" on {MONTH_NAMES[when.month - 1]} {when.day}"
         return {"kind": "limit", "text": f"{name} usage limit reached, {words}"}
-    at = base.milliseconds(hold.get("at"))
-    if at is None or now * 1000 - at > HOLD_UNKNOWN_MINUTES * 60000:
+    at = base.milliseconds(limit.get("at"))
+    if at is None or now * 1000 - at > LIMIT_UNKNOWN_MINUTES * 60000:
         return None
     return {"kind": "limit", "text": f"{name} usage limit reached"}
 
 
 def banners_of(providers=None):
-    """What is wrong with the whole machine, said once across the top of the
-    page: each a `kind` and the `text` to print. Never a kind of stuck on a
-    tile -- every session on the machine is held by it alike. The page prints
-    these and looks for nothing of its own."""
+    """What is wrong with the whole machine, or with a provider's whole account,
+    said once across the top of the page: each a `kind` and the `text` to print.
+    Never a kind of stuck on a tile -- every session it concerns is held by it
+    alike. The page prints these and looks for nothing of its own."""
     banners = []
     try:
         free = disk_usage(claude.claude_dir()).free
@@ -860,9 +860,9 @@ def banners_of(providers=None):
     for p in (providers if providers is not None else _providers()):
         # What a provider that did not answer this round last said is not news.
         if p.name in ROUND["answered"] and callable(getattr(p, "limit", None)):
-            held = hold_banner(p, now)
-            if held:
-                banners.append(held)
+            limited = limit_banner(p, now)
+            if limited:
+                banners.append(limited)
     return banners
 
 
@@ -1000,7 +1000,7 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         # Put where it is by hand: the page offers the way back.
         "assigned": bool(m.get("assigned")),
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex"),
-                                 ("exec", m.get("kind") in ("exec", "review"))) if on],
+                                 ("exec", bool(m.get("run")))) if on],
         "line": line, "lineSource": source,
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
@@ -1201,7 +1201,7 @@ def suggest_project(paths, shelves):
 
 # --------------------------------------------------------------- movement
 
-STRIP_SLOTS = 30
+STRIP_SLOTS = minutes.STRIP_MINUTES
 
 # Open background jobs kept per session. More than this is a runaway, not a list.
 MAX_JOBS = 8
@@ -1217,13 +1217,9 @@ WAIT_MAX_MINUTES = 360
 
 
 def writes_of(value):
-    """A provider's strip, if it is one: 30 counts, each a whole number or
-    None for a minute it could not see. Anything else is not believed."""
-    if (isinstance(value, list) and len(value) == STRIP_SLOTS
-            and all(v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 0)
-                    for v in value)):
-        return list(value)
-    return None
+    """A provider's strip, if it is one (`minutes.is_strip`); anything else is
+    not believed."""
+    return list(value) if minutes.is_strip(value) else None
 
 
 def tasks_of(value):
@@ -1426,11 +1422,7 @@ def strip_of(members):
     minute, oldest first. A minute any of them could not see is unknown for
     the project too. A session whose provider does not count writes is left
     out rather than counted as quiet."""
-    counted = [m["writes"] for m in members if m.get("writes") is not None]
-    if not counted:
-        return [None] * STRIP_SLOTS
-    return [None if any(w[i] is None for w in counted) else sum(w[i] for w in counted)
-            for i in range(STRIP_SLOTS)]
+    return minutes.added([m.get("writes") for m in members]) or [None] * STRIP_SLOTS
 
 
 def mix_of(tiles):

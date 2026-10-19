@@ -64,7 +64,7 @@ def _ms(stamp):
 # When a usage limit lifts, in the words Codex ends its message with: the time
 # alone ("try again at 2:35 PM."), or with its day ("... at Oct 21st, 2026 3:14 AM.").
 # Local time, with no zone: the machine that ran Codex wrote it.
-MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+MONTHS = tuple(name.lower() for name in base.MONTHS)
 RESETS = re.compile(r"try again at (?:([A-Za-z]{3}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) )?"
                     r"(\d{1,2}):(\d{2}) ([AP]M)", re.I)
 
@@ -112,7 +112,7 @@ def _failure(error, stamp):
     at = _ms(stamp)
     return {"kind": "limit" if name == "usage_limit_exceeded" else "error",
             "type": name, "status": status,
-            "text": words if len(words) <= base.FAILURE_LEN else words[:base.FAILURE_LEN - 1].rstrip() + "…",
+            "text": base.failure_text(words),
             "at": at or None,
             "resetsAt": _resets_at(words, at) if name == "usage_limit_exceeded" else None}
 
@@ -376,11 +376,6 @@ def _absorb(state, text):
     return state
 
 
-def _cold(state, path):
-    """A big rollout's first sight read only its tail: the minutes before it are not known."""
-    minutes.cold_counts(state)
-
-
 def _thread_id(name):
     """`rollout-2026-09-22T12-48-56-<uuid>.jsonl` -> the uuid, or ''."""
     stem = name[:-6] if name.endswith(".jsonl") else ""
@@ -394,10 +389,11 @@ class CodexProvider(Provider):
     def __init__(self, home=None, proc="/proc"):
         self.home = Path(home) if home else Path.home() / ".codex"
         self.proc = Path(proc)
-        self.tail = Tailed(_blank, _absorb, _cold)
+        # A big rollout's first sight reads only its tail: the minutes before it are not known.
+        self.tail = Tailed(_blank, _absorb, lambda state, path: minutes.cold_counts(state))
         self.done_tail = Tailed(_blank_done, _absorb_done)
         self.clock = time.time
-        self.held = None       # the account's usage limit, as `limit()` says it
+        self.limited = None    # the account's usage limit, as `limit()` says it
         self.looked = None     # when it was last looked for
         self.holders = {}      # thread id -> (pid, fd) seen holding its rollout
         self.orphans = {}      # thread id -> lock identity already found unheld
@@ -607,16 +603,16 @@ class CodexProvider(Provider):
         return None
 
     def limit(self):
-        return self.held
+        return self.limited
 
     def live(self):
         now = self.clock()
         if self.looked is None or not 0 <= now - self.looked < LIMIT_EVERY:
             self.looked = now
             try:
-                self.held = self._limit()
+                self.limited = self._limit()
             except OSError:         # a rollout went while it was looked at: the next look will see
-                self.held = None
+                self.limited = None
         locks = self._locks()
         if not locks:
             return []
