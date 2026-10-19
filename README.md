@@ -90,9 +90,43 @@ counters ride on the incremental tail the reader already keeps; they add no
 read. After a restart a transcript is read from its last 2 MB, so the minutes
 before that window are **unknown**, not empty: the strip leaves them as dotted
 stubs, and a minute any session in the project could not see is unknown for the
-project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session that
-needs you is stuck even while a job runs, and a busy session nothing proves is
-moving counts as stuck.
+project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session is
+stuck when its tile carries a kind (below), even while a job runs. A menu the
+person opened (`dialog open`) is not stuck, and neither is a busy session whose
+processes could not be read.
+
+## Stuck: Needs you, Error, Hung, Limit
+
+A tile that is stopped says so with a **kind**: a tag, a border and a dot in the
+kind's colour, a reason, and what the person needs to decide before they jump.
+A session has the most urgent kind that holds, in this order, and the card's
+state word (under its name) is the most urgent of its sessions':
+**NEEDS YOU** (amber), **ERROR** and **HUNG** (red), **LIMIT** (purple), then
+MOVING (green) and ALL IDLE (grey).
+
+| kind | when | reason | context |
+|---|---|---|---|
+| Needs you | an open question, an open permission prompt, or a session line with things left | Question, Permission prompt, "3 things left for you" | the question and its options; the tool and its command; the line's ask |
+| Error | an API or auth error is the session's last word | Overloaded, Auth error, Server error, or the error's own name | the error's words and how long ago |
+| Hung | busy, and nothing shows it moving for `hung_after_minutes` (default 10) | "Not moving for 14 min" | the last tool it called and how long ago |
+| Limit | a rate-limit error is the session's last word | Rate limit | when it resets (the error carries it) and how long it has been held |
+
+An error is **the last word** until the session says or is told anything else:
+a prompt, a message from another session, the session going on by itself after
+a limit. Records Claude Code writes on its own after an error (a turn duration,
+a title, a queued line, a snapshot) do not end it, and a subagent's records are
+not the session's.
+
+Hung is `moving` turned round (see Movement), so a session waiting on a
+subagent, a background job or a command using CPU is never Hung. It is also not
+said when `/proc` could not answer: the first look at a command after a restart
+has nothing to compare its CPU with, and a folder that will not be read, or a
+command that exits mid-walk, is no evidence of absence. The same goes for a
+transcript that cannot be read: with no writes to see, silence is not known.
+
+The flags the chime reads (`stuck`, `waiting`, `ready`, `tool`) are computed as
+before and stay on `blocks`; the kinds are on the tiles. Hung replaces `stuck`
+on the overview.
 
 ## After a reboot
 
