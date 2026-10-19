@@ -7,9 +7,13 @@ and `test_projects`. Goal files, READMEs, agent instructions and config are
 built in a temp dir; nothing here reads the real `~/.claude/pm`, a real
 repository, the real config or the brain. Names and texts are invented.
 """
+import contextlib
 import json
 import os
+import pty
+import subprocess
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -645,6 +649,228 @@ class Repositories(Cards):
         (self.loom / "README.md").symlink_to("README.md")
         self.put("AGENTS.md", "Instructions for agents.\n")
         self.assertEqual(self.line()["line"], "Instructions for agents.")
+
+    # -- a README swapped after it was looked at: what is judged is the file that was opened --
+
+    def after_the_listing(self, swap):
+        """Run `swap()` between the listing of the checkout's files and the read of the one it chose."""
+        real = context.files_in
+
+        def listing(folder):
+            got = real(folder)
+            swap()
+            return got
+        return mock.patch.object(context, "files_in", listing)
+
+    def put_a_link_over_the_readme(self, target):
+        """What a build script in the checkout can do at any moment: rename a link over the README."""
+        def swap():
+            (self.loom / "swap.tmp").symlink_to(target)
+            os.replace(self.loom / "swap.tmp", self.loom / "README.md")
+        return swap
+
+    def test_a_readme_swapped_for_a_link_out_of_the_checkout_after_the_listing_is_not_read(self):
+        (self.disk / "secret.txt").write_text(self.KEY)
+        self.put("README.md", "Prints reports.\n")
+        with self.after_the_listing(self.put_a_link_over_the_readme(self.disk / "secret.txt")):
+            got = self.context(sess("a", self.loom))
+        self.assertEqual(got["source"], "guess")
+        self.assertNotIn("KEY", got["line"] + got["full"])
+
+    def test_a_readme_swapped_for_a_link_into_the_git_folder_after_the_listing_is_not_read(self):
+        (self.loom / ".git" / "description").write_text(self.KEY)
+        self.put("README.md", "Prints reports.\n")
+        with self.after_the_listing(self.put_a_link_over_the_readme(".git/description")):
+            got = self.context(sess("a", self.loom))
+        self.assertEqual(got["source"], "guess")
+        self.assertNotIn("KEY", got["line"] + got["full"])
+
+    @contextlib.contextmanager
+    def at_the_open(self, swap, after=False):
+        """Run `swap()` once, just before (or, with `after`, just after) the README is opened by
+        whichever call opens it: how the file is opened is not what these tests are about. Yields
+        the list that says whether the swap ran."""
+        readme, real_os_open, real_open, ran = self.loom / "README.md", os.open, open, []
+
+        def watched(path, flags=0):
+            return not ran and not flags & os.O_PATH and isinstance(path, (str, os.PathLike)) and Path(path) == readme
+
+        def os_open(path, flags, *args, **kwargs):
+            go = watched(path, flags)
+            if go and not after:
+                ran.append(True)
+                swap()
+            fd = real_os_open(path, flags, *args, **kwargs)
+            if go and after:
+                ran.append(True)
+                swap()
+            return fd
+
+        def open_(file, *args, **kwargs):
+            go = watched(file)
+            if go and not after:
+                ran.append(True)
+                swap()
+            got = real_open(file, *args, **kwargs)
+            if go and after:
+                ran.append(True)
+                swap()
+            return got
+
+        with mock.patch.object(os, "open", os_open), mock.patch.object(context, "open", open_, create=True):
+            yield ran
+
+    def put_a_pipe_over_the_readme(self, text):
+        """A pipe in the README's place, and a writer waiting to give whoever opens it `text`."""
+        readme, real_os_open = self.loom / "README.md", os.open
+
+        def writer():
+            try:
+                fd = real_os_open(readme, os.O_WRONLY)       # waits for the reader
+                os.write(fd, text)
+                os.close(fd)
+            except OSError:
+                pass
+
+        def swap():
+            os.mkfifo(self.loom / "swap.fifo")
+            os.replace(self.loom / "swap.fifo", readme)
+            threading.Thread(target=writer, daemon=True).start()
+        return swap
+
+    def test_a_readme_swapped_for_a_named_pipe_just_before_it_is_opened_is_not_read_or_waited_for(self):
+        # The window between a check by path and the open by path: a pipe in it was opened for
+        # good, and every poll after it waited behind that open.
+        self.put("README.md", "Prints reports.\n")
+        self.addCleanup(self.release, self.loom / "README.md")
+        with self.at_the_open(self.put_a_pipe_over_the_readme(b"The text of a pipe.\n")) as ran:
+            got = self.context(sess("a", self.loom))
+        self.assertTrue(ran)
+        self.assertEqual(got["source"], "guess")
+        self.assertNotIn("pipe", got["line"] + got["full"])
+
+    def test_a_readme_swapped_for_a_link_just_before_it_is_opened_is_not_read(self):
+        (self.disk / "secret.txt").write_text(self.KEY)
+        self.put("README.md", "Prints reports.\n")
+        with self.at_the_open(self.put_a_link_over_the_readme(self.disk / "secret.txt")) as ran:
+            got = self.context(sess("a", self.loom))
+        self.assertTrue(ran)
+        self.assertEqual(got["source"], "guess")
+        self.assertNotIn("KEY", got["line"] + got["full"])
+
+    def test_a_readme_swapped_for_a_link_once_it_is_open_is_read_as_the_file_that_was_opened(self):
+        # What was judged is what is read: the descriptor, not the path again.
+        (self.disk / "secret.txt").write_text(self.KEY)
+        self.put("README.md", "Prints reports.\n")
+        with self.at_the_open(self.put_a_link_over_the_readme(self.disk / "secret.txt"), after=True) as ran:
+            got = self.context(sess("a", self.loom))
+        self.assertTrue(ran)
+        self.assertEqual((got["source"], got["line"]), ("readme", "Prints reports."))
+
+    def test_the_folder_a_checkout_is_read_in_is_the_one_it_resolves_to(self):
+        (self.disk / "via").symlink_to(self.loom)
+        self.put("README.md", "Prints reports.\n")
+        base, found = context.files_in(self.disk / "via")
+        self.assertEqual(base, self.loom.resolve())
+        self.assertEqual(context.read(found["readme.md"], 1000, base=base), "Prints reports.\n")
+        self.assertEqual(context.files_in(self.disk / "nowhere"), (None, {}))
+
+    @staticmethod
+    def release(fifo):
+        """Let go of whoever is stuck opening a pipe, so that a failing test ends."""
+        try:
+            os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+        except OSError:
+            pass
+
+    def read_in_the_checkout(self, path):
+        return context.read(str(path), 1000, base=self.loom.resolve())
+
+    def test_a_named_pipe_with_no_writer_is_not_waited_for(self):
+        os.mkfifo(self.loom / "README.md")
+        self.addCleanup(self.release, self.loom / "README.md")
+        got = []
+        reading = threading.Thread(target=lambda: got.append(self.read_in_the_checkout(self.loom / "README.md")),
+                                   daemon=True)
+        reading.start()
+        reading.join(5)
+        self.assertFalse(reading.is_alive())
+        self.assertEqual(got, [""])
+
+    def test_a_named_pipe_with_text_in_it_is_not_a_readme(self):
+        os.mkfifo(self.loom / "README.md")
+        fd = os.open(self.loom / "README.md", os.O_RDWR)             # holds both ends: the text stays in the pipe
+        self.addCleanup(os.close, fd)
+        os.write(fd, b"The text of a pipe.\n")
+        self.assertEqual(self.read_in_the_checkout(self.loom / "README.md"), "")
+
+    def test_what_is_opened_is_judged_wherever_the_path_to_it_went(self):
+        (self.disk / "secret.txt").write_text(self.KEY)
+        (self.loom / "docs").symlink_to(self.disk)                   # a folder of the checkout that is a link out
+        (self.loom / ".GIT").mkdir()
+        (self.loom / ".GIT" / "description").write_text(self.KEY)
+        (self.loom / "folder.md").mkdir()
+        self.put("README.md", "Prints reports.\n")
+        self.assertEqual(self.read_in_the_checkout(self.loom / "README.md"), "Prints reports.\n")
+        self.assertEqual(self.read_in_the_checkout(self.disk / "secret.txt"), "")        # not in the checkout at all
+        self.assertEqual(self.read_in_the_checkout(self.loom / "docs" / "secret.txt"), "")
+        self.assertEqual(self.read_in_the_checkout(self.loom / ".GIT" / "description"), "")
+        self.assertEqual(self.read_in_the_checkout(self.loom / "folder.md"), "")
+        self.assertEqual(self.read_in_the_checkout(self.loom / "gone.md"), "")
+
+    def test_a_goal_is_read_by_its_path_whatever_it_is_a_link_to(self):
+        # A goal or a tracker lies in the owner's own folder, and is not a cloned repository's file.
+        (self.disk / "goal.txt").write_text("Prints reports.\n")
+        (self.loom / "goal.md").symlink_to(self.disk / "goal.txt")
+        self.assertEqual(context.read(self.loom / "goal.md"), "Prints reports.\n")
+
+    def test_a_read_leaves_no_descriptor_open_whatever_it_finds(self):
+        (self.disk / "secret.txt").write_text(self.KEY)
+        self.put("README.md", "Prints reports.\n")
+        (self.loom / "out.md").symlink_to(self.disk / "secret.txt")
+        os.mkfifo(self.loom / "pipe.md")
+        held = os.open(self.loom / "pipe.md", os.O_RDWR)             # so that a read that waits for a writer ends
+        self.addCleanup(os.close, held)
+        (self.loom / "folder.md").mkdir()
+        paths = [self.loom / name for name in ("README.md", "out.md", "pipe.md", "folder.md", "gone.md")]
+        before = len(os.listdir("/proc/self/fd"))
+        for _ in range(20):
+            for path in paths:
+                self.read_in_the_checkout(path)
+        self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+
+    def test_a_terminal_in_the_place_of_a_readme_does_not_become_the_servers_terminal(self):
+        # A service is a session of its own and a session with no terminal takes the first one it
+        # opens (without O_NOCTTY) for its own: a hang-up of that terminal is then the service's.
+        try:
+            master, slave = pty.openpty()
+        except OSError:
+            self.skipTest("no pseudo-terminals here")
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        child = ("import os, sys\n"
+                 "from pathlib import Path\n"
+                 "sys.path.insert(0, sys.argv[1])\n"
+                 "import context\n"
+                 "os.setsid()\n"
+                 "context.read(sys.argv[2], 100, base=Path('/dev/pts'))\n"
+                 "try:\n"
+                 "    os.close(os.open('/dev/tty', os.O_RDONLY))\n"
+                 "    print('has a terminal')\n"
+                 "except OSError:\n"
+                 "    print('has none')\n")
+        done = subprocess.run([sys.executable, "-B", "-c", child, str(Path(context.__file__).parent),
+                               os.ttyname(slave)], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+        self.assertEqual(done.stdout.strip(), "has none", done.stderr)
+
+    def test_a_timeout_in_the_middle_of_a_read_is_not_swallowed_as_a_file_that_cannot_be_read(self):
+        self.put("README.md", "Prints reports.\n")
+        with mock.patch.object(os, "open", side_effect=TimeoutError), \
+                mock.patch.object(context, "open", side_effect=TimeoutError, create=True):
+            with self.assertRaises(TimeoutError):
+                context.read(str(self.loom / "README.md"))
+            with self.assertRaises(TimeoutError):
+                self.read_in_the_checkout(self.loom / "README.md")
 
     def test_a_readme_is_read_for_its_first_twenty_thousand_characters_and_no_more(self):
         # The first prose of 9,065 real files lies within the first 16,000 characters, but for two

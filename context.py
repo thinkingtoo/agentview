@@ -15,6 +15,7 @@ safety here.
 import itertools
 import os
 import re
+import stat
 from pathlib import Path
 
 import projects
@@ -114,14 +115,34 @@ DESCRIPTION_READ = 20_000   # a repository's file, this far: the first prose of 
                             # where what lies further down is a code line and a theme footer
 
 
-def read(path, limit=READ):
+def read(path, limit=READ, base=None):
     """The start of a text file, or "" when it is no regular file or cannot be
-    read: a named pipe would wait for a writer that may never come."""
+    read: a named pipe would wait for a writer that may never come.
+
+    A file of a repository is read with `base`, the folder of its checkout
+    (resolved). A cloned repository's files can change under a poll, so the
+    path is not trusted between a look and an open: the file is opened once (a
+    pipe returns at once, a terminal does not become the process's own), and
+    what is open is judged, a regular file that lies
+    in `base` and in no `.git` folder. What is read is that same descriptor. A
+    goal or a tracker, which lies in the owner's own folder, is read by its
+    path. A timeout that reaches this is the caller's and is let through."""
     try:
-        if not projects.regular(path):
-            return ""
-        with open(path, encoding="utf-8-sig", errors="replace") as fh:
-            return fh.read(limit)
+        if base is None:
+            if not projects.regular(path):
+                return ""
+            with open(path, encoding="utf-8-sig", errors="replace") as fh:
+                return fh.read(limit)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC)
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode) or not inside(os.readlink(f"/proc/self/fd/{fd}"), base):
+                return ""
+            with open(fd, encoding="utf-8-sig", errors="replace", closefd=False) as fh:
+                return fh.read(limit)
+        finally:
+            os.close(fd)
+    except TimeoutError:
+        raise
     except OSError:
         return ""
 
@@ -419,13 +440,24 @@ WANTED = frozenset(name for kind in DESCRIBED_BY for name in kind)
 LINKS_LOOKED_AT = 12     # per folder: a repository holds the names above, and no more than a few of them as links
 
 
+def inside(end, base):
+    """Whether a resolved path lies in the folder `base` (resolved) and not in
+    a `.git` folder of any case."""
+    try:
+        target = Path(end).relative_to(base)
+    except ValueError:
+        return False
+    return ".git" not in {part.casefold() for part in target.parts}
+
+
 def stays_inside(path, base):
     """Whether a link ends up in the folder `base` (already resolved), and not
     in a `.git` folder of any case: `AGENTS.md -> CLAUDE.md` does, `README.md ->
     ~/.ssh/id_ed25519` does not. A cloned repository chooses what its links
     point at. The kernel follows the link (a path-only descriptor: nothing is
     read, a named pipe is no trouble) and says where it ends; walking a chain
-    of long links in Python costs fifty milliseconds a link."""
+    of long links in Python costs fifty milliseconds a link. This is a look at
+    the listing, to pass over a link out; `read` judges the file it opens."""
     try:
         fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
     except OSError:                                 # a loop, too many levels, gone
@@ -436,20 +468,17 @@ def stays_inside(path, base):
         return False
     finally:
         os.close(fd)
-    try:
-        target = Path(end).relative_to(base)
-    except ValueError:
-        return False
-    return ".git" not in {part.casefold() for part in target.parts}
+    return inside(end, base)
 
 
 def files_in(folder):
-    """The files a repository may describe itself by, directly in a folder,
-    `{lowercase name: path}`. A link counts when it stays inside the folder, and
-    only the names looked for are looked at: the other links in a cloned folder
-    cost nothing. A link that loops is no link that stays inside, and the other
-    files are still found."""
-    found, links = {}, 0
+    """The folder resolved and the files a repository may describe itself by,
+    directly in it, `(base, {lowercase name: path})`, to be read with that
+    base. A link counts when it stays inside the folder, and only the names
+    looked for are looked at: the other links in a cloned folder cost nothing.
+    A link that loops is no link that stays inside, and the other files are
+    still found."""
+    found, links, base = {}, 0, None
     try:
         base = Path(folder).resolve()
         with os.scandir(folder) as entries:
@@ -464,8 +493,8 @@ def files_in(folder):
                 if entry.is_file():
                     found[key] = entry.path
     except OSError:
-        return {}
-    return found
+        return None, {}
+    return base, found
 
 
 def placed_in(cwd, project_id):
@@ -491,9 +520,9 @@ def repository_text(rows, project_id):
     # Worktrees mostly hold the same files: a text is parsed once per card.
     parsed = {}
     for wanted in DESCRIBED_BY:
-        for found in here.values():
+        for base, found in here.values():
             path = next((found[name] for name in wanted if name in found), None)
-            body = read(path, DESCRIPTION_READ) if path else ""
+            body = read(path, DESCRIPTION_READ, base=base) if path else ""
             if body not in parsed:
                 parsed[body] = first_prose(body) if body else ""
             if parsed[body]:
