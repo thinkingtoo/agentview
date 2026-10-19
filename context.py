@@ -75,11 +75,16 @@ BOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]")
 STATUS = re.compile(r"^\s*[_*]*status:[_*\s]*([a-z]+)", re.IGNORECASE)
 STATUS_WORDS = ("OPEN", "PAUSED", "MET")
 # The end of a sentence: a full stop, a question or exclamation mark (and any
-# closing quote) before a capital letter or a digit. "e.g. the" and
-# "server.py" do not end one.
-SENTENCE_END = re.compile(r"""[.!?]["'\u201d\u2019)\]]*(?=\s+[A-Z0-9"\u201c\u2018(\[]|\s*$)""")
-LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+# closing quote) before a capital letter, in any alphabet, or a digit or an
+# opening quote. "e.g. the" and "server.py" do not end one.
+SENTENCE_END = re.compile(r"""[.!?]["'\u201d\u2019)\]]*(?=\s+(\S)|\s*$)""")
+OPENERS = "\"'\u201c\u2018(["
+# A link or an image points with an address in brackets, one level of round
+# brackets allowed inside it (`Rule_(math)`, `3.10%20(min)`), or with a
+# reference, `[text][ref]`.
+POINTS_TO = r"(?:\((?:[^()]|\([^()]*\))*\)|\[[^\]]*\])"
+LINK = re.compile(r"\[([^\]]*)\]" + POINTS_TO)
+IMAGE = re.compile(r"!\[[^\]]*\]" + POINTS_TO)
 BOLD = re.compile(r"(\*\*|__)(.+?)\1")
 READ = 100_000       # a goal or a README is read this far, no further
 
@@ -87,7 +92,7 @@ READ = 100_000       # a goal or a README is read this far, no further
 def read(path):
     """The start of a text file, or "" when it cannot be read."""
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
             return fh.read(READ)
     except OSError:
         return ""
@@ -148,8 +153,17 @@ def plain(text):
 
 
 def first_sentence(text):
-    end = SENTENCE_END.search(text)
-    return text[:end.end()] if end else text
+    for end in SENTENCE_END.finditer(text):
+        after = end.group(1)
+        if after is None or after.isupper() or after.isdigit() or after in OPENERS:
+            return text[:end.end()]
+    return text
+
+
+def bare_tag(text):
+    """A text that is one tag, like the `<REPLACE: one sentence.>` a goal
+    template holds until someone writes the sentence."""
+    return text.startswith("<") and text.endswith(">")
 
 
 # ------------------------------------------------------------------ the track
@@ -178,6 +192,7 @@ def track_card(track):
         progress = None
     outcome = next((plain(" ".join(p)[:PARAGRAPH_MAX]) for p in paragraphs(section(lines, "outcome"))
                     if not HEADING.match(p[0])), "")
+    outcome = "" if bare_tag(outcome) else outcome
     return outcome, {"status": status, "progress": progress}
 
 
@@ -189,6 +204,9 @@ REFERENCE = re.compile(r"^\s*\[[^\]]+\]:\s")
 RULE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
 SETEXT = re.compile(r"^\s*(=+|-+)\s*$")
 NOT_PROSE = re.compile(r"^(\s{4,}|\t|[-*+]\s|\d+[.)]\s|\||>)")
+# What starts a block in the middle of a paragraph, so the paragraph ends
+# before it: a list (a numbered one only from 1) or a quote.
+INTERRUPTS = re.compile(r"^\s{0,3}([-*+]\s|1[.)]\s|>)")
 TAGS = re.compile(r"<[^>]*>")
 # README, then the instructions for agents, then Claude's own: AGENTS.md is
 # the file a project writes about itself, CLAUDE.md often only includes it.
@@ -225,8 +243,9 @@ def prose(par):
                                         or RULE.match(line))]
     if not par or HEADING.match(par[0]) or NOT_PROSE.match(par[0]):
         return ""
+    par = par[:next((i for i, line in enumerate(par) if i and INTERRUPTS.match(line)), len(par))]
     text = plain(" ".join(par)[:PARAGRAPH_MAX])
-    if text.startswith("<") and text.endswith(">"):
+    if bare_tag(text):
         return ""
     return text if re.search(r"\w", TAGS.sub("", text)) else ""
 
@@ -246,13 +265,21 @@ def files_in(folder):
         return {}
 
 
-def repository_text(rows):
+def placed_in(cwd, project_id):
+    """Whether a launch folder is in this repository by where it is, whatever
+    the person has assigned its session to."""
+    project = projects.project_of(cwd, lambda _: None)
+    return bool(project) and project["id"] == project_id
+
+
+def repository_text(rows, project_id):
     """What the repository says about itself: the first prose of its README,
     else of its agent instructions. Read from the main checkout when it is
     there, so that the line is the same whichever worktree a session is in
-    and whichever session comes first."""
+    and whichever session comes first. A session assigned here from another
+    repository lends nothing: its folder is not this repository's."""
     roots = {}
-    for cwd in sorted({m["cwd"] for m in rows}):
+    for cwd in sorted({m["cwd"] for m in rows if placed_in(m["cwd"], project_id)}):
         for rank, root in enumerate(projects.checkouts(cwd)):
             roots[root] = min(rank, roots.get(root, rank))
     here = {root: files_in(root) for root in sorted(roots, key=lambda r: (roots[r], str(r)))}
@@ -281,7 +308,7 @@ def card(project, rows, own_lines):
         return line_from("own", own), track
     if outcome:
         return line_from("goal", first_sentence(outcome), outcome), track
-    about = repository_text(rows) if project["kind"] == "repository" else ""
+    about = repository_text(rows, project["id"]) if project["kind"] == "repository" else ""
     if about:
         return line_from("readme", about), track
     return line_from("guess", guess(rows)), track

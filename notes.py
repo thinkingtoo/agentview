@@ -160,13 +160,31 @@ def _hits(result):
         content = result.get("content")
         if not isinstance(content, list):           # neither: not "no hits", an answer not understood
             raise Unavailable(UNKNOWN)
-        found = []
-        for part in content:
-            try:
-                found.append(json.loads(part["text"]))
-            except (KeyError, TypeError, ValueError):
-                pass
+        found = _from_text(content)
     return [_hit(h) for h in found if isinstance(h, dict)]
+
+
+def _from_text(content):
+    """The hits a service put in text blocks instead of structured content: a
+    block holds one hit, a list of them, or `{"result": [...]}`. A block that
+    is none of these is an answer not understood, not an empty one."""
+    found = []
+    for part in content:
+        if not isinstance(part, dict) or part.get("type") != "text":
+            continue
+        try:
+            block = json.loads(part.get("text"))
+        except (TypeError, ValueError):
+            raise Unavailable(UNKNOWN) from None
+        if isinstance(block, dict) and isinstance(block.get("result"), list):
+            block = block["result"]
+        if isinstance(block, list):
+            found.extend(block)
+        elif isinstance(block, dict):
+            found.append(block)
+        else:
+            raise Unavailable(UNKNOWN)
+    return found
 
 
 def _hit(hit):

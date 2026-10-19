@@ -173,6 +173,20 @@ class Search(unittest.TestCase):
         self.service.structured = False
         self.assertEqual(len(notes.search("Loom")["hits"]), 3)
 
+    def test_hits_in_one_text_block_read_the_same_whichever_way_the_block_holds_them(self):
+        hits = [service_hit(n) for n in range(1, 5)]
+        for block in (hits, {"result": hits}):
+            with self.subTest(block=type(block).__name__):
+                self.service.odd = {"content": [{"type": "text", "text": json.dumps(block)}], "isError": False}
+                self.assertEqual([h["path"] for h in notes.search("Loom")["hits"]],
+                                 [f"Clients/acme/kickoff-notes-{n}.md" for n in (1, 2, 3)])
+
+    def test_a_block_that_is_not_text_is_left_out(self):
+        text = {"type": "text", "text": json.dumps(service_hit(1))}
+        self.service.odd = {"content": [{"type": "image", "data": "x", "mimeType": "image/png"}, text],
+                            "isError": False}
+        self.assertEqual([h["path"] for h in notes.search("Loom")["hits"]], ["Clients/acme/kickoff-notes-1.md"])
+
     def test_no_hits_is_an_empty_answer_not_a_failure(self):
         self.service.hits = []
         self.assertEqual(notes.search("Loom"), {"ok": True, "hits": []})
@@ -249,6 +263,12 @@ class Trouble(unittest.TestCase):
                     {"structuredContent": 5}, {"structuredContent": {"result": 5}, "content": None}):
             with self.subTest(odd=odd):
                 self.service.odd = odd
+                self.assertEqual(self.refused(), "the notes service gave an answer this code does not know")
+
+    def test_a_text_block_that_is_not_hits_is_an_answer_not_understood(self):
+        for text in ("Nothing matched, sorry.", "5", '"x"'):
+            with self.subTest(text=text):
+                self.service.odd = {"content": [{"type": "text", "text": text}], "isError": False}
                 self.assertEqual(self.refused(), "the notes service gave an answer this code does not know")
 
     def test_a_first_answer_that_is_not_the_service_ends_it_there(self):

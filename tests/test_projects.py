@@ -633,6 +633,12 @@ class Edges(Placed):
         got = self.roster(sess("a", odd))
         self.assertEqual((self.raws(got), got["columns"][0]["kind"]), (["odd"], "folder"))
 
+    def test_a_gitlink_with_a_null_byte_in_it_does_not_stop_the_page(self):
+        odd = self.folder("odd")
+        (odd / ".git").write_bytes(b"gitdir: x\x00y\n")
+        got = self.roster(sess("a", odd))
+        self.assertEqual((self.raws(got), got["columns"][0]["kind"]), (["odd"], "folder"))
+
     def test_a_worktree_whose_commondir_is_not_text_is_still_a_project(self):
         parent = self.repo("suite")
         tree = self.worktree(parent, "suite-wt")

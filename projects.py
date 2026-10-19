@@ -102,7 +102,10 @@ def _repository(cwd):
             return git.resolve(), here.relative_to(d)
         if git.is_file():
             try:
-                admin = d / git.read_text(encoding="utf-8").split(":", 1)[1].strip()
+                target = git.read_text(encoding="utf-8").split(":", 1)[1].strip()
+                if "\0" in target:                         # no path has one
+                    raise ValueError
+                admin = d / target
             except (OSError, ValueError, IndexError):     # ValueError: not text
                 return None
             # A worktree names its parent's `.git`; a submodule's own folder

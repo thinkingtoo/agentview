@@ -8,6 +8,7 @@ built in a temp dir; nothing here reads the real `~/.claude/pm`, a real
 repository, the real config or the brain. Names and texts are invented.
 """
 import json
+import os
 import sys
 import time
 import unittest
@@ -166,6 +167,20 @@ class Tracks(Cards):
         self.assertEqual(self.track(status="Met")["track"]["status"], "MET")
         self.assertEqual(self.track(status="parked")["track"]["status"], "")
 
+    def test_a_sentence_ends_before_a_capital_that_is_not_ascii(self):
+        got = self.track(outcome="Il sito \u00e8 pronto per i clienti. \u00c8 online da luned\u00ec e accetta pagamenti.")
+        self.assertEqual(got["context"]["line"], "Il sito \u00e8 pronto per i clienti.")
+        got = self.track(outcome="Wij verkopen appels, e.g. in de winkel. \u00d6vriga delar f\u00f6ljer.")
+        self.assertEqual(got["context"]["line"], "Wij verkopen appels, e.g. in de winkel.")
+
+    def test_a_sentence_ends_before_a_digit_too(self):
+        got = self.track(outcome="Version 2 ships on Monday. 3 clients use it already.")
+        self.assertEqual(got["context"]["line"], "Version 2 ships on Monday.")
+
+    def test_a_goal_still_holding_its_placeholder_has_no_outcome_yet(self):
+        got = self.track(outcome="<REPLACE: one sentence.>")
+        self.assertEqual(got["context"]["source"], "guess")
+
     def test_an_outcome_written_over_several_lines_is_one_paragraph(self):
         got = self.track(outcome="Customers pay with\na saved card, e.g. the one\nthey used last. Then done.")["context"]
         self.assertEqual(got["line"], "Customers pay with a saved card, e.g. the one they used last.")
@@ -264,6 +279,42 @@ class Repositories(Cards):
         self.assertEqual(self.line(), {
             "source": "readme", "line": "A tiny tool that prints reports for the shop.",
             "full": "A tiny tool that prints reports for the shop.", "guess": False})
+
+    def test_a_session_assigned_here_from_another_repository_does_not_lend_its_readme(self):
+        zzz, aaa = self.repo("zzz-tool"), self.repo("aaa-dots")
+        self.put("README.md", "Tool turns timesheets into invoices.\n", zzz)
+        self.put("README.md", "My shell and editor settings.\n", aaa)
+        self.config = {"assign": {"fake:b": "repo:example.com/alice/zzz-tool"}}
+        got = self.roster(sess("a", zzz), sess("b", aaa))
+        self.assertEqual([c["project"] for c in got["columns"]], ["repo:example.com/alice/zzz-tool"])
+        self.assertEqual(got["columns"][0]["context"]["line"], "Tool turns timesheets into invoices.")
+        self.put("README.md", "Tool turns timesheets into invoices.\n", aaa)
+        os.remove(zzz / "README.md")
+        self.assertEqual(self.roster(sess("a", zzz), sess("b", aaa))["columns"][0]["context"]["source"], "guess")
+
+    def test_a_badge_row_is_not_prose_however_its_links_are_written(self):
+        badges = ["[![npm][npm-image]][npm-url] [![build][build-image]][build-url]",
+                  "[![Python](https://img.shields.io/badge/python-3.10%20(min)-blue.svg)](https://python.org)",
+                  "![a](a.svg) [![b](b.svg)](https://x.example/p_(q))"]
+        for row in badges:
+            self.put("README.md", f"# loom\n\n{row}\n\nA tiny tool that prints reports.\n")
+            self.assertEqual(self.line()["line"], "A tiny tool that prints reports.", row)
+
+    def test_a_link_whose_address_has_brackets_in_it_is_its_label(self):
+        self.put("README.md", "Loom follows [the rule](https://en.wikipedia.org/wiki/Rule_(math)) for reports.\n")
+        self.assertEqual(self.line()["line"], "Loom follows the rule for reports.")
+
+    def test_a_readme_that_starts_with_a_byte_order_mark_is_read_like_any_other(self):
+        self.loom.joinpath("README.md").write_bytes("\ufeff# loom\n\nA tiny tool that prints reports.\n".encode())
+        self.assertEqual(self.line()["line"], "A tiny tool that prints reports.")
+
+    def test_a_list_that_follows_a_line_is_not_part_of_it(self):
+        self.put("README.md", "Loom is a tool for:\n- reports\n- invoices\n")
+        self.assertEqual(self.line()["line"], "Loom is a tool for:")
+        self.put("README.md", "Loom prints reports\n1. fast\n> quoted\n")
+        self.assertEqual(self.line()["line"], "Loom prints reports")
+        self.put("README.md", "Loom prints reports\nin the year\n2019. Wow\n")
+        self.assertEqual(self.line()["line"], "Loom prints reports in the year 2019. Wow")
 
     def test_headings_badges_html_blocks_lists_tables_quotes_and_code_are_not_prose(self):
         self.put("README.md", "---\ntitle: Loom\n---\n<!-- a comment\nover lines -->\n"
