@@ -116,6 +116,40 @@ class Asking(mp.Provider):
         self.assertEqual((got["tool"], got["command"], got["target"]),
                          ("mcp__vault__open", "", ""))
 
+    # A transcript is read as found: a record that is not what Claude Code
+    # writes must leave a prompt with nothing to show, never take the read down.
+    def test_a_call_whose_input_is_not_an_object_keeps_nothing(self):
+        # What the prompt is built from is what `_kept` returns, so a call
+        # with no usable input is a prompt with nothing to copy.
+        for junk in ("make build", None, 7, ["make build"]):
+            with self.subTest(junk=junk):
+                self.assertEqual(claude._kept(junk, "Bash"), {})
+                self.assertEqual(claude._kept(junk, "AskUserQuestion"), {})
+        self.assertEqual(claude.asking_of("waiting", "permission prompt", [("Bash", {})]),
+                         {"kind": "permission", "tool": "Bash", "command": "", "target": ""})
+
+    def test_a_shell_command_that_is_not_text_is_no_command(self):
+        for junk in (7, ["make", "build"], {"cmd": "make build"}, None, True):
+            with self.subTest(junk=junk):
+                got = self.open([tool(30, "Bash", {"command": junk})], waiting_for="permission prompt")
+                self.assertEqual((got["tool"], got["command"]), ("Bash", ""))
+
+    def test_a_question_whose_parts_are_not_what_they_should_be_is_cut_down_not_fatal(self):
+        for junk in ("why", 7, None, {}, [None, 3, "x", {"question": 4}]):
+            with self.subTest(junk=junk):
+                self.assertIsNone(self.open([tool(30, "AskUserQuestion", {"questions": junk})]))
+        for options in ("docs", None, [None, "docs", 3], [{"label": 5}], [{}]):
+            with self.subTest(options=options):
+                got = self.open([tool(30, "AskUserQuestion", {"questions": [
+                    {"question": "Which folder?", "options": options}]})])
+                self.assertEqual(got["kind"], "question")
+                self.assertEqual([q["question"] for q in got["questions"]], ["Which folder?"])
+                self.assertTrue(all(isinstance(o["label"], str) for q in got["questions"]
+                                    for o in q["options"]))
+        got = self.open([tool(30, "AskUserQuestion", {"questions": [{"question": "Which folder?"}]})])
+        self.assertEqual(got["questions"], [{"question": "Which folder?", "header": "",
+                                             "multi": False, "options": []}])
+
     def test_the_prompt_is_for_the_oldest_call_still_waiting(self):
         got = self.open([tool(40, "Bash", {"command": "make build"}, "toolu_1"),
                          tool(30, "Bash", {"command": "make test"}, "toolu_2")],

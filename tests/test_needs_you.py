@@ -261,6 +261,20 @@ class Bounds(Base):
             with self.subTest(junk=junk):
                 self.assertIsNone(self.stuck(junk))
 
+    def test_a_prompt_whose_fields_are_not_text_is_a_prompt_with_nothing_in_it(self):
+        got = self.stuck({"kind": "permission", "tool": 7, "command": ["ls"], "target": {"a": 1}})
+        self.assertEqual((got["reason"], got["context"]),
+                         ("Permission prompt", {"tool": "", "command": "", "target": "", "copy": False}))
+
+    def test_a_row_that_is_not_text_where_text_is_expected_still_gets_a_tile(self):
+        # The row is made field by field from what the provider said; what the
+        # tile derives from it (`attach`, the state) never sees the raw value.
+        for junk in (7, ["x"], {"a": 1}, None, True):
+            with self.subTest(attach=junk):
+                got = self.tile(waiting(asking=asks(), attach=junk, canJump=False))
+                self.assertEqual(got["jump"]["via"], "none")
+                self.assertEqual(got["stuck"]["source"], "question")
+
     def test_options_that_are_not_options_are_left_out_and_the_question_stays(self):
         q = question(options=[None, "yes", {"label": 3, "description": None}, {"label": "Yes"}])
         got = self.stuck(asks(q))["context"]["questions"][0]["options"]
