@@ -17,6 +17,8 @@ import fleet
 import jump
 import lines
 import log
+import notes
+import projects
 import providers
 import seen
 import snapshot
@@ -263,7 +265,7 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or "{}")
 
     ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore", "snapshot", "revive",
-              "dismiss", "reopen", "ticket")
+              "dismiss", "reopen", "ticket", "context", "notes")
 
     def do_POST(self):
         if not self._local():
@@ -379,6 +381,27 @@ class Handler(BaseHTTPRequestHandler):
         assign.pop(key, None) if not project else assign.update({key: project})
         fleet.write_config({"assign": assign})
         self._send(json.dumps({"ok": True, "project": project}), "application/json")
+
+    def _context(self, body):
+        """Your own line for a project, kept under its identity. An empty one
+        takes it back, and the source the roster finds takes its place."""
+        project, text = body.get("project"), body.get("text")
+        if not isinstance(project, str) or not isinstance(text, str):
+            return self.send_error(400, "expected {project, text}")
+        if projects.from_identity(project) is None:
+            return self.send_error(400, "expected a project identity, like repo:host/owner/name")
+        text = " ".join(text.split())
+        own = fleet.config_value("project_lines", {})
+        own.pop(project, None) if not text else own.update({project: text})
+        fleet.write_config({"project_lines": own})
+        self._send(json.dumps({"ok": True}), "application/json")
+
+    def _notes(self, body):
+        """A click on a card's notes link: one search of your notes."""
+        query = body.get("query")
+        if not isinstance(query, str):
+            return self.send_error(400, "expected {query}")
+        self._send(json.dumps(notes.search(query)), "application/json")
 
     def _line(self, body):
         key, text = body.get("key"), body.get("text")
