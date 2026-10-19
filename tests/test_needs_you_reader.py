@@ -250,6 +250,11 @@ class Asking(mp.Provider):
             with self.subTest(value=value):
                 self.assertIsNone(self.open([text(30)], waiting_for=value))
 
+    def test_the_menu_word_is_a_menu_in_any_case_and_with_blanks_around_it(self):
+        for value in ("Dialog open", "DIALOG OPEN", "  dialog open  "):
+            with self.subTest(value=value):
+                self.assertIsNone(self.open([text(30)], waiting_for=value))
+
     def test_a_request_the_session_has_since_left_is_not_open(self):
         self.assertIsNone(self.open([text(30)], status="busy", waiting_for="sandbox request"))
         self.assertIsNone(self.open([text(30)], status="idle", waiting_for="sandbox request"))

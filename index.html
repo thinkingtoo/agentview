@@ -951,8 +951,9 @@ const STATE_WORD = { needs: "NEEDS YOU", error: "ERROR", hung: "HUNG", limit: "L
 
 function column(c) {
   // The state is always the card's second line, never above the name.
-  const word = known(STATE_WORD, c.state) || (c.state ? String(c.state).toUpperCase() : "");
-  const st = known(STATE_WORD, c.state) ? c.state : "other";
+  const said = known(STATE_WORD, c.state);
+  const word = said || (c.state ? String(c.state).toUpperCase() : "");
+  const st = said ? c.state : "other";
   return `<section class="ov-col" data-project="${esc(c.project)}">
     <div class="ov-head st-${st}"><span class="ov-name">${esc(c.name)}</span>${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${movementOf(c)}</div>
     ${c.sessions.map(tile).join("")}

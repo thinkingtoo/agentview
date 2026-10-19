@@ -85,7 +85,8 @@ stops counting as moving once `hung_after_minutes` more have passed (the
 ten minutes are counted from the moment the six hours ended, not from the last
 write). The same count runs from the last time CPU was seen moving under a
 command it waits on: a command that burned CPU two minutes ago is a session
-that was moving two minutes ago.
+that was moving two minutes ago. That time is kept per session, not per
+command, and in memory only: after a restart, CPU from before it is unknown.
 
 Each project card draws a **strip**: one bar per minute for the last 30,
 oldest first, the records written by all of the project's sessions and their
@@ -110,10 +111,10 @@ MOVING (green) and ALL IDLE (grey).
 
 | kind | when | reason | context |
 |---|---|---|---|
-| Needs you | an open question, an open permission prompt, another request that waits on the person (below), or a session line with things left | Question, Permission prompt, Sandbox request, Worker request, Goal proposal, "3 things left for you" | the question and its options; the tool and its command; the line's ask |
+| Needs you | an open question, an open permission prompt, another request that waits on the person (below), or a session line with things left | Question, Permission prompt, Sandbox request, Worker request, Goal proposal, "3 things left for you" | the question and its options; the tool and its command; the request's name and nothing more; the line's ask |
 | Error | an API or auth error is the session's last word | Overloaded, Auth error, Server error, or the error's own name | the error's words and how long ago |
 | Hung | busy, and nothing shows it moving for `hung_after_minutes` (default 10) | "Not moving for 14 min" | the last tool it called and how long ago |
-| Limit | a rate limit is the session's last word | Rate limit | when it resets (the error carries it) and how long it has been held |
+| Limit | the usage limit is the session's last word | Rate limit | when it resets (the error carries it) and how long it has been held |
 
 A `waiting` session says what it waits on (`waitingFor`, Claude Code's own
 word). `input needed` is a question and `permission prompt` a permission
@@ -125,7 +126,7 @@ stuck. A word this page has not met reads Needs you too, since Claude Code only
 says `waiting` when it waits on someone. The chime rings for every one of them,
 as before.
 
-An error is **the last word** until the session says or is told anything else:
+A failure (a Limit or an Error) is **the last word** until the session says or is told anything else:
 a prompt, a message from another session, the session going on by itself after
 a limit. Records Claude Code writes on its own after an error (a turn duration,
 a title, a queued line, a snapshot) do not end it, nor does anything that asks

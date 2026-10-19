@@ -784,14 +784,14 @@ def _processes(rec, summary, status, shells):
     session hung must wait for a look that can tell. `cpu_ago` is how many
     minutes ago CPU was last seen moving, whether or not it moves now.
     """
-    none = {"tasks": [], "cpu": False, "cpu_ago": None, "unread": False}
+    nothing = {"tasks": [], "cpu": False, "cpu_ago": None, "unread": False}
     tasks = summary["tasks"]
     if shells is None or not rec.get("pid") or not (
             tasks or (status == "busy" and summary["pending"] is not None)):
-        return none
+        return nothing
     seen = shells.look(rec["pid"])
     if seen is None:
-        return {**none, "unread": True}
+        return {**nothing, "unread": True}
     return {"tasks": [t for t in tasks if t["id"] in seen["tasks"]], "cpu": seen["cpu"] is True,
             "cpu_ago": shells.cpu_ago(rec["pid"]), "unread": seen["cpu"] is None}
 
@@ -829,7 +829,7 @@ def asking_of(status, waiting_for, calls):
         return {"kind": "question", "questions": []}
     if waiting_for != "permission prompt":
         word = waiting_for.strip() if isinstance(waiting_for, str) else ""
-        return {"kind": "request", "what": word} if word and word not in MENUS else None
+        return {"kind": "request", "what": word} if word and word.lower() not in MENUS else None
     name, inp = calls[0] if calls else ("", {})
     target = inp.get(TARGET.get(name, ""))
     return {"kind": "permission", "tool": name,

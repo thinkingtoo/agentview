@@ -399,18 +399,38 @@ MAX_EXTRAS = 8
 EXTRA_LEN = 40
 
 
+# The largest whole number a float holds exactly, and so the largest a page or
+# a clock sum can take: a provider's number beyond it is not a count or a time.
+MAX_COUNT = 2 ** 53
+
+
 def _int(value):
-    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+    """A provider's number as a whole number; 0 when it is not one (a bool, text,
+    nan, infinity, or beyond what a float holds exactly)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    try:
+        got = int(value)
+    except (OverflowError, ValueError):
+        return 0
+    return got if abs(got) <= MAX_COUNT else 0
 
 
 def _minutes(value):
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    """A provider's number as minutes; None when it is not one, as for `_int`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        got = float(value)
+    except OverflowError:
+        return None
+    return got if math.isfinite(got) else None
 
 
 def _age(value):
     """Minutes ago as a provider says it: a number that is not less than nothing, or None."""
     got = _minutes(value)
-    return got if got is not None and math.isfinite(got) and got >= 0 else None
+    return got if got is not None and got >= 0 else None
 
 
 def _text(value):
@@ -795,7 +815,11 @@ def error_words(error_type, status):
         return "Server error"
     if error_type in ("", "error"):
         return "API error"
-    words = error_type.replace("_", " ").strip()
+    return _sentence(error_type.replace("_", " ").strip())
+
+
+def _sentence(words):
+    """The words with a capital to begin: how a reason is said."""
     return words[:1].upper() + words[1:]
 
 
@@ -819,7 +843,7 @@ def needs_of(m):
                             # than none.
                             "copy": bool(asking["command"].strip()) and not asking["cut"]}}
     if asking and asking["kind"] == "request":
-        return {"kind": "needs", "source": "request", "reason": asking["what"][:1].upper() + asking["what"][1:],
+        return {"kind": "needs", "source": "request", "reason": _sentence(asking["what"]),
                 "context": {"what": asking["what"]}}
     if m["blocked"]:
         # The session's own line only: one read out of its last words is a

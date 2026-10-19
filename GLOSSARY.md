@@ -52,7 +52,7 @@ A kind of stuck: the usage limit was reached and the session's last word is that
 _Avoid_: rate limit error, throttled
 
 **Error**:
-A kind of stuck: any other API or authentication error is the session's last word (overloaded, auth, server). A new prompt or any other word from the session ends it.
+A kind of stuck: any other API or authentication error is the session's last word (overloaded, auth, server). It ends the way any Failure does.
 _Avoid_: crash
 
 **Failure**:

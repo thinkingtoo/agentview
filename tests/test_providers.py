@@ -170,6 +170,28 @@ class Shared(unittest.TestCase):
             with self.subTest(junk=junk):
                 self.assertIsNone(base.milliseconds(junk, seconds=True))
 
+    def test_a_number_a_provider_cannot_mean_is_none_and_never_an_exception(self):
+        # One bad value from one provider must not break the round for all of them.
+        for junk in (float("nan"), float("inf"), float("-inf"), 10 ** 400, -(10 ** 400)):
+            with self.subTest(junk=junk):
+                self.assertIsNone(fleet._minutes(junk))
+                self.assertIsNone(fleet._age(junk))
+                self.assertEqual(fleet._int(junk), 0)
+        self.assertEqual(fleet._minutes(3), 3.0)
+        self.assertEqual(fleet._minutes(-3.5), -3.5)
+        self.assertEqual(fleet._int(7.9), 7)
+        self.assertEqual(fleet._int(2 ** 53), 2 ** 53)
+        self.assertEqual(fleet._int(2 ** 53 + 1), 0)         # more than a float holds exactly
+
+    def test_a_roster_survives_every_number_field_holding_one(self):
+        for junk in (float("nan"), float("inf"), 10 ** 400):
+            with self.subTest(junk=junk):
+                row = minimal(quietFor=junk, subQuiet=junk, toolFor=junk, shellCpuAgo=junk,
+                              updatedAt=junk, startedAt=junk, pid=junk, status="busy",
+                              bgTasks=[{"label": "x", "since": junk}])
+                got = fleet.roster(providers=[Fake([row])])
+                self.assertEqual(len(got["blocks"][0]["members"]), 1)
+
     def test_the_cut_of_what_an_error_says_has_one_number(self):
         import fleet
         from providers import base, claude
