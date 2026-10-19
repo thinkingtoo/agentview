@@ -62,10 +62,12 @@ Under a project's name the card says what it is about, in one line cut at about
    `## Done when` (or `**Done when:**`); a MET track says "done" whatever its
    boxes say.
 3. **A repository's own words**: the first prose paragraph of its README, else of
-   `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, tables,
-   lists, code, HTML blocks and `@` includes skipped). Read from the main
-   checkout, so every worktree says the same. The line is a reminder, not a
-   rendering of the page: links give their label, formatting tags go, and code
+   `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, which
+   includes a language switcher with its current language in plain text,
+   tables, lists, code, HTML blocks and `@` includes skipped; a table or a list
+   directly under a line ends it). Read from the main checkout, so every
+   worktree says the same. The line is a reminder, not a rendering of the page:
+   links give their label, images say nothing, formatting tags go, and code
    stays as written.
 4. **A guess**: the two latest session titles, greyed, with "add a line".
 
