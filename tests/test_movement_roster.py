@@ -206,9 +206,9 @@ class Flags(Base):
         self.assertIsNone(got["columns"][0]["sessions"][0]["flag"])
         self.assertEqual(got["blocks"][0]["members"][0]["flag"], "stuck")
 
-    def test_stuck_is_shown_once_nothing_moves(self):
+    def test_stuck_is_shown_as_hung_once_nothing_moves(self):
         tile = self.tile(session("a", status="busy", quietFor=17.2))
-        self.assertEqual((tile["flag"], tile["flagNote"]), ("stuck", "17m"))
+        self.assertEqual((tile["flag"], tile["stuck"]["kind"]), (None, "hung"))
 
     def test_a_session_waiting_on_a_job_is_not_shown_stuck(self):
         tile = self.tile(session("a", status="busy", quietFor=8.0, toolFor=None,
@@ -262,13 +262,15 @@ class Mix(Base):
         got = self.summary(
             session("a", status="busy", quietFor=0.1),
             session("b", status="busy", quietFor=2.0),
-            session("c", status="waiting", waitingFor="input needed", updatedAt=ago(2)),
+            session("c", status="waiting", waitingFor="input needed", updatedAt=ago(2),
+                    asking={"kind": "question", "questions": []}),
             session("d", status="idle", updatedAt=ago(50)))
         self.assertEqual(got, {"moving": 2, "stuck": 1, "idle": 1})
 
     def test_a_session_that_needs_you_is_stuck_even_with_a_job_running(self):
         got = self.summary(session("a", status="waiting", waitingFor="input needed",
-                                   updatedAt=ago(2), bgTasks=[{"label": "watch", "since": 3.0}]))
+                                   updatedAt=ago(2), bgTasks=[{"label": "watch", "since": 3.0}],
+                                   asking={"kind": "question", "questions": []}))
         self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0})
 
     def test_an_idle_session_with_a_job_is_moving(self):

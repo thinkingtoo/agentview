@@ -350,7 +350,9 @@ class Shapes(Base):
             for status, waiting_for in (("waiting", "input needed"), ("waiting", "permission prompt"),
                                         ("idle", ""), ("busy", "")):
                 with self.subTest(junk=junk, status=status):
-                    got = self.tile(session("a", status=status, waitingFor=waiting_for, asking=junk))["stuck"]
+                    # Written a moment ago, so a busy one is not Hung: this is about `asking`.
+                    got = self.tile(session("a", status=status, waitingFor=waiting_for, asking=junk,
+                                            quietFor=0.1))["stuck"]
                     if got is not None:
                         self.assertEqual(set(got), {"kind", "source", "reason", "context"})
                         self.assertEqual(got["kind"], "needs")

@@ -9,6 +9,7 @@ import collections
 import concurrent.futures
 import functools
 import json
+import math
 import os
 import re
 import threading
@@ -472,14 +473,21 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
             named=bool(waiting_for), unseen=unseen)
     sub_quiet = _minutes(raw.get("subQuiet"))
     tasks = tasks_of(raw.get("bgTasks"))
-    sign, moving = movement_of(
+    sign, moving, silent = movement_of(
         status=status, quiet=quiet, sub_quiet=sub_quiet, in_flight=in_flight,
         doing=_text(raw.get("doing")), cpu=bool(raw.get("shellCpu")), tasks=tasks,
         status_for=(now * 1000 - updated) / 60000 if updated else None,
         hung_after=thresholds.get("hung_after", 10))
     moves = {"writes": writes_of(raw.get("writes")), "subQuiet": sub_quiet,
              "bgTasks": tasks, "shellCpu": bool(raw.get("shellCpu")),
-             "movement": sign, "moving": moving}
+             "movement": sign, "moving": moving,
+             # Minutes with no sign of life, for a busy session; and whether
+             # /proc could not say what runs under it. Only a provider saying
+             # so is believed: Hung is a claim, and it waits for a look that can tell.
+             "silentFor": None if silent is None else round(silent, 1),
+             "procsUnknown": raw.get("procsUnknown") is True,
+             "failure": failure_of(raw.get("failure"), now),
+             "lastTool": tool_of(raw.get("lastTool"), now)}
     row = {}
     for k, default in DEFAULTS.items():
         got = raw.get(k)
@@ -634,12 +642,18 @@ def columns_of(blocks):
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
 
 
+# The kinds of stuck, most urgent first. The tile says the first that holds for
+# its session, and the card the first that holds for any of its sessions.
+STUCK_ORDER = ("needs", "error", "hung", "limit")
+
+
 def state_of(tiles):
     """The card's one word, from its sessions: the most urgent decides. Needs
-    you, then moving, then all idle; the other kinds of stuck take their place
-    between them when the roster learns them."""
-    if any(t["stuck"] and t["stuck"]["kind"] == "needs" for t in tiles):
-        return "needs"
+    you, Error, Hung, Limit, then moving, then all idle."""
+    kinds = {t["stuck"]["kind"] for t in tiles if t["stuck"]}
+    for kind in STUCK_ORDER:
+        if kind in kinds:
+            return kind
     return "moving" if any(t["moving"] for t in tiles) else "idle"
 
 
@@ -691,10 +705,10 @@ def tile_of(m, suggestion=None):
     # Your words first, then the session's, then Claude Code's title -- and
     # nothing at all when that only says the name again.
     line = m["title"] if m["overridden"] else (m["did"] or m["title"])
-    # The chime keeps reading the flag. The tile says it through the movement
-    # sign instead where the sign is the better word: a long call is a wait,
-    # and a session that is moving is not stuck.
-    flag = None if m["flag"] == "tool" or (m["flag"] == "stuck" and m["moving"]) else m["flag"]
+    # The chime keeps reading the flag. The tile says it another way where
+    # that is the better word: a long call is a wait (the movement sign), and
+    # a busy session nothing proves is moving is Hung (its kind).
+    flag = None if m["flag"] in ("tool", "stuck") else m["flag"]
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
         "status": m["status"], "suggestion": suggestion,
@@ -717,6 +731,59 @@ def tile_of(m, suggestion=None):
 def stuck_of(m):
     """Why a session is stopped, as a kind with a reason and its context, or
     None. The flags the chime reads are not touched: this is for the page.
+
+    One session may be several things; the tile says the most urgent, in the
+    order the card does (`STUCK_ORDER`): Needs you, Error, Hung, Limit.
+    """
+    needs = needs_of(m)
+    if needs:
+        return needs
+    failure = m["failure"]
+    if failure and failure["kind"] == "error":
+        return {"kind": "error", "source": "api",
+                "reason": error_words(failure["type"], failure["status"]),
+                "context": {"type": failure["type"], "text": failure["text"],
+                            "ago": failure["held"]}}
+    if is_hung(m):
+        tool = m["lastTool"]
+        return {"kind": "hung", "source": "silence",
+                "reason": f"Not moving for {span_text(m['silentFor'])}",
+                "context": {"tool": tool["text"] if tool else "",
+                            "ago": tool["ago"] if tool else None}}
+    if failure:
+        return {"kind": "limit", "source": "api", "reason": "Rate limit",
+                "context": {"resetsAt": failure["resetsAt"], "held": failure["held"],
+                            "text": failure["text"]}}
+    return None
+
+
+def is_hung(m):
+    """Busy, and nothing shows it moving: no write of its own or a subagent's
+    inside `hung_after_minutes`, no command using CPU, no open background job.
+    That is `moving` turned round, plus two cases where it must not be said: a
+    /proc that could not answer (a restart, a race, an unreadable folder), and
+    a provider that cannot see the session's writes (no transcript to read), so
+    that silence is not known to be silence."""
+    return (m["status"] == "busy" and not m["moving"] and not m["procsUnknown"]
+            and m["silentFor"] is not None)
+
+
+def error_words(kind, status):
+    """The error's type, said short: overloaded, auth, server, or its own name."""
+    if status == 529 or "overloaded" in kind:
+        return "Overloaded"
+    if kind == "authentication_failed" or status in (401, 403):
+        return "Auth error"
+    if kind == "server_error" or (status or 0) >= 500:
+        return "Server error"
+    if kind in ("", "error"):
+        return "API error"
+    words = kind.replace("_", " ").strip()
+    return words[:1].upper() + words[1:]
+
+
+def needs_of(m):
+    """Needs you, or None.
 
     Needs you has three sources at one level -- an open question, an open
     permission prompt, a session line with things left -- and the dialog that
@@ -908,6 +975,47 @@ def asking_of(value):
     return None
 
 
+# What an API error says, as much as a tile holds; and the latest time a field
+# in milliseconds can be (the year 5000).
+FAILURE_LEN = 200
+MAX_MS = 95_000_000_000_000
+
+
+def _stamp(value):
+    """A time in milliseconds since 1970, or None if the value is not one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or not 0 < value < MAX_MS:
+        return None
+    return int(value)
+
+
+def failure_of(value, now):
+    """What a provider says stopped a session -- an API error that is the last
+    thing it said -- as the page may print it, or None. `kind` is the
+    provider's call (`limit` or `error`); `held` is minutes since it happened,
+    and never less than nothing for a clock that is ahead of ours."""
+    if not isinstance(value, dict) or value.get("kind") not in ("limit", "error"):
+        return None
+    at, status = _stamp(value.get("at")), value.get("status")
+    return {"kind": value["kind"],
+            "type": " ".join(_text(value.get("type")).split())[:LABEL_LEN],
+            "status": status if isinstance(status, int) and not isinstance(status, bool) else None,
+            "text": " ".join(_text(value.get("text")).split())[:FAILURE_LEN],
+            "held": None if at is None else max(0.0, round((now * 1000 - at) / 60000, 1)),
+            "resetsAt": _stamp(value.get("resetsAt"))}
+
+
+def tool_of(value, now):
+    """The last call a session made, in words, and how many minutes ago; or None."""
+    if not isinstance(value, dict):
+        return None
+    words, at = " ".join(_text(value.get("text")).split())[:HINT_LEN], _stamp(value.get("at"))
+    if not words or at is None:
+        return None
+    return {"text": words, "ago": max(0.0, round((now * 1000 - at) / 60000, 1))}
+
+
 def ago_text(minutes):
     """'8s', '3 min', '2 h', '3 d': the way a short time is said."""
     if minutes * 60 < 60:
@@ -924,7 +1032,8 @@ def span_text(minutes):
 
 
 def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after):
-    """What shows that a session is alive: (the sign for its tile, moving).
+    """What shows that a session is alive: (the sign for its tile, moving, and
+    for a busy session the minutes since its last sign of life, else None).
 
     Moving is any of: it or a subagent wrote recently; a command it is
     waiting on has CPU under its shell; a background job it started is open
@@ -935,6 +1044,10 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     The sign is for the person: writing, waiting on something and since
     when, or idle since when. A session that wrote nothing it can show and
     waits on nothing has none.
+
+    A busy session that is not moving is Hung (`is_hung`), and the third value
+    is how long: since its newest write. A provider that cannot see its writes
+    (no transcript to read) gives None, and the session is not called Hung.
     """
     # An idle session's last records ended its turn, and a subagent that wrote
     # before that is history: both say the session stopped. A session waiting
@@ -957,13 +1070,16 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
                and status_for is not None and status_for < hung_after)
     recent = status == "busy" and latest is not None and latest < hung_after
     moving = bool(evidence or unknown or recent)
+    # Only a write the provider could see says how long it has been quiet. The
+    # moment the status changed does not: it is not a heartbeat either way.
+    silent = latest if status == "busy" else None
 
     def writing(minutes):
         return {"kind": "writing", "ago": int(round(minutes * 60)),
                 "text": f"writing · {ago_text(minutes)} ago"}
 
     if latest is not None and latest * 60 <= WRITING_SECS:
-        return writing(latest), moving
+        return writing(latest), moving, silent
     if call or jobs or subagent:
         if call:
             on, since = doing or "a command", in_flight
@@ -973,13 +1089,13 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
         else:
             on, since = "a subagent", quiet if quiet is not None else sub_quiet
         return {"kind": "waiting", "on": on, "since": round(since, 1),
-                "text": f"waiting on: {on}, {span_text(since)}"}, moving
+                "text": f"waiting on: {on}, {span_text(since)}"}, moving, silent
     if recent:
-        return writing(latest), moving
+        return writing(latest), moving, silent
     if status == "idle":
         return {"kind": "idle", "since": round(status_for, 1) if status_for is not None else None,
-                "text": "idle" if status_for is None else f"idle {span_text(status_for)}"}, moving
-    return None, moving
+                "text": "idle" if status_for is None else f"idle {span_text(status_for)}"}, moving, silent
+    return None, moving, silent
 
 
 def strip_of(members):
@@ -995,12 +1111,14 @@ def strip_of(members):
 
 
 def mix_of(tiles):
-    """'2 moving · 1 stuck · 0 idle' as counts. Stuck wins over moving: a
-    session that needs you needs you even with a job running. A busy session
-    nothing proves is moving is stuck, the way the design calls hung."""
+    """'2 moving · 1 stuck · 0 idle' as counts. Stuck is a kind on the tile, the
+    same word the card's state is made of: a session counted here has one,
+    and one without (a menu the person opened, a busy session /proc could not
+    vouch for) is not. Stuck wins over moving: a session that needs you needs
+    you even with a job running."""
     mix = {"moving": 0, "stuck": 0, "idle": 0}
     for t in tiles:
-        if t["blocked"] or t["flag"] in ("waiting", "stuck") or (t["status"] == "busy" and not t["moving"]):
+        if t["stuck"]:
             mix["stuck"] += 1
         elif t["moving"]:
             mix["moving"] += 1
