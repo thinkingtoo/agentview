@@ -5,6 +5,7 @@ reading what the page would print: the line and where it came from. Names,
 titles and prompts are invented.
 """
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -104,6 +105,38 @@ class Sources(Working):
         self.assertEqual(self.line(session("b")), (HOSTILE, "own"))
         self.wrote("c", HOSTILE)
         self.assertEqual(self.line(session("c")), (HOSTILE, "did"))
+
+
+class Cost(Working):
+    def test_a_huge_prompt_or_title_costs_a_roster_next_to_nothing(self):
+        # A pasted file as the last prompt is 100 KB of one line of words, and
+        # a roster is made every 3 seconds for every session on the machine.
+        huge = "word " * 20480
+        sessions = [session(f"s{i}", f"project{i % 20}", prompt=huge, title=huge) for i in range(100)]
+        # The cost of a card's guessed line is the card's own (ticket 04).
+        self.config["project_lines"] = {f"folder:project{i}": "Sells maple syrup online" for i in range(20)}
+        self.roster(*sessions)                      # the first one loads the code
+        started = time.perf_counter()
+        got = self.roster(*sessions)
+        took = time.perf_counter() - started
+        self.assertLess(took, 0.25, took)
+        tile = got["columns"][0]["sessions"][0]
+        self.assertEqual(tile["lineSource"], "title")
+        self.assertTrue(tile["line"].endswith("\u2026"))
+        self.assertLessEqual(len(tile["line"]), 1500)
+
+
+    def test_only_the_start_of_a_huge_text_is_looked_at(self):
+        import context
+        import working
+        seen, real = [], context.squash
+        context.squash = lambda text: seen.append(len(text)) or real(text)
+        try:
+            got = working.line_of({"name": "Ilse", "title": "word " * 50000})
+        finally:
+            context.squash = real
+        self.assertEqual(got[1], "title")
+        self.assertEqual(seen, [working.LOOKED_AT])
 
 
 class NoRepeats(Working):

@@ -21,6 +21,12 @@ OWN, DID, TITLE, PROMPT, PLACE = "own", "did", "title", "prompt", "place"
 
 SLUG_MARKS = re.compile(r"[\s_-]+")
 
+# A line is carried this long. Only the start of a text is looked at: a
+# pasted file as the last prompt is a hundred kilobytes, and the roster is
+# made every few seconds for every session on the machine.
+CARRIED = context.PARAGRAPH_MAX
+LOOKED_AT = 8 * CARRIED
+
 
 def repeat_key(text):
     """What a line is compared by to tell a repeat.
@@ -73,7 +79,7 @@ def line_of(m, column_says=frozenset()):
     for source, text in _candidates(m):
         if not isinstance(text, str):
             continue
-        text = context.squash(text)
+        text = context.cut(context.squash(text[:LOOKED_AT]), CARRIED)
         if text and repeat_key(text) not in column_says:
-            return context.cut(text, context.PARAGRAPH_MAX), source
+            return text, source
     return "", ""
