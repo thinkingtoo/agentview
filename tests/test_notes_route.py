@@ -8,6 +8,7 @@ notes config path is always a temp file, never `~/.config/tiroir`.
 """
 import json
 import os
+import shutil
 import sys
 import tempfile
 import threading
@@ -34,6 +35,7 @@ HOSTILE = "<img src=x onerror=alert(1)>"
 class Route(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.config = self.tmp / "config.json"
         self.config.write_text("{}")
         fake = Fake([minimal(id="a", name="Ilse", cwd="/home/alice/Projects/maple", canJump=True)])
@@ -198,6 +200,7 @@ class Config(unittest.TestCase):
     """The notes config, like the embedder's: a local file, mode 0600, never in the repo."""
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         self.path = tmp / "agentview-brain.env"
         env = mock.patch.dict(os.environ, {notes.ENV_VAR: str(self.path)})
         env.start()

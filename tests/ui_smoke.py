@@ -555,9 +555,17 @@ def card_pass(browser):
     page.wait_for_selector(".ov-col")
     col = lambda project: page.locator(f'.ov-col[data-project="{project}"]')
 
-    check("the name is printed readable and the raw name is its hover",
-          col("checkout").locator(".ov-name").inner_text() == "Checkout rework"
-          and col("checkout").locator(".ov-name").get_attribute("title") == "checkout")
+    after = lambda loc: loc.evaluate("e => { const s = getComputedStyle(e, '::after'); return [s.content, s.color] }")
+    name = col("checkout").locator(".ov-name")
+    check("the name is printed readable, and the raw slug shows only on hover, in grey",
+          name.inner_text() == "Checkout rework" and after(name)[0] == "none")
+    name.hover()
+    check("hovering the name adds the raw slug after it, in grey",
+          after(name) == ['"checkout"', "rgb(138, 146, 158)"], after(name))
+    page.mouse.move(5, 700)
+    check("the raw slug is offered when the name is not it, and No project has none",
+          col("repo:example.com/alice/loom").locator(".ov-name").get_attribute("data-raw") == "loom"
+          and col("").locator(".ov-name").get_attribute("data-raw") is None)
     check("a track shows its status word, a repository none",
           col("checkout").locator(".ov-tag").inner_text() == "OPEN"
           and col("shipped").locator(".ov-tag.met").inner_text() == "MET"
@@ -589,7 +597,7 @@ def card_pass(browser):
           and page.locator("#main img, #main [onerror]").count() == 0)
     check("a quote in a hover, a raw name or a query cannot start an attribute of its own",
           page.locator("#main [onfocus], #main [autofocus]").count() == 0
-          and col(BOMB).locator(".ov-name").get_attribute("title") == BOMB + BREAK
+          and col(BOMB).locator(".ov-name").get_attribute("data-raw") == BOMB + BREAK
           and col(BOMB).locator(".ov-ctx").get_attribute("title") == "full: " + BOMB + BREAK
           and col(BOMB).locator(".ov-notes").get_attribute("data-query") == "q " + BOMB + BREAK)
 

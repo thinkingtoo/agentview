@@ -12,8 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import archive
-import embedder
 import context
+import embedder
 import fleet
 import jump
 import lines
@@ -391,7 +391,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400, "expected {project, text}")
         if projects.from_identity(project) is None:
             return self.send_error(400, "expected a project identity, like repo:host/owner/name")
-        text = " ".join(text.split())[:context.PARAGRAPH_MAX]
+        text = context.squash(text)[:context.PARAGRAPH_MAX]
         own = fleet.config_value("project_lines", {})
         own.pop(project, None) if not text else own.update({project: text})
         fleet.write_config({"project_lines": own})

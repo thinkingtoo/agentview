@@ -17,7 +17,7 @@ import re
 
 import projects
 
-LIMIT = 140          # about: the line is cut between words, full text on hover
+LINE_LIMIT = 140     # about: the line is cut between words, full text on hover
 PARAGRAPH_MAX = 1500  # no text is carried longer: the hover is a hover, and every poll carries it
 GUESS_TITLES = 2
 GUESS_JOIN = " · "
@@ -30,7 +30,7 @@ def squash(text):
     return " ".join(str(text).split())
 
 
-def cut(text, limit=LIMIT):
+def cut(text, limit=LINE_LIMIT):
     """The text as it is, or cut between words to fit with an ellipsis."""
     if len(text) <= limit:
         return text
@@ -41,7 +41,7 @@ def cut(text, limit=LIMIT):
     return head.rstrip(TRIM) + ELLIPSIS
 
 
-def made(source, text, full=None):
+def line_from(source, text, full=None):
     """The roster's context line: where it came from, what the card shows,
     what the hover shows."""
     text = squash(text)[:PARAGRAPH_MAX]
@@ -217,12 +217,12 @@ def prose(par):
     """The text of a paragraph that is prose, or "" when it is a heading,
     a list, a table, a quote, code, a badge row, an HTML block or an
     include."""
-    par = [line for line in par if not (INCLUDE.match(line) or REFERENCE.match(line)
-                                        or RULE.match(line))]
-    for i, line in enumerate(par):                  # a title with its underline
+    for i, line in enumerate(par):                  # a title with its underline, dashes too
         if i and SETEXT.match(line):
             par = par[i + 1:]
             break
+    par = [line for line in par if not (INCLUDE.match(line) or REFERENCE.match(line)
+                                        or RULE.match(line))]
     if not par or HEADING.match(par[0]) or NOT_PROSE.match(par[0]):
         return ""
     text = plain(" ".join(par)[:PARAGRAPH_MAX])
@@ -237,14 +237,13 @@ def first_prose(text):
     return next((got for got in map(prose, paragraphs(unfenced(text))) if got), "")
 
 
-def named(folder, wanted):
-    """The file in a folder whose name is one of `wanted`, in any case, or None."""
+def files_in(folder):
+    """The files directly in a folder, `{lowercase name: path}`."""
     try:
         with os.scandir(folder) as entries:
-            found = {e.name.casefold(): e.path for e in entries if e.is_file()}
+            return {e.name.casefold(): e.path for e in entries if e.is_file()}
     except OSError:
-        return None
-    return next((found[w] for w in wanted if w in found), None)
+        return {}
 
 
 def repository_text(rows):
@@ -256,9 +255,11 @@ def repository_text(rows):
     for cwd in sorted({m["cwd"] for m in rows}):
         for rank, root in enumerate(projects.checkouts(cwd)):
             roots[root] = min(rank, roots.get(root, rank))
-    for root in sorted(roots, key=lambda r: (roots[r], str(r))):
-        for wanted in DESCRIBED_BY:
-            path = named(root, wanted)
+    here = {root: files_in(root) for root in sorted(roots, key=lambda r: (roots[r], str(r)))}
+    # The kind of file decides first, the checkout only between files of one kind.
+    for wanted in DESCRIBED_BY:
+        for found in here.values():
+            path = next((found[name] for name in wanted if name in found), None)
             text = first_prose(read(path)) if path else ""
             if text:
                 return text
@@ -277,10 +278,10 @@ def card(project, rows, own_lines):
         outcome, track = track_card(project["raw"])
     own = own_lines.get(project["id"])
     if isinstance(own, str) and squash(own):
-        return made("own", own), track
+        return line_from("own", own), track
     if outcome:
-        return made("goal", first_sentence(outcome), outcome), track
+        return line_from("goal", first_sentence(outcome), outcome), track
     about = repository_text(rows) if project["kind"] == "repository" else ""
     if about:
-        return made("readme", about), track
-    return made("guess", guess(rows)), track
+        return line_from("readme", about), track
+    return line_from("guess", guess(rows)), track

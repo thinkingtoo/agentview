@@ -266,6 +266,16 @@ class Repositories(Cards):
         self.put("README.md", "Loom\n====\nPrints reports for the shop.\n")
         self.assertEqual(self.line()["line"], "Prints reports for the shop.")
 
+    def test_a_title_underlined_with_dashes_is_a_title_too(self):
+        self.put("README.md", "Loom\n---\n\nPrints reports for the shop.\n")
+        self.assertEqual(self.line()["line"], "Prints reports for the shop.")
+        self.put("README.md", "Loom\n---\nPrints reports for the shop.\n")
+        self.assertEqual(self.line()["line"], "Prints reports for the shop.")
+
+    def test_a_rule_between_paragraphs_is_not_a_title_for_what_follows_it(self):
+        self.put("README.md", "Prints reports for the shop.\n\n---\n\nSecond paragraph.\n")
+        self.assertEqual(self.line()["line"], "Prints reports for the shop.")
+
     def test_a_long_paragraph_is_cut_and_the_hover_keeps_it_whole(self):
         text = "Prints " + " ".join(["reports"] * 40) + " for the shop."
         self.put("README.md", text + "\n")
@@ -308,6 +318,20 @@ class Repositories(Cards):
     def test_a_comment_in_the_middle_of_a_line_is_taken_out_of_it(self):
         self.put("README.md", "Prints <!-- hidden --> reports.\n\n<!-- one\ntwo -->\nAnd more.\n")
         self.assertEqual(self.line()["line"], "Prints reports.")
+
+    def test_the_agent_instructions_come_before_claude_md_when_both_have_prose(self):
+        self.put("AGENTS.md", "Instructions for agents.\n")
+        self.put("CLAUDE.md", "Notes for Claude.\n")
+        self.assertEqual(self.line()["line"], "Instructions for agents.")
+
+    def test_a_readme_in_any_checkout_beats_the_instructions_of_the_main_one(self):
+        # The order the spec gives is README, then the instructions; which checkout has
+        # which file only matters between files of the same kind.
+        self.put("AGENTS.md", "Instructions for agents.\n")
+        side = self.worktree(self.loom, "loom-side")
+        self.put("README.md", "Prints reports.\n", root=side)
+        got = self.roster(sess("a", self.loom), sess("b", side))
+        self.assertEqual(got["columns"][0]["context"]["line"], "Prints reports.")
 
     def test_a_readme_wins_over_the_instructions(self):
         self.put("README.md", "Prints reports.\n")

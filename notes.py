@@ -23,6 +23,7 @@ reach the page and the log.
 import os
 from pathlib import Path
 
+import localenv
 from context import squash
 
 DEFAULT_ENV = "~/.config/tiroir/agentview-brain.env"
@@ -41,16 +42,6 @@ def config_path():
     return Path(os.environ.get(ENV_VAR) or DEFAULT_ENV).expanduser()
 
 
-def _read_env(path):
-    got = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            name, _, value = line.partition("=")
-            got[name.strip()] = value.strip().strip("'\"")
-    return got
-
-
 def settings(path=None):
     """(address, key) from the local config, or `Unavailable` saying what is
     wrong with it."""
@@ -62,7 +53,7 @@ def settings(path=None):
     if mode & 0o077:
         raise Unavailable("the notes config file is readable by others; chmod 600 it")
     try:
-        env = _read_env(path)
+        env = localenv.read_env(path)
     except (OSError, UnicodeDecodeError):
         env = {}
     if not (env.get("BRAIN_URL") and env.get("BRAIN_API_KEY")):

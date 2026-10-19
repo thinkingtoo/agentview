@@ -6,6 +6,7 @@ fake provider, the way `test_providers` and `test_round` reach the core.
 Names and texts are invented.
 """
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,7 @@ def session(sid, project="maple", **over):
 class Base(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         self.config = {}
         fleet.CONFIG, was = tmp / "config.json", fleet.CONFIG
         self.addCleanup(setattr, fleet, "CONFIG", was)
