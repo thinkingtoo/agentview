@@ -47,12 +47,15 @@ def _small_bytes(path, limit):
     The folder is anyone's to write in, and the poll that reads it holds the lock
     every poll takes: a pipe would be waited on for ever (and deleting it does not
     free the wait), a device or a link to one has no end, and a file of any size
-    is read whole. So the file is opened without waiting, looked at once opened
-    (the file, not the name: a link is followed and the thing it points to is
-    judged), and only a regular file is read, and only up to the bound.
+    is read whole. So the file is opened without waiting and without taking it for
+    a terminal, looked at once opened (the file, not the name: a link is followed
+    and the thing it points to is judged), and only a regular file is read, and
+    only up to the bound.
     """
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        # O_NOCTTY: a process with no terminal that merely opens one is given it,
+        # and is sent SIGHUP when it closes.
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
     except (OSError, ValueError):       # ValueError: a NUL in the path
         return None
     try:

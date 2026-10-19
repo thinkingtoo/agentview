@@ -9,6 +9,7 @@ import json
 import os
 import resource
 import signal
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -153,6 +154,69 @@ class HandWritten(unittest.TestCase):
         # A whole line followed by more than a line can be is not one either.
         (self.root / "abc.json").write_text(
             json.dumps({"did": "x", "ask": "y", "n": 1, "at": 1}) + " " * (lines.MAX_BYTES + 1), encoding="utf-8")
+        with self.guarded():
+            self.assertEqual(lines.read("abc", self.root), {})
+
+    def test_a_link_to_a_terminal_does_not_make_it_the_polls_terminal(self):
+        # A process that leads its own session and has none (the service) takes a
+        # terminal it merely opens, and is sent SIGHUP when that terminal closes.
+        child = (
+            "import os, sys\n"
+            "sys.path.insert(0, sys.argv[1])\n"
+            "import lines\n"
+            "os.setsid()\n"
+            "master, slave = os.openpty()\n"
+            "name = os.ttyname(slave)\n"
+            "os.close(slave)\n"
+            "root = sys.argv[2]\n"
+            "os.symlink(name, root + '/abc.json')\n"
+            "os.symlink(name, root + '/abc.turn')\n"
+            "assert lines.read('abc', root) == {} and lines.current_turn('abc', root) == ''\n"
+            "try:\n"
+            "    os.close(os.open('/dev/tty', os.O_RDONLY))\n"
+            "except OSError:\n"
+            "    sys.exit(0)\n"
+            "sys.exit(7)\n")
+        done = subprocess.run([sys.executable, "-B", "-c", child, str(Path(lines.__file__).parent), str(self.root)],
+                              capture_output=True, timeout=30)
+        self.assertEqual(done.returncode, 0, "the process took a terminal it only opened")
+
+    def test_a_run_of_openers_inside_the_bound_reads_as_no_line(self):
+        # No closer: this is the file json gives up on with a stack overflow on the Python
+        # that runs the service, where a file with its closers parses.
+        (self.root / "abc.json").write_text('{"ask": ' + "[" * 60000, encoding="utf-8")
+        self.assertEqual(lines.read("abc", self.root), {})
+
+    def test_reading_leaves_no_file_open(self):
+        (self.root / "abc.json").write_text(json.dumps({"did": "x", "ask": "y", "n": 1, "at": 1}), encoding="utf-8")
+        (self.root / "abc.turn").write_text("0123abcd", encoding="utf-8")
+        os.mkfifo(self.root / "fifo.json")
+        (self.root / "dir.json").mkdir()
+        before = len(os.listdir("/proc/self/fd"))
+        with self.guarded():
+            for _ in range(60):
+                for sid in ("abc", "fifo", "dir", "missing"):
+                    lines.read(sid, self.root)
+                    lines.current_turn(sid, self.root)
+        self.assertEqual(len(os.listdir("/proc/self/fd")), before)
+
+    def test_a_turn_that_is_not_text_reads_as_no_turn(self):
+        (self.root / "abc.turn").write_bytes(b"\xff\xfe")
+        self.assertEqual(lines.current_turn("abc", self.root), "")
+
+    def test_a_file_that_cannot_be_read_reads_as_no_line(self):
+        # /proc/self/mem is a plain file as far as stat can say, and refuses to be read from 0.
+        for name in ("abc.json", "abc.turn"):
+            (self.root / name).symlink_to("/proc/self/mem")
+        with self.guarded():
+            self.assertEqual((lines.read("abc", self.root), lines.current_turn("abc", self.root)), ({}, ""))
+
+    def test_a_file_of_8_gigabytes_is_not_read_whole(self):
+        try:
+            with open(self.root / "abc.json", "wb") as fh:
+                fh.truncate(8 << 30)
+        except OSError:
+            self.skipTest("no sparse files here")
         with self.guarded():
             self.assertEqual(lines.read("abc", self.root), {})
 
