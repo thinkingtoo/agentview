@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+import context
 import jump
 import lines
 import projects
@@ -620,13 +621,14 @@ def columns_of(blocks):
     """
     folder_rule = functools.partial(resolve_project, shelves=config())
     names = config_value("names", {})
+    own_lines = config_value("project_lines", {})
     pinned = config_value("pinned", [])
     members = [m for b in blocks if not b["routines"] for m in b["members"]]
     by_key = projects.assign_all(members, folder_rule, config_value("assign", {}))
     grouped = {}
     for m in members:
         grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
-    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names),
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names, own_lines),
                 _column_order(rows, by_key[rows[0]["key"]], names, pinned))
                for rows in grouped.values()]
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
@@ -637,15 +639,20 @@ def _column_name(project, names):
             else names.get("No project") or "No project")
 
 
-def _column(rows, project, folder_rule, names):
+def _column(rows, project, folder_rule, names, own_lines):
     # A boss leads its column, whatever the activity: who leads before who
     # works. The rest are in the order the blocks have always used.
     rows = order_members(list(rows))
     rows.sort(key=lambda s: not s["boss"])
     tiles = [tile_of(m, _suggestion(m, project, folder_rule, names)) for m in rows]
+    name = _column_name(project, names)
+    line = context.context_line(project, rows, own_lines)
     return {
         "project": project["id"], "raw": project["raw"], "kind": project["kind"],
-        "name": _column_name(project, names),
+        "name": name,
+        "context": line, "track": None,
+        # What the card's notes link asks the brain, once someone clicks it.
+        "notes": None if line is None else {"query": f"{name} {line['line']}".strip()},
         "strip": strip_of(rows), "summary": mix_of(tiles),
         "sessions": tiles,
     }
