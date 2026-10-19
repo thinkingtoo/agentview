@@ -25,6 +25,16 @@ The line of work a boss leads, with its workers. When a session belongs to a tra
 The key a project is known by, namespaced by what it is (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track, a repository, a client folder and a folder that share a name are never one project.
 _Avoid_: project name (the name is what the person calls it, and changes)
 
+**Pin**:
+A project the person keeps at the front of the overview. Pinned projects lead in the order they were pinned.
+_Avoid_: favourite
+
+**Move**:
+Putting a session, or a whole track or repository, into a project by hand. Moving a track or a repository holds for the sessions it will have; moving one session lasts as long as that session.
+
+**Merge**:
+Putting everything of one project into another by hand, so that the first is gone. Its pin and its context line go with it; the other project keeps its own name.
+
 **Context line**:
 A short line under a project's name that reminds the person what the project is about.
 _Avoid_: description, summary

@@ -18,7 +18,7 @@ class Refused(ValueError):
     """The request cannot mean anything; the route answers 400 with the reason."""
 
 
-def _project(ident, what="project"):
+def _named(ident, what="project"):
     got = projects.from_identity(ident) if isinstance(ident, str) else None
     if got is None:
         raise Refused(f"{what} must name a project: track:x, repo:x, client:x or folder:x")
@@ -66,21 +66,31 @@ def move(config, key, target):
     put(config, "assign", key, target)
 
 
+def set_order(config, pinned):
+    """The block view's pins: the plain names it shows, in the order you left
+    them. It knows nothing of identities, so the projects you pinned on the
+    overview are kept -- after these -- rather than erased with every drag."""
+    if not isinstance(pinned, list) or not all(isinstance(p, str) for p in pinned):
+        raise Refused("expected {pinned: [project, ...]}")
+    kept = [p for p in _pins(config) if isinstance(p, str) and projects.from_identity(p) and p not in pinned]
+    config["pinned"] = pinned + kept
+
+
 def pin(config, project, action, other=None):
     """`pin` puts a project last among the pinned, `unpin` takes it out, `swap`
     changes places with another pinned project -- the one beside it on the
     page, which is not the one beside it in the list when a pin names a
     project nobody is working in."""
-    mine = _project(project)
+    mine = _named(project)
     pinned = _pins(config)
     at = projects.pin_rank(mine, pinned)
     if action == "pin":
         if at is None:
             pinned.append(project)
     elif action == "unpin":
-        pinned = [p for p in pinned if projects.pin_rank(mine, [p]) is None]
+        pinned = [p for p in pinned if not projects.is_pin_of(p, mine)]
     elif action == "swap":
-        theirs = _project(other, "the project to swap with")
+        theirs = _named(other, "the project to swap with")
         if other == project:
             raise Refused("a project cannot swap places with itself")
         to = projects.pin_rank(theirs, pinned)
@@ -100,7 +110,7 @@ def merge(config, source, target):
     Nothing is left pointing at `source`, so a project absorbed twice over,
     or one that was itself the target of an earlier merge, ends in one place.
     """
-    gone, kept = _project(source, "source"), _project(target, "target")
+    gone, kept = _named(source, "source"), _named(target, "target")
     if source == target:
         raise Refused("a project cannot be merged into itself")
     assign = _table(config, "assign")
@@ -113,7 +123,7 @@ def merge(config, source, target):
     pinned, out = _pins(config), []
     had = projects.pin_rank(kept, pinned) is not None
     for p in pinned:
-        if projects.pin_rank(gone, [p]) is not None and projects.pin_rank(kept, [p]) is None:
+        if projects.is_pin_of(p, gone) and not projects.is_pin_of(p, kept):
             if not had:                       # the target steps into the first place the source had
                 out.append(target)
                 had = True

@@ -354,11 +354,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(json.dumps({"ok": True, "chime": chime}), "application/json")
 
     def _order(self, body):
-        pinned = body.get("pinned")
-        if not isinstance(pinned, list) or not all(isinstance(p, str) for p in pinned):
-            return self.send_error(400, "expected {pinned: [project, ...]}")
-        fleet.write_config({"pinned": pinned})
-        self._send(json.dumps({"ok": True, "pinned": pinned}), "application/json")
+        self._correct(lambda config: hand.set_order(config, body.get("pinned")))
 
     def _name(self, body):
         key, label = body.get("project"), body.get("label")

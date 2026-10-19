@@ -178,9 +178,11 @@
   .ov-top .ov-name { flex:1 1 auto; min-width:0; }
   .ov-top input.inline { min-width:0; width:100%; font-weight:400; }
   .ov-tools { display:flex; align-items:center; gap:2px; flex:none; font-weight:400; }
-  .ov-tools button, .ov-form button { padding:0 6px; font-size:12px; line-height:20px; border-color:transparent;
-                                      background:none; color:var(--faint); }
-  .ov-tools button:hover, .ov-form button:hover { color:var(--accent); border-color:transparent; }
+  .ov-tools button, .ov-form button, .ov-merged button { padding:0 6px; font-size:12px; line-height:20px;
+                                      border-color:transparent; background:none; color:var(--faint); }
+  .ov-tools button:hover, .ov-form button:hover, .ov-merged button:hover { color:var(--accent); border-color:transparent; }
+  .ov-merged { margin-top:6px; display:flex; flex-wrap:wrap; gap:0 10px; font-weight:400; font-size:12px;
+               color:var(--dim); overflow-wrap:anywhere; }
   .ov-tools .ov-pin { font-size:13px; }
   .ov-tools .ov-pin.on { color:var(--claude); }
   .ov-tools .ov-merge { opacity:0; }
@@ -358,6 +360,7 @@ const VIEW = new URLSearchParams(location.search).get("view") === "blocks" ? "bl
 let PINNED = [];
 let LATEST = [];            // the last roster the server sent, to repaint from
 let COLUMNS = [];           // and its `columns`, which the overview prints as they come
+let SHOWN = [];             // the columns painted now: the filter may hide some of them
 let HOLD = false;           // is the order frozen where you last saw it?
 let CHIME = true;           // does a session that starts waiting ring?
 let WAITING = null;         // who was waiting last poll -- null before the first
@@ -944,6 +947,7 @@ function filteredColumns(cols) {
 }
 
 function overview(cols) {
+  SHOWN = cols;
   const main = document.getElementById("main");
   const x = main.scrollLeft;          // a repaint every poll must not send you back to the first column
   main.innerHTML = cols.length ? cols.map(column).join("") : nothing();
@@ -959,9 +963,18 @@ function column(c) {
   const word = STATE_WORD[c.state] || (c.state ? String(c.state).toUpperCase() : "");
   const st = STATE_WORD[c.state] ? c.state : "other";
   return `<section class="ov-col" data-project="${esc(c.project)}">
-    <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${movementOf(c)}</div>
+    <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${movementOf(c)}${mergedOf(c)}</div>
     ${c.sessions.map(tile).join("")}
   </section>`;
+}
+
+// What you moved into this project, each with the way back. Undoing puts the
+// project back as its own; its pin, name and line were carried and stay here.
+function mergedOf(c) {
+  if (!(c.merged || []).length) return "";
+  return `<div class="ov-merged">${c.merged.map(m => `<span>includes ${esc(m.name)}
+    <button data-act="unmerge" data-from="${esc(m.project)}"
+      title="make ${esc(m.name)} its own project again (its pin, name and line are not given back)">undo</button></span>`).join("")}</div>`;
 }
 
 // The name, and what you can do to the project: pin it, move a pinned one
@@ -970,7 +983,8 @@ function column(c) {
 // The raw name stays on hover: renaming never hides what it is.
 function headOf(c) {
   if (c.kind === "none") return `<div class="ov-top"><span class="ov-name">${esc(c.name)}</span></div>`;
-  const pins = COLUMNS.filter(x => x.pinned);
+  // The neighbours are the cards on the page, not those a filter has hidden.
+  const pins = SHOWN.filter(x => x.pinned);
   const at = pins.findIndex(x => x.project === c.project);
   const arrow = (to, glyph, word) => to ? `<button class="ov-arrow" data-act="swap" data-with="${esc(to.project)}"
       title="${word} of ${esc(to.name)}" aria-label="${word} of ${esc(to.name)}">${glyph}</button>` : "";
@@ -1370,13 +1384,8 @@ main.addEventListener("drop", async ev => {
   load();
 });
 
-async function assign(sid, project) {
-  await fetch("/api/assign", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ key: sid, project }),
-  });
-  load();
+function assign(sid, project) {
+  return correct("/api/assign", { key: sid, project });
 }
 
 main.addEventListener("click", ev => {
@@ -1475,6 +1484,7 @@ document.getElementById("main").addEventListener("click", async ev => {
   const what = act.dataset.act;
   if (what === "pin" || what === "unpin") return correct("/api/pin", { project, action: what });
   if (what === "swap") return correct("/api/pin", { project, action: "swap", with: act.dataset.with });
+  if (what === "unmerge") return correct("/api/assign", { key: act.dataset.from, project: "" });
   if (what === "merge-form") {
     picker(col.querySelector(".ov-head"), `merge all of it into
         <select class="pick" aria-label="merge into">

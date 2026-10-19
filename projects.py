@@ -56,15 +56,17 @@ def display_name(project, names):
     return names.get(project["id"]) or names.get(project["raw"]) or project["raw"]
 
 
+def is_pin_of(pin, project):
+    """Does this pin name this project? A pin names the identity; one written
+    before projects had identities names the raw name, which a project of any
+    kind may carry."""
+    return isinstance(pin, str) and bool(pin) and (
+        pin == project["id"] or (from_identity(pin) is None and pin == project["raw"]))
+
+
 def pin_rank(project, pinned):
-    """Where the person pinned this project, or None. A pin names the
-    identity; one written before projects had identities names the raw name,
-    which a project of any kind may carry."""
-    for i, pin in enumerate(pinned):
-        if isinstance(pin, str) and pin and (
-                pin == project["id"] or (from_identity(pin) is None and pin == project["raw"])):
-            return i
-    return None
+    """Where the person pinned this project, or None."""
+    return next((i for i, pin in enumerate(pinned) if is_pin_of(pin, project)), None)
 
 
 # ------------------------------------------------------- the repository
@@ -331,6 +333,16 @@ def _worker_track(m, live, teams, trackers):
 
 # --------------------------------------------------------- the assignment
 
+def merged_into(assigned):
+    """`{project identity: [identities you moved into it]}`, by name: what the
+    page offers to take back."""
+    out = {}
+    for key, value in assigned.items():
+        if isinstance(value, str) and from_identity(key) and from_identity(value.strip()) and key != value.strip():
+            out.setdefault(value.strip(), []).append(key)
+    return {into: sorted(keys) for into, keys in out.items()}
+
+
 def _is_assigned(assigned, key):
     return isinstance(assigned.get(key), str) and bool(assigned[key].strip())
 
@@ -348,7 +360,7 @@ def _assigned_project(value, known_as):
     return _project("folder", value, value)
 
 
-def _moved(project, assigned, known_as):
+def _follow_moves(project, assigned, known_as):
     """Where you moved this whole project to, or the project itself.
 
     `assigned` is keyed by a session (`provider:id`) or, since you can move a
@@ -408,9 +420,7 @@ def assign_all(members, folder_rule, assigned):
                 if name and project not in known_as.setdefault(name, []):
                     known_as[name].append(project)
     for m in members:
-        if _is_assigned(assigned, m["key"]):
-            by_key[m["key"]] = _moved(_assigned_project(assigned[m["key"]].strip(), known_as),
-                                      assigned, known_as)
-        else:
-            by_key[m["key"]] = _moved(by_key[m["key"]], assigned, known_as)
+        start = (_assigned_project(assigned[m["key"]].strip(), known_as)
+                 if _is_assigned(assigned, m["key"]) else by_key[m["key"]])
+        by_key[m["key"]] = _follow_moves(start, assigned, known_as)
     return by_key

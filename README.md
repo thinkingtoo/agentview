@@ -1003,7 +1003,7 @@ python3 -m unittest discover -s tests
 ```
 
 `tests/ui_smoke.py` is separate: it drives the page with Playwright (the
-overview's columns, the chime, the filter, search, the closed list, and the old
+overview's columns and the by-hand controls, the chime, the filter, search, the closed list, and the old
 block view at `/?view=blocks` with its rename, pin, assign, fold and hold) and is
 not part of `unittest discover`. Run it by hand against a throwaway server, never
 the one on 8765:
@@ -1012,11 +1012,14 @@ the one on 8765:
 python3 tests/ui_smoke.py http://127.0.0.1:PORT/ /path/to/that/server/config.json SERVER_PID
 ```
 
-All three arguments are required. Every pass but one is routed: the page, the
-roster and every POST are answered from fixtures by `page.route`, so no jump,
-reopen, revive or rename can reach a terminal, and the smoke writes nothing. The
-one unrouted pass loads the test server's own roster read-only (no clicks, any
-non-GET request aborted, no screenshot) and asserts that columns render.
+All three arguments are required. Most passes are routed: the page, the roster
+and every POST are answered from fixtures by `page.route`, so no jump, reopen,
+revive or rename can reach a terminal. One unrouted pass loads the test server's
+own roster read-only (no clicks, any non-GET request aborted, no screenshot) and
+asserts that columns render. One more starts a server of its own, on invented
+sessions with a config in a temp dir, and drives the by-hand controls (pin,
+arrows, rename, merge, move) against it, reading the config back and restarting
+the server; the config you give is only read.
 
 The movement tests (`tests/test_movement_*.py`) run on invented transcripts, a
 fake `/proc` and fake providers, never on a real session: writes per minute and

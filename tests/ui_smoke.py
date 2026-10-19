@@ -12,16 +12,22 @@ chosen by binding port 0.
 
 Nothing here reaches a real session, and nothing here can launch anything:
 
-  * Every pass but one is *routed*. The page's HTML, the roster, the search and
-    every POST are answered by `page.route` from fixtures built below, so a
-    jump, a reopen, a revival, a rename, a snapshot never leave the browser,
-    and no request carries a real session key. A request the routes do not
-    know is aborted and fails the run.
-  * One pass is not routed (R21): it loads the page from the server, lets the
-    page poll the server's own `/api/roster` and asserts that real columns
+  * Most passes are *routed*. The page's HTML, the roster, the search and every
+    POST are answered by `page.route` from fixtures built below, so a jump, a
+    reopen, a revival, a rename, a snapshot never leave the browser, and no
+    request carries a real session key. A request the routes do not know is
+    aborted and fails the run.
+  * One pass is not routed (R21): it loads the page from the server given, lets
+    the page poll the server's own `/api/roster` and asserts that real columns
     render. It clicks nothing, writes nothing, saves no screenshot (it shows
     real sessions), and any request that is not a GET is aborted and fails.
-  * The config file is only read: its hash is taken before and after.
+  * One pass starts a server of its own (`e2e_pass`): `tests/hand_server.py`,
+    with invented sessions, a config in a new temp dir, state under the temp
+    dir, a port the system picks (8765 refused) and its pid proven with `ss`.
+    It clicks the by-hand controls and reads that config back, then restarts
+    the server on it. Only that temp dir is written, and it is removed; the
+    page may reach nothing but that server.
+  * The config file given is only read: its hash is taken before and after.
 
 Playwright is needed (`pip install playwright`); the chromium it drives must
 already be installed.
@@ -267,12 +273,16 @@ class Fake:
                     if m["key"] == b["key"]:
                         m["assigned"] = bool(b["project"])
             self.move_tile(b["key"], b["project"])
+            for c in self.body["columns"]:
+                c["merged"] = [m for m in c.get("merged", []) if m["project"] != b["key"]]
         elif path == "/api/pin":
             self.pin_column(b)
         elif path == "/api/merge":
             cols = self.body["columns"]
             source = next(c for c in cols if c["project"] == b["source"])
-            next(c for c in cols if c["project"] == b["target"])["sessions"].extend(source["sessions"])
+            target = next(c for c in cols if c["project"] == b["target"])
+            target["sessions"].extend(source["sessions"])
+            target.setdefault("merged", []).append({"project": source["project"], "name": source["name"]})
             cols.remove(source)
         elif path == "/api/order":
             pins = b["pinned"]
@@ -1199,6 +1209,14 @@ def hand_pass(browser):
           arrows("folder:maple") == ["›"] and arrows("folder:orchard") == ["‹"] and arrows("folder:pear") == [],
           (arrows("folder:maple"), arrows("folder:orchard")))
 
+    page.locator("#q").fill("orch")
+    page.wait_for_function("() => document.querySelectorAll('.ov-col').length === 1")
+    check("a filter that hides the neighbour takes the arrow away rather than pointing at a hidden card",
+          arrows("folder:orchard") == [], arrows("folder:orchard"))
+    page.locator("#q").fill("")
+    page.wait_for_function("() => document.querySelectorAll('.ov-col').length === 4")
+    check("and clearing it gives the arrow back", arrows("folder:orchard") == ["‹"], arrows("folder:orchard"))
+
     col("folder:maple").locator(".ov-arrow").click()
     page.wait_for_function("() => document.querySelector('.ov-col').dataset.project === 'folder:orchard'")
     check("an arrow swaps with the neighbour it points at, named by identity",
@@ -1245,6 +1263,15 @@ def hand_pass(browser):
           posts("/api/merge") == [{"source": "folder:orchard", "target": "folder:maple"}], posts("/api/merge"))
     check("the absorbed card is gone and its session is in the other",
           "folder:orchard" not in order() and col("folder:maple").locator(".tile").count() == 3, order())
+
+    check("the card that took it says what it includes",
+          col("folder:maple").locator(".ov-merged").inner_text().startswith("includes orchard"),
+          col("folder:maple").locator(".ov-merged").count())
+    col("folder:maple").locator(".ov-merged button").click()
+    page.wait_for_function("() => !document.querySelector('.ov-merged')")
+    check("undo moves the absorbed project into nothing, by identity",
+          posts("/api/assign") == [{"key": "folder:orchard", "project": ""}], posts("/api/assign"))
+    fake.posts[:] = [x for x in fake.posts if x[0] != "/api/assign"]
 
     # Move one session.
     tile = col("folder:maple").locator('.tile[data-sid="m2"]')
@@ -1335,13 +1362,23 @@ def e2e_pass(browser):
         page.wait_for_function("() => document.querySelector('.ov-name') && [...document.querySelectorAll('.ov-name')].some(e => e.textContent === 'Maple tree')")
         check("e2e: a rename is in the config by identity", stored()["names"] == {"folder:maple": "Maple tree"}, stored())
 
-        col("folder:pear").hover()
-        col("folder:pear").locator(".ov-merge").click()
-        page.locator("select.pick").select_option("folder:maple")
-        page.locator(".ov-form button", has_text="merge").click()
-        wait_order(["folder:orchard", "folder:maple"])
+        def merge_pear():
+            col("folder:pear").hover()
+            col("folder:pear").locator(".ov-merge").click()
+            page.locator("select.pick").select_option("folder:maple")
+            page.locator(".ov-form button", has_text="merge").click()
+            wait_order(["folder:orchard", "folder:maple"])
+
+        merge_pear()
         check("e2e: a merge is a move of the whole project in the config",
               stored()["assign"] == {"folder:pear": "folder:maple"}, stored())
+        check("e2e: and the card that took it says so",
+              col("folder:maple").locator(".ov-merged").inner_text().startswith("includes pear"))
+        col("folder:maple").locator(".ov-merged button").click()
+        wait_order(["folder:orchard", "folder:maple", "folder:pear"])
+        check("e2e: undo takes it back out of the config and the project is its own again",
+              stored().get("assign", {}) == {} and col("folder:maple").locator(".ov-merged").count() == 0, stored())
+        merge_pear()
 
         # One session: moved, shown as moved, and taken back.
         tile = col("folder:maple").locator('.tile[data-sid="fake:c"]')

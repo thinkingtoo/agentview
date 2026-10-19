@@ -106,6 +106,16 @@ class Moves(TrackFixtures):
         tiles = {t["key"]: t["assigned"] for c in got["columns"] for t in c["sessions"]}
         self.assertEqual(tiles, {"claude:a": True, "claude:b": False, "claude:c": False})
 
+    def test_a_column_lists_the_projects_you_moved_into_it_so_the_page_can_take_them_back(self):
+        loom, orchard, pear = self.repo("loom"), self.repo("orchard"), self.repo("pear")
+        self.config = {"names": {"repo:example.com/alice/loom": "The loom"},
+                       "assign": {LOOM: ORCHARD, "track:docs": ORCHARD, "claude:z": ORCHARD,
+                                  "repo:example.com/alice/pear": "orchard"}}
+        got = self.claude(sess("a", loom), sess("b", orchard), sess("c", pear))
+        self.assertEqual(self.column(got, ORCHARD)["merged"],
+                         [{"project": LOOM, "name": "The loom"}, {"project": "track:docs", "name": "docs"}])
+        self.assertEqual([c["merged"] for c in got["columns"] if c["project"] != ORCHARD], [])
+
     def test_the_move_of_one_session_beats_the_move_of_its_repository(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         self.config = {"assign": {LOOM: "track:checkout", "claude:a": ORCHARD}}
@@ -231,6 +241,7 @@ class Served(unittest.TestCase):
             with urllib.request.urlopen(req, timeout=20) as r:
                 return r.status, json.loads(r.read())
         except urllib.error.HTTPError as e:
+            e.close()
             return e.code, None
 
     def poll(self):
@@ -288,6 +299,23 @@ class Concurrency(Served):
                                 for n in range(8)])
         self.assertEqual(codes, [200] * 8)
         self.assertEqual(self.stored()["assign"], {f"fake:{n}": f"folder:p{n}" for n in range(8)})
+
+    def test_a_pin_a_swap_a_merge_and_a_rename_at_once_all_land(self):
+        self.fake._sessions = [minimal(id=i, name=n, cwd=f"/home/alice/Projects/{w}")
+                               for i, n, w in (("a", "Ilse", "maple"), ("b", "Odile", "orchard"),
+                                               ("c", "Saskia", "pear"), ("e", "Kasper", "plum"))]
+        self.cfg.write_text(json.dumps({"pinned": ["folder:maple", "folder:orchard"]}))
+        self.slow()
+        codes = self.together(
+            ("/api/pin", {"project": "folder:pear", "action": "pin"}),
+            ("/api/pin", {"project": "folder:orchard", "action": "swap", "with": "folder:maple"}),
+            ("/api/merge", {"source": "folder:plum", "target": "folder:pear"}),
+            ("/api/name", {"project": "folder:maple", "label": "Maple tree"}))
+        self.assertEqual(codes, [200] * 4)
+        got = self.stored()
+        self.assertEqual(sorted(got["pinned"]), ["folder:maple", "folder:orchard", "folder:pear"])
+        self.assertEqual((got["assign"], got["names"]),
+                         ({"folder:plum": "folder:pear"}, {"folder:maple": "Maple tree"}))
 
     def test_no_write_leaves_a_temp_file_behind(self):
         self.slow()
@@ -488,6 +516,36 @@ class Merges(Corrected):
         self.assertEqual(self.stored(), {})
 
 
+class TakenBack(Corrected):
+    def test_a_merge_is_taken_back_by_moving_the_project_into_nothing(self):
+        self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
+        self.assertEqual(self.column("folder:maple")["merged"],
+                         [{"project": "folder:orchard", "name": "orchard"}])
+        self.post("/api/assign", {"key": "folder:orchard", "project": ""})
+        self.assertEqual(self.names(), ["maple", "orchard", "pear"])
+        self.assertEqual(self.keys("folder:orchard"), ["fake:b"])
+        self.assertEqual(self.column("folder:maple")["merged"], [])
+
+
+class BlockViewPins(Corrected):
+    """The old block view still writes `pinned`, from the names it knows."""
+
+    def test_pinning_in_the_block_view_keeps_the_projects_you_pinned_on_the_overview(self):
+        self.seed(pinned=["folder:pear", "folder:orchard"])
+        self.assertEqual(self.post("/api/order", {"pinned": ["maple"]})[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["maple", "folder:pear", "folder:orchard"])
+
+    def test_the_block_view_still_unpins_what_it_pinned_by_name(self):
+        self.seed(pinned=["maple", "folder:pear"])
+        self.post("/api/order", {"pinned": []})
+        self.assertEqual(self.stored()["pinned"], ["folder:pear"])
+
+    def test_the_overview_keeps_the_place_of_an_identity_the_block_view_names_again(self):
+        self.seed(pinned=["folder:pear", "folder:orchard"])
+        self.post("/api/order", {"pinned": ["folder:orchard", "maple"]})
+        self.assertEqual(self.stored()["pinned"], ["folder:orchard", "maple", "folder:pear"])
+
+
 class MovedByRoute(Corrected):
     def test_a_whole_project_moved_by_the_assign_route_holds_and_can_be_taken_back(self):
         self.assertEqual(self.post("/api/assign", {"key": "folder:pear", "project": "folder:maple"})[0], 200)
@@ -505,25 +563,6 @@ class MovedByRoute(Corrected):
         self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
         self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:c", "fake:d"])
         self.assertEqual(self.stored()["assign"], {"fake:c": "folder:maple"})
-
-
-class MoreConcurrency(Concurrency):
-    def test_a_pin_a_swap_a_merge_and_a_rename_at_once_all_land(self):
-        self.fake._sessions = [minimal(id=i, name=n, cwd=f"/home/alice/Projects/{w}")
-                               for i, n, w in (("a", "Ilse", "maple"), ("b", "Odile", "orchard"),
-                                               ("c", "Saskia", "pear"), ("e", "Kasper", "plum"))]
-        self.cfg.write_text(json.dumps({"pinned": ["folder:maple", "folder:orchard"]}))
-        self.slow()
-        codes = self.together(
-            ("/api/pin", {"project": "folder:pear", "action": "pin"}),
-            ("/api/pin", {"project": "folder:orchard", "action": "swap", "with": "folder:maple"}),
-            ("/api/merge", {"source": "folder:plum", "target": "folder:pear"}),
-            ("/api/name", {"project": "folder:maple", "label": "Maple tree"}))
-        self.assertEqual(codes, [200] * 4)
-        got = self.stored()
-        self.assertEqual(sorted(got["pinned"]), ["folder:maple", "folder:orchard", "folder:pear"])
-        self.assertEqual((got["assign"], got["names"]),
-                         ({"folder:plum": "folder:pear"}, {"folder:maple": "Maple tree"}))
 
 
 if __name__ == "__main__":

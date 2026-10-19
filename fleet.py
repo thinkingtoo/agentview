@@ -651,7 +651,8 @@ def columns_of(blocks):
     grouped = {}
     for m in members:
         grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
-    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names, pinned),
+    merged = projects.merged_into(config_value("assign", {}))
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names, pinned, merged),
                 _column_order(rows, by_key[rows[0]["key"]], names, pinned))
                for rows in grouped.values()]
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
@@ -671,7 +672,7 @@ def _column_name(project, names):
             else names.get("No project") or "No project")
 
 
-def _column(rows, project, folder_rule, names, pinned):
+def _column(rows, project, folder_rule, names, pinned, merged):
     # A boss leads its column, whatever the activity: who leads before who
     # works. The rest are in the order the blocks have always used.
     rows = order_members(list(rows))
@@ -680,10 +681,18 @@ def _column(rows, project, folder_rule, names, pinned):
     return {
         "project": project["id"], "raw": project["raw"], "kind": project["kind"],
         "name": _column_name(project, names),
-        "pinned": project is not NO_PROJECT and projects.pin_rank(project, pinned) is not None,
+        "pinned": _pin_rank(project, pinned) is not None,
+        # What you moved into this project, which the page can take back.
+        "merged": [{"project": ident, "name": projects.display_name(projects.from_identity(ident), names)}
+                   for ident in merged.get(project["id"], [])],
         "strip": strip_of(rows), "summary": mix_of(tiles),
         "state": state_of(tiles), "sessions": tiles,
     }
+
+
+def _pin_rank(project, pinned):
+    """Where you pinned a project -- never No project, which is not one."""
+    return None if project is NO_PROJECT else projects.pin_rank(project, pinned)
 
 
 def _column_order(rows, project, names, pinned):
@@ -691,7 +700,7 @@ def _column_order(rows, project, names, pinned):
     the folders; No project last whatever. Inside a kind they go by name and
     stay put: a column that jumps sideways because a session woke up is the
     reshuffling this page exists to stop."""
-    pin = None if project is NO_PROJECT else projects.pin_rank(project, pinned)
+    pin = _pin_rank(project, pinned)
     return (project is NO_PROJECT,
             len(pinned) if pin is None else pin,
             projects.COLUMN_RANK[project["kind"]],
@@ -723,7 +732,7 @@ def tile_of(m, suggestion=None):
         "key": m["key"], "name": m["name"], "provider": m["provider"],
         "status": m["status"], "suggestion": suggestion,
         # Put where it is by hand: the page offers the way back.
-        "assigned": m["assigned"],
+        "assigned": bool(m.get("assigned")),
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
         "line": "" if line.strip() == m["name"].strip() else line,
         "jump": jump_of(m),
