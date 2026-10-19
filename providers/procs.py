@@ -108,7 +108,12 @@ class Shells:
         """{"shells": how many commands it is running, "cpu": whether any of
         them, or anything they started, used CPU since the last look, "tasks":
         the background tasks whose shells are alive}, or None when `/proc`
-        cannot say."""
+        cannot say.
+
+        "cpu" is None, not False, when it cannot be said yet: the first look at
+        a command (every session is, after a restart), or a walk that could
+        read none of what it found. "Uses none" is a claim, and it takes a
+        look to compare with."""
         now = time.time() if now is None else now
         kids = _children(self.proc, pid)
         if kids is None:
@@ -116,6 +121,9 @@ class Shells:
         shells = [k for k in kids
                   if SHELL_MARK in (_read(f"{self.proc}/{k}/cmdline") or b"")]
         walked, queue, seen, moved = set(), list(shells), {}, False
+        # With no command running there is nothing whose CPU could be
+        # compared, and that is a complete answer.
+        based = not shells
         while queue and len(walked) < MAX_WALK:
             at = queue.pop()
             if at in walked:
@@ -127,8 +135,9 @@ class Shells:
             start, ticks = got
             seen[(at, start)] = (ticks, now)
             before = self.last.get((at, start))
-            if before and 0 <= now - before[1] <= STALE and ticks > before[0]:
-                moved = True
+            if before and 0 <= now - before[1] <= STALE:
+                based = True
+                moved = moved or ticks > before[0]
             queue.extend(_children(self.proc, at) or [])
         self.last = {key: value for key, value in {**self.last, **seen}.items()
                      if now - value[1] <= FORGET}
@@ -136,4 +145,5 @@ class Shells:
             self.cpu_at[pid] = now
         self.cpu_at = {p: t for p, t in self.cpu_at.items() if now - t <= GRACE}
         tasks = [t for t in (_task_of(self.proc, shell) for shell in shells) if t]
-        return {"shells": len(shells), "cpu": pid in self.cpu_at, "tasks": tasks}
+        cpu = True if pid in self.cpu_at else (False if based else None)
+        return {"shells": len(shells), "cpu": cpu, "tasks": tasks}

@@ -86,7 +86,8 @@ class Shells(Base):
     def test_the_first_sight_is_never_cpu(self):
         shell = self.fake.add(200, SESSION, cmd=BASH)
         self.fake.add(300, shell, cmd="python3\0", ticks=9999)
-        self.assertEqual(self.look(0), {"shells": 1, "cpu": False, "tasks": []})
+        # Nothing to compare with yet: not "uses none" (False), which takes a second look.
+        self.assertEqual(self.look(0), {"shells": 1, "cpu": None, "tasks": []})
 
     def test_a_shell_that_is_alive_but_idle_is_not_cpu(self):
         shell = self.fake.add(200, SESSION, cmd=BASH)
@@ -149,7 +150,7 @@ class Races(Base):
         shell = self.fake.add(200, SESSION, cmd=BASH)
         self.fake.add(300, shell, cmd="python3\0", ticks=1)
         self.fake.vanish(300)
-        self.assertEqual(self.look(0), {"shells": 1, "cpu": False, "tasks": []})
+        self.assertEqual(self.look(0), {"shells": 1, "cpu": None, "tasks": []})
 
     def test_a_shell_that_exits_between_the_list_and_the_read_is_not_a_shell(self):
         self.fake.add(200, SESSION, cmd=BASH)
@@ -237,7 +238,7 @@ class BackgroundOutputs(Base):
         # R17: the descriptor is gone, or not ours.
         shell = self.fake.add(200, SESSION, cmd=BASH, out=OUT % "bk7q2m9xa")
         (self.fake.root / str(shell) / "fd" / "1").unlink()
-        self.assertEqual(self.look(0), {"shells": 1, "cpu": False, "tasks": []})
+        self.assertEqual(self.look(0), {"shells": 1, "cpu": None, "tasks": []})
 
 
 if __name__ == "__main__":

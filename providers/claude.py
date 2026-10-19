@@ -13,6 +13,7 @@ the session runs inside its own turn; the core reads them by session id.
 import collections
 import datetime
 import json
+import math
 import os
 import re
 import stat
@@ -290,8 +291,64 @@ def _tasks(state, rec):
                 tasks.pop(task.group(1), None)
 
 
+# What an API error says, as much as a tile holds.
+FAILURE_LEN = 200
+
+# Seconds since 1970 that can be a time: a positive, finite number below the
+# year 5000. Anything else in a reset-time field is not one.
+MAX_EPOCH = 95_000_000_000
+
+
+def _reset_ms(value):
+    """A reset time (seconds since 1970) as milliseconds, or None if it is not one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or not 0 < value < MAX_EPOCH:
+        return None
+    return int(value * 1000)
+
+
+def _dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _failure(state, rec):
+    """Is the session's last turn an API error?
+
+    `state["failure"]` is set by an API error that is the newest conversational
+    record and cleared by any other: a prompt typed, a message sent to it, the
+    session resuming by itself, an answer. Records Claude Code writes on its own
+    after an error (a turn duration, a title, a queued line, a snapshot) are not
+    the session moving on, and a subagent's records are not the session's.
+    Claude Code marks the error itself (`isApiErrorMessage`) and names it
+    (`error`); a rate limit also carries the quota, with the reset time.
+    """
+    if rec.get("type") not in ("user", "assistant") or rec.get("isSidechain"):
+        return
+    if rec.get("type") != "assistant" or rec.get("isApiErrorMessage") is not True:
+        state["failure"] = None
+        return
+    name, status = rec.get("error"), rec.get("apiErrorStatus")
+    content = _dict(rec.get("message")).get("content")
+    words = next((" ".join(part["text"].split()) for part in content if isinstance(part, dict)
+                  and part.get("type") == "text" and isinstance(part.get("text"), str)),
+                 "") if isinstance(content, list) else ""
+    seconds = _seconds_of(rec.get("timestamp"))
+    quota = _dict(rec.get("quotaLimits")).get("resetsAt")
+    if _reset_ms(quota) is None:
+        quota = _dict(_dict(rec.get("apiErrorParams")).get("rate_limit_info")).get("resetsAt")
+    state["failure"] = {
+        "kind": "limit" if name == "rate_limit" else "error",
+        "type": name if isinstance(name, str) else "",
+        "status": status if isinstance(status, int) and not isinstance(status, bool) else None,
+        "text": words if len(words) <= FAILURE_LEN else words[:FAILURE_LEN - 1].rstrip() + "…",
+        "at": None if seconds is None else int(seconds * 1000),
+        "resetsAt": _reset_ms(quota)}
+
+
 def _blank_state():
     return {**_blank_counts(),
+            "failure": None, "tool": None,
             "title": "", "prompt": "", "branch": "", "tasks": {},
             "uses": {}, "done": set(), "said": "", "spoke": "", "msg": "",
             "sent": collections.Counter(),
@@ -308,6 +365,7 @@ def _absorb(state, text):
             continue
         _count(state, rec)
         _tasks(state, rec)
+        _failure(state, rec)
         kind = rec.get("type")
         if kind == "ai-title" and rec.get("aiTitle"):
             state["title"] = rec["aiTitle"]
@@ -352,6 +410,11 @@ def _absorb(state, text):
                     state["uses"][part["id"]] = (
                         rec.get("timestamp"), part.get("name") or "",
                         _kept(part.get("input"), part.get("name") or ""), mid)
+                # The newest call the session itself made, answered or not.
+                if (kind == "assistant" and not rec.get("isSidechain")
+                        and _seconds_of(rec.get("timestamp")) is not None):
+                    state["tool"] = (rec["timestamp"], part.get("name") or "",
+                                     _kept(part.get("input"), part.get("name") or ""))
                 # Who it works with: every peer it has messaged. `to` is
                 # the address -- a name, sometimes with a disambiguating ref.
                 if part.get("name") == "SendMessage":
@@ -567,6 +630,8 @@ def _view(state, now):
             "sent": [name for name, _ in state["sent"].most_common()],
             "pending": pending,
             "calls": asked,
+            "failure": dict(state["failure"]) if state["failure"] else None,
+            "lastTool": _last_tool(state["tool"]),
             "writes": _strip(state, now),
             # Open background shells, oldest first, with how long each has run.
             "tasks": sorted(({"id": tid, "label": t["label"],
@@ -574,6 +639,14 @@ def _view(state, now):
                              for tid, t in state["tasks"].items()
                              if (started := _seconds_of(t["stamp"])) is not None),
                             key=lambda t: -t["since"])}
+
+
+def _last_tool(call):
+    """The newest call, said the way `doing` says one, and when it was made."""
+    if not call:
+        return None
+    return {"text": activity([(call[1], call[2])]) or "a tool",
+            "at": int(_seconds_of(call[0]) * 1000)}
 
 
 def _subagents(path, now):
@@ -638,7 +711,7 @@ def scan_session(path, now=None):
 
 EMPTY = {"title": "", "prompt": "", "branch": "", "paths": [], "said": "",
          "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": [],
-         "calls": []}
+         "calls": [], "failure": None, "lastTool": None}
 
 
 def _peers(cfg):
@@ -698,15 +771,20 @@ def _processes(rec, summary, status, shells):
     writes to its own output file is alive: a task whose shell died and sent
     no notice (the session was resumed, say) is not running, and another
     command's shell does not make it so.
+
+    The third answer is whether `/proc` could not say: it would not answer, or
+    this is the first look at a command and there is nothing to compare its CPU
+    with. Then "no CPU" is not "uses none", and a caller that wants to call the
+    session hung must wait for a look that can tell.
     """
     tasks = summary["tasks"]
     if shells is None or not rec.get("pid") or not (
             tasks or (status == "busy" and summary["pending"] is not None)):
-        return [], False
+        return [], False, False
     seen = shells.look(rec["pid"])
     if seen is None:
-        return [], False
-    return [t for t in tasks if t["id"] in seen["tasks"]], seen["cpu"]
+        return [], False, True
+    return [t for t in tasks if t["id"] in seen["tasks"]], seen["cpu"] is True, seen["cpu"] is None
 
 
 def asking_of(status, waiting_for, calls):
@@ -764,7 +842,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
     routine = routine_of(rec, cfg)
     track = boss_marker(sid, cfg)
     boss = track is not None
-    background, cpu = _processes(rec, summary, status, shells)
+    background, cpu, unread = _processes(rec, summary, status, shells)
     return {
         "id": sid,
         "name": rec.get("name") or "(unnamed)",
@@ -810,6 +888,11 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         "subQuiet": summary["subQuiet"],
         "bgTasks": background,
         "shellCpu": cpu,
+        "procsUnknown": unread,
+        # An API error as the newest thing the session said, and the last
+        # call it made: what Limit, Error and Hung are told from.
+        "failure": summary["failure"],
+        "lastTool": summary["lastTool"],
     }
 
 

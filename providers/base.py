@@ -19,7 +19,8 @@ Optional: `pid`, `name`, `branch`, `title`, `prompt`, `said` (the raw text of
 the last thing the agent said -- the core shapes it), `waitingFor`,
 `startedAt`, `kind`, `tmux`, `bg`, `routine`, `boss`, `track` (a boss's
 track: the name of its tracker), `team`, `paths`, `doing`, `quietFor`,
-`toolFor`, `canJump`, `attach`, `noJump`, `extras`, `asking`.
+`toolFor`, `canJump`, `attach`, `noJump`, `extras`, `asking`, `failure`,
+`lastTool`, `procsUnknown`.
 
 `canJump` says a pane shows the session. `attach` is what to attach to when no
 pane does but a new tab can show it (a background session; the provider's own
@@ -35,6 +36,24 @@ prompt. `command` is present only when the prompt is for a shell command
 (`COMMAND_LIMIT` characters, plus one if it was cut); `target` names a file or
 address for any other tool. The provider decides what is open; the core only
 prints what it is told.
+
+`failure` is an API error that is the newest thing the session said, or absent:
+`{"kind": "limit" | "error", "type", "status", "text", "at", "resetsAt"}`. The
+provider decides which it is (a rate limit is `limit`, any other API or auth
+error `error`); `type` is the error's own name, `status` its HTTP status or
+None, `text` the words it carries, `at` and `resetsAt` milliseconds since 1970
+(`resetsAt` None when the error names no reset time). It is gone once the
+session says or is told anything else -- not when it merely writes bookkeeping
+of its own -- so a provider must clear it itself.
+
+`lastTool` is the newest call the session made, answered or not:
+`{"text", "at"}`, said the way `doing` is, with `at` in milliseconds.
+
+`procsUnknown` is True when the provider looked for what runs under a busy
+session and could not tell (the process folder would not answer, or this was
+the first look at a command, with nothing to compare its CPU with). Then an
+absence of `bgTasks` and `shellCpu` is not evidence of absence, and the core
+does not call the session hung. A provider that never looks leaves it out.
 """
 import os
 
