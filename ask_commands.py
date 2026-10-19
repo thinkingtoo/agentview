@@ -297,7 +297,10 @@ def guess(text):
             continue
         if argument_of_a_runner(masked[:m.start()]):
             continue
-        said = re.sub(r"^\$ +", "", said)
+        # What stands after the prompt is stripped again: the space after the `$` may
+        # be followed by any other whitespace, and a command that begins with it
+        # is not the piece the person would paste.
+        said = re.sub(r"^\$ +", "", said).strip()
         if quoted_command(said):
             found.append(Hit(m.start(), m.end(), said))
     ordered = []

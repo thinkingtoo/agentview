@@ -40,6 +40,15 @@ class Store(unittest.TestCase):
         self.assertEqual(lines.read("abc", self.root)["ask"],
                          "Aspetto solo la tua riga sul corpus")
 
+    def test_a_file_nested_deeper_than_json_can_read_reads_as_no_line(self):
+        # Nothing the hook writes looks like this, but the folder is anyone's to
+        # write in, and "never raises" is what keeps the page up.
+        depth = 70000
+        (self.root / "abc.json").write_text(
+            '{"ask": ' + "[" * depth + "]" * depth + ', "n": 1, "at": 1}', encoding="utf-8")
+        self.assertEqual(lines.read("abc", self.root), {})
+        self.assertEqual(lines.fresh("abc", self.root), {})
+
     def test_a_damaged_file_reads_as_no_line(self):
         # A hook killed mid-write must never take the page down with it.
         (self.root / "abc.json").write_text("{not json", encoding="utf-8")

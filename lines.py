@@ -105,7 +105,9 @@ def read(session_id, root=None):
     try:
         with path.open(encoding="utf-8") as fh:
             got = json.load(fh)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
+        # RecursionError is a file nested deeper than json can read: no hook
+        # writes one, a hand does, and "never raises" is what keeps the page up.
         return {}
     if not isinstance(got, dict):
         return {}

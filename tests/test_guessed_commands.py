@@ -9,6 +9,7 @@ accepted; a guess never answers the session and never runs anything.
 Through `roster()` with fake providers, like `test_needs_you`. Sessions,
 branches and commands are all invented.
 """
+import json
 import random
 import sys
 import time
@@ -602,6 +603,80 @@ class Guess(Base):
         self.assertEqual(self.commands("Run 'make test' for the users' notes?"), [])
 
 
+class GuessStore(Base):
+    """The roster hands the guesser what the store gives it, and the store is a
+    folder anyone can write a file in by hand: whatever is there, the guesser sees
+    one clipped line of text, or nothing, and the roster does not raise."""
+
+    def by_hand(self, text=None, **fields):
+        lines.begin_turn("a", self.lines)
+        if text is None:
+            text = json.dumps({"did": "Notes page built.", "n": 1, "at": time.time(), "by": "session",
+                               "turn": lines.current_turn("a", self.lines), **fields})
+        (self.lines / "a.json").write_text(text, encoding="utf-8")
+        return self.tile(session("a"))
+
+    def test_a_line_longer_than_the_hook_allows_is_cut_before_it_is_guessed_on(self):
+        tile = self.by_hand(ask='Run "make test" now? ' + "x " * 5000)
+        self.assertLessEqual(len(tile["need"]), lines.LIMIT)
+        self.assertEqual(tile["guessedCommands"], ["make test"])
+        # What was cut away is gone, command and all.
+        tile = self.by_hand(ask="x " * 100 + 'Run "make test" now?')
+        self.assertEqual((len(tile["need"]) <= lines.LIMIT, tile["guessedCommands"]), (True, []))
+
+    def test_whitespace_in_a_line_is_folded_before_it_is_guessed_on(self):
+        tile = self.by_hand(ask='Run "$\t　make\ttest" now?\n')
+        self.assertEqual(tile["need"], 'Run "$ make test" now?')
+        self.assertEqual(tile["guessedCommands"], ["make test"])
+
+    def test_a_line_that_is_not_text_offers_nothing(self):
+        for ask in ([1, 2], 5, None, {"a": 1}, True):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.by_hand(ask=ask)["guessedCommands"], [])
+
+    def test_a_file_nested_deeper_than_json_can_read_is_no_line_and_no_error(self):
+        depth = 70000
+        tile = self.by_hand('{"ask": ' + "[" * depth + "]" * depth + ', "n": 1, "at": 1}')
+        self.assertEqual((tile["need"], tile["guessedCommands"]), ("", []))
+
+
+class GuessEdges(unittest.TestCase):
+    """The rules that decide a quote is not a command, one line each, so that a rule
+    taken out is noticed. Every line is invented."""
+
+    def test_a_quote_after_a_runner_is_its_argument_within_six_words_and_not_after_(self):
+        # The six words before the quote count, the runner among them: `ssh` and
+        # five words of options still hold it, `ssh` and six let it go (a known
+        # limit, named in the README).
+        five = 'Run ssh -t -i ~/.ssh/k -p deploy@maple "sudo systemctl restart maple" when ready?'
+        six = 'Run ssh -t -i ~/.ssh/k -p 22 deploy@maple "sudo systemctl restart maple" when ready?'
+        self.assertEqual(ask_commands.guess(five), [])
+        self.assertEqual(ask_commands.guess(six), ["sudo systemctl restart maple"])
+
+    def test_a_runner_in_an_earlier_sentence_does_not_hold_a_quote_in_this_one(self):
+        self.assertEqual(ask_commands.guess('The ssh key is fixed. Now run "make test" for me?'), ["make test"])
+
+    def test_a_quote_never_closed_doubts_every_quote_on_the_line(self):
+        self.assertEqual(ask_commands.guess("""Run 'make test now and "git push origin dev" after?"""), [])
+
+    def test_a_quote_glued_to_a_word_or_an_equals_sign_is_an_argument_not_a_phrase(self):
+        self.assertEqual(ask_commands.guess('Set MAPLE_CMD="git status --short" in the env file?'), [])
+        self.assertEqual(ask_commands.guess('Use alias gs="git status" in the shell?'), [])
+
+    def test_a_quote_closed_by_a_letter_or_a_hyphen_is_not_closed(self):
+        self.assertEqual(ask_commands.guess('Is "make test"-style naming ok, and "git push origin dev"?'), [])
+
+    def test_a_command_that_ends_in_a_semicolon_or_a_colon_is_not_offered(self):
+        for end in (";", ":"):
+            with self.subTest(end=end):
+                self.assertEqual(ask_commands.guess(f'Then run "git push origin dev{end}" now?'), [])
+
+    def test_a_tool_with_a_subcommand_the_list_lacks_and_the_bang_prefix_get_no_button(self):
+        # The safe direction: a missing button costs a selection with the mouse.
+        for ask in ('Try "npm login" or "git lfs pull"?', 'Run "! ssh-add ~/.ssh/id_maple" in this pane?'):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
 
 class GuessGrid(unittest.TestCase):
     """The property the buttons rest on, over a grid of realistic lines.
@@ -793,9 +868,49 @@ class GuessInvariants(unittest.TestCase):
         self.assertLessEqual(len(ask), lines.LIMIT)
         self.assertEqual(ask_commands.guess(ask), ["make test"])
 
-    def test_what_the_roster_hands_over_is_never_longer_than_the_hook_allows(self):
-        stored = lines._clip("x " * 5000 + "$ make test")
-        self.assertLessEqual(len(stored), lines.LIMIT)
+    def test_the_bound_is_exact_and_a_longer_text_offers_nothing_rather_than_a_cut_command(self):
+        self.assertEqual(ask_commands.LONGEST, 400, "the README names this number")
+        self.assertGreaterEqual(ask_commands.LONGEST, lines.LIMIT)
+        tail = 'Run "git push origin dev" now?'
+        for length, want in ((ask_commands.LONGEST, ["git push origin dev"]), (ask_commands.LONGEST + 1, [])):
+            with self.subTest(length=length):
+                ask = "a" * (length - len(tail) - 1) + " " + tail
+                self.assertEqual(len(ask), length)
+                self.assertEqual(ask_commands.guess(ask), want)
+        # A command that straddles the bound is not offered cut short.
+        ask = "a" * 380 + " $ git push origin dev --force-with-lease now"
+        self.assertGreater(len(ask), ask_commands.LONGEST)
+        self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_what_is_offered_is_stripped_whatever_whitespace_stands_inside_the_quote(self):
+        # The store folds whitespace, so a line never has these; the guesser holds
+        # the property itself rather than lean on that.
+        for space in ("\t", "\u3000", "\u00a0", "\u2028", "\x0b", "\x0c", "\x1f", "  "):
+            for opening, closing in (('"', '"'), ("'", "'"), ("`", "`"), ("\u201c", "\u201d"), ("\u00ab", "\u00bb")):
+                ask = f"Run {opening}$ {space}make test{closing} now"
+                with self.subTest(ask=ask):
+                    self.assertEqual(ask_commands.guess(ask), ["make test"])
+
+    def test_whatever_is_offered_is_a_stripped_piece_of_the_ask_also_when_nothing_clipped_it(self):
+        rng = random.Random(16)
+        spaces = ("\t", "\u3000", "\u00a0", "\n", "\r", "\x0b", "\x0c", "\u2028", "  ")
+        pairs = (('"', '"'), ("'", "'"), ("`", "`"), ("\u201c", "\u201d"), ("\u00ab", "\u00bb"))
+        pieces = self.PIECES + spaces
+        bad, offers = [], 0
+        for i in range(20000):
+            if i % 2:
+                # Quoted commands with whitespace of every kind inside and around them.
+                opening, closing = rng.choice(pairs)
+                ask = (rng.choice(pieces) + " Run " + opening + rng.choice(("", "$ ", "$ ")) + rng.choice(spaces + ("",))
+                       + rng.choice(GuessGrid.COMMANDS) + rng.choice(spaces + ("",)) + closing + rng.choice(("", " now", "?")))
+            else:
+                ask = "".join(rng.choice(pieces) + rng.choice(("", " ", " ")) for _ in range(rng.randint(1, 45)))
+            for command in ask_commands.guess(ask):
+                offers += 1
+                if not (command and command == command.strip() and command in ask):
+                    bad.append((ask, command))
+        self.assertGreater(offers, 100)
+        self.assertEqual(bad[:5], [], f"{len(bad)} of {offers} offers are not a stripped piece of their ask")
 
 
 if __name__ == "__main__":
