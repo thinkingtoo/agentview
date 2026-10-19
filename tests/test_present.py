@@ -8,6 +8,7 @@ signal 0 exactly like a working one. That is the case these cover -- Petra,
 sixteen hours on the page in the `waiting` her last turn left behind.
 """
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,7 @@ STOPPED = ("742884 (claude) T 1859 742884 742539 0 -1 4194304 1 0 0 0 "
 class Stat(unittest.TestCase):
     def setUp(self):
         self.proc = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.proc, True)
 
     def write(self, pid, line):
         (self.proc / str(pid)).mkdir()
@@ -73,6 +75,7 @@ class Present(unittest.TestCase):
 
     def setUp(self):
         base_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base_dir, True)
         self.cfg, self.proc = base_dir / "claude", base_dir / "proc"
         (self.cfg / "sessions").mkdir(parents=True)
         self.proc.mkdir()

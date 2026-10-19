@@ -5,6 +5,7 @@ that misses a round must not make everything you had read come back as
 `ready` when it returns.
 """
 import json
+import shutil
 import sys
 import tempfile
 import threading
@@ -70,6 +71,7 @@ class Round(unittest.TestCase):
 class Forgetting(unittest.TestCase):
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "seen.json"
+        self.addCleanup(shutil.rmtree, self.path.parent, True)
         seen.mark("claude:a", 100, self.path)
         seen.mark("codex:b", 100, self.path)
 
@@ -87,6 +89,7 @@ class Forgetting(unittest.TestCase):
 class Migration(unittest.TestCase):
     def test_bare_ids_become_claude_keys_once(self):
         path = Path(tempfile.mkdtemp()) / "seen.json"
+        self.addCleanup(shutil.rmtree, path.parent, True)
         seen.mark("abc", 100, path)
         seen.mark("codex:def", 200, path)
         seen.migrate("claude", path)
@@ -97,6 +100,7 @@ class Migration(unittest.TestCase):
 
     def test_config_assign_and_lines_are_migrated_too(self):
         cfg = Path(tempfile.mkdtemp()) / "config.json"
+        self.addCleanup(shutil.rmtree, cfg.parent, True)
         cfg.write_text(json.dumps({"assign": {"abc": "maple", "codex:x": "pmd"},
                                    "lines": {"abc": "my words"}, "pinned": ["maple"]}))
         fleet.CONFIG, was = cfg, fleet.CONFIG
@@ -132,6 +136,7 @@ class Click(unittest.TestCase):
 
     def test_looking_marks_the_session_read_whatever_happens_next(self):
         path = Path(tempfile.mkdtemp()) / "seen.json"
+        self.addCleanup(shutil.rmtree, path.parent, True)
         seen.store, was = (lambda: path), seen.store
         try:
             fleet.look("fake:s1")

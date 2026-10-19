@@ -9,6 +9,7 @@ import contextlib
 import datetime
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -51,6 +52,7 @@ def reads_of_files():
 class Base(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, True)
         self.path = self.dir / "proj" / "sid.jsonl"
         claude._cache.clear()
         claude.SUBS.cache.clear()

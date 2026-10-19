@@ -69,6 +69,7 @@ class FromTranscript(unittest.TestCase):
                           said("/home/alice/Projects/maple", "plan"),
                           {"type": "permission-mode", "permissionMode": "default", "sessionId": SID},
                           said("/home/alice/Projects/maple/src", "acceptEdits"))
+        self.addCleanup(shutil.rmtree, path.parent.parent, True)
         rec = snapshot.revive_record(SID, [snap(100, "boot-a", session("X", sid="another"))],
                                      transcript=path, name="Nimbus")
         self.assertEqual(rec, {"sessionId": SID, "name": "Nimbus", "cwd": "/home/alice/Projects/maple",
@@ -80,6 +81,7 @@ class FromTranscript(unittest.TestCase):
         path = transcript("-home-alice-Projects-maple",
                           said("/home/alice/Projects/maple/src"),
                           said("/home/alice/Projects/maple"))
+        self.addCleanup(shutil.rmtree, path.parent.parent, True)
         self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["cwd"],
                          "/home/alice/Projects/maple")
 
@@ -89,6 +91,7 @@ class FromTranscript(unittest.TestCase):
         path = transcript("-home-alice-Projects-maple",
                           said("/home/alice/Projects/maple", "auto"),
                           {"type": "permission-mode", "permissionMode": "default", "sessionId": SID})
+        self.addCleanup(shutil.rmtree, path.parent.parent, True)
         self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["flags"],
                          "--permission-mode default")
 
@@ -99,12 +102,14 @@ class FromTranscript(unittest.TestCase):
                                ("bypassPermissions", "bypassPermissions"), ("default", "default"),
                                ("manual", "default"), ("dontAsk", "dontAsk"), ("plan", "plan")):
             path = transcript("-home-alice-Projects-maple", said("/home/alice/Projects/maple", written))
+            self.addCleanup(shutil.rmtree, path.parent.parent, True)
             self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["flags"],
                              f"--permission-mode {asked}", written)
 
     def test_no_mode_or_one_claude_does_not_know_adds_no_flag(self):
         for mode in (None, "sideways"):
             path = transcript("-home-alice-Projects-maple", said("/home/alice/Projects/maple", mode))
+            self.addCleanup(shutil.rmtree, path.parent.parent, True)
             self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["flags"], "")
 
     def test_with_neither_there_is_nothing_to_reopen(self):

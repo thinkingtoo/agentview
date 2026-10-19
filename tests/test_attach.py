@@ -10,6 +10,7 @@ Nothing here touches a real terminal: the process table is a folder of fake
 recorders, and any real subprocess fails the test. Names and ids are invented.
 """
 import json
+import shutil
 import sys
 import tempfile
 import threading
@@ -40,6 +41,7 @@ class AttachBase(unittest.TestCase):
 
     def setUp(self):
         self.proc = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.proc, True)
         self.opened, self.ran, self.routes = [], [], {}
         self.delay = 0
         jump._ATTACHING.clear()
@@ -297,6 +299,7 @@ class FakeRegistry(unittest.TestCase):
 
     def setUp(self):
         base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, True)
         self.cfg, self.proc = base / "claude", base / "proc"
         (self.cfg / "sessions").mkdir(parents=True)
         self.proc.mkdir()
@@ -452,6 +455,7 @@ class ClickServer(FakeRegistry):
         super().setUp()
         import fleet, log, seen, server
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         (tmp / "config.json").write_text("{}")
         self.seen = seen
         self.opened, self.delay = [], 0
