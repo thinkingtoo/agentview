@@ -557,10 +557,15 @@ def needs_pass(browser):
         S("q4", "Aziz", "idle", "ready", line="Notes drafted",
           stuck=needs("line", "3 things left for you", {"text": ""})),
         S("q5", "Dmitri", "idle", line="Tests green", need="Which branch should it go on?"),
-        S("q6", "Elin", "busy", line="Writing the changelog")])
+        S("q6", "Elin", "busy", line="Writing the changelog"),
+        S("q7", "Ines", "waiting", "waiting", note="input needed", line="Ask about the schema",
+          stuck=needs("question", "Question", {"questions": []}))])
     orchard = ("orchard", "orchard", [S("o1", "Frode", "busy", line="Pruning the schema", mv="writing · 8s ago")])
     pmd = ("pmd", "pmd", [S("p1", "Lennart", "idle", line="Plan the cutover")])
-    fake = Fake(roster([maple, orchard, pmd]))
+    body = roster([maple, orchard, pmd])
+    # Minutes the server did not see, in a card of each colour that tints the strip.
+    next(c for c in body["columns"] if c["project"] == "pmd")["strip"] = [None] * 4 + [0] * 25 + [1]
+    fake = Fake(body)
     page = new_page(browser, fake)
     open_at(page)
     page.wait_for_selector(".ov-col")
@@ -571,27 +576,32 @@ def needs_pass(browser):
 
     # The three sources, each with its reason and its context.
     check("an open question: the reason, the question and every option",
-          t("q1").locator(".why").inner_text() == "Question"
+          t("q1").locator(".stuck-box .reason").inner_text() == "Question"
           and "Publish the notes page under /docs?" in t("q1").locator(".qtext").inner_text()
           and t("q1").locator("li .ol").all_inner_texts() == ["Yes, under /docs", "No, keep it private"]
           and t("q1").locator("li .od").all_inner_texts() == [" — Linked from the sidebar"])
     check("an open permission prompt: the reason, the tool and the whole command",
-          t("q2").locator(".why").inner_text() == "Permission prompt"
+          t("q2").locator(".stuck-box .reason").inner_text() == "Permission prompt"
           and t("q2").locator(".tool").inner_text().lower() == "bash"
           and t("q2").locator("code").inner_text() == cmd)
     check("a prompt for a tool with no command shows what it would touch",
           t("q3").locator(".tool").inner_text().lower() == "edit"
           and t("q3").locator("code").inner_text() == "/home/alice/Projects/maple/notes.md")
     check("several things left: the count, in the reason",
-          t("q4").locator(".why").inner_text() == "3 things left for you"
+          t("q4").locator(".stuck-box .reason").inner_text() == "3 things left for you"
           and t("q4").locator(".say").count() == 0)
     check("one thing left: the count and the ask",
-          t("q5").locator(".why").inner_text() == "1 thing left for you"
+          t("q5").locator(".stuck-box .reason").inner_text() == "1 thing left for you"
           and t("q5").locator(".say").inner_text() == "Which branch should it go on?")
+    check("an open question not written down yet: the reason, no options, and a plain note",
+          t("q7").locator(".stuck-box .reason").inner_text() == "Question"
+          and t("q7").locator(".stuck-box li").count() == 0
+          and t("q7").locator(".stuck-box .late").inner_text() == "Its question is not in the transcript yet."
+          and "needs" in t("q7").get_attribute("class"))
     check("a session that needs nothing has no box",
           t("q6").locator(".stuck-box").count() == 0 and "needs" not in t("q6").get_attribute("class"))
     check("a tile that needs you is marked, in amber, and says it once",
-          all("needs" in t(k).get_attribute("class") for k in ("q1", "q2", "q3", "q4", "q5"))
+          all("needs" in t(k).get_attribute("class") for k in ("q1", "q2", "q3", "q4", "q5", "q7"))
           and t("q1").locator(".flag.needs").inner_text().lower() == "needs you"
           and t("q1").locator(".flag.waiting").count() == 0
           and t("q1").evaluate("e => getComputedStyle(e).borderTopColor") == probe("--wait"))
@@ -622,6 +632,29 @@ def needs_pass(browser):
               (paint(h, "borderTopColor"), paint(h.locator(".ov-state"), "color"), probe(var)))
         check(f"{project}: the card has a light tint of its own", paint(h, "backgroundColor") != plain,
               paint(h, "backgroundColor"))
+
+    # A minute the server did not see is a dotted stub in every card, whatever
+    # its state tints the bars with: never a bar, and never a filled one.
+    for project in ("maple", "pmd"):
+        stubs = head(project).locator(".strip i.u")
+        check(f"{project}: a minute not seen stays a dotted stub, with no fill of the state's colour",
+              stubs.count() > 0 and all(stubs.nth(i).evaluate("e => getComputedStyle(e).backgroundColor")
+                                        == "rgba(0, 0, 0, 0)" for i in range(stubs.count())),
+              [stubs.nth(i).evaluate("e => getComputedStyle(e).backgroundColor") for i in range(stubs.count())])
+
+    # The reason is part of what the tile knows. A click that jumps clears the
+    # jump's own note and nothing else, whether the jump works or fails.
+    kept = lambda k, word: t(k).locator(".stuck-box .reason").all_inner_texts() == [word]
+    t("q1").locator(".nm").click()
+    page.wait_for_timeout(150)
+    check("a click on a Needs-you tile that jumps keeps its reason", kept("q1", "Question"))
+    fake.answer["/api/jump"] = {"ok": False, "reason": "no pane for it"}
+    t("q2").locator(".nm").click()
+    page.wait_for_timeout(150)
+    check("a jump that fails says why on the tile and keeps the reason",
+          kept("q2", "Permission prompt") and t("q2").locator(".why").all_inner_texts() == ["no pane for it"],
+          t("q2").locator(".why").all_inner_texts())
+    del fake.answer["/api/jump"]
 
     # Copy does not answer the session and does not jump.
     posts = len(fake.posts)

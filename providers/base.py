@@ -28,7 +28,8 @@ to say than "no terminal".
 
 `asking` is what the session is stopped on right now, or absent. Two shapes:
 `{"kind": "question", "questions": [{"question", "header", "multi",
-"options": [{"label", "description"}]}]}` for an open question, and
+"options": [{"label", "description"}]}]}` for an open question (`questions`
+is `[]` when the dialog is open and its text is not written yet), and
 `{"kind": "permission", "tool", "command", "target"}` for an open permission
 prompt. `command` is present only when the prompt is for a shell command
 (`COMMAND_LIMIT` characters, plus one if it was cut); `target` names a file or

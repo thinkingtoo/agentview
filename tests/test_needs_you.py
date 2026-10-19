@@ -59,6 +59,13 @@ class Sources(Base):
                 "options": [{"label": "Yes, under /docs", "description": "Linked from the sidebar"},
                             {"label": "No, keep it private", "description": ""}]}]}})
 
+    def test_an_open_question_not_written_down_yet_is_needs_you_with_nothing_to_show(self):
+        # Claude Code writes the question into the transcript late; the dialog
+        # is open all that time, and the person is wanted.
+        got = self.stuck(waiting(asking={"kind": "question", "questions": []}))
+        self.assertEqual(got, {"kind": "needs", "source": "question", "reason": "Question",
+                               "context": {"questions": []}})
+
     def test_an_open_permission_prompt_is_needs_you_with_the_tool_and_its_command(self):
         got = self.stuck(session("a", status="waiting", waitingFor="permission prompt",
                                  asking=prompt()))
@@ -170,6 +177,10 @@ class Chime(Base):
         self.assertEqual((with_content[0]["alarms"], with_content[0]["members"][0]["flag"]),
                          (1, "waiting"))
 
+    def test_a_question_not_written_down_yet_rings_exactly_as_it_did(self):
+        self.assertEqual(self.heard(waiting(asking={"kind": "question", "questions": []})),
+                         self.heard(waiting()))
+
     def test_an_open_permission_prompt_rings_exactly_as_it_did_without_the_content(self):
         waits = dict(status="waiting", waitingFor="permission prompt")
         self.assertEqual(self.heard(session("a", asking=prompt(), **waits)),
@@ -203,6 +214,9 @@ class Card(Base):
 
     def test_a_card_with_a_session_that_needs_you_is_needs_you(self):
         self.assertEqual(self.state(waiting("a", asking=asks())), "needs")
+
+    def test_a_question_not_written_down_yet_makes_the_card_needs_you(self):
+        self.assertEqual(self.state(waiting("a", asking={"kind": "question", "questions": []})), "needs")
 
     def test_needs_you_beats_moving(self):
         self.assertEqual(self.state(self.writing("a"), waiting("b", asking=asks())), "needs")
@@ -260,6 +274,17 @@ class Bounds(Base):
                      {"kind": "question", "questions": [None, 3, {"question": ""}]}):
             with self.subTest(junk=junk):
                 self.assertIsNone(self.stuck(junk))
+
+    def test_only_a_provider_saying_no_question_is_readable_yet_is_believed_with_none(self):
+        # `[]` is what a provider sends when the dialog is open and its text is
+        # not written yet. A list of things that are not questions is not that.
+        self.assertEqual(fleet.asking_of({"kind": "question", "questions": []}),
+                         {"kind": "question", "questions": []})
+        for junk in ({"kind": "question", "questions": [None]},
+                     {"kind": "question", "questions": [{"question": ""}]},
+                     {"kind": "question", "questions": ()}, {"kind": "question", "questions": {}}):
+            with self.subTest(junk=junk):
+                self.assertIsNone(fleet.asking_of(junk))
 
     def test_a_prompt_whose_fields_are_not_text_is_a_prompt_with_nothing_in_it(self):
         got = self.stuck({"kind": "permission", "tool": 7, "command": ["ls"], "target": {"a": 1}})

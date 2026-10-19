@@ -714,16 +714,22 @@ def asking_of(status, waiting_for, calls):
     (the peer record's status and `waitingFor`) and what the transcript says
     it is about (the calls that have not come back).
 
-    A question is an unanswered AskUserQuestion while the session is waiting.
-    A permission prompt is Claude Code's own `permission prompt`, about the
-    oldest call still waiting -- a running call is not one, and a menu
-    (`dialog open`) is neither.
+    A question is Claude Code's `input needed`, with the unanswered
+    AskUserQuestion as its content. Claude Code writes that call into the
+    transcript late -- minutes after the dialog opens, sometimes hours -- so
+    until the read finds it the question is open with nothing to show
+    (`questions` empty), and fills in on the read that does. A permission
+    prompt is Claude Code's own `permission prompt`, about the oldest call
+    still waiting -- a running call is not one, and a menu (`dialog open`) is
+    neither.
     """
     if status != "waiting":
         return None
     for name, inp in calls:
         if name == "AskUserQuestion" and inp.get("questions"):
             return {"kind": "question", "questions": inp["questions"]}
+    if waiting_for == "input needed":
+        return {"kind": "question", "questions": []}
     if waiting_for != "permission prompt":
         return None
     name, inp = calls[0] if calls else ("", {})

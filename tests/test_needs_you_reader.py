@@ -60,12 +60,35 @@ class Asking(mp.Provider):
                         {"label": "No, keep it private", "description": "Stays a draft"}]}]})
 
     def test_a_question_that_has_been_answered_is_not_open(self):
-        got = self.open([tool(30, "AskUserQuestion", {"questions": QUESTIONS}), answered(20)])
+        # The session is working again once it is answered: the registry says so.
+        got = self.open([tool(30, "AskUserQuestion", {"questions": QUESTIONS}), answered(20)],
+                        status="busy", waiting_for="")
         self.assertIsNone(got)
 
     def test_a_question_the_session_has_talked_past_is_not_open(self):
-        got = self.open([tool(30, "AskUserQuestion", {"questions": QUESTIONS}), said(10)])
+        got = self.open([tool(30, "AskUserQuestion", {"questions": QUESTIONS}), said(10)],
+                        status="busy", waiting_for="")
         self.assertIsNone(got)
+
+    # Claude Code writes a question into the transcript late: minutes after the
+    # dialog opens, and on this machine as long as hours (replayed from
+    # agentview's own event log, 245 of 1231 `input needed` events, every
+    # version up to 2.1.295). The registry record is what says a dialog is open.
+    def test_input_needed_with_the_question_not_written_yet_is_a_question_with_nothing_to_show(self):
+        self.assertEqual(self.open([text(30)], waiting_for="input needed"),
+                         {"kind": "question", "questions": []})
+
+    def test_the_last_question_that_was_answered_is_not_shown_as_the_one_open_now(self):
+        # The file's newest question is answered; the new one is not written yet.
+        got = self.open([tool(90, "AskUserQuestion", {"questions": QUESTIONS}), answered(80), text(60)])
+        self.assertEqual(got, {"kind": "question", "questions": []})
+
+    def test_the_question_is_filled_in_on_the_read_that_finds_it(self):
+        self.assertEqual(self.open([text(60)]), {"kind": "question", "questions": []})
+        with self.transcript.open("a") as fh:
+            fh.write(json.dumps(tool(30, "AskUserQuestion", {"questions": QUESTIONS})) + "\n")
+        self.assertEqual([q["question"] for q in self.live()[0]["asking"]["questions"]],
+                         ["Publish the notes page under /docs?"])
 
     def test_a_question_is_open_only_while_the_session_says_it_is_waiting(self):
         got = self.open([tool(30, "AskUserQuestion", {"questions": QUESTIONS})],
@@ -148,9 +171,12 @@ class Asking(mp.Provider):
                 self.assertEqual((got["tool"], got["command"]), ("Bash", ""))
 
     def test_a_question_whose_parts_are_not_what_they_should_be_is_cut_down_not_fatal(self):
+        # The dialog is open all the same, so it is a question with nothing
+        # readable in it.
         for junk in ("why", 7, None, {}, [None, 3, "x", {"question": 4}]):
             with self.subTest(junk=junk):
-                self.assertIsNone(self.open([tool(30, "AskUserQuestion", {"questions": junk})]))
+                self.assertEqual(self.open([tool(30, "AskUserQuestion", {"questions": junk})]),
+                                 {"kind": "question", "questions": []})
         for options in ("docs", None, [None, "docs", 3], [{"label": 5}], [{}]):
             with self.subTest(options=options):
                 got = self.open([tool(30, "AskUserQuestion", {"questions": [
@@ -197,19 +223,21 @@ class Asking(mp.Provider):
         got = self.open([tool(30, "Bash", {"command": "make test"})], waiting_for="dialog open")
         self.assertIsNone(got)
 
-    def test_input_needed_with_no_question_behind_it_is_nothing_to_show(self):
-        self.assertIsNone(self.open([text(30)], waiting_for="input needed"))
-
     def test_a_session_that_is_idle_asks_nothing(self):
         self.assertIsNone(self.open([text(30)], status="idle", waiting_for=""))
 
     def test_a_question_arriving_in_a_later_read_is_found_and_its_answer_closes_it(self):
-        self.assertIsNone(self.open([text(60)]))
+        self.assertEqual(self.open([text(60)])["questions"], [])
         with self.transcript.open("a") as fh:
             fh.write(json.dumps(tool(30, "AskUserQuestion", {"questions": QUESTIONS})) + "\n")
         self.assertEqual(self.live()[0]["asking"]["kind"], "question")
+        # Answered: Claude Code is working again, and the registry says so.
         with self.transcript.open("a") as fh:
             fh.write(json.dumps(answered(10)) + "\n")
+        path = self.cfg / "sessions" / "100.json"
+        rec = json.loads(path.read_text())
+        rec["status"], rec["waitingFor"] = "busy", ""
+        path.write_text(json.dumps(rec))
         self.assertIsNone(self.live()[0]["asking"])
 
     def test_a_big_dialog_does_not_make_the_reader_remember_it_whole(self):

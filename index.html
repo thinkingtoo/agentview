@@ -207,19 +207,20 @@
   .ov-state { margin-top:1px; font-size:10.5px; font-weight:700; letter-spacing:.09em; color:var(--faint); }
   .ov-head.st-needs { border-top-color:var(--wait); background:color-mix(in srgb,var(--wait) 9%,var(--card)); }
   .ov-head.st-needs .ov-state { color:var(--wait); }
-  .ov-head.st-needs .strip i { background:var(--wait); }
+  .ov-head.st-needs .strip i:not(.u) { background:var(--wait); }
   .ov-head.st-moving { border-top-color:var(--busy); background:color-mix(in srgb,var(--busy) 7%,var(--card)); }
   .ov-head.st-moving .ov-state { color:var(--busy); }
   .ov-head.st-idle { border-top-color:var(--idle); background:color-mix(in srgb,var(--idle) 7%,var(--card)); }
   .ov-head.st-idle .ov-state { color:var(--idle); }
-  .ov-head.st-idle .strip i { background:var(--idle); }
+  .ov-head.st-idle .strip i:not(.u) { background:var(--idle); }
   /* Needs you. The reason, then what the person needs to decide before they
      jump: the question with its options, the tool and its command, or what
      the session left. All of it is text a session wrote. */
   .tile.needs { border-color:var(--wait); }
   .flag.needs { color:var(--wait); border:1px solid color-mix(in srgb,var(--wait) 45%,transparent); }
   .stuck-box { margin-top:3px; display:flex; flex-direction:column; gap:4px; font-size:13px; }
-  .stuck-box .why { color:var(--wait); font-weight:600; }
+  .stuck-box .reason { color:var(--wait); font-weight:600; font-size:12px; overflow-wrap:anywhere; }
+  .stuck-box .late { color:var(--dim); font-size:12px; }
   .stuck-box .qh { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.05em; margin-right:6px; }
   .stuck-box .qtext { overflow-wrap:anywhere; white-space:pre-wrap;
                       display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; }
@@ -981,7 +982,10 @@ function stuckBox(t) {
   if (!s) return t.need ? `<div class="need">${esc(t.need)}</div>` : "";
   const c = s.context || {};
   let body = "";
-  if (s.source === "question") {
+  if (s.source === "question" && !(c.questions || []).length) {
+    // The dialog is open; Claude Code has not written its question down yet.
+    body = `<div class="late">Its question is not in the transcript yet.</div>`;
+  } else if (s.source === "question") {
     body = (c.questions || []).map(q => `<div>
       <div class="qtext">${q.header ? `<span class="qh">${esc(q.header)}${q.multi ? " · several" : ""}</span>` : ""}${esc(q.question)}</div>
       <ul>${(q.options || []).map(o => `<li><span class="ol">${esc(o.label)}</span>${o.description ? `<span class="od"> — ${esc(o.description)}</span>` : ""}</li>`).join("")}</ul>
@@ -992,7 +996,9 @@ function stuckBox(t) {
   } else if (c.text) {
     body = `<div class="say">${esc(c.text)}</div>`;
   }
-  return `<div class="stuck-box ${esc(s.kind)}"><div class="why">${esc(s.reason)}</div>${body}</div>`;
+  // Its own class, not `.why`: a jump clears the tile's `.why` (the note a
+  // failed jump leaves) and must not clear the reason with it.
+  return `<div class="stuck-box ${esc(s.kind)}"><div class="reason">${esc(s.reason)}</div>${body}</div>`;
 }
 
 // The copy button is on a command and nowhere else. It puts the command on

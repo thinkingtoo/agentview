@@ -875,12 +875,15 @@ def _clip(value, limit):
 def asking_of(value):
     """What a provider says a session is stopped on, as the page may print it:
     an open question with its options, or None. Anything not believable is
-    None -- a dialog that cannot be read is no reason to mark a session."""
+    None -- a dialog that cannot be read is no reason to mark a session. The
+    one exception is a provider saying so itself: `questions: []` is a dialog
+    that is open whose text is not written yet (Claude Code writes it late)."""
     if not isinstance(value, dict):
         return None
     if value.get("kind") == "question":
         questions = []
-        for q in (value.get("questions") if isinstance(value.get("questions"), list) else ())[:MAX_QUESTIONS]:
+        listed = value.get("questions")
+        for q in (listed if isinstance(listed, list) else ())[:MAX_QUESTIONS]:
             if not isinstance(q, dict) or not _clip(q.get("question"), QUESTION_LEN):
                 continue
             options = [{"label": " ".join(_text(o.get("label")).split())[:LABEL_LEN],
@@ -891,7 +894,7 @@ def asking_of(value):
                               "header": " ".join(_text(q.get("header")).split())[:LABEL_LEN],
                               "multi": bool(q.get("multi")),
                               "options": options})
-        return {"kind": "question", "questions": questions} if questions else None
+        return {"kind": "question", "questions": questions} if questions or listed == [] else None
     if value.get("kind") == "permission":
         # A provider hands over a command only when it is one, and one longer
         # than the limit arrives with a character to spare: that is how a cut
