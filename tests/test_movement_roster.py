@@ -170,6 +170,18 @@ class TheBound(Base):
         self.assertTrue(self.moving(**job(5)))
         self.assertFalse(self.moving(**job(7)))
 
+    def test_a_busy_session_keeps_the_grace_after_the_bound_for_ten_minutes(self):
+        # The evidence stops at six hours; "not moving for ten minutes" is
+        # counted from there, not from the session's last write.
+        past = lambda minutes: minutes + fleet.WAIT_MAX_MINUTES
+        cpu = lambda m: dict(status="busy", quietFor=past(m), toolFor=past(m), shellCpu=True)
+        job = lambda m: dict(status="busy", quietFor=past(m) + 30,
+                             bgTasks=[{"label": "watch", "since": past(m)}])
+        for make in (cpu, job):
+            with self.subTest(make=make.__name__):
+                self.assertTrue(self.moving(**make(5)))
+                self.assertFalse(self.moving(**make(11)))
+
     def test_cpu_with_no_call_in_flight_proves_nothing(self):
         # A shell left behind burns CPU after the call came back.
         self.assertFalse(self.moving(status="idle", updatedAt=ago(40), shellCpu=True))

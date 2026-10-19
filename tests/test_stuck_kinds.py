@@ -19,7 +19,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
-import lines
 from test_columns import Base, session
 from test_needs_you import asks, prompt, waiting, INJECTION
 
@@ -168,6 +167,121 @@ class Hung(Kind):
                 tile = self.tile(session("a", status="busy", updatedAt=int(NOW_MS - ago * 60000)))
                 self.assertIsNone(tile["stuck"])
                 self.assertEqual(tile["moving"], False)
+
+
+class HungAfter(Kind):
+    """`hung_after_minutes` is a number of minutes greater than nothing: a
+    fraction is allowed, zero or less would call everything quiet hung at once."""
+
+    def hung_at(self, setting, quiet):
+        self.config = {"hung_after_minutes": setting}
+        return self.stuck(hung(quiet=quiet)) is not None
+
+    def test_a_whole_number_is_the_minutes(self):
+        self.assertFalse(self.hung_at(20, 15.0))
+        self.assertTrue(self.hung_at(20, 25.0))
+
+    def test_a_fraction_is_the_minutes_too(self):
+        self.assertFalse(self.hung_at(7.5, 7.0))
+        self.assertTrue(self.hung_at(7.5, 8.0))
+
+    def test_anything_that_is_not_a_positive_number_is_the_ten_that_ships(self):
+        for junk in ("20", "", None, True, False, 0, 0.0, -5, -0.5, float("nan"), float("inf"), [20], {"a": 1}):
+            with self.subTest(junk=junk):
+                self.assertFalse(self.hung_at(junk, 9.0))
+                self.assertTrue(self.hung_at(junk, 11.0))
+
+    def test_no_setting_at_all_is_ten(self):
+        self.config = {}
+        self.assertIsNone(self.stuck(hung(quiet=9.0)))
+        self.assertIsNotNone(self.stuck(hung(quiet=11.0)))
+
+
+class TheClock(Kind):
+    """Not moving for `hung_after_minutes` means since the last sign of life of
+    any kind: a write, CPU under a command, a background job. The signs the core
+    stops counting at `WAIT_MAX_MINUTES` end there, not when the session began."""
+
+    CAP = fleet.WAIT_MAX_MINUTES
+
+    def stuck_for(self, **over):
+        return self.stuck(hung(**over))
+
+    def test_cpu_seen_five_minutes_ago_is_a_sign_of_life_five_minutes_ago(self):
+        self.assertIsNone(self.stuck_for(quiet=40.0, toolFor=40.0, shellCpuAgo=5.0))
+
+    def test_and_at_twelve_minutes_ago_the_session_has_not_been_moving_for_twelve(self):
+        got = self.stuck_for(quiet=40.0, toolFor=40.0, shellCpuAgo=12.0)
+        self.assertEqual((got["kind"], got["reason"]), ("hung", "Not moving for 12 min"))
+
+    def test_a_write_younger_than_the_cpu_is_the_sign(self):
+        got = self.stuck_for(quiet=15.0, toolFor=40.0, shellCpuAgo=30.0)
+        self.assertEqual(got["reason"], "Not moving for 15 min")
+
+    def test_cpu_with_no_call_in_flight_is_not_a_sign(self):
+        # A shell left behind burns CPU after the call came back.
+        got = self.stuck_for(quiet=40.0, shellCpuAgo=2.0)
+        self.assertEqual(got["reason"], "Not moving for 40 min")
+
+    def test_cpu_that_was_never_seen_is_not_a_sign(self):
+        self.assertEqual(self.stuck_for(quiet=40.0, toolFor=40.0, shellCpuAgo=None)["reason"],
+                         "Not moving for 40 min")
+
+    def test_cpu_moving_now_is_a_sign_now(self):
+        tile = self.tile(hung(quiet=40.0, toolFor=40.0, shellCpu=True, shellCpuAgo=0.0))
+        self.assertEqual((tile["moving"], tile["stuck"]), (True, None))
+
+    def test_a_job_still_inside_the_bound_is_a_sign_now(self):
+        self.assertIsNone(self.stuck_for(quiet=500.0, bgTasks=[{"label": "watch", "since": self.CAP - 1}]))
+
+    def test_a_job_past_the_bound_stopped_counting_when_it_passed_it(self):
+        # Six hours and five minutes: it stopped counting five minutes ago.
+        job = lambda minutes: [{"label": "watch", "since": minutes}]
+        self.assertIsNone(self.stuck_for(quiet=500.0, bgTasks=job(self.CAP + 5)))
+        got = self.stuck_for(quiet=500.0, bgTasks=job(self.CAP + 11))
+        self.assertEqual((got["kind"], got["reason"]), ("hung", "Not moving for 11 min"))
+
+    def test_the_youngest_of_several_jobs_decides(self):
+        jobs = [{"label": "old", "since": self.CAP + 90}, {"label": "newer", "since": self.CAP + 3}]
+        self.assertIsNone(self.stuck_for(quiet=500.0, bgTasks=jobs))
+
+    def test_a_call_with_cpu_now_past_the_bound_is_a_sign_for_ten_more_minutes(self):
+        over = lambda minutes: self.stuck_for(quiet=minutes, toolFor=minutes, shellCpu=True, shellCpuAgo=0.0)
+        self.assertIsNone(over(self.CAP + 5))
+        self.assertEqual(over(self.CAP + 11)["reason"], "Not moving for 11 min")
+
+    def test_cpu_seen_after_the_bound_is_no_sign_and_the_bound_itself_is_the_last_one(self):
+        # A call 7 h old: the mark where it stopped counting is 60 min ago. CPU
+        # seen 30 min ago came after the mark and proves nothing; the mark stands.
+        got = self.stuck_for(quiet=420.0, toolFor=420.0, shellCpuAgo=30.0)
+        self.assertEqual(got["reason"], "Not moving for 1 h")
+
+    def test_cpu_that_stopped_before_the_bound_was_reached_counts_from_when_it_stopped(self):
+        # CPU last seen 150 min ago, before the mark at 60: it is the CPU that ended it.
+        got = self.stuck_for(quiet=420.0, toolFor=420.0, shellCpuAgo=150.0)
+        self.assertEqual(got["reason"], "Not moving for 2 h")
+
+    def test_a_subagent_still_writing_is_a_sign(self):
+        self.assertIsNone(self.stuck_for(quiet=500.0, subQuiet=2.0))
+
+    def test_the_time_is_never_less_than_the_ten_minutes_when_hung(self):
+        cases = itertools.product((12.0, 40.0, 500.0), (None, 0.0, 3.0, 11.0, 90.0),
+                                  (None, 5.0, 14.0), (None, self.CAP - 1, self.CAP + 4, self.CAP + 30),
+                                  (False, True))
+        for quiet, cpu_ago, sub, job, cpu in cases:
+            with self.subTest(quiet=quiet, cpu_ago=cpu_ago, sub=sub, job=job, cpu=cpu):
+                row = hung(quiet=quiet, toolFor=quiet, shellCpuAgo=cpu_ago, subQuiet=sub, shellCpu=cpu,
+                           bgTasks=[{"label": "watch", "since": job}] if job else [])
+                got = self.tile(row)
+                if got["stuck"] and got["stuck"]["kind"] == "hung":
+                    self.assertFalse(got["moving"])
+                    self.assertGreaterEqual(self.roster(row)["blocks"][0]["members"][0]["silentFor"], 10.0)
+
+    def test_a_cpu_time_that_is_not_a_time_is_not_believed(self):
+        for junk in ("5", True, -3.0, float("nan"), float("inf"), [1], None):
+            with self.subTest(junk=junk):
+                got = self.stuck_for(quiet=40.0, toolFor=40.0, shellCpuAgo=junk)
+                self.assertEqual(got["reason"], "Not moving for 40 min")
 
 
 class Races(Kind):

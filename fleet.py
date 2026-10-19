@@ -89,6 +89,15 @@ def config_value(key, default):
     return got if isinstance(got, type(default)) else default
 
 
+def positive_value(key, default):
+    """A config number of minutes (a whole number or a fraction) that is more
+    than nothing, else the default. `config_value` takes any value of the
+    default's type, and 0 or less would call everything quiet hung at once."""
+    got = read_config().get(key, default)
+    ok = isinstance(got, (int, float)) and not isinstance(got, bool) and 0 < got < float("inf")
+    return got if ok else default
+
+
 def write_config(patch):
     """Merge a patch into config.json, atomically.
 
@@ -307,7 +316,7 @@ def sessions(providers=None):
             "waiting_after": config_value("waiting_after_seconds", 20) / 60,
             # How long a busy session may go without a sign of life before
             # it counts as not moving.
-            "hung_after": config_value("hung_after_minutes", 10),
+            "hung_after": positive_value("hung_after_minutes", 10),
         }
         now = time.time()
         out, failed, answered = [], {}, set()
@@ -398,6 +407,12 @@ def _minutes(value):
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
+def _age(value):
+    """Minutes ago as a provider says it: a number that is not less than nothing, or None."""
+    got = _minutes(value)
+    return got if got is not None and math.isfinite(got) and got >= 0 else None
+
+
 def _text(value):
     return value if isinstance(value, str) else ""
 
@@ -477,7 +492,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         status=status, quiet=quiet, sub_quiet=sub_quiet, in_flight=in_flight,
         doing=_text(raw.get("doing")), cpu=bool(raw.get("shellCpu")), tasks=tasks,
         status_for=(now * 1000 - updated) / 60000 if updated else None,
-        hung_after=thresholds.get("hung_after", 10))
+        hung_after=thresholds.get("hung_after", 10), cpu_ago=_age(raw.get("shellCpuAgo")))
     moves = {"writes": writes_of(raw.get("writes")), "subQuiet": sub_quiet,
              "bgTasks": tasks, "shellCpu": bool(raw.get("shellCpu")),
              "movement": sign, "moving": moving,
@@ -485,9 +500,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
              # /proc could not say what runs under it. Only a provider saying
              # so is believed: Hung is a claim, and it waits for a look that can tell.
              "silentFor": None if silent is None else round(silent, 1),
-             "procsUnknown": raw.get("procsUnknown") is True,
-             "failure": failure_of(raw.get("failure"), now),
-             "lastTool": tool_of(raw.get("lastTool"), now)}
+             "procsUnknown": raw.get("procsUnknown") is True}
     row = {}
     for k, default in DEFAULTS.items():
         got = raw.get(k)
@@ -520,6 +533,10 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         **moves,
         "canJump": can_jump,
         "asking": asking_of(raw.get("asking")),
+        # How it stopped, if an API error is its last word; and the last call
+        # it made (what a hung session was doing).
+        "failure": failure_of(raw.get("failure"), now),
+        "lastTool": tool_of(raw.get("lastTool"), now),
         # A provider that cannot jump has no terminal to attach to: the field is emptied.
         "attach": row["attach"] if "jump" in caps else "",
         "extras": extras_of(raw.get("extras")),
@@ -768,26 +785,27 @@ def is_hung(m):
             and m["silentFor"] is not None)
 
 
-def error_words(kind, status):
+def error_words(error_type, status):
     """The error's type, said short: overloaded, auth, server, or its own name."""
-    if status == 529 or "overloaded" in kind:
+    if status == 529 or "overloaded" in error_type:
         return "Overloaded"
-    if kind == "authentication_failed" or status in (401, 403):
+    if error_type == "authentication_failed" or status in (401, 403):
         return "Auth error"
-    if kind == "server_error" or (status or 0) >= 500:
+    if error_type == "server_error" or (status or 0) >= 500:
         return "Server error"
-    if kind in ("", "error"):
+    if error_type in ("", "error"):
         return "API error"
-    words = kind.replace("_", " ").strip()
+    words = error_type.replace("_", " ").strip()
     return words[:1].upper() + words[1:]
 
 
 def needs_of(m):
     """Needs you, or None.
 
-    Needs you has three sources at one level -- an open question, an open
-    permission prompt, a session line with things left -- and the dialog that
-    is open now is the one shown over a line written a turn ago.
+    Needs you has four sources at one level -- an open question, an open
+    permission prompt, another request waiting on the person (a sandbox, a
+    worker, a goal proposal), a session line with things left -- and the
+    dialog that is open now is the one shown over a line written a turn ago.
     """
     asking = m["asking"]
     if asking and asking["kind"] == "question":
@@ -800,6 +818,9 @@ def needs_of(m):
                             # Half a command pasted into a terminal is worse
                             # than none.
                             "copy": bool(asking["command"].strip()) and not asking["cut"]}}
+    if asking and asking["kind"] == "request":
+        return {"kind": "needs", "source": "request", "reason": asking["what"][:1].upper() + asking["what"][1:],
+                "context": {"what": asking["what"]}}
     if m["blocked"]:
         # The session's own line only: one read out of its last words is a
         # guess, and the chime does not believe it either.
@@ -962,6 +983,10 @@ def asking_of(value):
                               "multi": bool(q.get("multi")),
                               "options": options})
         return {"kind": "question", "questions": questions} if questions or listed == [] else None
+    if value.get("kind") == "request":
+        # A dialog that waits on the person and is neither: told by its name.
+        what = " ".join(_text(value.get("what")).split())[:LABEL_LEN]
+        return {"kind": "request", "what": what} if what else None
     if value.get("kind") == "permission":
         # A provider hands over a command only when it is one, and one longer
         # than the limit arrives with a character to spare: that is how a cut
@@ -975,19 +1000,7 @@ def asking_of(value):
     return None
 
 
-# What an API error says, as much as a tile holds; and the latest time a field
-# in milliseconds can be (the year 5000).
-FAILURE_LEN = 200
-MAX_MS = 95_000_000_000_000
-
-
-def _stamp(value):
-    """A time in milliseconds since 1970, or None if the value is not one."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if not math.isfinite(value) or not 0 < value < MAX_MS:
-        return None
-    return int(value)
+FAILURE_LEN = base.FAILURE_LEN
 
 
 def failure_of(value, now):
@@ -997,20 +1010,20 @@ def failure_of(value, now):
     and never less than nothing for a clock that is ahead of ours."""
     if not isinstance(value, dict) or value.get("kind") not in ("limit", "error"):
         return None
-    at, status = _stamp(value.get("at")), value.get("status")
+    at = base.milliseconds(value.get("at"))
     return {"kind": value["kind"],
             "type": " ".join(_text(value.get("type")).split())[:LABEL_LEN],
-            "status": status if isinstance(status, int) and not isinstance(status, bool) else None,
+            "status": base.whole_number(value.get("status")),
             "text": " ".join(_text(value.get("text")).split())[:FAILURE_LEN],
             "held": None if at is None else max(0.0, round((now * 1000 - at) / 60000, 1)),
-            "resetsAt": _stamp(value.get("resetsAt"))}
+            "resetsAt": base.milliseconds(value.get("resetsAt"))}
 
 
 def tool_of(value, now):
     """The last call a session made, in words, and how many minutes ago; or None."""
     if not isinstance(value, dict):
         return None
-    words, at = " ".join(_text(value.get("text")).split())[:HINT_LEN], _stamp(value.get("at"))
+    words, at = " ".join(_text(value.get("text")).split())[:HINT_LEN], base.milliseconds(value.get("at"))
     if not words or at is None:
         return None
     return {"text": words, "ago": max(0.0, round((now * 1000 - at) / 60000, 1))}
@@ -1031,7 +1044,8 @@ def span_text(minutes):
     return "<1 min" if minutes < 1 else ago_text(minutes)
 
 
-def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after):
+def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after,
+                cpu_ago=None):
     """What shows that a session is alive: (the sign for its tile, moving, and
     for a busy session the minutes since its last sign of life, else None).
 
@@ -1046,8 +1060,12 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     waits on nothing has none.
 
     A busy session that is not moving is Hung (`is_hung`), and the third value
-    is how long: since its newest write. A provider that cannot see its writes
-    (no transcript to read) gives None, and the session is not called Hung.
+    is how long: since its last sign of life of any kind, which is the
+    youngest of its newest write, the last time CPU moved under a command it
+    is waiting on, and the moment each job or command stopped counting at
+    `WAIT_MAX_MINUTES`. A provider that cannot see its writes (no transcript
+    to read) gives None, and the session is not called Hung. `cpu_ago` is how
+    many minutes ago a provider last saw that CPU move, if it knows.
     """
     # An idle session's last records ended its turn, and a subagent that wrote
     # before that is history: both say the session stopped. A session waiting
@@ -1068,11 +1086,21 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     # a write would, and no longer. The status has no heartbeat.
     unknown = (status == "busy" and quiet is None and sub_quiet is None
                and status_for is not None and status_for < hung_after)
-    recent = status == "busy" and latest is not None and latest < hung_after
-    moving = bool(evidence or unknown or recent)
     # Only a write the provider could see says how long it has been quiet. The
     # moment the status changed does not: it is not a heartbeat either way.
-    silent = latest if status == "busy" else None
+    # Writes are not the only sign: a command whose CPU moved a minute ago, or a
+    # job that stopped counting a minute ago, is a session that was moving a
+    # minute ago, so the quiet is counted from the youngest of them.
+    silent = None
+    if status == "busy" and latest is not None:
+        signs = [latest]
+        cpu_age = 0.0 if cpu else cpu_ago
+        if call and cpu_age is not None:
+            signs.append(max(cpu_age, in_flight - WAIT_MAX_MINUTES))
+        signs.extend(max(0.0, t["since"] - WAIT_MAX_MINUTES) for t in jobs)
+        silent = min(signs)
+    recent = silent is not None and silent < hung_after
+    moving = bool(evidence or unknown or recent)
 
     def writing(minutes):
         return {"kind": "writing", "ago": int(round(minutes * 60)),
