@@ -98,6 +98,14 @@ class OnDisk(unittest.TestCase):
         rollout(self.home, "19", "b" * 36, refused(NOW - 600))
         self.assertEqual(self.limit()["at"], int((NOW - 600) * 1000))
 
+    def test_a_file_written_to_lately_does_not_outvote_a_newer_finished_turn_in_an_older_one(self):
+        # Both have been written to since: it is the finished turns that are compared.
+        rollout(self.home, "19", "a" * 36, refused(NOW - 100),
+                rec(stamp(NOW - 10), "event_msg", type="token_count") | {"at": NOW - 10})
+        rollout(self.home, "19", "b" * 36, finished(NOW - 5 * HOUR),
+                rec(stamp(NOW - 50), "event_msg", type="token_count") | {"at": NOW - 50})
+        self.assertEqual(self.limit()["at"], int((NOW - 100) * 1000))
+
     def test_the_newest_of_two_refusals_gives_the_time(self):
         rollout(self.home, "19", "a" * 36, refused(NOW - 600, "2:35 PM"))
         rollout(self.home, "19", "b" * 36, refused(NOW - 60, "4:05 PM"))
