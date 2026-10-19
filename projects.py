@@ -103,13 +103,13 @@ def _repository(cwd):
         if git.is_file():
             try:
                 admin = d / git.read_text(encoding="utf-8").split(":", 1)[1].strip()
-            except (OSError, IndexError):
+            except (OSError, ValueError, IndexError):     # ValueError: not text
                 return None
             # A worktree names its parent's `.git`; a submodule's own folder
             # is the repository.
             try:
                 common = (admin / (admin / "commondir").read_text(encoding="utf-8").strip()).resolve()
-            except OSError:
+            except (OSError, ValueError):
                 common = admin.resolve()
             return common, here.relative_to(d)
     return None
