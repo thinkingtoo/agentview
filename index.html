@@ -284,7 +284,7 @@
   /* The header's counts: each is a button that lights up its sessions. */
   .hc { padding:1px 9px; font-size:12.5px; font-weight:650; font-variant-numeric:tabular-nums; }
   .hc.needs { color:var(--wait); }
-  .hc.stuck { color:var(--bad); }
+  .hc.otherStuck { color:var(--bad); }
   .hc.moving { color:var(--busy); }
   .hc[aria-pressed="true"] { border-color:currentColor; background:color-mix(in srgb,currentColor 14%,transparent); }
   .hc:disabled { color:var(--faint); cursor:default; border-color:var(--line); }
@@ -1012,7 +1012,7 @@ function overview(cols) {
 // The words of the header's three counts. The roster counts; this is only how
 // each is said, and what a click on it lights up (`counted` on a tile).
 const COUNT_WORD = { needs: n => n === 1 ? "needs you" : "need you",
-                     stuck: () => "other stuck", moving: () => "moving" };
+                     otherStuck: () => "other stuck", moving: () => "moving" };
 
 // The overview's header: what is on the page, then the roster's three counts,
 // each a button that lights up its sessions. A count of nothing has nothing to

@@ -41,28 +41,28 @@ class Counts(Base):
             idle("e1", failure=failure("error")),
             moving("m1"), moving("m2"), moving("m3"),
             idle("i1"))
-        self.assertEqual(got, {"needs": 2, "stuck": 3, "moving": 3})
+        self.assertEqual(got, {"needs": 2, "otherStuck": 3, "moving": 3})
 
     def test_a_roster_with_no_sessions_counts_nothing(self):
-        self.assertEqual(self.counts(), {"needs": 0, "stuck": 0, "moving": 0})
+        self.assertEqual(self.counts(), {"needs": 0, "otherStuck": 0, "moving": 0})
 
     def test_a_session_that_needs_you_while_a_job_runs_is_counted_once_as_needing_you(self):
         got = self.counts(waiting("a", asking=asks(), bgTasks=[{"label": "watch", "since": 3.0}]))
-        self.assertEqual(got, {"needs": 1, "stuck": 0, "moving": 0})
+        self.assertEqual(got, {"needs": 1, "otherStuck": 0, "moving": 0})
 
     def test_a_session_waiting_on_a_background_job_is_moving_not_idle(self):
         got = self.counts(idle("a", bgTasks=[{"label": "watch", "since": 3.0}]), idle("b"))
-        self.assertEqual(got, {"needs": 0, "stuck": 0, "moving": 1})
+        self.assertEqual(got, {"needs": 0, "otherStuck": 0, "moving": 1})
 
     def test_the_counts_cover_every_project_and_no_project(self):
         got = self.counts(waiting("a", project="maple", asking=asks()), moving("b", "orchard"),
                           moving("c", None), hung("d", project="orchard", quiet=14.0))
-        self.assertEqual(got, {"needs": 1, "stuck": 1, "moving": 2})
+        self.assertEqual(got, {"needs": 1, "otherStuck": 1, "moving": 2})
 
     def test_a_routine_is_in_no_count(self):
         got = self.counts(moving("a"), moving("r", None, routine="nightly-report"),
                           waiting("w", project=None, routine="weekly-digest", asking=asks()))
-        self.assertEqual(got, {"needs": 0, "stuck": 0, "moving": 1})
+        self.assertEqual(got, {"needs": 0, "otherStuck": 0, "moving": 1})
 
 
 class Counted(Base):
@@ -81,14 +81,14 @@ class Counted(Base):
             idle("e", name="Saskia", failure=failure("error")),
             moving("m", name="Kasper"),
             idle("i", name="Femi"))
-        self.assertEqual(got, {"Vera": "needs", "Mei": "stuck", "Odile": "stuck",
-                               "Saskia": "stuck", "Kasper": "moving", "Femi": None})
+        self.assertEqual(got, {"Vera": "needs", "Mei": "otherStuck", "Odile": "otherStuck",
+                               "Saskia": "otherStuck", "Kasper": "moving", "Femi": None})
 
     def test_the_counts_are_the_tiles_that_name_them(self):
         got = self.roster(waiting("n", asking=asks()), hung("h", quiet=14.0),
                           moving("m1"), moving("m2"), idle("i"))
         named = collections.Counter(t["counted"] for c in got["columns"] for t in c["sessions"])
-        self.assertEqual(got["counts"], {k: named[k] for k in ("needs", "stuck", "moving")})
+        self.assertEqual(got["counts"], {k: named[k] for k in ("needs", "otherStuck", "moving")})
 
 
 MB = 1024 * 1024
@@ -99,19 +99,26 @@ class Banners(Base):
     """A condition of the whole machine is one banner across the page, said by
     the roster and by nothing else; no tile carries it."""
 
-    def disk(self, free_mb, total_mb=400_000):
-        """The disk has this much left. Returns the paths it was asked about."""
-        asked = []
+    def setUp(self):
+        super().setUp()
+        # The folder Claude Code writes to, which is the disk that counts. A
+        # folder of our own, so that the machine's real one is never asked.
+        self.claude = Path(tempfile.mkdtemp())
+        os.environ["CLAUDE_CONFIG_DIR"], was = str(self.claude), os.environ.get("CLAUDE_CONFIG_DIR")
+        self.addCleanup(lambda: os.environ.pop("CLAUDE_CONFIG_DIR") if was is None
+                        else os.environ.__setitem__("CLAUDE_CONFIG_DIR", was))
 
+    def disk(self, free_mb, elsewhere_mb=80_000, total_mb=400_000):
+        """The disk the sessions write to has this much left; any other disk
+        has `elsewhere_mb`. An exception stands for a disk that cannot be read."""
         def usage(path):
-            asked.append(path)
             if isinstance(free_mb, Exception):
                 raise free_mb
-            return Usage(total_mb * MB, (total_mb - free_mb) * MB, free_mb * MB)
+            left = free_mb if Path(path) == self.claude else elsewhere_mb
+            return Usage(total_mb * MB, (total_mb - left) * MB, left * MB)
         was = fleet.disk_usage
         fleet.disk_usage = usage
         self.addCleanup(setattr, fleet, "disk_usage", was)
-        return asked
 
     def banners(self, *sessions):
         return self.roster(*sessions)["banners"]
@@ -134,7 +141,7 @@ class Banners(Base):
         got = self.roster(moving("a", name="Kasper"), idle("b", name="Femi"))
         self.assertEqual({t["name"]: (t["stuck"], t["counted"]) for t in got["columns"][0]["sessions"]},
                          {"Kasper": (None, "moving"), "Femi": (None, None)})
-        self.assertEqual(got["counts"], {"needs": 0, "stuck": 0, "moving": 1})
+        self.assertEqual(got["counts"], {"needs": 0, "otherStuck": 0, "moving": 1})
 
     def test_full_is_less_than_five_hundred_megabytes_unless_the_config_says_otherwise(self):
         self.disk(499)
@@ -154,14 +161,11 @@ class Banners(Base):
                 self.config = {"disk_full_mb": bad}
                 self.assertEqual(len(self.banners()), 1)
 
-    def test_it_is_the_disk_that_holds_the_sessions_transcripts_that_is_asked(self):
-        here = tempfile.mkdtemp()
-        os.environ["CLAUDE_CONFIG_DIR"], was = here, os.environ.get("CLAUDE_CONFIG_DIR")
-        self.addCleanup(lambda: os.environ.pop("CLAUDE_CONFIG_DIR") if was is None
-                        else os.environ.__setitem__("CLAUDE_CONFIG_DIR", was))
-        asked = self.disk(80_000)
-        self.banners()
-        self.assertEqual([str(p) for p in asked], [here])
+    def test_it_is_the_disk_the_sessions_write_to_that_counts_and_no_other(self):
+        self.disk(80_000, elsewhere_mb=10)
+        self.assertEqual(self.banners(), [])
+        self.disk(212, elsewhere_mb=80_000)
+        self.assertEqual(len(self.banners()), 1)
 
     def test_a_disk_that_cannot_be_read_is_no_banner_and_no_crash(self):
         self.disk(OSError("no such file"))

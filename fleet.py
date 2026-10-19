@@ -91,9 +91,10 @@ def config_value(key, default):
 
 
 def positive_value(key, default):
-    """A config number of minutes (a whole number or a fraction) that is more
-    than nothing, else the default. `config_value` takes any value of the
-    default's type, and 0 or less would call everything quiet hung at once."""
+    """A config number (a whole number or a fraction) that is more than
+    nothing, else the default: minutes for `hung_after_minutes`, megabytes for
+    `disk_full_mb`. `config_value` takes any value of the default's type, and 0
+    or less would call everything quiet hung at once."""
     got = read_config().get(key, default)
     ok = isinstance(got, (int, float)) and not isinstance(got, bool) and 0 < got < float("inf")
     return got if ok else default
@@ -706,25 +707,30 @@ def columns_of(blocks):
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
 
 
-def counted_in(tile):
-    """Which of the header's three counts a tile is in, or None: what needs the
-    person, what else is stuck, what is moving. Stuck wins over moving, as it
-    does in the card's mix: a session that needs you needs you with a job
-    running. An idle session is in none."""
-    if tile["stuck"]:
-        return "needs" if tile["stuck"]["kind"] == "needs" else "stuck"
-    return "moving" if tile["moving"] else None
+# The header's three counts: what needs the person, what else is stuck (Error,
+# Hung or Limit), what is moving. `otherStuck` and not `stuck`, which in
+# the glossary includes Needs you.
+COUNT_KINDS = ("needs", "otherStuck", "moving")
+
+
+def counted_in(stuck, moving):
+    """Which of the header's counts a session is in, or None, from its tile's
+    `stuck` kind and whether it is moving. Stuck wins over moving, as it does
+    in the card's mix: a session that needs you needs you with a job running.
+    An idle session is in none."""
+    if stuck:
+        return "needs" if stuck["kind"] == "needs" else "otherStuck"
+    return "moving" if moving else None
 
 
 def counts_of(columns):
     """The header's counts, over every tile on the page. Routines are not in
     `columns`, so they are not in these."""
-    counts = {"needs": 0, "stuck": 0, "moving": 0}
+    counts = dict.fromkeys(COUNT_KINDS, 0)
     for column in columns:
         for tile in column["sessions"]:
-            kind = tile["counted"]
-            if kind:
-                counts[kind] += 1
+            if tile["counted"]:
+                counts[tile["counted"]] += 1
     return counts
 
 
@@ -852,7 +858,7 @@ def tile_of(m, suggestion=None):
         "stuck": stuck,
         # The header count the tile is in, for the page to light it up when
         # that count is clicked.
-        "counted": counted_in({"stuck": stuck, "moving": m["moving"]}),
+        "counted": counted_in(stuck, m["moving"]),
         # The chime rings for a blocked session whatever its flag says, so the
         # tile carries what it is asking, the way the old row did.
         "blocked": m["blocked"], "need": need_of(m),

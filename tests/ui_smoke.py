@@ -168,7 +168,7 @@ def counted(s):
     """The header count the server puts a session in: stuck wins over moving, and
     an idle session is in none."""
     if s["stuck"]:
-        return "needs" if s["stuck"]["kind"] == "needs" else "stuck"
+        return "needs" if s["stuck"]["kind"] == "needs" else "otherStuck"
     return "moving" if s["moving"] else None
 
 
@@ -215,7 +215,7 @@ def roster(projects, **top):
                         "strip": STRIPS.get(key, [0] * 29 + [2]), "summary": mix(sessions),
                         "state": state_of(sessions), "sessions": [tile(s) for s in sessions]})
     counts = {k: sum(counted(s) == k for _, _, sessions in projects for s in sessions)
-              for k in ("needs", "stuck", "moving")}
+              for k in ("needs", "otherStuck", "moving")}
     return {"blocks": blocks, "columns": columns, "counts": counts, "banners": [],
             "hold": False, "chime": True, "providers": {},
             "restore": None, "closed": [], "saved": None, **top}
@@ -472,9 +472,9 @@ def real_pass(browser, url, pid):
       return { sent: COUNTS, named, shown }; }""")
     sent = head["sent"]
     want = [f"{sent['needs']} {'needs you' if sent['needs'] == 1 else 'need you'}",
-            f"{sent['stuck']} other stuck", f"{sent['moving']} moving"]
+            f"{sent['otherStuck']} other stuck", f"{sent['moving']} moving"]
     check("unrouted: the header shows the roster's counts, and they are the tiles that name them",
-          head["shown"] == want and all(head["named"].get(k, 0) == sent[k] for k in ("needs", "stuck", "moving")), head)
+          head["shown"] == want and all(head["named"].get(k, 0) == sent[k] for k in ("needs", "otherStuck", "moving")), head)
     page.wait_for_timeout(3500)       # one more poll, still no clicks
     check("unrouted: read-only (only GET page and roster)", not aborted and set(seen) <= {"/", "/api/roster", "/favicon.ico"},
           aborted or sorted(set(seen)))
@@ -693,11 +693,11 @@ def header_pass(browser):
     check("and what is on the page: sessions and projects",
           head_line(page).split(" · ")[:2] == ["8 sessions", "4 projects"], head_line(page))
     check("each count is a button, and none is pressed", page.locator("button.hc").count() == 3
-          and all(btn(k).get_attribute("aria-pressed") == "false" for k in ("needs", "stuck", "moving")))
+          and all(btn(k).get_attribute("aria-pressed") == "false" for k in ("needs", "otherStuck", "moving")))
     check("nothing is lit, faded or shrunk to begin with", not lit() and not dim() and not shrunk())
 
     before = widths()
-    btn("stuck").click()
+    btn("otherStuck").click()
     check("a click lights up the sessions in that count", lit() == ["Mei", "Odile"], lit())
     check("fades the rest", dim() == 6, dim())
     check("and shrinks the columns with none to their card", shrunk() == ["delta", "gamma"], shrunk())
@@ -706,16 +706,16 @@ def header_pass(browser):
           and not page.locator('.ov-col[data-project="gamma"] .tile').first.is_visible()
           and page.locator('.ov-col[data-project="alpha"] .tile.lit').first.is_visible())
     check("columns keep their width", widths() == before, (before, widths()))
-    check("the count that is lit says so", btn("stuck").get_attribute("aria-pressed") == "true"
+    check("the count that is lit says so", btn("otherStuck").get_attribute("aria-pressed") == "true"
           and btn("needs").get_attribute("aria-pressed") == "false")
     check("lighting up posts nothing and jumps nowhere", fake.posts == [], fake.posts)
 
     poll_now(page)
     check("a poll keeps the light", lit() == ["Mei", "Odile"] and shrunk() == ["delta", "gamma"], (lit(), shrunk()))
 
-    btn("stuck").click()
+    btn("otherStuck").click()
     check("a second click clears it", not lit() and not dim() and not shrunk()
-          and btn("stuck").get_attribute("aria-pressed") == "false", (lit(), dim(), shrunk()))
+          and btn("otherStuck").get_attribute("aria-pressed") == "false", (lit(), dim(), shrunk()))
 
     btn("moving").click()
     check("moving lights the moving ones, including a session waiting on a job",
@@ -735,33 +735,33 @@ def header_pass(browser):
           lit() == ["Kasper", "Vera"], lit())
     btn("needs").click()
     # ... and prints the roster's numbers, not a count of its own.
-    fake.body["counts"] = {"needs": 7, "stuck": 0, "moving": 12}
+    fake.body["counts"] = {"needs": 7, "otherStuck": 0, "moving": 12}
     poll_now(page)
     check("the numbers are the roster's, however many tiles there are",
           head_line(page).split(" · ")[2:] == ["7 need you", "0 other stuck", "12 moving"], head_line(page))
-    check("a count of nothing is not a button", btn("stuck").is_disabled() and not btn("needs").is_disabled())
-    btn("stuck").click(force=True)
+    check("a count of nothing is not a button", btn("otherStuck").is_disabled() and not btn("needs").is_disabled())
+    btn("otherStuck").click(force=True)
     check("and a click on it lights nothing", not lit() and not shrunk(), (lit(), shrunk()))
-    fake.body["counts"] = {"needs": 1, "stuck": 2, "moving": 3}
+    fake.body["counts"] = {"needs": 1, "otherStuck": 2, "moving": 3}
     poll_now(page)
 
     # A lit count that has emptied clears itself instead of hiding every session.
     btn("needs").click()
-    fake.body["counts"] = {"needs": 0, "stuck": 2, "moving": 3}
+    fake.body["counts"] = {"needs": 0, "otherStuck": 2, "moving": 3}
     poll_now(page)
     check("a lit count that falls to nothing clears itself",
           not lit() and not dim() and not shrunk() and btn("needs").is_disabled(), (lit(), dim(), shrunk()))
-    fake.body["counts"] = {"needs": 1, "stuck": 2, "moving": 3}
+    fake.body["counts"] = {"needs": 1, "otherStuck": 2, "moving": 3}
     poll_now(page)
     check("and does not light again when it comes back", not lit() and not shrunk()
           and btn("needs").get_attribute("aria-pressed") == "false", (lit(), shrunk()))
 
     # A repaint that changes nothing leaves the header alone, so a click that
     # is pressed before a poll lands is still a click when it is released.
-    page.evaluate("window.__head = document.querySelector('button.hc.stuck')")
+    page.evaluate("window.__head = document.querySelector('button.hc.otherStuck')")
     poll_now(page)
     check("a poll that changes nothing does not rebuild the header's buttons",
-          page.evaluate("window.__head === document.querySelector('button.hc.stuck')"))
+          page.evaluate("window.__head === document.querySelector('button.hc.otherStuck')"))
 
     # The filter box narrows the page; the counts stay the roster's.
     page.locator("#q").fill("mei")

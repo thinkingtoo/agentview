@@ -54,7 +54,7 @@ class Poll(unittest.TestCase):
         self.assertEqual([t["key"] for c in got["columns"] for t in c["sessions"]], ["fake:a"])
         self.assertEqual(sorted(got), ["banners", "blocks", "chime", "closed", "columns", "counts",
                                        "hold", "providers", "restore", "saved"])
-        self.assertEqual(sorted(got["counts"]), ["moving", "needs", "stuck"])
+        self.assertEqual(sorted(got["counts"]), ["moving", "needs", "otherStuck"])
         self.assertIsInstance(got["banners"], list)
 
     def test_the_page_is_served_with_a_query_on_it(self):
