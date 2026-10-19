@@ -53,10 +53,13 @@ _Avoid_: rate limit error, throttled
 
 **Error**:
 A kind of stuck: any other API or authentication error is the session's last word (overloaded, auth, server). A new prompt or any other word from the session ends it.
-_Avoid_: failure, crash
+_Avoid_: crash
+
+**Failure**:
+The API error that is a session's last word: a Limit if it is the usage limit, an Error for any other. It ends when the model is asked or says anything again; a slash command run locally, or a `!` shell line, does not end it.
 
 **Hung**:
-A kind of stuck: the session is busy and nothing shows it moving, for ten minutes (`hung_after_minutes`). Waiting on a subagent, a background job or a command using CPU is moving, not Hung; so is a session whose processes could not be read.
+A kind of stuck: the session is busy and nothing shows it moving, for ten minutes (`hung_after_minutes`) counted from its last sign of life of any kind. Waiting on a subagent, a background job or a command using CPU is moving, not Hung, for the six hours such a wait counts and the ten minutes after; so is a session whose processes could not be read.
 _Avoid_: frozen, stalled, the old `stuck` flag
 
 **Jump**:

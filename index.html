@@ -940,6 +940,10 @@ function overview(cols) {
   main.scrollLeft = x;
 }
 
+// What a table says about a key, and nothing a plain object inherits: a kind
+// the server calls "constructor" is not on the list.
+const known = (table, key) => Object.prototype.hasOwnProperty.call(table, key) ? table[key] : "";
+
 // The card's state word. The server decides the state (the most urgent of its
 // sessions); this is only how each is said.
 const STATE_WORD = { needs: "NEEDS YOU", error: "ERROR", hung: "HUNG", limit: "LIMIT",
@@ -947,8 +951,8 @@ const STATE_WORD = { needs: "NEEDS YOU", error: "ERROR", hung: "HUNG", limit: "L
 
 function column(c) {
   // The state is always the card's second line, never above the name.
-  const word = STATE_WORD[c.state] || (c.state ? String(c.state).toUpperCase() : "");
-  const st = STATE_WORD[c.state] ? c.state : "other";
+  const word = known(STATE_WORD, c.state) || (c.state ? String(c.state).toUpperCase() : "");
+  const st = known(STATE_WORD, c.state) ? c.state : "other";
   return `<section class="ov-col" data-project="${esc(c.project)}">
     <div class="ov-head st-${st}"><span class="ov-name">${esc(c.name)}</span>${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${movementOf(c)}</div>
     ${c.sessions.map(tile).join("")}
@@ -976,19 +980,19 @@ function movementOf(c) {
 const KIND_TAG = { needs: "needs you", error: "error", hung: "hung", limit: "limit" };
 
 function tile(t) {
-  const kind = KIND_TAG[t.stuck?.kind] ? t.stuck.kind : "";
+  const kind = known(KIND_TAG, t.stuck?.kind) ? t.stuck.kind : "";
   const needs = kind === "needs" ? " needs" : "";
   // Error, Hung and Limit are told by their kind alone: the dot is theirs, not
   // a tick for a finished turn, and no flag of the old pages is added to it.
-  const other = kind && kind !== "needs";
-  const alarm = other ? kind : (["waiting", "stuck", "ready"].includes(t.flag) ? t.flag : "") + needs;
+  const notNeeds = kind && kind !== "needs";
+  const alarm = notNeeds ? kind : (["waiting", "stuck", "ready"].includes(t.flag) ? t.flag : "") + needs;
   const via = t.jump?.via;
   const can = via === "pane" || via === "attach";
   const tags = (t.tags || []).map(g =>
     `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
   return `<div class="tile ${can ? "can" : ""} ${alarm}" data-sid="${esc(t.key)}">
     <div class="rhead">
-      ${mark({ ...t, flag: other ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${jumpLabel(t, via)}
+      ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${jumpLabel(t, via)}
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
@@ -1119,7 +1123,8 @@ function jumpLabel(t, via) {
 function tileFlag(t) {
   // A kind says what the flag would, and says it once.
   const kind = t.stuck?.kind;
-  if (KIND_TAG[kind]) return `<span class="flag ${kind}">${KIND_TAG[kind]}</span>`;
+  const tag = known(KIND_TAG, kind);
+  if (tag) return `<span class="flag ${esc(kind)}">${esc(tag)}</span>`;
   // `flagNote` is finished by the server: what a waiting session is blocked
   // on, or the minutes a stuck session has been quiet and a tool call has run.
   return t.flag === "waiting"

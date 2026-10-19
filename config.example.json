@@ -13,7 +13,7 @@
   "lines": {},
   "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by provider:id — it also retitles that terminal tab. pinned: projects held at the top, in this order. assign: a session's project, keyed by provider:id. A project is named by its identity (track:x, repo:host/owner/name, folder:x) or by its plain name.",
   "assign": {},
-  "_stuck": "A busy session whose transcript has been silent this many minutes is stuck. A `waiting` session is flagged at once, whatever this says.",
+  "_stuck": "The flag the chime and the block view read: a busy session whose transcript has been silent this many minutes. A `waiting` session is flagged at once, whatever this says. The overview says Hung instead, by `hung_after_minutes`.",
   "stuck_after_minutes": 5,
   "_hung": "How long a busy session may go without a write, a CPU-using shell under it or a live background job before the overview counts it as not moving, and calls it Hung.",
   "hung_after_minutes": 10,

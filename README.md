@@ -81,7 +81,11 @@ session waiting on a dialog is not "writing". CPU with no call in flight is a
 shell left behind and proves nothing.
 Any command or job counts for at most six hours (`WAIT_MAX_MINUTES` in
 `fleet.py`); past that the tile still says what it waits on, and the session
-stops counting as moving.
+stops counting as moving once `hung_after_minutes` more have passed (the
+ten minutes are counted from the moment the six hours ended, not from the last
+write). The same count runs from the last time CPU was seen moving under a
+command it waits on: a command that burned CPU two minutes ago is a session
+that was moving two minutes ago.
 
 Each project card draws a **strip**: one bar per minute for the last 30,
 oldest first, the records written by all of the project's sessions and their
@@ -106,19 +110,31 @@ MOVING (green) and ALL IDLE (grey).
 
 | kind | when | reason | context |
 |---|---|---|---|
-| Needs you | an open question, an open permission prompt, or a session line with things left | Question, Permission prompt, "3 things left for you" | the question and its options; the tool and its command; the line's ask |
+| Needs you | an open question, an open permission prompt, another request that waits on the person (below), or a session line with things left | Question, Permission prompt, Sandbox request, Worker request, Goal proposal, "3 things left for you" | the question and its options; the tool and its command; the line's ask |
 | Error | an API or auth error is the session's last word | Overloaded, Auth error, Server error, or the error's own name | the error's words and how long ago |
 | Hung | busy, and nothing shows it moving for `hung_after_minutes` (default 10) | "Not moving for 14 min" | the last tool it called and how long ago |
-| Limit | a rate-limit error is the session's last word | Rate limit | when it resets (the error carries it) and how long it has been held |
+| Limit | a rate limit is the session's last word | Rate limit | when it resets (the error carries it) and how long it has been held |
+
+A `waiting` session says what it waits on (`waitingFor`, Claude Code's own
+word). `input needed` is a question and `permission prompt` a permission
+prompt; `sandbox request` (a sandboxed command wants the network), `worker
+request` (a teammate's worker asks) and `goal proposal` (Claude proposes a
+session goal) each wait on an approval, and read Needs you under their own
+name. `dialog open` is a menu or panel the person opened themselves: not
+stuck. A word this page has not met reads Needs you too, since Claude Code only
+says `waiting` when it waits on someone. The chime rings for every one of them,
+as before.
 
 An error is **the last word** until the session says or is told anything else:
 a prompt, a message from another session, the session going on by itself after
 a limit. Records Claude Code writes on its own after an error (a turn duration,
-a title, a queued line, a snapshot) do not end it, and a subagent's records are
-not the session's.
+a title, a queued line, a snapshot) do not end it, nor does anything that asks
+the model nothing: a slash command run locally, or a `!` shell line. A
+subagent's records are not the session's.
 
 Hung is `moving` turned round (see Movement), so a session waiting on a
-subagent, a background job or a command using CPU is never Hung. It is also not
+subagent, a background job or a command using CPU is never Hung, for the six
+hours such evidence counts and `hung_after_minutes` after. It is also not
 said when `/proc` could not answer: the first look at a command after a restart
 has nothing to compare its CPU with, and a folder that will not be read, or a
 command that exits mid-walk, is no evidence of absence. The same goes for a

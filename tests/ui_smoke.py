@@ -27,6 +27,7 @@ Playwright is needed (`pip install playwright`); the chromium it drives must
 already be installed.
 """
 import copy
+import datetime
 import hashlib
 import json
 import pathlib
@@ -98,6 +99,11 @@ def limit_kind(resets=None, held=22.0, text=""):
 def error_kind(reason, text="", ago=3.0, type_="server_error"):
     return {"kind": "error", "source": "api", "reason": reason,
             "context": {"type": type_, "text": text, "ago": ago}}
+
+
+def request_kind(what):
+    """A dialog that waits on an approval and is neither a question nor a permission prompt."""
+    return needs("request", what[:1].upper() + what[1:], {"what": what})
 
 
 def asks(question, options, header="Publish", multi=False):
@@ -744,6 +750,27 @@ def needs_pass(browser):
     page.close()
 
 
+def clock_said(line):
+    """The time of day a line says, as (hour, minute, on another day), whatever
+    the browser's locale writes it as: `14:20`, `2:20 PM`, `Tue 14.20`."""
+    got = re.search(r"(?:(?P<day>[^\W\d_]{2,})\.?\s+)?(?P<h>\d{1,2})[:.](?P<m>\d{2})\s*(?P<ap>[AaPp])?\.?[Mm]?", line)
+    if not got:
+        return None
+    hour = int(got["h"]) % 12 + (12 if (got["ap"] or "").lower() == "p" else 0) if got["ap"] else int(got["h"])
+    return hour, int(got["m"]), bool(got["day"])
+
+
+def when(line):
+    """The time part of 'resets 14:20 · held 22 min': what stands between the verb and the dot."""
+    return line.split(" · ")[0].split(" ", 1)[1]
+
+
+def clock_is(ms):
+    """The same, from Python's own clock: what the page should have written."""
+    moment = datetime.datetime.fromtimestamp(ms / 1000)
+    return moment.hour, moment.minute, moment.date() != datetime.date.today()
+
+
 def kinds_pass(browser):
     """Ticket 08: Error, Hung and Limit on the tile and on the card, in the
     card's full order. Fixtures are invented; so is every error and tool in them."""
@@ -772,7 +799,11 @@ def kinds_pass(browser):
         S("l4", "Pia", "idle", stuck=limit_kind(None, None, "Invented: limit reached")),
         S("l5", "Quin", "busy", mv="writing · 8s ago")])
     quiet_p = ("quiet", "quiet", [S("z1", "Rune", "idle"), S("z2", "Sol", "busy", mv="writing · 8s ago")])
-    fake = Fake(roster([mix_p, errors_p, hung_p, limit_p, quiet_p]))
+    ask_p = ("asks", "asks", [
+        S("q1", "Rhea", "waiting", "waiting", note="sandbox request", stuck=request_kind("sandbox request")),
+        S("q2", "Soren", "waiting", "waiting", note="goal proposal", stuck=request_kind("goal proposal")),
+        S("q3", "Tove", "waiting", "waiting", note="dialog open")])
+    fake = Fake(roster([mix_p, errors_p, hung_p, limit_p, quiet_p, ask_p]))
     page = new_page(browser, fake)
     open_at(page)
     page.wait_for_selector(".ov-col")
@@ -783,18 +814,18 @@ def kinds_pass(browser):
     paint = lambda loc, prop: loc.evaluate(f"e => getComputedStyle(e).{prop}")
     reason = lambda k: t(k).locator(".stuck-box .reason").inner_text()
     late = lambda k: t(k).locator(".stuck-box .late").all_inner_texts()
-    clock = lambda ms: page.evaluate("""ms => { const d = new Date(ms);
-      const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      return d.toDateString() === new Date().toDateString() ? time
-        : d.toLocaleDateString([], { weekday: 'short' }) + ' ' + time }""", ms)
 
     # The tile: tag, reason, context.
     check("Limit: the tag, the reason, and when it resets and how long it has been held",
           t("a4").locator(".flag.limit").inner_text().lower() == "limit"
-          and reason("a4") == "Rate limit" and late("a4") == [f"resets {clock(soon)} · held 22 min"],
-          (reason("a4"), late("a4")))
+          and reason("a4") == "Rate limit" and len(late("a4")) == 1
+          and late("a4")[0].startswith("resets ") and late("a4")[0].endswith(" · held 22 min")
+          and clock_said(when(late("a4")[0])) == clock_is(soon),
+          (reason("a4"), late("a4"), clock_is(soon)))
     check("Limit: a reset time already past says reset, not resets",
-          late("l2") == [f"reset {clock(passed)} · held 5 h"], late("l2"))
+          len(late("l2")) == 1 and late("l2")[0].startswith("reset ") and not late("l2")[0].startswith("resets ")
+          and late("l2")[0].endswith(" · held 5 h") and clock_said(when(late("l2")[0])) == clock_is(passed),
+          (late("l2"), clock_is(passed)))
     check("Limit: with no reset time it says only how long, and with nothing, its own words",
           late("l3") == ["held 5 min"] and t("l4").locator(".stuck-box .say").inner_text() == "Invented: limit reached"
           and late("l4") == [], (late("l3"), late("l4")))
@@ -816,6 +847,13 @@ def kinds_pass(browser):
           and t("a3").locator(".flag.stuck").count() == 0)
     check("a session with no kind has no box", t("a5").locator(".stuck-box").count() == 0
           and t("a6").locator(".stuck-box").count() == 0)
+    check("Needs you by a request: the tag, and its name as the reason, with nothing under it",
+          t("q1").locator(".flag.needs").inner_text().lower() == "needs you"
+          and reason("q1") == "Sandbox request" and reason("q2") == "Goal proposal"
+          and t("q1").locator(".stuck-box .say, .stuck-box .late, .stuck-box .cmd").count() == 0,
+          (reason("q1"), reason("q2")))
+    check("and a menu the person opened (dialog open) is waiting, not Needs you",
+          t("q3").locator(".stuck-box").count() == 0 and t("q3").locator(".flag.needs").count() == 0)
 
     # Colour: the border and the dot, per kind.
     check("Error and Hung are red, Limit is purple, on the border",
@@ -839,7 +877,8 @@ def kinds_pass(browser):
             ("errs", "ERROR", "--bad", "1 moving · 2 stuck · 0 idle"),
             ("hangs", "HUNG", "--bad", "1 moving · 3 stuck · 0 idle"),
             ("limits", "LIMIT", "--limit", "1 moving · 4 stuck · 0 idle"),
-            ("quiet", "MOVING", "--busy", "1 moving · 0 stuck · 1 idle")):
+            ("quiet", "MOVING", "--busy", "1 moving · 0 stuck · 1 idle"),
+            ("asks", "NEEDS YOU", "--wait", "0 moving · 2 stuck · 1 idle")):
         h = head(project)
         check(f"{project}: the card reads {word}", h.locator(".ov-state").inner_text() == word,
               h.locator(".ov-state").inner_text())
@@ -886,6 +925,26 @@ def kinds_pass(browser):
     check("an unknown kind builds no markup and adds no class from the server's text",
           page.locator("#main b").count() == 0 and "<" not in (t("w1").get_attribute("class") or ""),
           t("w1").get_attribute("class"))
+    page.close()
+
+    # A word every object has (`constructor`, `toString`) is not a kind or a state the page knows.
+    inherited = roster([("inherit", "inherit", [
+        S("i1", "Ivo", "idle", stuck={"kind": "constructor", "source": "api", "reason": "Inherited", "context": {}}),
+        S("i2", "Jana", "idle", stuck={"kind": "toString", "source": "api", "reason": "Inherited too", "context": {}})])])
+    inherited["columns"][0]["state"] = "toString"
+    page = new_page(browser, Fake(inherited))
+    open_at(page)
+    page.wait_for_selector(".tile")
+    text = page.locator("#main").inner_text()
+    check("an inherited object key is no kind: no code printed, no class, no tag",
+          "native code" not in text and "function" not in text
+          and all("constructor" not in (t(k).get_attribute("class") or "") and "toString" not in (t(k).get_attribute("class") or "")
+                  for k in ("i1", "i2"))
+          and t("i1").locator(".flag.constructor, .flag.toString").count() == 0,
+          (text, t("i1").get_attribute("class")))
+    check("and the card says the word it was given, as a state of no colour",
+          page.locator(".ov-state").inner_text() == "TOSTRING" and "st-other" in page.locator(".ov-head").get_attribute("class"),
+          page.locator(".ov-head").get_attribute("class"))
     page.close()
 
 
