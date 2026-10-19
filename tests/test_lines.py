@@ -11,8 +11,11 @@ import resource
 import signal
 import subprocess
 import sys
+import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -181,6 +184,27 @@ class HandWritten(unittest.TestCase):
                               capture_output=True, timeout=30)
         self.assertEqual(done.returncode, 0, "the process took a terminal it only opened")
 
+    def test_a_pipe_is_refused_at_once_and_not_after_the_time_bound(self):
+        # The time bound would hide a read that waits on the pipe: the answer is the
+        # same, only half a second late and with a thread left waiting for ever.
+        for name in ("abc.json", "abc.turn"):
+            os.mkfifo(self.root / name)
+        for call in (lines.read, lines.current_turn):
+            t0 = time.monotonic()
+            call("abc", self.root)
+            self.assertLess(time.monotonic() - t0, lines.READ_BUDGET / 2)
+        self.assertEqual(lines._reading, {})
+
+    def test_only_the_bound_is_read_of_a_larger_file(self):
+        (self.root / "big").write_bytes(b"0123456789" * 100)
+        self.assertEqual(lines._small_bytes(self.root / "big", 10), b"0123456789")
+        self.assertEqual(lines._plain_bytes(self.root / "big", 10), b"0123456789")
+
+    def test_a_file_that_cannot_be_read_is_none_and_not_a_raise(self):
+        self.assertIsNone(lines._plain_bytes("/proc/self/mem", 10))
+        self.assertIsNone(lines._plain_bytes(str(self.root) + "/a\0b", 10))
+        self.assertIsNone(lines._plain_bytes(self.root / "missing", 10))
+
     def test_a_run_of_openers_inside_the_bound_reads_as_no_line(self):
         # No closer: this is the file json gives up on with a stack overflow on the Python
         # that runs the service, where a file with its closers parses.
@@ -247,6 +271,190 @@ class HandWritten(unittest.TestCase):
     def test_a_count_of_true_is_not_one_thing_left(self):
         (self.root / "abc.json").write_text(json.dumps({"did": "x", "ask": "y", "n": True, "at": 1}), encoding="utf-8")
         self.assertEqual(lines.read("abc", self.root)["n"], 0)
+
+
+class FilesystemThatStopsAnswering(unittest.TestCase):
+    """A link into a network mount, or a mount on the name itself, whose server has
+    gone away. No flag keeps open, read or close from waiting on it, and the poll
+    that reads the file holds the lock every poll takes. The read is bounded in
+    time instead: a file that does not answer reads as no line, the wait is paid
+    once, and a read still out is never asked a second time behind itself.
+
+    The stand-in is `lines._plain_bytes` held on an event, for the files whose name
+    starts with "stuck"; a real FUSE mount held the same way was run once by hand.
+    """
+
+    BUDGET = 1.0
+    REAL_BUDGET = lines.READ_BUDGET       # taken at import, before any test patches it
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        self.addCleanup(self.dir.cleanup)
+        def hung(*_):
+            raise AssertionError("still reading after 20 s")
+        self.addCleanup(signal.signal, signal.SIGALRM, signal.signal(signal.SIGALRM, hung))
+        self.addCleanup(signal.alarm, 0)
+        signal.alarm(20)
+        self.release = threading.Event()
+        self.addCleanup(self.settle)            # cleanups run last-added first: release, then settle
+        self.addCleanup(self.release.set)       # nothing is left waiting on the folder when it goes
+        self.calls = []
+        real = lines._plain_bytes
+
+        def plain(path, limit):
+            name = Path(path).name
+            self.calls.append(name)
+            if name.startswith("stuck"):
+                self.release.wait(30)
+            elif name.startswith("slow"):
+                time.sleep(0.1)
+            elif name.startswith("boom"):
+                raise MemoryError("invented")
+            return real(path, limit)
+
+        for sid in ("stuck", "fine", "slow", "boom"):       # written before anything is held
+            (self.root / f"{sid}.turn").write_text("0123abcd", encoding="utf-8")
+            lines.write(sid, did="Notes page built.", ask='Run "make test".', n=1, root=self.root)
+        for patch in (mock.patch.object(lines, "_plain_bytes", plain),
+                      mock.patch.object(lines, "READ_BUDGET", self.BUDGET)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def settle(self):
+        """Wait for the reads still out to finish (they end when `release` is set)."""
+        end = time.monotonic() + 10
+        while lines._reading and time.monotonic() < end:
+            time.sleep(0.01)
+
+    def timed(self, call, *args):
+        t0 = time.monotonic()
+        got = call(*args, self.root)
+        return got, time.monotonic() - t0
+
+    def test_a_line_that_does_not_answer_reads_as_no_line_after_the_budget(self):
+        got, took = self.timed(lines.read, "stuck")
+        self.assertEqual(got, {})
+        self.assertGreaterEqual(took, self.BUDGET * 0.8, "a read was given up on before its budget")
+        self.assertLess(took, 5)
+
+    def test_a_turn_that_does_not_answer_reads_as_no_turn(self):
+        got, took = self.timed(lines.current_turn, "stuck")
+        self.assertEqual(got, "")
+        self.assertLess(took, 5)
+        self.assertEqual(lines.fresh("stuck", self.root), {})
+
+    def test_the_wait_is_paid_once_and_no_second_read_piles_up_behind_it(self):
+        before = threading.active_count()
+        self.timed(lines.read, "stuck")
+        for _ in range(6):
+            got, took = self.timed(lines.read, "stuck")
+            self.assertEqual(got, {})
+            self.assertLess(took, self.BUDGET / 2, "the next poll waited again on a read still out")
+        self.assertEqual(self.calls.count("stuck.json"), 1)
+        self.assertLessEqual(threading.active_count() - before, 1)
+
+    def test_a_session_that_answers_is_read_while_another_is_stuck(self):
+        self.timed(lines.read, "stuck")
+        got, took = self.timed(lines.read, "fine")
+        self.assertEqual(got["ask"], 'Run "make test".')
+        self.assertLess(took, self.BUDGET / 2)
+        self.assertEqual(lines.current_turn("fine", self.root), "0123abcd")
+
+    def test_a_read_that_comes_back_late_is_made_again_by_the_next_poll(self):
+        self.assertEqual(lines.read("stuck", self.root), {})
+        self.release.set()
+        self.settle()
+        self.assertEqual(lines._reading, {}, "a finished read stays on the list")
+        self.assertEqual(lines.read("stuck", self.root)["n"], 1)
+        self.assertEqual(self.calls.count("stuck.json"), 2)
+
+    def test_two_readers_of_one_slow_file_share_the_one_read(self):
+        out = []
+        threads = [threading.Thread(target=lambda: out.append(lines.read("slow", self.root))) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        self.assertEqual([got.get("n") for got in out], [1, 1])
+        self.assertEqual(self.calls.count("slow.json"), 1)
+
+    def test_a_read_that_raises_reads_as_no_line_and_says_nothing(self):
+        heard = []
+        with mock.patch.object(threading, "excepthook", heard.append):
+            self.assertEqual(lines.read("boom", self.root), {})
+            self.settle()
+        self.assertEqual(heard, [])
+        self.assertEqual(lines._reading, {})
+
+    def test_no_thread_to_be_had_reads_as_no_line(self):
+        with mock.patch.object(threading.Thread, "start", side_effect=RuntimeError("can't start new thread")):
+            self.assertEqual(lines.read("fine", self.root), {})
+            self.assertEqual(lines.current_turn("fine", self.root), "")
+        self.assertEqual(lines._reading, {})
+        self.assertEqual(lines.read("fine", self.root)["n"], 1)
+
+    def test_the_budget_is_a_fraction_of_a_second(self):
+        # Setup patched it for the other tests. A wait is paid once per file that
+        # does not answer, inside a poll that is due every three seconds and gives
+        # a provider two.
+        self.assertTrue(0.05 <= self.REAL_BUDGET <= 1.0, self.REAL_BUDGET)
+
+    def test_a_read_is_off_the_list_before_a_reader_is_told_it_is_done(self):
+        # Otherwise a reader coming in at that moment is handed a read made before its
+        # call, and a line written in between is not seen.
+        seen = []
+
+        class Done(threading.Event):
+            def set(self):
+                seen.append(dict(lines._reading))
+                super().set()
+
+        class Read(lines._Read):
+            def __init__(self):
+                super().__init__()
+                self.done = Done()
+
+        with mock.patch.object(lines, "_Read", Read):
+            self.assertEqual(lines.read("fine", self.root)["n"], 1)
+        self.assertEqual(seen, [{}])
+
+    def test_a_fast_read_does_not_wait_for_its_budget(self):
+        got, took = self.timed(lines.read, "fine")
+        self.assertEqual(got["n"], 1)
+        self.assertLess(took, self.BUDGET / 2)
+
+
+class WhatIsOpened(unittest.TestCase):
+    """The file judged is the file read, and it is the one the name led to."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.dir.name)
+        self.addCleanup(self.dir.cleanup)
+
+    def test_a_link_to_a_plain_file_is_followed(self):
+        lines.write("real", did="x", ask="Run it.", n=1, root=self.root)
+        (self.root / "abc.json").symlink_to(self.root / "real.json")
+        self.assertEqual(lines.read("abc", self.root)["ask"], "Run it.")
+
+    def test_the_name_is_not_opened_a_second_time_after_it_was_judged(self):
+        # The name is swapped for a pipe between the open and the read: a read by
+        # name would wait on the pipe, and a judgement of the name would refuse it.
+        lines.write("abc", did="x", ask="Run it.", n=1, root=self.root)
+        target = str(self.root / "abc.json")
+        real_open = os.open
+
+        def open_then_swap(path, *args, **kwargs):
+            fd = real_open(path, *args, **kwargs)
+            if str(path) == target:
+                os.unlink(target)
+                os.mkfifo(target)
+            return fd
+
+        with mock.patch.object(os, "open", open_then_swap):
+            got = lines.read("abc", self.root)
+        self.assertEqual(got.get("ask"), "Run it.")
 
 
 class WhoWroteIt(unittest.TestCase):

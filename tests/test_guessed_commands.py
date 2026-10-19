@@ -83,6 +83,14 @@ class Guess(Base):
     def test_a_dollar_inside_quotes_is_one_command_without_the_sign(self):
         self.assertEqual(self.commands('Could you run "$ make test" now?'), ["make test"])
 
+    def test_a_dollar_after_the_start_of_a_quote_stays_in_the_command_as_written(self):
+        # Only the prompt at the start of a quote is taken off. A `$ ` further in is
+        # part of the command, and what is copied is the piece of the ask.
+        for ask, command in (('Run "ls -la $ -x" now?', "ls -la $ -x"),
+                             ('Run "echo $ -n x" now?', "echo $ -n x")):
+            self.assertEqual(self.commands(ask), [command])
+            self.assertIn(command, ask)
+
     def test_a_quote_inside_a_dollar_command_does_not_make_a_second_one(self):
         self.assertEqual(self.commands('When ready, run $ git commit -m "update notes".'),
                          ['git commit -m "update notes"'])

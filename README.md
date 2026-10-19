@@ -220,6 +220,13 @@ Known limits, accepted:
   `tests/__pycache`.
 - The hook folds a command's lines into one, so a heredoc (`<<EOF`) or a `\`
   continuation is offered as a one-line command that is not the one written.
+- A session's line file behind a filesystem that has stopped answering (a link
+  into a network mount that went away) is waited on for half a second, once, and
+  reads as no line until the mount answers. The read stays out on a thread of its
+  own and cannot be given up on, so a process that ends while it is out ends when
+  the mount answers or is cut loose (`fusermount3 -u -z`). The other files the
+  page reads (`config.json`, `seen.json`, a repository's `.git/config`) are not
+  bounded this way.
 
 What is not offered, so that half a command is never one click away: a command
 cut by the line's length, one with a quote left open, a bracket that closes

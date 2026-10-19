@@ -23,6 +23,7 @@ import re
 import secrets
 import stat
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -40,9 +41,64 @@ SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
 # lines, and nothing is read past it.
 MAX_BYTES = 64 * 1024
 
+# How long a read of one of these files may take. They are small and on the local
+# disk; one that takes longer is behind a filesystem that has stopped answering (a
+# network mount, or a link into one), where open, read and close each wait for it
+# whatever flags they are given, and the poll holds the lock every poll takes.
+READ_BUDGET = 0.5
+
+# The reads still out, by path: at most one per file, so a file that never answers
+# costs one thread and one wait, not a thread and a wait every poll.
+_reading = {}
+_reading_lock = threading.Lock()
+
+
+class _Read:
+    """One read of one file, on a thread of its own, and the moment it is given up on."""
+
+    def __init__(self):
+        self.done = threading.Event()
+        self.data = None
+        self.due = time.monotonic() + READ_BUDGET
+
+
+def _run(key, read, path, limit):
+    try:
+        read.data = _plain_bytes(path, limit)
+    except Exception:       # whatever it was, it is no line; a thread's traceback is nobody's
+        read.data = None
+    finally:
+        with _reading_lock:
+            _reading.pop(key, None)         # before the flag: a reader that sees it done finds no entry
+        read.done.set()
+
 
 def _small_bytes(path, limit):
-    """The first `limit` bytes of a plain file, or None.
+    """The first `limit` bytes of a plain file, or None; None too when it does not answer in time.
+
+    A reader that arrives while the read of the same file is out waits for that
+    read, until its time is up, and not for a new one. Past that time the file is
+    taken as not answering and every reader gets None at once until the read
+    comes back; what a late read found is dropped, and the next call reads again.
+    """
+    key = str(path)
+    with _reading_lock:
+        read = _reading.get(key)
+        if read is None:
+            read = _reading[key] = _Read()
+            try:
+                threading.Thread(target=_run, args=(key, read, path, limit),
+                                 name="lines-read", daemon=True).start()
+            except RuntimeError:        # no thread to be had
+                del _reading[key]
+                return None
+    if not read.done.wait(max(0.0, read.due - time.monotonic())):
+        return None
+    return read.data
+
+
+def _plain_bytes(path, limit):
+    """The first `limit` bytes of a plain file, or None. May wait on a filesystem that does not answer.
 
     The folder is anyone's to write in, and the poll that reads it holds the lock
     every poll takes: a pipe would be waited on for ever (and deleting it does not
