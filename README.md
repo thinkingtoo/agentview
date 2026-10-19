@@ -144,22 +144,34 @@ a string, an `@` or `=`. `sudo` and its kind are judged by the command after
 them. A path to a script, or `VAR=1 cmd`, counts too. After a `$` one word is
 enough if it is a known program or has a hyphen, dot or slash in it.
 
+A `$` command is offered only when it is the whole of its line: nothing but
+the sentence's own full stop, `?` or `!` (or the next `$ `) stands after it.
+Where it ends is read from a comma, a dash, a bracket, a full stop after a word
+or before a capital letter, or a `?` or `!`; none of those counts inside a
+quoted argument, after a flag (`-F,`), in `find ! -name x`, or as the `.` or
+`..` of a command. When words stand after the end, nothing is offered, because
+the end cannot be told from a comma that belongs to the command. Whatever
+stands after a `$`, or between quotes, claims every quote inside it, so a
+command the lists do not know (`fly ssh console -C "rm -rf /data"`) never has
+its argument offered as a command of its own.
+
 Known limits, accepted: a program the lists do not know (`tiroir-work next` in
 quotes) gets no button; a title that starts with a tool's name and a sign gets
-one; a `$` command runs to the end of its sentence (`, ? !`, a dash, or a
-period after a word; not inside a quoted argument, and not a `.` or `..` of
-its own), so one with no sentence end after it swallows the words that follow;
-a quote escaped inside a quote (`\"`) is not understood.
+one; a `$` command with no sentence end after it runs on into the words that
+close the sentence (`Run $ make test now?` offers `make test now`).
 
 What is not offered, so that half a command is never one click away: a command
-cut by the line's length, one with a quote left open, and the quotes inside
-either. Only the session's own line is guessed on, the one it wrote as its one
-thing left. Words read out of its last message are shown as before and get no
-button: reading them takes out `*`, `_`, backticks and `#`, so a command in
-them is not the command the session wrote. The tile carries the list as
-`guessedCommands`, and the page prints one row per command with its own button.
-Copying puts the text on the clipboard and sends nothing to the server;
-approving stays in the session's pane.
+cut by the line's length, one with a quote left open, a bracket that closes
+something outside it, a backtick (pasted, it would run what it holds), a quote
+that holds an escaped quote, a quote with a space inside against its marks (two
+phrases mispaired), and the quotes inside any of these. `20 $` is an amount and
+`$5` is money, never a prompt. Only the session's own line is guessed on, the
+one it wrote as its one thing left. Words read out of its last message are
+shown as before and get no button: reading them takes out `*`, `_`, backticks
+and `#`, so a command in them is not the command the session wrote. The tile
+carries the list as `guessedCommands`, and the page prints one row per command
+with its own button. Copying puts the text on the clipboard and sends nothing
+to the server; approving stays in the session's pane.
 
 ## After a reboot
 
