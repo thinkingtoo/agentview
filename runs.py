@@ -14,7 +14,7 @@ Two rollouts held by one process are one run: `codex exec review` writes one
 for the run and one for its review. And the run's writes go where the run goes,
 into its starter's, so they are counted once.
 """
-from providers import minutes
+from providers import base, minutes
 
 
 def pid_of(raw):
@@ -43,8 +43,9 @@ def ancestors_of(raw):
 
 
 def start_of(raw):
-    start = raw.get("startedAt")
-    return start if isinstance(start, (int, float)) and not isinstance(start, bool) and start > 0 else None
+    """When the run began, in milliseconds, or None when the row names no such time:
+    a number past what a clock holds would stop the whole roster at its first sum."""
+    return base.milliseconds(raw.get("startedAt"))
 
 
 def one_run(group):
@@ -60,14 +61,28 @@ def one_run(group):
                 writes=minutes.added([strip_of(r) for r in group]))
 
 
+def owns(raw):
+    """Can a run be folded into this row: a session with a process, that is no run and no routine?"""
+    return (isinstance(raw, dict) and not is_run(raw) and bool(pid_of(raw))
+            and isinstance(raw.get("id"), str) and bool(raw["id"])
+            and not (isinstance(raw.get("routine"), str) and raw["routine"]))
+
+
 def fold(pairs, now):
     """The `(provider, raw)` pairs the roster shows: runs folded into their starters."""
+    # The roster shows one row for a `provider:id` -- the first, or a later one that leads
+    # a track when the first does not -- so that is where a run under any of its pids goes.
+    kept = {}
+    for index, (provider, raw) in enumerate(pairs):
+        if isinstance(raw, dict) and isinstance(raw.get("id"), str) and raw["id"]:
+            first = kept.setdefault((provider.name, raw["id"]), index)
+            if bool(raw.get("boss")) and not bool(pairs[first][1].get("boss")):
+                kept[(provider.name, raw["id"])] = index
     owners = {}
-    for index, (_, raw) in enumerate(pairs):
-        if (isinstance(raw, dict) and not is_run(raw) and pid_of(raw)
-                and isinstance(raw.get("id"), str) and raw["id"]
-                and not (isinstance(raw.get("routine"), str) and raw["routine"])):
-            owners.setdefault(pid_of(raw), index)
+    for index, (provider, raw) in enumerate(pairs):
+        if owns(raw):
+            stays = kept[(provider.name, raw["id"])]
+            owners.setdefault(pid_of(raw), stays if owns(pairs[stays][1]) else index)
     groups = {}
     for index, (_, raw) in enumerate(pairs):
         if is_run(raw):

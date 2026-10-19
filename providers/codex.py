@@ -90,7 +90,9 @@ def _resets_at(message, at):
         else:
             then = datetime.datetime.fromtimestamp(at / 1000)
             when = then.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if when <= then:
+            # Codex writes the minute, not the second ("try again at 12:00 PM"
+            # for 12:00:40): the refusal's own minute is still today.
+            if when < then.replace(second=0, microsecond=0):
                 when += datetime.timedelta(days=1)
         return int(when.timestamp() * 1000)
     except (ValueError, OverflowError, OSError):
@@ -149,12 +151,56 @@ def _unescape(text):
                        else _PLAIN.get(m.group(1), m.group(1)), text)
 
 
+# After one of these a `/` opens a regular expression; after anything else (a name, a
+# number, a text, a closing bracket) it divides.
+_BEFORE_REGEX = frozenset("(,=:[!&|?{};+-*%<>~^")
+_KEYWORDS = frozenset("return typeof case in of do else new delete void throw yield await instanceof".split())
+_LINE_ENDS = "\n\r\u2028\u2029"
+_FLAG = re.compile(r"[A-Za-z]*")
+_ESCAPE_PAIR = re.compile(r"\\.", re.DOTALL)
+
+
+def _regex_end(code, at, budget):
+    """Where the regular expression opened by the `/` at `at` ends (flags included) and
+    how many characters it took to see, or `(0, steps)` when the line has no closing `/`.
+    A `/` inside `[...]` or after a backslash does not close it; a line ending does not
+    continue it."""
+    i, inside = at + 1, False
+    while i < len(code) and i - at <= budget:
+        ch = code[i]
+        if ch in _LINE_ENDS:
+            break
+        if ch == "\\":
+            if i + 1 >= len(code) or code[i + 1] in _LINE_ENDS:
+                break
+            i += 2
+            continue
+        if ch == "/" and not inside:
+            return _FLAG.match(code, i + 1).end(), i - at
+        if ch == "[":
+            inside = True
+        elif ch == "]":
+            inside = False
+        i += 1
+    return 0, i - at
+
+
+def _interpolates(body):
+    """Does the body of a template hold a `${`, one not escaped by a backslash? An
+    escape and what it escapes become one mark first, so `$\\n{` is not one."""
+    return "${" in _ESCAPE_PAIR.sub("\0", body)
+
+
 def _tokens(code):
-    """A script as (kind, text) pairs: "text" for a quoted text (unescaped), "name"
-    for a word or a number, the character itself for anything else. Comments and
-    blanks are dropped. A text that is never closed ends the list: nothing after
-    it can be told."""
+    """A script as (kind, text) pairs: "text" for a quoted text (unescaped), "template"
+    for a backtick text that holds a `${` (it says nothing, its value is not its
+    letters), "regex" for a regular expression, "name" for a word or a number, the
+    character itself for anything else. Comments and blanks are dropped. A text that
+    is never closed ends the list: nothing after it can be told."""
     out, at = [], 0
+    # What the regular expressions may cost in all: a `/` that opens nothing is a
+    # division after the look, and a line of them must not be looked at once each.
+    spent, allowed = 0, 4 * len(code) + 64
     while at < len(code):
         ch = code[at]
         if ch.isspace():
@@ -174,9 +220,20 @@ def _tokens(code):
                 close += 2 if code[close] == "\\" else 1
             if close >= len(code):
                 break
-            out.append(("text", _unescape(code[at + 1:close])))
+            body = code[at + 1:close]
+            out.append(("template", "") if ch == "`" and _interpolates(body) else ("text", _unescape(body)))
             at = close + 1
         else:
+            prev = out[-1] if out else None
+            end = 0
+            if ch == "/" and (prev is None or prev[0] in _BEFORE_REGEX
+                              or prev[0] == "name" and prev[1] in _KEYWORDS):
+                end, steps = _regex_end(code, at, allowed - spent)
+                spent += steps
+            if end:
+                out.append(("regex", ""))
+                at = end
+                continue
             word = _NAME.match(code, at)
             out.append(("name", word.group()) if word else (ch, ch))
             at = word.end() if word else at + 1
@@ -185,25 +242,25 @@ def _tokens(code):
 
 def _script_arguments(code):
     """The objects a script hands to `tools.exec_command`, each as the keys at its
-    top level whose value is a text: `{key: text}`. An object never closed is not one."""
-    tokens, found = _tokens(code), []
-    for start in range(len(tokens) - len(_CALL) + 1):
-        if tuple(tokens[start:start + len(_CALL)]) != _CALL:
-            continue
-        keys, depth = {}, 0
-        for i in range(start + len(_CALL) - 1, len(tokens)):
-            kind, text = tokens[i]
-            if kind in ("{", "[", "("):
-                depth += 1
-            elif kind in ("}", "]", ")"):
-                depth -= 1
-                if depth == 0:
-                    found.append(keys)
-                    break
-            elif (depth == 1 and kind in ("name", "text") and tokens[i - 1][0] in ("{", ",")
-                  and i + 2 < len(tokens) and tokens[i + 1][0] == ":" and tokens[i + 2][0] == "text"):
-                keys[text] = tokens[i + 2][1]
-    return found
+    top level whose value is ONE text -- not a text joined to another, not a template
+    with a `${` in it -- `{key: text}`, oldest call first. An object never closed
+    is not one. The script is read once: a call nested in another call's object has
+    a frame of its own on the stack, and only the innermost open one takes a key."""
+    tokens, found, frames, depth = _tokens(code), [], [], 0
+    for i, (kind, text) in enumerate(tokens):
+        if kind in ("{", "[", "("):
+            depth += 1
+            if kind == "{" and tuple(tokens[max(i - 4, 0):i + 1]) == _CALL:
+                frames.append((depth, {}, i))
+        elif kind in ("}", "]", ")"):
+            depth -= 1
+            while frames and depth < frames[-1][0]:
+                found.append(frames.pop())
+        elif (frames and depth == frames[-1][0] and kind in ("name", "text") and tokens[i - 1][0] in ("{", ",")
+              and i + 3 < len(tokens) and tokens[i + 1][0] == ":" and tokens[i + 2][0] == "text"
+              and tokens[i + 3][0] in (",", "}")):
+            frames[-1][1][text] = tokens[i + 2][1]
+    return [keys for _, keys, _ in sorted(found, key=lambda frame: frame[2])]
 
 
 def _json_arguments(text):

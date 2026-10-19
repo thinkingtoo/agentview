@@ -369,8 +369,16 @@ class Failures(Fixture):
         self.assertEqual(self.limit("12:05 AM")["resetsAt"], 1792368300000 + 86400000)   # tomorrow, 00:05
         self.assertEqual(self.limit("12:30 PM")["resetsAt"], 1792413000000)
 
-    def test_a_reset_time_that_is_this_very_minute_is_tomorrow_s(self):
-        got = self.failure(done(ts="2026-10-19T12:00:00.000Z", message=LIMIT % "12:00 PM",
+    def test_a_reset_time_that_is_this_very_minute_is_today_s(self):
+        # Codex writes the minute, not the second: a refusal at 12:00:40 for 12:00:50 says "12:00 PM".
+        for stamp in ("12:00:00.000", "12:00:10.000", "12:00:59.900"):
+            with self.subTest(stamp=stamp):
+                got = self.failure(done(ts=f"2026-10-19T{stamp}Z", message=LIMIT % "12:00 PM",
+                                        codex_error_info="usage_limit_exceeded"))
+                self.assertEqual(got["resetsAt"], 1792411200000)
+
+    def test_a_reset_time_that_was_the_minute_before_is_tomorrow_s(self):
+        got = self.failure(done(ts="2026-10-19T12:01:10.000Z", message=LIMIT % "12:00 PM",
                                 codex_error_info="usage_limit_exceeded"))
         self.assertEqual(got["resetsAt"], 1792411200000 + 86400000)
 
@@ -661,6 +669,89 @@ class Scripts(Fixture):
                 s = self.turn(rec(T1, "response_item", type="custom_tool_call", name="exec",
                                   input=bad, call_id="c1", status="completed"))
                 self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+    # A `/` that opens a regular expression holds quotes and slashes that are not the script's.
+
+    def test_what_a_regular_expression_holds_hides_no_question(self):
+        reading = 'const r = await tools.exec_command({cmd: "cat package.json"});\n'
+        for regex in ('/"name": "([^"]+)"/', "/['\"]/g", "/^https?:\\/\\//", "/[/\"]/", "/'/gi"):
+            with self.subTest(regex=regex):
+                code = reading + f"const name = r.output.match({regex})[1];\n" + code_of("npm publish")
+                self.assertEqual(self.asked(code), ("waiting", "npm publish"))
+
+    def test_the_words_after_a_regular_expression_are_still_only_words(self):
+        code = ('const r = await tools.exec_command({cmd: "make test"});\n'
+                'const clean = r.output.replace(/"/g, "");\n'
+                'text("next: tools.exec_command({cmd: \'git push\', sandbox_permissions: \'require_escalated\'}) once tests pass");\n')
+        self.assertEqual(self.asked(code), ("busy", None))
+
+    def test_a_slash_that_divides_opens_no_regular_expression(self):
+        call = 'await tools.exec_command({cmd: "git push", sandbox_permissions: "require_escalated"});'
+        for left, right in (("a", "b"), ("(a)", "(b)"), ("xs[0]", "ys[1]"), ("4", "5"), ('"x"', '"y"')):
+            with self.subTest(left=left):
+                self.assertEqual(self.asked(f"const h = {left} / 2; {call} const k = {right} / 3;"),
+                                 ("waiting", "git push"))
+
+    def test_a_slash_with_no_closing_slash_on_its_line_is_a_division_and_no_crash(self):
+        for tail in ("const h = /\n", "const h = /abc\n", "const h = /ab\\\n/\n", "const h = /[/\n", "x = (/\n"):
+            with self.subTest(tail=tail):
+                self.assertEqual(self.asked(tail + code_of("git push")), ("waiting", "git push"))
+                self.assertEqual(self.asked(code_of("git push") + tail.rstrip("\n")), ("waiting", "git push"))
+
+    def test_slashes_opening_nothing_are_read_in_linear_time(self):
+        started = time.monotonic()
+        self.assertEqual(self.asked("require_escalated " + "/[" * 90_000), ("busy", None))
+        self.assertLess(time.monotonic() - started, 2)
+
+    # A value is one whole text, or it is not a text at all.
+
+    def test_a_command_built_from_pieces_is_no_command(self):
+        for cmd in ('"git push origin " + b', "`git push origin ${b}`", "`git ${a} push ${b}`",
+                    '"git push" + " origin"', '"git push" ? 1 : 2'):
+            with self.subTest(cmd=cmd):
+                code = f'await tools.exec_command({{cmd: {cmd}, sandbox_permissions: "require_escalated"}})'
+                self.assertEqual(self.asked(code), ("waiting", ""))
+
+    def test_a_template_that_interpolates_nothing_is_a_text(self):
+        for cmd in ("`echo \\${b}`", "`echo $ {b} \\\\\\${c}`"):
+            with self.subTest(cmd=cmd):
+                code = f'await tools.exec_command({{cmd: {cmd}, sandbox_permissions: "require_escalated"}})'
+                self.assertEqual(self.asked(code)[0], "waiting")
+                self.assertNotEqual(self.asked(code)[1], "")
+        code = 'await tools.exec_command({cmd: `git push`, sandbox_permissions: "require_escalated"})'
+        self.assertEqual(self.asked(code), ("waiting", "git push"))
+
+    def test_a_permission_built_from_pieces_is_no_request(self):
+        for how in ('"require_escalated" + ""', "`require_escalated${x}`", '"require_escalated" || "x"'):
+            with self.subTest(how=how):
+                code = f'await tools.exec_command({{cmd: "ls", sandbox_permissions: {how}}})'
+                self.assertEqual(self.asked(code), ("busy", None))
+
+    # Every call is read once, whatever is nested in it or left open.
+
+    def test_calls_left_open_cost_no_more_than_their_length(self):
+        started = time.monotonic()
+        self.assertEqual(self.asked("require_escalated " + "tools.exec_command({" * 9999), ("busy", None))
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_a_call_inside_another_call_s_object_is_read_on_its_own(self):
+        inner = 'tools.exec_command({cmd:"x", sandbox_permissions:"require_escalated"})'
+        self.assertEqual(self.asked(f'tools.exec_command({{a: {inner}, cmd:"y"}})'), ("waiting", "x"))
+        self.assertEqual(self.asked(f'tools.exec_command({{cmd:"y", a: {inner}}})'), ("waiting", "x"))
+        outer = 'tools.exec_command({cmd:"y", sandbox_permissions:"require_escalated", a: tools.exec_command({cmd:"x"})})'
+        self.assertEqual(self.asked(outer), ("waiting", "y"))
+
+    def test_a_key_of_an_object_inside_the_call_is_not_the_call_s(self):
+        code = 'tools.exec_command({cmd:"y", a: {sandbox_permissions:"require_escalated"}})'
+        self.assertEqual(self.asked(code), ("busy", None))
+
+    def test_two_calls_that_ask_show_the_first_one(self):
+        self.assertEqual(self.asked(code_of("first") + code_of("second")), ("waiting", "first"))
+
+    def test_a_call_never_closed_asks_for_nothing_whatever_follows_it(self):
+        code = 'tools.exec_command({cmd:"x", sandbox_permissions:"require_escalated"'
+        self.assertEqual(self.asked(code), ("busy", None))
+        self.assertEqual(self.asked(code + "\n" + code_of("git push")), ("waiting", "git push"))
 
 
 class Runs(Fixture):

@@ -144,6 +144,38 @@ class Folded(Base):
         out = fleet.roster(providers=[Other([starter()]), Codex([run()])])
         self.assertEqual([t["key"] for c in out["columns"] for t in c["sessions"]], ["other:s"])
 
+    def test_a_run_started_from_either_terminal_of_a_session_open_twice_is_in_its_one_tile(self):
+        # A resumed session open in two terminals is listed once per pid; the roster keeps the first row.
+        for above in ((200, 150), (200, 100)):
+            with self.subTest(above=above):
+                got = self.both([starter(pid=100), starter(pid=150)], [run(above=above)])
+                tiles = {t["key"]: t for c in got["columns"] for t in c["sessions"]}
+                self.assertEqual(list(tiles), ["claude:s"])
+                self.assertEqual(tiles["claude:s"]["movement"]["text"], "waiting on: codex review, 2 min")
+                self.assertEqual(got["counts"]["moving"], 1)
+
+    def test_of_two_rows_of_one_session_the_one_that_leads_a_track_is_the_one_that_stays(self):
+        for above in ((200, 150), (200, 100)):
+            with self.subTest(above=above):
+                got = self.both([starter(pid=100), starter(pid=150, boss=True)], [run(above=above)])
+                tiles = {t["key"]: t for c in got["columns"] for t in c["sessions"]}
+                self.assertEqual(list(tiles), ["claude:s"])
+                self.assertIn("boss", tiles["claude:s"]["tags"])
+                self.assertEqual(tiles["claude:s"]["movement"]["text"], "waiting on: codex review, 2 min")
+
+    def test_two_sessions_with_different_ids_are_not_one(self):
+        got = self.tiles([starter("a", pid=100), starter("b", pid=150)], [run(above=(200, 150))])
+        self.assertEqual(sorted(got), ["claude:a", "claude:b"])
+        self.assertEqual(got["claude:b"]["movement"]["text"], "waiting on: codex review, 2 min")
+        self.assertNotEqual(got["claude:a"]["movement"]["text"], "waiting on: codex review, 2 min")
+
+    def test_a_start_that_is_no_time_is_no_start_and_loses_nothing(self):
+        for bad in (10**400, 10**20, float("inf"), float("nan"), True, "x", -5, 0):
+            with self.subTest(start=bad):
+                got = self.tiles([starter()], [{**run(), "startedAt": bad}])
+                self.assertEqual(list(got), ["claude:s"])
+                self.assertEqual(got["claude:s"]["movement"]["text"], "waiting on: codex review, <1 min")
+
 
 class Alone(Base):
     def run_tile(self, *codex, claude=()):
