@@ -169,6 +169,16 @@ class Folded(Base):
         self.assertEqual(got["claude:b"]["movement"]["text"], "waiting on: codex review, 2 min")
         self.assertNotEqual(got["claude:a"]["movement"]["text"], "waiting on: codex review, 2 min")
 
+    def test_a_session_of_another_provider_with_the_same_id_is_not_the_same_session(self):
+        class Other(Fake):
+            name = "other"
+        out = fleet.roster(providers=[Claude([starter(pid=100)]), Other([starter(pid=150)]),
+                                      Codex([run(above=(200, 150))])])
+        tiles = {t["key"]: t for c in out["columns"] for t in c["sessions"]}
+        self.assertEqual(sorted(tiles), ["claude:s", "other:s"])
+        self.assertEqual(tiles["other:s"]["movement"]["text"], "waiting on: codex review, 2 min")
+        self.assertNotEqual(tiles["claude:s"]["movement"]["text"], "waiting on: codex review, 2 min")
+
     def test_a_start_that_is_no_time_is_no_start_and_loses_nothing(self):
         for bad in (10**400, 10**20, float("inf"), float("nan"), True, "x", -5, 0):
             with self.subTest(start=bad):

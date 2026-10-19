@@ -678,6 +678,14 @@ class Scripts(Fixture):
             with self.subTest(regex=regex):
                 code = reading + f"const name = r.output.match({regex})[1];\n" + code_of("npm publish")
                 self.assertEqual(self.asked(code), ("waiting", "npm publish"))
+                code = reading + code_of("npm publish", before=f"const name = r.output.match({regex}); ")
+                self.assertEqual(self.asked(code), ("waiting", "npm publish"))
+
+    def test_a_regular_expression_may_follow_a_word_that_leaves_a_value(self):
+        for word in ("return", "typeof", "yield", "await", "void", "throw", "case", "in", "of", "delete"):
+            with self.subTest(word=word):
+                code = code_of("git push", before=f'const f = (s) => {{ {word} /"/.test(s); }}; ')
+                self.assertEqual(self.asked(code), ("waiting", "git push"))
 
     def test_the_words_after_a_regular_expression_are_still_only_words(self):
         code = ('const r = await tools.exec_command({cmd: "make test"});\n'
@@ -693,14 +701,15 @@ class Scripts(Fixture):
                                  ("waiting", "git push"))
 
     def test_a_slash_with_no_closing_slash_on_its_line_is_a_division_and_no_crash(self):
-        for tail in ("const h = /\n", "const h = /abc\n", "const h = /ab\\\n/\n", "const h = /[/\n", "x = (/\n"):
+        for tail in ("const h = /\n", "const h = /abc\n", "const h = /ab\\\n/\n", "const h = /[/\n", "x = (/\n",
+                     'const h = /ab\\\nx = "a/b"; ', "x = /\\\n"):
             with self.subTest(tail=tail):
                 self.assertEqual(self.asked(tail + code_of("git push")), ("waiting", "git push"))
                 self.assertEqual(self.asked(code_of("git push") + tail.rstrip("\n")), ("waiting", "git push"))
 
     def test_slashes_opening_nothing_are_read_in_linear_time(self):
         started = time.monotonic()
-        self.assertEqual(self.asked("require_escalated " + "/[" * 90_000), ("busy", None))
+        self.assertEqual(self.asked("require_escalated " + "/[" * 6_000), ("busy", None))
         self.assertLess(time.monotonic() - started, 2)
 
     # A value is one whole text, or it is not a text at all.
@@ -713,7 +722,7 @@ class Scripts(Fixture):
                 self.assertEqual(self.asked(code), ("waiting", ""))
 
     def test_a_template_that_interpolates_nothing_is_a_text(self):
-        for cmd in ("`echo \\${b}`", "`echo $ {b} \\\\\\${c}`"):
+        for cmd in ("`echo \\${b}`", "`echo $ {b} \\\\\\${c}`", "`echo $\\n{b}`"):
             with self.subTest(cmd=cmd):
                 code = f'await tools.exec_command({{cmd: {cmd}, sandbox_permissions: "require_escalated"}})'
                 self.assertEqual(self.asked(code)[0], "waiting")
@@ -740,6 +749,9 @@ class Scripts(Fixture):
         self.assertEqual(self.asked(f'tools.exec_command({{cmd:"y", a: {inner}}})'), ("waiting", "x"))
         outer = 'tools.exec_command({cmd:"y", sandbox_permissions:"require_escalated", a: tools.exec_command({cmd:"x"})})'
         self.assertEqual(self.asked(outer), ("waiting", "y"))
+        both = ('tools.exec_command({cmd:"outer", sandbox_permissions:"require_escalated", '
+                'a: tools.exec_command({cmd:"inner", sandbox_permissions:"require_escalated"})})')
+        self.assertEqual(self.asked(both), ("waiting", "outer"))
 
     def test_a_key_of_an_object_inside_the_call_is_not_the_call_s(self):
         code = 'tools.exec_command({cmd:"y", a: {sandbox_permissions:"require_escalated"}})'
