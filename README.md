@@ -660,8 +660,8 @@ identity settles what an age could only estimate.
 **A read ask fills the words and does not raise the count.** Extraction can see
 a question. It cannot tell one that stops the session from one that offers to do
 more, and a tab that says `(6)` has to mean six. Every line records who wrote
-it; only a session speaking for itself joins `waiting` and `stuck` in the header
-and the tab title, and leads its block.
+it; only a session speaking for itself joins `waiting` and `stuck` in the block
+view's header and the tab title, and leads its block.
 
 **While it works, the line is the call in flight** — *Editing fleet.py*,
 *Reading 3 files*, or, for a Bash call, the description the caller already

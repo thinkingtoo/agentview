@@ -294,7 +294,9 @@
   .tile.dim { opacity:.3; }
   .tile.lit { box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent); }
   .ov-col.shrunk .tile { display:none; }
-  /* A condition of the whole machine, across the top under the header's row. */
+  /* A condition of the whole machine, across the top under the header's row.
+     The negative margin cancels the header's own 14px 20px padding, so the band
+     runs edge to edge and sits flush with the header's bottom. */
   #banners { flex:1 0 100%; margin:0 -20px -14px; }
   #banners:empty { display:none; }
   .banner { padding:6px 20px; font-size:13px; font-weight:600; overflow-wrap:anywhere;
@@ -949,7 +951,7 @@ function paint() {
   const shown = VIEW === "overview" ? filteredColumns(COLUMNS) : [];
   // A lit count that has emptied since (the question was answered) has nothing
   // left to light: it clears, rather than hide every session.
-  if (LIGHT && !(COUNTS[LIGHT] > 0)) LIGHT = "";
+  if (LIGHT && !countOf(LIGHT)) LIGHT = "";
   drawBanners();
   if (VIEW === "overview") drawHead(shown, down);
   else document.getElementById("count").innerHTML =
@@ -1006,13 +1008,17 @@ function overview(cols) {
   const x = main.scrollLeft;          // a repaint every poll must not send you back to the first column
   main.innerHTML = cols.length ? cols.map(column).join("") : nothing();
   main.scrollLeft = x;
-  main.dataset.light = LIGHT;
 }
 
 // The words of the header's three counts. The roster counts; this is only how
 // each is said, and what a click on it lights up (`counted` on a tile).
 const COUNT_WORD = { needs: n => n === 1 ? "needs you" : "need you",
                      otherStuck: () => "other stuck", moving: () => "moving" };
+
+// The count the page shows for a key: the roster's number when it is a whole
+// number above nothing, and 0 for anything else. The header and the clear-on-
+// empty both read it, so a count that prints as 0 is never one that is lit.
+const countOf = k => Number.isInteger(COUNTS[k]) && COUNTS[k] > 0 ? COUNTS[k] : 0;
 
 // The overview's header: what is on the page, then the roster's three counts,
 // each a button that lights up its sessions. A count of nothing has nothing to
@@ -1023,7 +1029,7 @@ function drawHead(cols, down) {
   const all = list => list.reduce((a, c) => a + c.sessions.length, 0);
   const total = all(cols), everyone = all(COLUMNS);
   const buttons = Object.keys(COUNT_WORD).map(k => {
-    const n = Number.isInteger(COUNTS[k]) && COUNTS[k] > 0 ? COUNTS[k] : 0;
+    const n = countOf(k);
     return `<button class="hc ${k}" data-count="${k}" aria-pressed="${LIGHT === k}" ${n ? "" : "disabled"}
       title="${n ? "light up these sessions; click again to clear" : "none"}">${n} ${COUNT_WORD[k](n)}</button>`;
   }).join(" &nbsp;·&nbsp; ");
@@ -1032,21 +1038,26 @@ function drawHead(cols, down) {
     + ` &nbsp;·&nbsp; ${buttons}${down}`;
   if (html === HEAD_SHOWN) return;
   HEAD_SHOWN = html;
+  // Rebuilding the buttons drops the focus from the one that has it, so a
+  // keyboard press (Enter to light, Enter again to clear) would stop at the
+  // first. Put it back on the button of the same count.
+  const held = document.activeElement?.closest("button.hc")?.dataset.count;
   document.getElementById("count").innerHTML = html;
+  if (held && known(COUNT_WORD, held)) document.querySelector(`#count button.hc[data-count="${held}"]`)?.focus();
 }
 
 // What is wrong with the whole machine: one band each, as the roster named it.
-// The roster is the only place this comes from, and its words are text.
-const BANNER_KIND = { disk: "disk" };
+// The roster is the only place this comes from, and its words are text. Written
+// again only when the list changed, like the header.
+let BANNERS_SHOWN = "";
 function drawBanners() {
-  const box = document.getElementById("banners");
   const list = BANNERS.filter(b => b && typeof b.text === "string" && b.text);
   const key = JSON.stringify(list);
-  if (box.dataset.shown === key) return;
-  box.dataset.shown = key;
-  box.replaceChildren(...list.map(b => {
+  if (key === BANNERS_SHOWN) return;
+  BANNERS_SHOWN = key;
+  document.getElementById("banners").replaceChildren(...list.map(b => {
     const el = document.createElement("div");
-    el.className = "banner " + (known(BANNER_KIND, b.kind) || "other");
+    el.className = "banner";
     el.textContent = b.text;
     return el;
   }));

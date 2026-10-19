@@ -72,6 +72,13 @@ The API error that is a session's last word: a Limit if it is the usage limit, a
 A kind of stuck: the session is busy and nothing shows it moving, for ten minutes (`hung_after_minutes`) counted from its last sign of life of any kind. Waiting on a subagent, a background job or a command using CPU is moving, not Hung, for the six hours such a wait counts and the ten minutes after; so is a session whose processes could not be read.
 _Avoid_: frozen, stalled, the old `stuck` flag
 
+**Header counts**:
+The three numbers at the top of the overview: sessions that need you, other stuck (an Error, a Hung or a Limit), and moving. The roster counts them and each session is in at most one, stuck winning over moving. A click on a count lights up its sessions and shrinks the columns with none to their card; a second click clears it.
+_Avoid_: alarms, busy
+
+**Banner**:
+A band across the top of the page for a condition of the whole machine, such as a full disk, rather than of one session. It comes from the roster's `banners` and nowhere else: a session or an error that talks about a full disk is not one.
+
 **Jump**:
 One click that puts the terminal showing a session in front of the person. A session at a terminal has its own pane; a background session has none, so the click opens a new tab attached to it.
 
