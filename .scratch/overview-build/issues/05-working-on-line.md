@@ -6,7 +6,9 @@
 
 **Claimed by:** Hugo 2026-10-19 18:32
 
-**Status:** in-progress
+**Status:** done
+
+Merged to origin/dev as `653a4eb`
 
 - [x] A busy session that wrote a `did` keeps showing it through its next prompt. Evidence: `tests/test_working_on.py` `KeepingTheDid.test_a_busy_session_keeps_its_last_did_through_its_next_prompt`, `test_an_idle_one_too`, `test_across_many_prompts`, `test_a_new_did_replaces_it`, `test_a_question_found_in_its_words_does_not_cost_it_the_did`; the store in `tests/test_lines.py` `Turns.test_the_last_did_outlives_the_next_prompt_though_the_line_does_not`, `test_a_did_written_before_it_was_kept_survives_its_first_prompt`; `tests/test_own_line.py` `test_where_the_work_stood_is_kept_until_a_session_says_otherwise`. The did is kept in a file of its own (`<id>.did`, `lines.kept_did`), written by `lines.write`, seeded by `begin_turn` for a line written before dids were kept, and cleaned by `forget`.
 - [x] `ask` and `n` still reset at each prompt. Evidence: `tests/test_working_on.py` `KeepingTheDid.test_ask_and_n_still_reset_at_each_prompt` (blocked and need before the prompt, neither after, the line still the did); `tests/test_own_line.py` `WhichTurn.test_what_a_session_was_stopped_on_in_a_previous_turn_is_not_shown`; opus hunts 2 and 4 drove the real hooks in session order (prompt, did, prompt, stop with and without a question) and read it back through `roster()`.
