@@ -142,6 +142,15 @@ class Moves(TrackFixtures):
         self.assertEqual(self.names(got), ["pear"])
         self.assertEqual(len(got["columns"][0]["sessions"]), 3)
 
+    def test_a_longer_cycle_of_moves_ends_too_and_every_session_has_a_place(self):
+        loom, orchard, pear = self.repo("loom"), self.repo("orchard"), self.repo("pear")
+        pear_id = "repo:example.com/alice/pear"
+        self.config = {"assign": {LOOM: ORCHARD, ORCHARD: pear_id, pear_id: LOOM}}
+        got = self.claude(sess("a", loom), sess("b", orchard), sess("c", pear))
+        self.assertEqual(self.keys(self.column(got, pear_id)), ["claude:a"])
+        self.assertEqual(self.keys(self.column(got, LOOM)), ["claude:b"])
+        self.assertEqual(self.keys(self.column(got, ORCHARD)), ["claude:c"])
+
     def test_two_projects_moved_into_each_other_swap_places_and_do_not_loop(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         self.config = {"assign": {LOOM: ORCHARD, ORCHARD: LOOM}}
@@ -501,6 +510,16 @@ class Merges(Corrected):
         self.assertEqual(self.stored()["assign"], {"folder:maple": "folder:orchard"})
         self.assertEqual(self.names(), ["orchard", "pear"])
         self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:d"])
+
+    def test_the_target_steps_into_the_place_the_source_had_among_the_pins(self):
+        self.seed(pinned=["folder:orchard", "folder:pear"])
+        self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:pear"])
+
+    def test_a_source_pinned_twice_leaves_the_target_pinned_once(self):
+        self.seed(pinned=["folder:orchard", "folder:pear", "orchard"])
+        self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:pear"])
 
     def test_merging_twice_in_a_row_carries_the_first_merge_along(self):
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
