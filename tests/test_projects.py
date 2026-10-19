@@ -11,6 +11,7 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -78,6 +79,27 @@ class Placed(Base):
         path = self.disk.joinpath(*parts)
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def pipe(self, path):
+        """A named pipe where a file is expected: opening it to read waits for
+        a writer that never comes. The cleanup is that writer, so a reader
+        left waiting by a failing test is let go."""
+        os.mkfifo(path)
+
+        def release():
+            try:
+                os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+            except OSError:
+                pass
+        self.addCleanup(release)
+
+    def answers_within(self, seconds, call):
+        """What `call()` returns, or None if it has not returned by then."""
+        got = []
+        thread = threading.Thread(target=lambda: got.append(call()), daemon=True)
+        thread.start()
+        thread.join(seconds)
+        return got[0] if got else None
 
     def names(self, got):
         return [c["name"] for c in got["columns"]]
@@ -261,6 +283,14 @@ class Tracks(TrackFixtures):
         got = self.claude(self.boss("b", loom, "checkout"),
                           sess("w", orchard, name="Mateo"))
         self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b", "claude:w"])
+
+    def test_a_tracker_that_is_a_named_pipe_is_no_roster_and_no_wait(self):
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.pipe(self.pm / "checkout.md")
+        got = self.answers_within(5, lambda: self.claude(self.boss("b", loom, "checkout"),
+                                                         sess("w", orchard, name="Mateo")))
+        self.assertIsNotNone(got, "the roster is still waiting for the tracker to be read")
+        self.assertEqual(self.keys(self.column(got, "track:checkout")), ["claude:b"])
 
     def test_a_roster_heading_may_carry_a_note_or_a_prefix_as_real_trackers_write_it(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")

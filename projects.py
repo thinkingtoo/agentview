@@ -17,6 +17,7 @@ none -- with a guess from the files it touched offered as a suggestion.
 import collections
 import os
 import re
+import stat
 from pathlib import Path
 
 from providers import claude
@@ -31,6 +32,16 @@ NO_PROJECT = {"id": "", "kind": "none", "raw": ""}
 def pm_dir():
     """Where claude-boss keeps its trackers. A function so a test can move it."""
     return claude.claude_dir() / "pm"
+
+
+def regular(path):
+    """Whether a path is a regular file, or a link to one. Reading a named pipe
+    waits for a writer that may never come, so a file that is read on every
+    poll is looked at first."""
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except OSError:
+        return False
 
 
 def _project(prefix, key, raw):
@@ -297,7 +308,10 @@ def _roster_names(track):
     if not TRACK_NAME.match(track):
         return set()
     try:
-        with open(pm_dir() / f"{track}.md", encoding="utf-8", errors="replace") as fh:
+        path = pm_dir() / f"{track}.md"
+        if not regular(path):
+            return set()
+        with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read(TRACKER_READ)
     except OSError:
         return set()

@@ -69,7 +69,7 @@ def guess(rows):
 
 # ------------------------------------------------------------ reading markdown
 
-FENCE = re.compile(r"^\s*(```|~~~)")
+FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 # The rest of a heading line is taken whole and its closing marks are cut in
 # Python: a pattern that tries to find them itself backtracks cubically on a
 # line of many spaces, and this runs on every poll.
@@ -94,17 +94,21 @@ LINK = re.compile(r"\[([^\]]*)\]" + POINTS_TO)
 IMAGE = re.compile(r"!\[[^\]]*\]" + POINTS_TO)
 BOLD = re.compile(r"(\*\*|__)(.+?)\1")
 CODE = re.compile(r"`([^`]+)`")
-# Tags that only format a word: they go, their text stays. Any other tag
-# is left as it was written, and the page prints it as text.
-FORMATTING = re.compile(r"</?(a|abbr|b|big|br|cite|code|del|em|font|i|ins|kbd|mark|s|small|span|strike|strong"
-                        r"|sub|sup|u)\b[^<>]*>", re.IGNORECASE)
+# Tags that only format a word: they go, their text stays. An image says
+# nothing here, as `![]()` does. Any other tag is left as it was written, and
+# the page prints it as text.
+FORMATTING = re.compile(r"</?(a|abbr|b|big|br|cite|code|del|em|font|i|img|ins|kbd|mark|s|small|span|strike"
+                        r"|strong|sub|sup|u)\b[^<>]*>", re.IGNORECASE)
 HTML_LINK = re.compile(r"<a\b[^<>]*>[^<]*</a>", re.IGNORECASE)
 READ = 100_000       # a goal or a README is read this far, no further
 
 
 def read(path):
-    """The start of a text file, or "" when it cannot be read."""
+    """The start of a text file, or "" when it is no regular file or cannot be
+    read: a named pipe would wait for a writer that may never come."""
     try:
+        if not projects.regular(path):
+            return ""
         with open(path, encoding="utf-8-sig", errors="replace") as fh:
             return fh.read(READ)
     except OSError:
@@ -113,15 +117,23 @@ def read(path):
 
 def unfenced(text):
     """The lines of a markdown text that are not inside a code fence. A fence
-    reads as a blank line, so it ends the paragraph before it."""
+    reads as a blank line, so it ends the paragraph before it. It opens with
+    three or more backticks or tildes, and a backtick one has no backtick in
+    the rest of its line (that is inline code, not a fence). It closes on the
+    same mark, at least as many of it, and nothing after."""
     fence = None
     for line in text.splitlines():
         marker = FENCE.match(line)
-        if marker:
-            fence = marker.group(1) if fence is None else (None if marker.group(1) == fence else fence)
+        if fence is None:
+            if marker and not (marker.group(1)[0] == "`" and "`" in marker.group(2)):
+                fence = marker.group(1)
+                yield ""
+            else:
+                yield line
+        elif (marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence)
+              and not marker.group(2).strip()):
+            fence = None
             yield ""
-        elif fence is None:
-            yield line
 
 
 def heading_text(heading):
@@ -247,13 +259,16 @@ NOT_PROSE = re.compile(r"^(\s{4,}|\t|[-*+]\s|\d+[.)]\s|\||>)")
 INTERRUPTS = re.compile(r"^\s{0,3}([-*+]\s|1[.)]\s|>)")
 TAGS = re.compile(r"<[^>]*>")
 # A line that opens an HTML block, which runs to the next blank line and is
-# skipped whole: a block-level tag, a linked image, or a line that is one
-# tag and nothing else.
+# skipped whole: a block-level tag, or a line that is one tag and nothing else
+# (an image on its own line is one). An image in a line of text is not.
 BLOCK_TAGS = ("address|article|aside|blockquote|center|dd|details|dialog|div|dl|dt|fieldset|figcaption|figure|"
-              "footer|form|h[1-6]|header|hr|iframe|img|li|main|menu|nav|ol|p|picture|pre|script|section|style|"
+              "footer|form|h[1-6]|header|hr|iframe|li|main|menu|nav|ol|p|picture|pre|script|section|style|"
               "summary|table|tbody|td|th|thead|tr|ul|video")
-HTML_BLOCK = re.compile(rf"^\s{{0,3}}(?:</?(?:{BLOCK_TAGS})(?:[\s/>]|$)|<a\b[^<>]*>\s*<img\b|<[A-Za-z][^<>]*>\s*$)",
-                        re.IGNORECASE)
+HTML_BLOCK = re.compile(rf"^\s{{0,3}}(?:</?(?:{BLOCK_TAGS})(?:[\s/>]|$)|<[A-Za-z][^<>]*>\s*$)", re.IGNORECASE)
+# Between the items of a row: a bar, a dot, a slash, a comma, a spaced dash,
+# or what follows a colon.
+ITEM_BREAK = re.compile(r"\s*[|·•/,;]\s*|\s+[-–—]\s+|(?<=:)\s+")
+LINK_MARK = ""
 # README, then the instructions for agents, then Claude's own: AGENTS.md is
 # the file a project writes about itself, CLAUDE.md often only includes it.
 DESCRIBED_BY = (("readme.md", "readme.markdown", "readme.txt", "readme"),
@@ -293,13 +308,22 @@ def prose(par):
             break
     par = [line for line in par if not (INCLUDE.match(line) or REFERENCE.match(line)
                                         or RULE.match(line))]
+    table = next((i for i, line in enumerate(par) if table_delimiter(line)), None)
+    if table is not None:                           # the row above the dashes is the table's header
+        par = par[:max(table - 1, 0)]
     if not par or HEADING.match(par[0]) or NOT_PROSE.match(par[0]) or HTML_BLOCK.match(par[0]):
         return ""
     par = par[:next((i for i, line in enumerate(par)
                      if i and (INTERRUPTS.match(line) or HTML_BLOCK.match(line))), len(par))]
     raw = " ".join(par)[:PARAGRAPH_MAX]
     text = plain(raw)
-    return "" if bare_tag(text) or not has_words(raw) else text
+    return "" if bare_tag(text) or not has_words(raw) or link_row(raw) else text
+
+
+def table_delimiter(line):
+    """The row of dashes between a table's header and its body: bars, dashes
+    and colons, and nothing else."""
+    return "|" in line and "-" in line and re.fullmatch(r"[\s|:-]+", line) is not None
 
 
 def has_words(raw):
@@ -307,6 +331,29 @@ def has_words(raw):
     like a row of badges or the switcher between a README's languages."""
     rest = HTML_LINK.sub("", LINK.sub("", IMAGE.sub("", raw)))
     return re.search(r"\w", TAGS.sub("", rest)) is not None
+
+
+def link_row(raw):
+    """Whether markdown is a row of links, like the switcher between a README's
+    languages with the current one in plain text. Its items are links, a word
+    or three of plain text (the language), or a lead-in ending with a colon;
+    the plain ones are no more than the links, and none is a sentence. A link
+    inside a sentence makes it prose. (A row with no link and no words is
+    `has_words`' to say.)"""
+    marked = HTML_LINK.sub(LINK_MARK, LINK.sub(LINK_MARK, IMAGE.sub("", raw)))
+    links = plain_items = 0
+    for item in map(squash, ITEM_BREAK.split(re.sub(r"[*_]+", "", TAGS.sub("", marked)))):
+        linked = LINK_MARK in item
+        worded = re.search(r"\w", item) is not None
+        if linked and worded:
+            return False
+        if linked:
+            links += item.count(LINK_MARK)
+        elif worded:
+            plain_items += 1
+            if not (item.endswith(":") or (len(item.split()) <= 3 and not item.endswith((".", "!", "?")))):
+                return False
+    return plain_items <= links
 
 
 def first_prose(text):

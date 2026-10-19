@@ -47,6 +47,8 @@ class Names(TrackFixtures):
 FOLDER = "/home/alice/Projects/orchard"      # no repository there: a project by the folder rule
 EARLY, MIDDLE, LATE = 1790000000000, 1790000100000, 1790000200000
 HOSTILE = "<img src=x onerror=alert(1)>"     # R7: every text reaches the page as text
+# In a README or a goal an <img> is an image and, like `![]()`, says nothing; this tag is kept as text.
+HOSTILE_IN_A_FILE = "<svg onload=alert(1)>"
 
 
 class Cards(TrackFixtures):
@@ -198,8 +200,9 @@ class Tracks(Cards):
         self.assertEqual(self.track(nogoal=True)["context"]["source"], "guess")
 
     def test_markup_in_the_outcome_is_kept_as_the_text_it_is(self):
-        got = self.track(outcome=f"Pay with {HOSTILE} cards. Then done.")["context"]
-        self.assertEqual((got["line"], got["full"]), (f"Pay with {HOSTILE} cards.", f"Pay with {HOSTILE} cards. Then done."))
+        hostile = HOSTILE_IN_A_FILE
+        got = self.track(outcome=f"Pay with {hostile} cards. Then done.")["context"]
+        self.assertEqual((got["line"], got["full"]), (f"Pay with {hostile} cards.", f"Pay with {hostile} cards. Then done."))
 
     def test_your_line_beats_the_goal(self):
         self.config = {"project_lines": {"track:checkout": "Mine"}}
@@ -282,6 +285,30 @@ class Tracks(Cards):
         for outcome in ("<div>Customers pay.</div>", "<p align=\"center\">\nCustomers pay.\n</p>"):
             with self.subTest(outcome=outcome):
                 self.assertEqual(self.track(outcome=outcome)["context"]["source"], "guess")
+
+    def test_an_image_tag_in_the_outcome_is_not_a_block_and_not_text(self):
+        for outcome, line in (('<img src="logo.svg" width="32"> Customers pay with a saved card.',
+                               "Customers pay with a saved card."),
+                              ('Customers pay with a saved <img src="card.png" /> card.',
+                               "Customers pay with a saved card.")):
+            with self.subTest(outcome=outcome):
+                got = self.track(outcome=outcome)["context"]
+                self.assertEqual((got["source"], got["line"]), ("goal", line))
+        self.assertEqual(self.track(outcome='<img src="logo.svg"> <img src="b.svg">')["context"]["source"], "guess")
+
+    def test_a_goal_that_is_a_named_pipe_is_no_goal_and_no_wait(self):
+        loom = self.loom
+        self.pipe(self.pm / "checkout.goal.md")
+        got = self.answers_within(5, lambda: self.claude(self.boss("b", loom, "checkout")))
+        self.assertIsNotNone(got, "the roster is still waiting for the goal to be read")
+        column = got["columns"][0]
+        self.assertEqual((column["context"]["source"], column["track"]["progress"]), ("guess", None))
+
+    def test_a_fence_in_the_boxes_ends_only_where_its_own_closing_mark_is(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n## Outcome\nCustomers pay.\n\n## Done when\n- [x] one\n"
+            "````md\n```\n- [ ] inside\n```\n- [ ] still inside\n````\n- [ ] two\n")
+        self.assertEqual(self.track(nogoal=True)["track"]["progress"]["text"], "1 of 2")
 
     def test_a_heading_of_marks_alone_before_the_outcome_does_not_stop_the_goal_being_read(self):
         (self.pm / "checkout.goal.md").write_text(
@@ -455,12 +482,12 @@ class Repositories(Cards):
         self.assertEqual(self.line()["line"], "Claude-only notes for the shop tooling.")
 
     def test_markup_in_the_readme_or_the_instructions_is_kept_as_the_text_it_is(self):
-        text = f"Prints {HOSTILE} reports.\n"
+        text = f"Prints {HOSTILE_IN_A_FILE} reports.\n"
         for name in ("README.md", "AGENTS.md", "CLAUDE.md"):
             for old in ("README.md", "AGENTS.md", "CLAUDE.md"):
                 (self.loom / old).unlink(missing_ok=True)
             self.put(name, text)
-            self.assertEqual(self.line()["line"], f"Prints {HOSTILE} reports.", name)
+            self.assertEqual(self.line()["line"], f"Prints {HOSTILE_IN_A_FILE} reports.", name)
 
     def test_a_comment_that_never_closes_ends_the_text_and_costs_nothing(self):
         self.put("README.md", "Prints reports.\n\n" + "<!-- note\n" * 20000)
@@ -511,10 +538,20 @@ class Repositories(Cards):
                               "<div>\n  <img src=\"logo.png\">\n</div>\nMore about the logo.\n\n"
                               "<img src=\"a.png\"> <img src=\"b.png\">\n\n"
                               "<a href=\"x\"><img src=\"y.png\"></a>\n\n"
-                              "<a href=\"x\"><img src=\"y.png\"> Loom</a> prints reports.\n\n"
+                              "<img src=\"logo.png\" width=\"100\">\nThe logo's caption.\n\n"
                               "<banner-note class=\"x\">\nPrints reports.\n\n"
                               "Second paragraph.\n")
         self.assertEqual(self.line()["line"], "Second paragraph.")
+
+    def test_an_image_tag_in_a_line_of_text_is_not_a_block_and_not_text(self):
+        for text, line in (('<img src="logo.svg" width="32"> **loom** prints reports for the shop.',
+                            "loom prints reports for the shop."),
+                           ('<a href="x"><img src="y.png"> Loom</a> prints reports.', "Loom prints reports."),
+                           ('Loom <img src="y.png" /> prints reports.', "Loom prints reports."),
+                           ('Loom prints reports.\n<img src="logo.png">', "Loom prints reports.")):
+            with self.subTest(text=text):
+                self.put("README.md", f"{text}\n\n## Install\n\nRun `make`.\n")
+                self.assertEqual(self.line()["line"], line)
 
     def test_an_html_block_ends_the_paragraph_before_it(self):
         self.put("README.md", "Prints reports for the shop.\n<div>\n  <img src=\"logo.png\">\n</div>\n")
@@ -535,9 +572,71 @@ class Repositories(Cards):
                 self.put("README.md", f"# loom\n\n{row}\n\nPrints reports for the shop.\n")
                 self.assertEqual(self.line()["line"], "Prints reports for the shop.")
 
+    def test_a_switcher_between_languages_is_a_row_of_links_with_the_current_one_in_plain_text(self):
+        rows = ["English | [简体中文](README.zh-CN.md)",
+                "**English** · [Español](README.es.md) · [日本語](README.ja.md)",
+                "Read this in other languages: [English](README.md), [Español](README.es.md)",
+                "\U0001f310 [English](README.md) | Français | [Deutsch](README.de.md)",
+                "[English](README.md) - Português do Brasil",
+                "<a href=\"README.md\">English</a> | Français",
+                "__[English](README.md)__ | **[Español](README.es.md)**",
+                "<span class=\"now\" id=\"en\" title=\"This one\">English</span> | [Español](README.es.md)",
+                "English | [![ci](c.svg)](https://ci.example) | [Español](README.es.md)"]
+        for row in rows:
+            with self.subTest(row=row):
+                self.put("README.md", f"# loom\n\n{row}\n\nA tiny tool that prints reports.\n")
+                self.assertEqual(self.line()["line"], "A tiny tool that prints reports.")
+
     def test_a_sentence_with_a_link_in_it_is_still_prose(self):
         self.put("README.md", "[Loom](https://loom.example) prints reports for the shop.\n")
         self.assertEqual(self.line()["line"], "Loom prints reports for the shop.")
+        for text, line in (("[Loom](x) is a tool.", "Loom is a tool."),
+                           ("Loom, a tool for [reports](x), prints reports.", "Loom, a tool for reports, prints reports."),
+                           ("Loom is [fast](x) and [small](y)", "Loom is fast and small"),
+                           ("Run [Loom](x) today.", "Run Loom today."),
+                           ("Fast, small, [free](x)", "Fast, small, free"),
+                           ("Loom prints reports. | [Docs](x)", "Loom prints reports. | Docs"),
+                           ("Loom prints reports for shops | [Docs](x)", "Loom prints reports for shops | Docs")):
+            with self.subTest(text=text):
+                self.put("README.md", f"{text}\n")
+                self.assertEqual(self.line()["line"], line)
+
+    def test_a_table_ends_the_paragraph_before_it_and_none_of_it_is_in_the_line(self):
+        for table in ("| Format | Flag |\n|---|---|\n| CSV | --csv |",
+                      "Format | Flag\n--- | ---\nCSV | --csv",
+                      "| Format | Flag |\n|:--|--:|\n| CSV | --csv |",
+                      "|Format|\n|-|\n|CSV|"):
+            with self.subTest(table=table):
+                self.put("README.md", f"A tiny tool that prints reports in these formats:\n{table}\n")
+                self.assertEqual(self.line()["line"], "A tiny tool that prints reports in these formats:")
+                self.put("README.md", f"{table}\n\nThen some prose.\n")
+                self.assertEqual(self.line()["line"], "Then some prose.")
+
+    def test_pipes_in_a_sentence_are_text_while_no_row_under_it_is_a_delimiter(self):
+        for text, line in (("Loom prints reports | invoices | receipts.", "Loom prints reports | invoices | receipts."),
+                           ("Loom prints reports | invoices - receipts.\nAnd more.",
+                            "Loom prints reports | invoices - receipts. And more."),
+                           ("Loom prints reports\n- -\nand more.", "Loom prints reports"),
+                           ("Loom prints reports\n| |\nand more.", "Loom prints reports | | and more.")):
+            with self.subTest(text=text):
+                self.put("README.md", f"{text}\n")
+                self.assertEqual(self.line()["line"], line)
+
+    def test_a_fence_is_closed_by_the_same_mark_and_at_least_as_many_of_it(self):
+        for fenced in ("````md\n```python\nprint('hi')\n```\n````",
+                       "~~~~\n~~~\ncode\n~~~~",
+                       "```\n~~~\ncode\n```",
+                       "~~~\n```\ncode\n~~~",
+                       "~~~ js `x`\ncode\n~~~",
+                       "```\ncode\n``` still code\nmore code\n```"):
+            with self.subTest(fenced=fenced):
+                self.put("README.md", f"# mdfmt\n\n{fenced}\n\nmdfmt formats markdown files.\n")
+                self.assertEqual(self.line()["line"], "mdfmt formats markdown files.")
+
+    def test_a_line_that_starts_with_inline_triple_backticks_is_text_and_not_a_fence(self):
+        self.put("README.md", "# tool\n\n```npm i tool``` installs it.\n\nA tool that formats reports.\n\n"
+                              "## Usage\n\n```sh\ntool run --all\n```\n")
+        self.assertEqual(self.line()["line"], "npm i tool installs it.")
 
     def test_markup_in_a_code_span_is_code_and_not_markup(self):
         for text, line in (("Expands `<!-- include: a.md -->` directives in Markdown files.",
