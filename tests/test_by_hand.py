@@ -651,6 +651,37 @@ class OneNameTwoCards(Corrected):
                                                   "shown": self.shown})[0], 200)
         self.assertEqual(self.stored()["pinned"], ["track:maple", "folder:orchard"])
 
+    def test_a_click_on_another_card_leaves_the_plain_pin_as_the_block_view_wrote_it(self):
+        # One card carries the plain pin: there is nothing to tell apart, and
+        # the block view (and a same-named project with no session yet) still
+        # needs the plain name.
+        self.seed(pinned=["maple"])
+        self.assertEqual(self.pin("folder:orchard", shown=["folder:maple"])[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["maple", "folder:orchard"])
+        self.assertEqual([b["project"] for b in self.poll()["blocks"] if b["pinned"]], ["maple"])
+
+    def test_a_click_on_a_third_card_leaves_two_cards_that_share_a_pin_where_they_are(self):
+        self.seed(pinned=["maple", "track:maple"], assign={"fake:c": "track:maple"})
+        shown = ["track:maple", "folder:maple"]
+        self.assertEqual(self.order(), ["track:maple", "folder:maple", "folder:orchard"])
+        self.pin("folder:orchard", shown=shown)
+        self.assertEqual(self.stored()["pinned"], ["maple", "track:maple", "folder:orchard"])
+        self.assertEqual(self.order(), ["track:maple", "folder:maple", "folder:orchard"])
+
+    def test_the_arrow_swaps_two_cards_that_share_a_pin_when_one_is_also_pinned_by_identity(self):
+        # The block view can leave `["maple", "track:maple"]`: the page shows both cards
+        # at the place of the first pin.
+        self.seed(pinned=["maple", "folder:orchard", "track:maple"], assign={"fake:c": "track:maple"})
+        self.assertEqual(self.order(), ["track:maple", "folder:maple", "folder:orchard"])
+        self.pin("track:maple", "swap", **{"with": "folder:maple", "shown": self.shown})
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "track:maple", "folder:orchard"])
+        self.assertEqual(self.order(), ["folder:maple", "track:maple", "folder:orchard"])
+
+    def test_a_merge_of_one_of_two_cards_that_share_a_pin_puts_the_target_where_the_page_shows_it(self):
+        self.seed(pinned=["maple", "folder:orchard", "track:maple"], assign={"fake:c": "track:maple"})
+        self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard", "shown": self.shown})
+        self.assertEqual(self.stored()["pinned"], ["track:maple", "folder:orchard"])
+
     def test_a_pin_that_names_nobody_on_the_page_stays_as_written(self):
         self.seed(pinned=["maple", "gone"], assign={"fake:c": "track:maple"})
         self.pin("folder:maple", "unpin", shown=["track:maple", "folder:maple"])

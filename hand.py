@@ -45,22 +45,39 @@ def _shown(shown):
     return shown
 
 
-def _spread(pinned, shown):
+def _spread(pinned, shown, touched):
     """A pin written by plain name, from before projects had identities (the
     block view still writes them), pins every project that carries the name --
     a track and a folder can share one. Where the page shows more than one of
-    them, the pin is written out as one pin each, in the order the page shows
-    them, so that each can be moved, unpinned or merged on its own."""
+    them and one is the project being corrected (`touched`), the pin is written
+    out as one pin each, in the order the page shows them, so that each can be
+    moved, unpinned or merged on its own. Any other plain pin is left as it is:
+    the block view and a project with no session yet still read the name.
+
+    A card the plain pin held keeps its place when it is also pinned by identity
+    further on: the page shows it at the first of its pins."""
     shown = [(ident, got) for ident in shown if (got := projects.from_identity(ident))]
-    out = []
+    touched = [got for ident in touched if isinstance(ident, str) and (got := projects.from_identity(ident))]
+    out, spread = [], False
     for pin in pinned:
-        mine = [ident for ident, got in shown if projects.from_identity(pin) is None
-                and projects.is_pin_of(pin, got)] if isinstance(pin, str) else []
-        if not mine:
-            out.append(pin)
+        mine = []
+        if isinstance(pin, str) and projects.from_identity(pin) is None:
+            mine = list(dict.fromkeys(ident for ident, got in shown if projects.is_pin_of(pin, got)))
+        if len(mine) > 1 and any(projects.is_pin_of(pin, got) for got in touched):
+            out.extend(mine)
+            spread = True
         else:
-            out.extend(i for i in mine if i not in out and i not in pinned)
-    return out
+            out.append(pin)
+    if not spread:
+        return pinned
+    seen, once = set(), []
+    for pin in out:
+        if isinstance(pin, str) and projects.from_identity(pin):
+            if pin in seen:
+                continue
+            seen.add(pin)
+        once.append(pin)
+    return once
 
 
 def put(config, field, key, value):
@@ -115,7 +132,7 @@ def pin(config, project, action, other=None, shown=None):
     project nobody is working in. `shown` is the pinned projects the page
     shows, in order: it is what tells apart two that share a pin by plain name."""
     mine = _named(project)
-    pinned = _spread(_pins(config), _shown(shown))
+    pinned = _spread(_pins(config), _shown(shown), [project, other])
     at = projects.pin_rank(mine, pinned)
     if action == "pin":
         if at is None:
@@ -156,7 +173,7 @@ def merge(config, source, target, shown=None):
     assign[source] = target
     config["assign"] = {k: v for k, v in assign.items() if k != v}
 
-    pinned, out = _spread(_pins(config), shown), []
+    pinned, out = _spread(_pins(config), shown, [source, target]), []
     had = projects.pin_rank(kept, pinned) is not None
     for p in pinned:
         if projects.is_pin_of(p, gone) and not projects.is_pin_of(p, kept):
