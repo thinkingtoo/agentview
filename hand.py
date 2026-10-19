@@ -18,6 +18,12 @@ class Refused(ValueError):
     """The request cannot mean anything; the route answers 400 with the reason."""
 
 
+class Stale(Refused):
+    """The request is about a card as the page drew it, and another tab has
+    changed it since; the route answers 409 and nothing is written. The page
+    reads the roster again and the person clicks on what is there now."""
+
+
 def _named(ident, what="project"):
     got = projects.from_identity(ident) if isinstance(ident, str) else None
     if got is None:
@@ -92,63 +98,54 @@ def rename(config, project, label):
     raw name, even when a rename from before projects had identities (keyed by
     the plain name) would otherwise show through again."""
     label = label.strip()
+    _current(config, project)
     put(config, "names", project, label)
     named = projects.from_identity(project)
     if not label and named and named["raw"] in _table(config, "names"):
         config["names"][project] = named["raw"]
 
 
-def _unring(config, key, target):
-    """A tab that is behind can ask to move `key` into a project that was
-    already moved into `key` -- directly, or through others: the page has never
-    written a ring of moves, and a ring puts every click aimed at one card in
-    another. The move made first is turned around: the entry that leads into
-    `key` goes, so both end where `target` ends. A merge does the same before it
-    rewrites what was moved into the project it absorbs."""
-    assign = _table(config, "assign")
-    here, seen = target, set()
-    while here not in seen:
-        seen.add(here)
-        value = assign.get(here)
-        value = value.strip() if isinstance(value, str) else ""
-        if value == key:
-            del assign[here]
-            config["assign"] = assign
-            return
-        if not value:
-            return
-        here = value
+def _moved_to(config, project):
+    """The project this one was moved into -- merged into, or moved as a whole --
+    or None when it is its own card. What the page writes is one step deep: a
+    project that took others is itself never moved without them going with it."""
+    value = _table(config, "assign").get(project)
+    value = value.strip() if isinstance(value, str) else ""
+    return value if value != project and projects.from_identity(value) else None
 
 
-def _lands(config, project):
-    """Where a project you moved away has gone: the project it was moved into,
-    and that one's, to the end of the way. A tab that is behind can still offer
-    a project another tab has merged away; what is merged into it is merged
-    into where it went, so that its pin and its name for it follow its sessions
-    to the card that holds them."""
-    assign = _table(config, "assign")
-    seen = {project}
-    while True:
-        value = assign.get(project)
-        value = value.strip() if isinstance(value, str) else ""
-        if value in seen or not projects.from_identity(value):
-            return project
-        seen.add(value)
-        project = value
+def _current(config, *named):
+    """Every project a request names must still be a card. One that was moved
+    away since the page was drawn (another tab merged it) is not: whatever the
+    request would do to it lands on a project with no card, or on nothing, or
+    -- an arrow, a pin -- against what the click said. All of it is refused,
+    here, once, for every route. A name that is not a project's identity (a
+    session's key, a block view's plain name) is not looked at."""
+    for ident in named:
+        if isinstance(ident, str) and projects.from_identity(ident) and _moved_to(config, ident):
+            raise Stale("changed in another tab")
 
 
-def move(config, key, target):
+def move(config, key, target, was=None):
     """Move a session (its key) or a whole track or repository (its identity)
     into a project. An empty target puts it back where it belongs. A move of a
     project holds for the sessions it will have: it is what the person wanted
-    of the project, not of the sessions it has today."""
+    of the project, not of the sessions it has today.
+
+    `was` is where the page saw `key` moved to, for the way back from a card
+    (`includes X . undo`): if X is not there any more, it is not that move the
+    person is taking back."""
     if not isinstance(key, str) or not key:
         raise Refused("expected the key of a session or the identity of a project")
+    if was is not None and not isinstance(was, str):
+        raise Refused("was must name the project it was moved into")
     target = target.strip()
     if target == key:
         raise Refused("a project cannot be moved into itself")
+    if was is not None and _moved_to(config, key) != was.strip():
+        raise Stale("changed in another tab")
     if target:
-        _unring(config, key, target)
+        _current(config, key, target)
     put(config, "assign", key, target)
 
 
@@ -161,34 +158,72 @@ def set_order(config, pinned, shown=None):
     if not isinstance(pinned, list) or not all(isinstance(p, str) for p in pinned):
         raise Refused("expected {pinned: [project, ...]}")
     shown = _shown(shown)
+    _current(config, *pinned)
     kept = [p for p in _pins(config)
             if isinstance(p, str) and projects.from_identity(p) and p not in pinned and p not in shown]
     config["pinned"] = pinned + kept
 
 
-def pin(config, project, action, other=None, shown=None):
+def _beside(pinned, shown, project, other, side):
+    """Whether `project` and `other` are still in the order the arrow was drawn
+    for: `side` is where the click puts `project`, after `other` or before it,
+    so it has to be on the other side of it now. And no card the page showed has
+    come between them since: the page's neighbours are the cards it shows, so
+    those it showed between the two (a filter hides some) may still be there and
+    no others. A pin the page did not show -- a project nobody is working in --
+    is not a card, and the swap goes past it."""
+    rank = lambda got: projects.pin_rank(got, pinned)
+    at, to = rank(project), rank(other)
+    if at is None or to is None or (at < to) != (side == "after"):
+        return False
+    cards = [(ident, got) for ident in shown if (got := projects.from_identity(ident))]
+    order = [got for _, got in cards]
+    if project not in order or other not in order:
+        return True
+    first, last = sorted((order.index(project), order.index(other)))
+    saw = [ident for ident, _ in cards[first + 1:last]]
+    lo, hi = sorted((at, to))
+    now = sorted(((ident, rank(got)) for ident, got in cards if rank(got) is not None and lo < rank(got) < hi),
+                 key=lambda pair: pair[1])
+    return saw == [ident for ident, _ in now]
+
+
+def pin(config, project, action, other=None, shown=None, side=None):
     """`pin` puts a project last among the pinned, `unpin` takes it out, `swap`
     changes places with another pinned project -- the one beside it on the
     page, which is not the one beside it in the list when a pin names a
     project nobody is working in. `shown` is the pinned projects the page
-    shows, in order: it is what tells apart two that share a pin by plain name."""
+    shows, in order: it is what tells apart two that share a pin by plain name.
+
+    A swap says which way it goes (`side`, the arrow's own word: before or
+    after `other`). A tab that is behind sends the same arrow again after
+    another has made the move, and a swap alone would undo it: it is refused
+    unless the two are still in the order the arrow was drawn for."""
     mine = _named(project)
-    pinned = _spread(_pins(config), _shown(shown), [project, other])
+    shown = _shown(shown)
+    if action not in ("pin", "unpin", "swap"):
+        raise Refused("action must be pin, unpin or swap")
+    theirs = None
+    if action == "swap":
+        theirs = _named(other, "the project to swap with")
+        if other == project:
+            raise Refused("a project cannot swap places with itself")
+        if side not in (None, "before", "after"):
+            raise Refused("side must be before or after")
+    _current(config, project, other if action == "swap" else None)
+    pinned = _spread(_pins(config), shown, [project, other])
     at = projects.pin_rank(mine, pinned)
     if action == "pin":
         if at is None:
             pinned.append(project)
     elif action == "unpin":
         pinned = [p for p in pinned if not projects.is_pin_of(p, mine)]
-    elif action == "swap":
-        theirs = _named(other, "the project to swap with")
-        if other == project:
-            raise Refused("a project cannot swap places with itself")
+    else:
+        if side and not _beside(pinned, shown, mine, theirs, side):
+            raise Stale("changed in another tab")
         to = projects.pin_rank(theirs, pinned)
         if at is not None and to is not None and at != to:
             pinned[at], pinned[to] = pinned[to], pinned[at]
-    else:
-        raise Refused("action must be pin, unpin or swap")
     config["pinned"] = pinned
 
 
@@ -199,19 +234,17 @@ def merge(config, source, target, shown=None):
     pinned, its context line. Its name goes: the target keeps its own.
 
     No project is left moved into `source`, so one absorbed twice over, or one
-    that was itself the target of an earlier merge, ends in one place. A target
-    that was merged away since the page was drawn (another tab) is not the one
-    merged into: its sessions are in the project it went to, so that is. A session
-    you moved there is left as you moved it: it follows the project, and taking
-    the merge back puts it where you had put it.
+    that was itself the target of an earlier merge, ends in one place. Neither
+    project may have been merged away since the page was drawn (another tab):
+    that is refused, so no ring of moves can be closed from a tab that is behind.
+    A session you moved there is left as you moved it: it follows the project,
+    and taking the merge back puts it where you had put it.
     """
     gone, kept = _named(source, "source"), _named(target, "target")
     if source == target:
         raise Refused("a project cannot be merged into itself")
     shown = _shown(shown)
-    _unring(config, source, target)
-    target = _lands(config, target)
-    kept = _named(target, "target")
+    _current(config, source, target)
     assign = _table(config, "assign")
     for key, value in assign.items():
         if isinstance(value, str) and value.strip() == source and projects.from_identity(key):

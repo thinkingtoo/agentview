@@ -63,14 +63,20 @@ undo`); a session you had moved into the absorbed project goes back there, its
 pin, name and line do not. The page tells `/api/pin`, `/api/merge` and
 `/api/order` which cards or blocks it shows (`shown`), because a pin written by
 plain name can hold two cards and a session moved by hand is a block of its own
-in the block view, and only the page knows which is which. The page never
-writes a ring of moves (two projects moved into each other): a move or a merge
-that a tab which is behind asks for the other way round from one already made,
-or round a longer way through others, turns that one around; a merge into a
-project that another tab has merged away since goes where that one went, with
-the pin. A ring written into `config.json` by hand is not
-supported: it neither crashes nor loops, and every session still has a card,
-but the cards swap places and a click aimed at one card can land in another.
+in the block view, and only the page knows which is which. A click is about
+the cards as the page drew them, and another tab may have changed them since.
+A request that names a project which has been moved away since (merged into
+another: its card is gone) is refused with 409 and
+nothing is written, whichever it is: a pin, an unpin, an arrow, a rename, a
+move or the guess chip, a merge, the block view's order. The page reads the
+roster again and says "changed in another tab, refreshed". An arrow also says
+which way it goes (`side`, before or after the neighbour it names) and is
+refused unless the two are still in that order with no card the page showed
+between them; the undo of a merge says which card it was shown in (`was`).
+So the page never writes a ring of moves, stale tabs included. A ring written
+into `config.json` by hand is not supported: it neither crashes nor loops, and
+every session still has a card, but the cards swap places and a click aimed at
+one card can land in another.
 
 The page this README describes below is still there as the **block view**, at
 `/?view=blocks` (a link in the header goes each way). Fold,

@@ -27,6 +27,8 @@ Nothing here reaches a real session, and nothing here can launch anything:
     It clicks the by-hand controls and reads that config back, then restarts
     the server on it. Only that temp dir is written, and it is removed; the
     page may reach nothing but that server.
+  * `stale_pass` starts a server of the same kind and holds some of its own tabs
+    back, to click on cards another tab has since merged away or moved.
   * The config file given is only read: its hash is taken before and after.
 
 Playwright is needed (`pip install playwright`); the chromium it drives must
@@ -245,6 +247,8 @@ class Fake:
         self.posts = []        # (path, body) for every POST the page made
         self.stray = []        # anything the routes do not know
         self.answer = {}       # path -> the reply to give instead of {"ok": true}
+        self.status = {}       # path -> the HTTP status to give instead of 200 (nothing is applied then)
+        self.polls = 0         # how many times the page read /api/roster
         self.hold = False      # keep /api/jump unanswered, in `held`, until the test answers it
         self.held = []
 
@@ -323,10 +327,11 @@ class Fake:
     def handle(self, route):
         req = route.request
         url = urllib.parse.urlsplit(req.url)
-        json_ = lambda data: route.fulfill(status=200, content_type="application/json", body=json.dumps(data))
+        json_ = lambda data, status=200: route.fulfill(status=status, content_type="application/json", body=json.dumps(data))
         if req.method == "GET" and url.path in ("/", "/index.html"):
             route.fulfill(status=200, content_type="text/html; charset=utf-8", body=PAGE)
         elif req.method == "GET" and url.path == "/api/roster":
+            self.polls += 1
             json_(self.body)
         elif req.method == "GET" and url.path == "/api/search":
             json_(self.found)
@@ -336,11 +341,13 @@ class Fake:
             body = json.loads(req.post_data or "{}")
             self.posts.append((url.path, body))
             posted.append(body)
-            self.apply(url.path, body)
+            status = self.status.get(url.path, 200)
+            if status == 200:
+                self.apply(url.path, body)
             if self.hold and url.path == "/api/jump":
                 self.held.append(route)
                 return
-            json_(self.answer.get(url.path, {"ok": True, "did": "opened", "changed": False}))
+            json_(self.answer.get(url.path, {"ok": True, "did": "opened", "changed": False}), status)
         else:
             self.stray.append(f"{req.method} {req.url}")
             route.abort()
@@ -1228,7 +1235,7 @@ def hand_pass(browser):
     page.wait_for_function("() => document.querySelector('.ov-col').dataset.project === 'folder:orchard'")
     check("an arrow swaps with the neighbour it points at, named by identity",
           posts("/api/pin")[-1] == {"project": "folder:maple", "action": "swap", "with": "folder:orchard",
-                                    "shown": ["folder:maple", "folder:orchard"]}
+                                    "side": "after", "shown": ["folder:maple", "folder:orchard"]}
           and order()[:2] == ["folder:orchard", "folder:maple"], posts("/api/pin")[-1])
 
     col("folder:orchard").locator(".ov-pin").click()
@@ -1279,8 +1286,8 @@ def hand_pass(browser):
           col("folder:maple").locator(".ov-merged").count())
     col("folder:maple").locator(".ov-merged button").click()
     page.wait_for_function("() => !document.querySelector('.ov-merged')")
-    check("undo moves the absorbed project into nothing, by identity",
-          posts("/api/assign") == [{"key": "folder:orchard", "project": ""}], posts("/api/assign"))
+    check("undo moves the absorbed project into nothing, by identity, and says which card it was in",
+          posts("/api/assign") == [{"key": "folder:orchard", "project": "", "was": "folder:maple"}], posts("/api/assign"))
     fake.posts[:] = [x for x in fake.posts if x[0] != "/api/assign"]
 
     # Move one session.
@@ -1308,6 +1315,30 @@ def hand_pass(browser):
     moved.locator(".clear").click()
     page.wait_for_timeout(300)
     check("the way back sends an empty project", posts("/api/assign")[-1] == {"key": "m2", "project": ""}, posts("/api/assign"))
+
+    # A refusal (409): another tab changed the card, nothing was written. The page reads
+    # the roster again and says so in one short line that stays; it does not say "not done".
+    stamp = lambda: page.locator("#stamp").inner_text()
+    logged = len(errors)
+    for label, path, act in (("a click on a card's pin", "/api/pin", lambda: col("folder:pear").locator(".ov-pin").click()),
+                             ("a rename by its field", "/api/name", None)):
+        fake.status[path] = 409
+        polls = fake.polls
+        if act:
+            act()
+        else:
+            open_editor(page, col("folder:pear").locator(".ov-name"))
+            page.locator("input.inline").fill("Pear 2")
+            page.keyboard.press("Enter")
+        page.wait_for_function("() => document.getElementById('stamp').textContent === 'changed in another tab, refreshed'")
+        check(f"409 on {label}: the roster is read again and the line says so", fake.polls > polls and "not done" not in stamp(), stamp())
+        check(f"409 on {label}: nothing was applied", not col("folder:pear").locator(".ov-pin.on").count()
+              and col("folder:pear").locator(".ov-name").inner_text() == BOMB, stamp())
+        fake.status.clear()
+    # Chromium logs each HTTP 409 as a console error: these two are the ones asked for, and no others.
+    refused = [e for e in errors[logged:] if "status of 409" in e]
+    errors[logged:] = [e for e in errors[logged:] if e not in refused]
+    check("409: the console line Chromium logs for each of the two refusals, and nothing else", len(refused) == 2, refused)
     check("hand: nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()
 
@@ -1344,6 +1375,125 @@ def picker_pass(browser):
     page.close()
 
 
+def start_hand_server(root, procs):
+    """`tests/hand_server.py` on a port the system picks, state under `root`; its pid is proven with `ss`."""
+    env = {**os.environ, "XDG_STATE_HOME": str(root / "state"), "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.Popen([sys.executable, str(HERE / "hand_server.py"), str(root)],
+                            stdout=subprocess.PIPE, text=True, env=env)
+    procs.append(proc)
+    port = int(proc.stdout.readline().split()[1])
+    held = subprocess.run(["ss", "-ltnp", f"sport = :{port}"], capture_output=True, text=True).stdout
+    check("e2e: the listener on the test port is the server just started", f"pid={proc.pid}," in held and port != 8765,
+          held.strip())
+    return proc, port
+
+
+def open_hand_page(browser, port, refusals=None):
+    """A page that may reach nothing but the test server on `port`. Chromium logs every
+    HTTP 409 as a console error; a pass that makes some on purpose passes a list to collect them."""
+    page = browser.new_page(viewport={"width": 1700, "height": 2400})
+    page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+    page.on("console", lambda m: (refusals.append(m.text) if refusals is not None and "status of 409" in m.text
+                                  else errors.append(f"console: {m.text}")) if m.type == "error" else None)
+    page.on("dialog", lambda d: (errors.append(f"dialog: {d.message}"), d.dismiss()))
+    page.route("**/*", lambda r: r.continue_() if r.request.url.startswith(f"http://127.0.0.1:{port}/")
+               else r.abort())
+    page.goto(f"http://127.0.0.1:{port}/", wait_until="load")
+    page.wait_for_selector(".ov-col")
+    return page
+
+
+def hold_back(page):
+    """Make a tab stale, as a picker left open does: from now on it is served the roster it
+    already has, until the first thing it POSTs -- then the real one again, for the page's
+    own refresh after a refusal."""
+    body = page.evaluate("fetch('/api/roster', {cache: 'no-store'}).then(r => r.text())")
+    state = {"posted": False}
+    page.on("request", lambda r: state.update(posted=True) if r.method == "POST" else None)
+    page.route("**/api/roster", lambda route: route.continue_() if state["posted"]
+               else route.fulfill(status=200, content_type="application/json", body=body))
+
+
+def stale_pass(browser):
+    """Two or three tabs on one real server, some of them behind: a tab clicks on a card
+    another tab has since changed, the two routes hunt 6 found. The server must refuse,
+    change nothing, and the page must read again and say so."""
+    root = pathlib.Path(tempfile.mkdtemp(prefix="stale-"))
+    cfg = root / "config.json"
+    procs = []
+    stored = lambda: json.loads(cfg.read_text())
+    line = "changed in another tab, refreshed"
+    try:
+        proc, port = start_hand_server(root, procs)
+        refused = []        # Chromium's own console line for each 409 this pass provokes
+        a, b, c = (open_hand_page(browser, port, refused) for _ in range(3))
+        col = lambda page, p: page.locator(f'.ov-col[data-project="{p}"]')
+        order = lambda page: page.locator(".ov-col").evaluate_all("els => els.map(e => e.dataset.project)")
+        wait_order = lambda page, want: page.wait_for_function(
+            "want => [...document.querySelectorAll('.ov-col')].map(e => e.dataset.project).join() === want.join()",
+            arg=want, timeout=8000)
+        def wait_for(cond):
+            for _ in range(80):
+                if cond():
+                    return
+                a.wait_for_timeout(100)
+        said = lambda page: page.locator("#stamp").inner_text()
+
+        # Hunt 6, finding 2: both tabs show maple, orchard and both click the arrow on maple.
+        for p in ("folder:maple", "folder:orchard"):
+            col(a, p).locator(".ov-pin").click()
+            wait_for(lambda p=p: p in stored().get("pinned", []))
+        b.wait_for_function("() => document.querySelectorAll('.ov-head.pinned').length === 2")
+        hold_back(b)
+        col(a, "folder:maple").locator(".ov-arrow").click()
+        wait_for(lambda: stored()["pinned"] == ["folder:orchard", "folder:maple"])
+        check("stale: tab b still shows what it showed, maple before orchard",
+              order(b)[:2] == ["folder:maple", "folder:orchard"], order(b))
+        col(b, "folder:maple").locator(".ov-arrow").click()
+        b.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
+        wait_order(b, ["folder:orchard", "folder:maple", "folder:pear"])
+        check("stale: the same arrow clicked in a tab that was behind does not undo the first",
+              stored()["pinned"] == ["folder:orchard", "folder:maple"] and order(a) == order(b), stored())
+
+        # Hunt 6, finding 1: orchard and pear merged into maple while b and c still show them.
+        wait_order(c, ["folder:orchard", "folder:maple", "folder:pear"])
+        hold_back(b)
+        hold_back(c)
+        for p in ("folder:orchard", "folder:pear"):
+            col(a, p).hover()
+            col(a, p).locator(".ov-merge").click()
+            a.locator("select.pick").select_option("folder:maple")
+            a.locator(".ov-form button", has_text="merge").click()
+            wait_for(lambda p=p: p in stored().get("assign", {}))
+        wait_order(a, ["folder:maple"])
+        done = stored()
+        check("stale: both merges are in the config, and maple took orchard's place among the pins",
+              done["assign"] == {"folder:orchard": "folder:maple", "folder:pear": "folder:maple"}
+              and done["pinned"] == ["folder:maple"], done)
+        check("stale: tabs b and c still show the cards that are gone", "folder:orchard" in order(b) and "folder:pear" in order(c),
+              (order(b), order(c)))
+        col(b, "folder:orchard").locator(".ov-pin").click()      # the star it still shows lit
+        b.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
+        wait_order(b, ["folder:maple"])
+        check("stale: the star of a card another tab merged away does not unpin the card that took its pin",
+              stored() == done and col(b, "folder:maple").locator(".ov-pin.on").count() == 1, stored())
+        col(c, "folder:pear").locator(".ov-pin").click()          # the star it still shows unlit
+        c.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
+        wait_order(c, ["folder:maple"])
+        check("stale: nor does one pin a project with no card",
+              stored() == done and "not done" not in said(c), stored())
+        check("stale: and the line says what happened, calmly", said(c) == line and said(b) == line, (said(b), said(c)))
+        check("stale: three clicks, three refusals, nothing else refused", len(refused) == 3, refused)
+        for page in (a, b, c):
+            page.close()
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(10)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def e2e_pass(browser):
     """The same clicks against a real server: fake sessions, a config of its own,
     on a port the system picked. What the page does must be in the config file
@@ -1352,27 +1502,8 @@ def e2e_pass(browser):
     cfg = root / "config.json"
     procs = []
 
-    def start():
-        env = {**os.environ, "XDG_STATE_HOME": str(root / "state"), "PYTHONDONTWRITEBYTECODE": "1"}
-        proc = subprocess.Popen([sys.executable, str(HERE / "hand_server.py"), str(root)],
-                                stdout=subprocess.PIPE, text=True, env=env)
-        procs.append(proc)
-        port = int(proc.stdout.readline().split()[1])
-        held = subprocess.run(["ss", "-ltnp", f"sport = :{port}"], capture_output=True, text=True).stdout
-        check("e2e: the listener on the test port is the server just started", f"pid={proc.pid}," in held and port != 8765,
-              held.strip())
-        return proc, port
-
-    def look(port):
-        page = browser.new_page(viewport={"width": 1700, "height": 2400})
-        page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
-        page.on("console", lambda m: errors.append(f"console: {m.text}") if m.type == "error" else None)
-        page.on("dialog", lambda d: (errors.append(f"dialog: {d.message}"), d.dismiss()))
-        page.route("**/*", lambda r: r.continue_() if r.request.url.startswith(f"http://127.0.0.1:{port}/")
-                   else r.abort())
-        page.goto(f"http://127.0.0.1:{port}/", wait_until="load")
-        page.wait_for_selector(".ov-col")
-        return page
+    start = lambda: start_hand_server(root, procs)
+    look = lambda port: open_hand_page(browser, port)
 
     stored = lambda: json.loads(cfg.read_text())
     try:
@@ -1480,6 +1611,7 @@ def main():
         hand_pass(browser)
         picker_pass(browser)
         e2e_pass(browser)
+        stale_pass(browser)
         suggestion_pass(browser)
         jump_pass(browser)
         for view in ("overview", "blocks"):

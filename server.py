@@ -369,20 +369,24 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400, "expected {key, project}")
         # Empty puts it back where its directory says it belongs. A key that
         # names a project (`track:x`, `repo:…`) moves the whole project.
-        self._correct(lambda config: hand.move(config, key, project), project=project.strip())
+        self._correct(lambda config: hand.move(config, key, project, body.get("was")), project=project.strip())
 
     def _pin(self, body):
         self._correct(lambda config: hand.pin(config, body.get("project"), body.get("action"),
-                                              body.get("with"), body.get("shown")))
+                                              body.get("with"), body.get("shown"), body.get("side")))
 
     def _merge(self, body):
         self._correct(lambda config: hand.merge(config, body.get("source"), body.get("target"), body.get("shown")))
 
     def _correct(self, change, **answer):
         """Make one correction to config.json -- alone, whatever else is being
-        written -- or say why it makes no sense and change nothing."""
+        written -- or say why it makes no sense and change nothing. A request
+        about a card another tab has changed since the page was drawn is 409:
+        the page reads the roster again."""
         try:
             fleet.update_config(change)
+        except hand.Stale as why:
+            return self.send_error(409, str(why))
         except hand.Refused as why:
             return self.send_error(400, str(why))
         self._send(json.dumps({"ok": True, **answer}), "application/json")

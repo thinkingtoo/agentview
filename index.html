@@ -920,8 +920,14 @@ function paint() {
   } else {
     overview(filteredColumns(COLUMNS));
   }
-  document.getElementById("stamp").textContent =
-    "updated " + new Date().toLocaleTimeString();
+  document.getElementById("stamp").textContent = stampText();
+}
+
+// The line over the header: when the roster was read, or -- for a few seconds
+// after a refusal -- what happened, so that the next poll does not wipe it.
+let NOTE = null;
+function stampText() {
+  return NOTE && Date.now() < NOTE.until ? NOTE.text : "updated " + new Date().toLocaleTimeString();
 }
 
 function nothing() {
@@ -986,7 +992,7 @@ function headOf(c) {
   // The neighbours are the cards on the page, not those a filter has hidden.
   const pins = SHOWN.filter(x => x.pinned);
   const at = pins.findIndex(x => x.project === c.project);
-  const arrow = (to, glyph, word) => to ? `<button class="ov-arrow" data-act="swap" data-with="${esc(to.project)}"
+  const arrow = (to, glyph, word) => to ? `<button class="ov-arrow" data-act="swap" data-with="${esc(to.project)}" data-side="${word}"
       title="${word} of ${esc(to.name)}" aria-label="${word} of ${esc(to.name)}">${glyph}</button>` : "";
   return `<div class="ov-top">
     <span class="ov-name edit" data-edit="name" title="${esc(c.raw)}: click to rename">${esc(c.name)}</span>
@@ -1282,11 +1288,12 @@ document.getElementById("main").addEventListener("click", ev => {
         : kind === "assign"
           ? { key: sid, project: input.value }
           : { key: sid, text: input.value };
-      await fetch(endpoint, {
+      const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Fleet": "1" },
         body: JSON.stringify(body),
       });
+      if (await changedElsewhere(r)) return;
     }
     load();
   };
@@ -1376,11 +1383,12 @@ main.addEventListener("drop", async ev => {
   // Dropping pins everything above and including the drop point: the ones
   // you have deliberately placed are exactly the ones that should stop moving.
   const pinned = order.slice(0, Math.max(to, from) + 1);
-  await fetch("/api/order", {
+  const r = await fetch("/api/order", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: JSON.stringify({ pinned, shown: order }),
   });
+  if (await changedElsewhere(r)) return;
   load();
 });
 
@@ -1405,11 +1413,12 @@ main.addEventListener("click", async ev => {
   // Read the pinned set off the page rather than off a variable the last
   // refresh happened to fill: clicking straight after a drop must still work.
   const current = [...main.querySelectorAll(".block.pinned")].map(b => b.dataset.project);
-  await fetch("/api/order", {
+  const r = await fetch("/api/order", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: JSON.stringify({ pinned: current.filter(p => p !== holder.dataset.project), shown: PAINTED }),
   });
+  if (await changedElsewhere(r)) return;
   load();
 });
 
@@ -1423,8 +1432,19 @@ async function correct(path, body) {
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: JSON.stringify(body),
   });
+  if (await changedElsewhere(r)) return;
   if (!r.ok) document.getElementById("stamp").textContent = "not done: " + (r.statusText || r.status);
   load();
+}
+
+// 409: another tab changed the card this page drew, so nothing was written.
+// Read the roster again and say so, calmly: the line holds for a few seconds.
+async function changedElsewhere(r) {
+  if (r.status !== 409) return false;
+  NOTE = { text: "changed in another tab, refreshed", until: Date.now() + 6000 };
+  await load();
+  document.getElementById("stamp").textContent = stampText();
+  return true;
 }
 
 // Other projects you can put something in, named so two with one name differ:
@@ -1495,8 +1515,10 @@ document.getElementById("main").addEventListener("click", async ev => {
   // by plain name can hold two cards, and only the page knows which is which.
   const shown = COLUMNS.filter(c => c.pinned).map(c => c.project);
   if (what === "pin" || what === "unpin") return correct("/api/pin", { project, action: what, shown });
-  if (what === "swap") return correct("/api/pin", { project, action: "swap", with: act.dataset.with, shown });
-  if (what === "unmerge") return correct("/api/assign", { key: act.dataset.from, project: "" });
+  // The arrow says which way it goes and the undo says where it saw the project,
+  // so that the same click from a tab that is behind is refused, not repeated.
+  if (what === "swap") return correct("/api/pin", { project, action: "swap", with: act.dataset.with, side: act.dataset.side, shown });
+  if (what === "unmerge") return correct("/api/assign", { key: act.dataset.from, project: "", was: project });
   if (what === "merge-form") {
     picker(col.querySelector(".ov-head"), `merge all of it into
         <select class="pick" aria-label="merge into">

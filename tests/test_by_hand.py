@@ -536,12 +536,13 @@ class Merges(Corrected):
         self.assertEqual(got["names"], {"folder:maple": "Maple tree"})
         self.assertEqual(got["project_lines"], {"folder:maple": "Syrup"})
 
-    def test_merging_a_project_into_one_that_was_merged_into_it_turns_the_move_around(self):
+    def test_merging_a_project_into_one_that_was_merged_into_it_is_refused_not_looped(self):
+        # The picker never offers orchard once it is merged away: only a tab that is behind asks.
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
-        self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
-        self.assertEqual(self.stored()["assign"], {"folder:maple": "folder:orchard"})
-        self.assertEqual(self.names(), ["orchard", "pear"])
-        self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:d"])
+        self.assertEqual(self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})[0], 409)
+        self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:maple"})
+        self.assertEqual(self.names(), ["maple", "pear"])
+        self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:d"])
 
     def test_the_target_steps_into_the_place_the_source_had_among_the_pins(self):
         self.seed(pinned=["folder:orchard", "folder:pear"])
@@ -749,57 +750,48 @@ class MovedByRoute(Corrected):
 
 
 class TwoTabs(Corrected):
-    """A tab that has not caught up asks for a move the other way round from one
-    already made. The page can never write a ring of moves, so the second move
-    turns the first around, the way a merge does, instead of closing a ring that
-    would put every click aimed at one card into the other."""
+    """A tab that has not caught up asks for something another tab has already
+    undone. The page can never write a ring of moves, and a request that names a
+    project another tab moved away is refused (StaleTabs), so no ring can be
+    closed from a tab that is behind."""
 
-    def test_moving_a_project_into_one_that_was_moved_into_it_turns_the_move_around(self):
+    def test_moving_a_project_into_one_that_was_moved_into_it_is_refused(self):
         self.seed(assign={"folder:orchard": "folder:maple"})        # the other tab's move
-        self.assertEqual(self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})[0], 200)
-        self.assertEqual(self.stored()["assign"], {"folder:maple": "folder:orchard"})
-        self.assertEqual(self.names(), ["orchard", "pear"])
-        self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:d"])
-        self.assertEqual(self.column("folder:orchard")["merged"],
-                         [{"project": "folder:maple", "name": "maple"}])
+        self.assertEqual(self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})[0], 409)
+        self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:maple"})
+        self.assertEqual(self.names(), ["maple", "pear"])
+        self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:d"])
 
-    def test_the_chip_and_the_picker_of_the_card_it_landed_in_still_land_there(self):
+    def test_the_chip_and_the_picker_of_the_card_it_landed_in_land_there(self):
         # What the ring broke: a click aimed at a card put the session in the other one.
         self.seed(assign={"folder:orchard": "folder:maple"})
         self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})
-        self.post("/api/assign", {"key": "fake:c", "project": "folder:orchard"})
-        self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
+        self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:c", "fake:d"])
 
-    def test_the_move_turns_around_a_ring_of_three_as_well(self):
+    def test_a_move_round_a_ring_of_three_is_refused_as_well(self):
         # pear into maple (one tab), orchard into pear (another), maple into orchard (a third that is behind).
         self.seed(assign={"folder:pear": "folder:maple", "folder:orchard": "folder:pear"})
-        self.assertEqual(self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})[0], 200)
-        self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:pear", "folder:maple": "folder:orchard"})
-        self.assertEqual(self.names(), ["pear"])
-        self.assertEqual(self.keys("folder:pear"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+        self.assertEqual(self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})[0], 409)
+        self.assertEqual(self.stored()["assign"], {"folder:pear": "folder:maple", "folder:orchard": "folder:pear"})
+        self.assertEqual(self.names(), ["maple"])
 
     def test_a_merge_from_a_tab_that_is_behind_does_not_close_a_ring_of_three_either(self):
         # orchard into maple (one tab), pear into orchard (another); then maple merged into pear.
         self.seed(assign={"folder:orchard": "folder:maple", "folder:pear": "folder:orchard"})
-        self.assertEqual(self.post("/api/merge", {"source": "folder:maple", "target": "folder:pear"})[0], 200)
-        self.assertEqual(self.stored()["assign"], {"folder:pear": "folder:orchard", "folder:maple": "folder:orchard"})
-        self.assertEqual(self.names(), ["orchard"])
-        self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+        self.assertEqual(self.post("/api/merge", {"source": "folder:maple", "target": "folder:pear"})[0], 409)
+        self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:maple", "folder:pear": "folder:orchard"})
 
-    def test_a_merge_into_a_project_another_tab_merged_away_goes_where_that_one_went(self):
+    def test_a_merge_into_a_project_another_tab_merged_away_is_refused_and_the_pin_stays(self):
         # Hunt 5: pear is pinned; one tab merges orchard into maple; the other, whose
-        # picker still offers orchard, merges pear into it. Pear's pin must follow
-        # its sessions to the card that holds them, and that card must name pear.
+        # picker still offers orchard, merges pear into it.
         self.seed(pinned=["folder:pear"])
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
-        self.assertEqual(self.post("/api/merge", {"source": "folder:pear", "target": "folder:orchard"})[0], 200)
-        got = self.stored()
-        self.assertEqual(got["assign"], {"folder:orchard": "folder:maple", "folder:pear": "folder:maple"})
-        self.assertEqual(got["pinned"], ["folder:maple"])
-        self.assertEqual(self.names(), ["maple"])
-        self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:c", "fake:d"])
-        self.assertEqual(sorted(m["project"] for m in self.column("folder:maple")["merged"]),
-                         ["folder:orchard", "folder:pear"])
+        after = self.stored()
+        self.assertEqual(self.post("/api/merge", {"source": "folder:pear", "target": "folder:orchard"})[0], 409)
+        self.assertEqual(self.stored(), after)
+        self.assertEqual(after["pinned"], ["folder:pear"])
+        self.assertEqual(self.names(), ["pear", "maple"])
 
     def test_the_same_two_merges_in_the_other_order_end_in_the_same_place(self):
         self.seed(pinned=["folder:pear"])
@@ -809,27 +801,180 @@ class TwoTabs(Corrected):
         self.assertEqual(got["assign"], {"folder:orchard": "folder:maple", "folder:pear": "folder:maple"})
         self.assertEqual(got["pinned"], ["folder:maple"])
 
-    def test_a_merge_into_a_project_moved_through_two_others_goes_to_the_end_of_the_way(self):
+    def test_a_merge_into_a_project_moved_through_two_others_is_refused(self):
         self.fake._sessions.append(minimal(id="e", name="Kasper", cwd="/home/alice/Projects/plum"))
         self.seed(pinned=["folder:plum"], assign={"folder:orchard": "folder:maple", "folder:maple": "folder:pear"})
-        self.assertEqual(self.post("/api/merge", {"source": "folder:plum", "target": "folder:orchard"})[0], 200)
-        got = self.stored()
-        self.assertEqual(got["assign"]["folder:plum"], "folder:pear")
-        self.assertEqual(got["pinned"], ["folder:pear"])
-        self.assertEqual(self.names(), ["pear"])
-        self.assertIn("folder:plum", [m["project"] for m in self.column("folder:pear")["merged"]])
+        self.assertEqual(self.post("/api/merge", {"source": "folder:plum", "target": "folder:orchard"})[0], 409)
+        self.assertEqual(self.post("/api/merge", {"source": "folder:plum", "target": "folder:maple"})[0], 409)
+        self.assertEqual(self.post("/api/merge", {"source": "folder:plum", "target": "folder:pear"})[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["folder:pear"])
 
     def test_a_move_that_closes_no_ring_leaves_the_other_moves_as_they_are(self):
         self.seed(assign={"folder:orchard": "folder:pear", "fake:c": "folder:maple"})
-        self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})
+        self.assertEqual(self.post("/api/assign", {"key": "folder:maple", "project": "folder:pear"})[0], 200)
         self.assertEqual(self.stored()["assign"],
-                         {"folder:orchard": "folder:pear", "fake:c": "folder:maple", "folder:maple": "folder:orchard"})
+                         {"folder:orchard": "folder:pear", "fake:c": "folder:maple", "folder:maple": "folder:pear"})
 
     def test_taking_a_move_back_and_moving_a_session_never_touch_the_other_moves(self):
         self.seed(assign={"folder:orchard": "folder:maple"})
-        self.post("/api/assign", {"key": "fake:c", "project": "folder:orchard"})
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
         self.post("/api/assign", {"key": "folder:pear", "project": ""})
-        self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:maple", "fake:c": "folder:orchard"})
+        self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:maple", "fake:c": "folder:maple"})
+
+
+class StaleTabs(Corrected):
+    """Hunts 4, 5 and 6 each found a tab that is behind acting on a card another
+    tab had merged away. One rule closes the family: a request that names a
+    project which has been moved away since the page was drawn is refused with
+    409 and changes nothing; the page reads the roster again. The first tab's
+    merge of orchard into maple is the config every test starts from."""
+
+    MERGED = {"assign": {"folder:orchard": "folder:maple"}}
+
+    def refused(self, path, body, **config):
+        self.seed(**{**self.MERGED, **config})
+        before = self.stored()
+        self.assertEqual(self.post(path, body)[0], 409, body)
+        self.assertEqual(self.stored(), before, body)
+        return before
+
+    def test_pin_and_unpin_of_a_card_that_was_merged_away_are_refused(self):
+        self.refused("/api/pin", {"project": "folder:orchard", "action": "pin"})
+        self.refused("/api/pin", {"project": "folder:orchard", "action": "unpin"}, pinned=["folder:maple"])
+
+    def test_the_star_of_a_card_another_tab_merged_away_pins_nothing(self):
+        # Hunt 6, finding 1, through the routes: tab A merges, tab B (picker open, poll paused) clicks the star.
+        self.assertEqual(self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})[0], 200)
+        after = self.stored()
+        self.assertEqual(self.pin("folder:orchard", shown=[])[0], 409)
+        self.assertEqual(self.stored(), after)
+        self.assertEqual([c["name"] for c in self.columns() if c["pinned"]], [])
+
+    def test_the_star_of_a_merged_away_card_does_not_unpin_the_card_that_took_the_pin(self):
+        self.seed(pinned=["folder:orchard"])
+        self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
+        self.assertEqual(self.stored()["pinned"], ["folder:maple"])
+        self.assertEqual(self.pin("folder:orchard", "unpin", shown=["folder:orchard"])[0], 409)
+        self.assertEqual(self.stored()["pinned"], ["folder:maple"])
+        self.assertTrue(self.column("folder:maple")["pinned"])
+
+    def test_an_arrow_names_a_card_that_was_merged_away_on_either_side(self):
+        pins = ["folder:pear", "folder:maple"]
+        self.refused("/api/pin", {"project": "folder:orchard", "action": "swap", "with": "folder:pear"}, pinned=pins)
+        self.refused("/api/pin", {"project": "folder:pear", "action": "swap", "with": "folder:orchard"}, pinned=pins)
+        self.refused("/api/pin", {"project": "folder:pear", "action": "swap", "with": "folder:orchard",
+                                  "side": "after"}, pinned=pins)
+
+    def test_rename_of_a_card_that_was_merged_away_is_refused(self):
+        self.refused("/api/name", {"project": "folder:orchard", "label": "Orchard 2"})
+
+    def test_a_move_names_a_project_that_was_merged_away_as_target_or_as_the_thing_moved(self):
+        # The chip, the picker on a tile and the inline "assign" all send {key: session, project: target}.
+        self.refused("/api/assign", {"key": "fake:c", "project": "folder:orchard"})
+        self.refused("/api/assign", {"key": "folder:orchard", "project": "folder:pear"})
+        self.refused("/api/assign", {"key": "folder:pear", "project": "folder:orchard"})
+
+    def test_a_merge_names_a_project_that_was_merged_away_as_source_or_as_target(self):
+        self.refused("/api/merge", {"source": "folder:orchard", "target": "folder:pear"})
+        self.refused("/api/merge", {"source": "folder:pear", "target": "folder:orchard"})
+
+    def test_the_block_views_order_names_a_project_that_was_merged_away(self):
+        self.refused("/api/order", {"pinned": ["folder:pear", "folder:orchard"], "shown": []})
+
+    def test_a_line_names_a_session_not_a_project_and_is_not_held_back(self):
+        self.seed(**self.MERGED)
+        # fake:b was in the merged-away card; its line is its own.
+        self.assertEqual(self.post("/api/line", {"key": "fake:b", "text": "Picking"})[0], 200)
+        self.assertEqual(self.stored()["lines"], {"fake:b": "Picking"})
+
+    def test_a_current_card_is_not_refused_by_anything_here(self):
+        self.seed(**self.MERGED)
+        for path, body in (("/api/pin", {"project": "folder:maple", "action": "pin"}),
+                           ("/api/name", {"project": "folder:maple", "label": "Maple tree"}),
+                           ("/api/assign", {"key": "fake:c", "project": "folder:maple"}),
+                           ("/api/merge", {"source": "folder:pear", "target": "folder:maple"}),
+                           ("/api/order", {"pinned": ["folder:maple"], "shown": []}),
+                           ("/api/pin", {"project": "folder:maple", "action": "unpin"})):
+            self.assertEqual(self.post(path, body)[0], 200, body)
+
+    def test_undoing_a_merge_checks_the_card_it_was_shown_in(self):
+        # The undo button sits in the card that took the project; if the project has since been
+        # put somewhere else, it is not that merge the tab is undoing.
+        self.seed(assign={"folder:orchard": "folder:pear"})
+        before = self.stored()
+        self.assertEqual(self.post("/api/assign", {"key": "folder:orchard", "project": "", "was": "folder:maple"})[0], 409)
+        self.assertEqual(self.stored(), before)
+        self.assertEqual(self.post("/api/assign", {"key": "folder:orchard", "project": "", "was": "folder:pear"})[0], 200)
+        self.assertEqual(self.stored()["assign"], {})
+        # a second click on the same button, from a tab that did not see the first
+        self.assertEqual(self.post("/api/assign", {"key": "folder:orchard", "project": "", "was": "folder:pear"})[0], 409)
+        # callers that say nothing about where it was keep working
+        self.seed(**self.MERGED)
+        self.assertEqual(self.post("/api/assign", {"key": "folder:orchard", "project": ""})[0], 200)
+        self.assertEqual(self.post("/api/assign", {"key": "folder:orchard", "project": "", "was": 7})[0], 400)
+
+    def test_an_arrow_clicked_in_two_tabs_moves_the_card_once(self):
+        # Hunt 6, finding 2: both tabs showed maple, orchard and both clicked the "after" arrow on maple.
+        self.seed(pinned=["folder:maple", "folder:orchard"])
+        body = {"with": "folder:orchard", "side": "after", "shown": ["folder:maple", "folder:orchard"]}
+        self.assertEqual(self.pin("folder:maple", "swap", **body)[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["folder:orchard", "folder:maple"])
+        self.assertEqual(self.pin("folder:maple", "swap", **body)[0], 409)
+        self.assertEqual(self.stored()["pinned"], ["folder:orchard", "folder:maple"])
+        # and the mirror: the "before" arrow on the card now second
+        body = {"with": "folder:orchard", "side": "before", "shown": ["folder:orchard", "folder:maple"]}
+        self.assertEqual(self.pin("folder:maple", "swap", **body)[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:orchard"])
+        self.assertEqual(self.pin("folder:maple", "swap", **body)[0], 409)
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:orchard"])
+
+    def test_an_arrow_for_a_pair_that_is_no_longer_pinned_is_refused(self):
+        for pinned in ([], ["folder:maple"], ["folder:orchard"]):
+            self.seed(pinned=pinned)
+            self.assertEqual(self.pin("folder:maple", "swap", **{"with": "folder:orchard", "side": "after",
+                                                                  "shown": ["folder:maple", "folder:orchard"]})[0], 409, pinned)
+            self.assertEqual(self.stored()["pinned"], pinned)
+
+    def test_an_arrow_is_refused_when_a_card_the_page_showed_has_come_between_the_two(self):
+        # The page showed maple, pear, orchard; another tab has put orchard between maple and pear.
+        self.seed(pinned=["folder:maple", "folder:orchard", "folder:pear"])
+        body = {"with": "folder:pear", "side": "after", "shown": ["folder:maple", "folder:pear", "folder:orchard"]}
+        self.assertEqual(self.pin("folder:maple", "swap", **body)[0], 409)
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:orchard", "folder:pear"])
+
+    def test_an_arrow_skips_a_card_a_filter_hides_between_the_two(self):
+        # The page's own neighbours are the cards it shows; one a filter hides is still in `shown`, in place.
+        self.seed(pinned=["folder:maple", "folder:orchard", "folder:pear"])
+        body = {"with": "folder:pear", "side": "after", "shown": ["folder:maple", "folder:orchard", "folder:pear"]}
+        self.assertEqual(self.pin("folder:maple", "swap", **body)[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["folder:pear", "folder:orchard", "folder:maple"])
+
+    def test_an_arrow_still_skips_a_pin_for_a_project_nobody_is_working_in(self):
+        self.seed(pinned=["folder:maple", "folder:nobody", "folder:pear"])
+        body = {"with": "folder:pear", "side": "after", "shown": ["folder:maple", "folder:pear"]}
+        self.assertEqual(self.pin("folder:maple", "swap", **body)[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["folder:pear", "folder:nobody", "folder:maple"])
+
+    def test_a_side_that_is_neither_before_nor_after_is_refused_as_malformed(self):
+        self.seed(pinned=["folder:maple", "folder:orchard"])
+        for side in ("left", 3, ["after"], ""):
+            self.assertEqual(self.pin("folder:maple", "swap", **{"with": "folder:orchard", "side": side})[0], 400, side)
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:orchard"])
+
+    def test_an_arrow_without_a_side_swaps_as_it_always_did(self):
+        self.seed(pinned=["folder:maple", "folder:orchard"])
+        self.assertEqual(self.pin("folder:maple", "swap", **{"with": "folder:orchard"})[0], 200)
+        self.assertEqual(self.pin("folder:maple", "swap", **{"with": "folder:orchard"})[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:orchard"])
+
+    def test_the_refusal_says_so_in_words_the_page_can_show(self):
+        self.seed(**self.MERGED)
+        req = urllib.request.Request(self.base + "/api/pin", json.dumps({"project": "folder:orchard", "action": "pin"}).encode(),
+                                     method="POST", headers={"Content-Type": "application/json", "X-Fleet": "1"})
+        with self.assertRaises(urllib.error.HTTPError) as got:
+            urllib.request.urlopen(req, timeout=20)
+        self.assertEqual((got.exception.code, got.exception.reason), (409, "changed in another tab"))
+        got.exception.close()
 
 
 if __name__ == "__main__":
