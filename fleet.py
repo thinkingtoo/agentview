@@ -7,6 +7,7 @@ The provider gives the facts; the core gives the voice.
 """
 import collections
 import concurrent.futures
+import datetime
 import functools
 import json
 import math
@@ -737,7 +738,7 @@ def roster(providers=None):
     for s in everyone:
         s.pop("paths", None)
     return {"blocks": blocks, "columns": columns, "counts": counts_of(columns),
-            "banners": banners_of()}
+            "banners": banners_of(providers)}
 
 
 # A session idle this long, with nothing pending, is finished.
@@ -808,7 +809,41 @@ MB = 1024 * 1024
 disk_usage = shutil.disk_usage
 
 
-def banners_of():
+# A usage limit that names no time is believed for this long after the refusal.
+HOLD_UNKNOWN_MINUTES = 300
+MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def hold_banner(p, now):
+    """A provider's hold on the whole account -- a usage limit -- as a banner, or
+    None. The provider says what it knows (`Provider.limit`); whether it still
+    holds is decided here, from the clock: until the time it lifts, or for
+    `HOLD_UNKNOWN_MINUTES` after the refusal when it names none."""
+    try:
+        hold = p.limit()
+    except Exception:                      # a provider's bug is its own
+        return None
+    if not isinstance(hold, dict) or not isinstance(hold.get("name"), str) or not hold["name"].strip():
+        return None
+    resets = hold.get("resetsAt")
+    if resets is not None and base.milliseconds(resets) is None:
+        return None
+    name = " ".join(hold["name"].split())[:LABEL_LEN]
+    if resets is not None:
+        if resets <= now * 1000:
+            return None
+        when = datetime.datetime.fromtimestamp(resets / 1000)
+        words = f"resets at {when:%H:%M}"
+        if when.date() != datetime.datetime.fromtimestamp(now).date():
+            words += f" on {MONTH_NAMES[when.month - 1]} {when.day}"
+        return {"kind": "limit", "text": f"{name} usage limit reached, {words}"}
+    at = base.milliseconds(hold.get("at"))
+    if at is None or now * 1000 - at > HOLD_UNKNOWN_MINUTES * 60000:
+        return None
+    return {"kind": "limit", "text": f"{name} usage limit reached"}
+
+
+def banners_of(providers=None):
     """What is wrong with the whole machine, said once across the top of the
     page: each a `kind` and the `text` to print. Never a kind of stuck on a
     tile -- every session on the machine is held by it alike. The page prints
@@ -821,6 +856,13 @@ def banners_of():
     if free is not None and free < positive_value("disk_full_mb", DISK_FULL_MB) * MB:
         banners.append({"kind": "disk",
                         "text": f"Disk full: {size_text(free)} left where sessions write"})
+    now = time.time()
+    for p in (providers if providers is not None else _providers()):
+        # What a provider that did not answer this round last said is not news.
+        if p.name in ROUND["answered"] and callable(getattr(p, "limit", None)):
+            held = hold_banner(p, now)
+            if held:
+                banners.append(held)
     return banners
 
 
@@ -958,7 +1000,7 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         # Put where it is by hand: the page offers the way back.
         "assigned": bool(m.get("assigned")),
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex"),
-                                 ("exec", m["kind"] in ("exec", "review"))) if on],
+                                 ("exec", m.get("kind") in ("exec", "review"))) if on],
         "line": line, "lineSource": source,
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",

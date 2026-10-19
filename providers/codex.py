@@ -169,6 +169,54 @@ def _asked(state):
     return next(iter(state["calls"].values()))
 
 
+# The account's usage limit outlives the run that hit it, so it is looked for on
+# disk: in the newest finished turn of the rollouts of the last few days.
+LIMIT_DAYS = 8
+LIMIT_FILES = 60
+LIMIT_EVERY = 10.0         # seconds between two looks
+
+
+def _blank_done():
+    return {"offset": 0, "ino": None, "head": b"", "done": None}
+
+
+def _absorb_done(state, text):
+    """Of a rollout, only the last turn that finished: when, and in what error."""
+    for line in text.splitlines():
+        if '"task_complete"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        payload = rec.get("payload") if isinstance(rec, dict) else None
+        if (isinstance(payload, dict) and rec.get("type") == "event_msg"
+                and payload.get("type") == "task_complete" and _ms(rec.get("timestamp"))):
+            state["done"] = (_ms(rec.get("timestamp")), _failure(payload.get("error"), rec.get("timestamp")))
+    return state
+
+
+def _numbered(folder):
+    """The sub-folders of `folder` named for a number, the highest first."""
+    try:
+        names = [e.name for e in os.scandir(folder) if e.name.isdigit() and e.is_dir()]
+    except OSError:
+        return []
+    return sorted(names, reverse=True)
+
+
+def _recent_days(root, count):
+    """The `count` newest day folders of `sessions/YYYY/MM/DD`."""
+    days = []
+    for year in _numbered(root):
+        for month in _numbered(root / year):
+            for day in _numbered(root / year / month):
+                days.append(root / year / month / day)
+                if len(days) == count:
+                    return days
+    return days
+
+
 def _source(value):
     """A thread's `source` as one word. Most are a word (`exec`, `cli`); a
     subagent's thread carries an object, `{"subagent": "review"}` (the thread
@@ -256,7 +304,10 @@ class CodexProvider(Provider):
         self.home = Path(home) if home else Path.home() / ".codex"
         self.proc = Path(proc)
         self.tail = Tailed(_blank, _absorb, _cold)
+        self.done_tail = Tailed(_blank_done, _absorb_done)
         self.clock = time.time
+        self.held = None       # the account's usage limit, as `limit()` says it
+        self.looked = None     # when it was last looked for
         self.holders = {}      # thread id -> (pid, fd) seen holding its rollout
         self.orphans = {}      # thread id -> lock identity already found unheld
 
@@ -429,7 +480,48 @@ class CodexProvider(Provider):
             out["pid"] = held[0]
         return out
 
+    def _limit(self):
+        """The account's usage limit, or None: the newest finished turn of the
+        recent rollouts is a refusal. A file's modified time is when it last
+        wrote, so once the next one is older than the newest finished turn
+        found, none after it can hold a newer."""
+        files = []
+        for day in _recent_days(self.home / "sessions", LIMIT_DAYS):
+            try:
+                entries = list(os.scandir(day))
+            except OSError:
+                continue
+            for entry in entries:
+                try:
+                    if entry.name.startswith("rollout-") and entry.name.endswith(".jsonl") and entry.is_file():
+                        files.append((entry.stat().st_mtime, entry.path))
+                except OSError:
+                    continue
+        files.sort(reverse=True)
+        newest, looked = None, set()
+        for mtime, path in files[:LIMIT_FILES]:
+            if newest and mtime + 1 < newest[0] / 1000:
+                break
+            looked.add(("state", path))
+            done = self.done_tail.scan(Path(path))["done"]
+            if done and (newest is None or done[0] > newest[0]):
+                newest = done
+        self.done_tail.cache = {k: v for k, v in self.done_tail.cache.items() if k in looked}
+        if newest and newest[1] and newest[1]["kind"] == "limit":
+            return {"name": "Codex", "at": newest[0], "resetsAt": newest[1]["resetsAt"]}
+        return None
+
+    def limit(self):
+        return self.held
+
     def live(self):
+        now = self.clock()
+        if self.looked is None or not 0 <= now - self.looked < LIMIT_EVERY:
+            self.looked = now
+            try:
+                self.held = self._limit()
+            except OSError:         # a rollout went while it was looked at: the next look will see
+                self.held = None
         locks = self._locks()
         if not locks:
             return []

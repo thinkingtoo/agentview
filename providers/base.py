@@ -20,7 +20,7 @@ the last thing the agent said -- the core shapes it), `waitingFor`,
 `startedAt`, `kind`, `tmux`, `bg`, `routine`, `boss`, `track` (a boss's
 track: the name of its tracker), `team`, `paths`, `doing`, `quietFor`,
 `toolFor`, `canJump`, `attach`, `noJump`, `extras`, `asking`, `failure`,
-`lastTool`, `procsUnknown`, `shellCpuAgo`, `turnOver`.
+`lastTool`, `procsUnknown`, `shellCpuAgo`, `turnOver`, `run`, `ancestors`.
 
 `canJump` says a pane shows the session. `attach` is what to attach to when no
 pane does but a new tab can show it (a background session; the provider's own
@@ -76,6 +76,16 @@ session). Such a session has
 nothing running of its own, so the core never calls it hung; it moves only
 while a subagent writes. Leaving it out, or anything but True, says the status
 is believed.
+
+`run` is set on a session that is a one-shot someone else started (a `codex
+exec` run): what to call it ("codex review", "codex exec"). `ancestors` is then
+the pids of the processes above it, nearest first, [] when they could not be
+walked. The core looks for a session of any provider among them and shows the
+run as movement inside that session's tile (`runs.py`); a run with no starter on
+the page is a tile of its own, told by its `kind`.
+
+A provider may also say, apart from its sessions, that the whole account is held:
+`limit()` returns `{"name", "at", "resetsAt"}` or None (see `Provider.limit`).
 """
 import os
 
@@ -139,6 +149,14 @@ class Provider:
         for s in self.live():
             if isinstance(s, dict) and s.get("id") == session_id:
                 return s
+        return None
+
+    def limit(self):
+        """A usage limit on the whole account, or None: `{"name": "Codex", "at":
+        ms, "resetsAt": ms or None}` -- when the refusal came, and when it lifts
+        if it says. The core says it once across the page, until it lifts.
+        Called once per poll, after `live()`, and must not read anything: it
+        answers from what `live()` found."""
         return None
 
     def jump(self, session):
