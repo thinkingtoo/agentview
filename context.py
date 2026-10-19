@@ -18,6 +18,7 @@ import re
 import projects
 
 LIMIT = 140          # about: the line is cut between words, full text on hover
+PARAGRAPH_MAX = 1500  # no text is carried longer: the hover is a hover, and every poll carries it
 GUESS_TITLES = 2
 GUESS_JOIN = " · "
 ELLIPSIS = "…"
@@ -43,9 +44,15 @@ def cut(text, limit=LIMIT):
 def made(source, text, full=None):
     """The roster's context line: where it came from, what the card shows,
     what the hover shows."""
-    full = squash(text) if full is None else full
-    return {"source": source, "line": cut(squash(text)), "full": full,
-            "guess": source == "guess"}
+    text = squash(text)[:PARAGRAPH_MAX]
+    full = text if full is None else full[:PARAGRAPH_MAX]
+    return {"source": source, "line": cut(text), "full": full, "guess": source == "guess"}
+
+
+def notes_query(name, line):
+    """What the notes link asks: the project's name and its context line,
+    without the ellipsis of a cut one."""
+    return f"{name} {line['line'].removesuffix(ELLIPSIS)}".strip()
 
 
 def guess(rows):
@@ -75,7 +82,6 @@ LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 BOLD = re.compile(r"(\*\*|__)(.+?)\1")
 READ = 100_000       # a goal or a README is read this far, no further
-PARAGRAPH_MAX = 1500  # and a paragraph this far: the hover is a hover, and every poll carries it
 
 
 def read(path):

@@ -652,7 +652,7 @@ def _column(rows, project, folder_rule, names, own_lines):
         "name": name,
         "context": line, "track": track,
         # What the card's notes link asks the brain, once someone clicks it.
-        "notes": None if line is None else {"query": f"{name} {line['line']}".strip()},
+        "notes": None if line is None else {"query": context.notes_query(name, line)},
         "strip": strip_of(rows), "summary": mix_of(tiles),
         "sessions": tiles,
     }

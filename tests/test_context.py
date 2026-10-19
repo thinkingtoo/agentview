@@ -98,6 +98,12 @@ class ContextLine(Cards):
         self.assertTrue(words.startswith(got["line"][:-1]))
         self.assertEqual(got["line"][-8], " ")            # cut between words, not inside one
 
+    def test_a_line_of_yours_that_is_a_wall_of_text_is_held_to_what_a_hover_can_carry(self):
+        self.config = {"project_lines": {"folder:orchard": "word " * 5000}}
+        got = self.context(sess("a", FOLDER))
+        self.assertLessEqual(len(got["full"]), 1500)
+        self.assertTrue(got["line"].endswith("\u2026"))
+
     def test_markup_in_your_line_or_in_a_title_is_kept_as_the_text_it_is(self):
         self.config = {"project_lines": {"folder:orchard": "Sells " + HOSTILE}}
         self.assertEqual(self.context(sess("a", FOLDER))["line"], "Sells " + HOSTILE)
@@ -216,6 +222,12 @@ class Tracks(Cards):
     def test_a_repository_has_a_context_line_but_no_status_or_progress(self):
         column = self.first(sess("a", self.loom))
         self.assertIsNone(column["track"])
+
+    def test_the_notes_query_does_not_carry_the_ellipsis_of_a_cut_line(self):
+        sentence = "Customers pay " + " ".join(["with"] * 60) + " a saved card."
+        got = self.track(outcome=sentence)
+        self.assertTrue(got["context"]["line"].endswith("\u2026"))
+        self.assertEqual(got["notes"]["query"], "Checkout " + got["context"]["line"][:-1])
 
     def test_the_notes_query_is_the_name_and_the_line(self):
         self.assertEqual(self.track()["notes"],

@@ -83,6 +83,12 @@ class ContextRoute(Route):
         self.assertEqual(self.post("/api/context", {"project": LOOM, "text": "  Prints reports  "})[0], 200)
         self.assertEqual(self.stored()["project_lines"], {LOOM: "Prints reports"})
 
+    def test_a_line_is_one_line_of_bounded_length(self):
+        self.post("/api/context", {"project": LOOM, "text": "a\n  b " + "x" * 5000})
+        stored = self.stored()["project_lines"][LOOM]
+        self.assertTrue(stored.startswith("a b x"))
+        self.assertLessEqual(len(stored), 1500)
+
     def test_the_next_poll_shows_it_as_your_own(self):
         self.post("/api/context", {"project": "folder:maple", "text": "Sells apples"})
         column = self.poll()["columns"][0]

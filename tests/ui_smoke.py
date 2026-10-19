@@ -638,6 +638,20 @@ def card_pass(browser):
     page.wait_for_function("() => document.querySelector('.ov-col[data-project=\"shipped\"] .ov-hits').innerText.includes('not set up')")
     check("when there is no search the card says so", "notes search is not set up here"
           in col("shipped").locator(".ov-hits").inner_text())
+    # An answer that comes in while you are typing a line must not take the field away,
+    # and an answer that is not the shape the server promises must not break the page.
+    fake.answer["/api/notes"] = {"ok": True}
+    col("repo:example.com/alice/loom").locator(".ov-ctx").click()
+    page.wait_for_selector("input.inline")
+    page.locator("input.inline").fill("half a sentence")
+    page.evaluate("document.querySelector('.ov-col[data-project=\"folder:orchard\"] .ov-notes').click()")
+    page.wait_for_timeout(500)
+    check("a notes answer that arrives mid-edit leaves the field and what you typed alone",
+          page.locator("input.inline").count() == 1 and page.locator("input.inline").input_value() == "half a sentence")
+    page.locator("input.inline").press("Escape")
+    page.wait_for_selector('.ov-col[data-project="folder:orchard"] .ov-hits')
+    check("and it shows once you are done, an answer without hits as nothing found",
+          col("folder:orchard").locator(".ov-hits").inner_text() == "nothing found")
     check("card: no dialog, no page error", len(errors) == seen, errors[seen:])
     check("card: nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()

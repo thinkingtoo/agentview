@@ -952,9 +952,10 @@ const NOTES = new Map();      // project -> what its last click found, until cli
 function hitsOf(c) {
   const n = NOTES.get(c.project);
   if (!n) return "";
+  const hits = Array.isArray(n.hits) ? n.hits : [];
   const body = n.wait ? "searching…"
     : !n.ok ? esc(n.reason || "notes search failed")
-    : n.hits.length ? n.hits.map(h => `<div><div class="hit-title" title="${esc(h.path)}">${esc(h.title || h.path)}</div>
+    : hits.length ? hits.map(h => `<div><div class="hit-title" title="${esc(h.path)}">${esc(h.title || h.path)}</div>
         <div class="hit-snip">${esc(h.snippet)}</div></div>`).join("")
     : "nothing found";
   return `<div class="ov-hits">${body}</div>`;
@@ -1187,9 +1188,12 @@ document.getElementById("main").addEventListener("click", async ev => {
   ev.preventDefault();
   const project = link.closest("section")?.dataset.project;
   const query = link.dataset.query;
-  if (NOTES.has(project)) { NOTES.delete(project); paint(); return; }
+  // Repainting while a field is open would take it away from you; the next poll
+  // draws what is waiting, as soon as the field is closed.
+  const show = () => { if (!busyWithUser()) paint(); };
+  if (NOTES.has(project)) { NOTES.delete(project); show(); return; }
   NOTES.set(project, { wait: true });
-  paint();
+  show();
   let found = { ok: false, reason: "notes search failed" };
   try {
     const r = await fetch("/api/notes", {
@@ -1199,7 +1203,7 @@ document.getElementById("main").addEventListener("click", async ev => {
     });
     if (r.ok) found = await r.json();
   } catch (e) { /* the card says it failed */ }
-  if (NOTES.has(project)) { NOTES.set(project, found); paint(); }      // not if you clicked it away meanwhile
+  if (NOTES.has(project)) { NOTES.set(project, found); show(); }      // not if you clicked it away meanwhile
 });
 
 // Drag a block to pin it; the order you drop them in is the order they keep.
