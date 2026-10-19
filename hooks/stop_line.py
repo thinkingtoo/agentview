@@ -32,6 +32,7 @@ sys.path.insert(0, str(HERE.parent))
 import fleet          # noqa: E402  -- after the path is set
 import lines          # noqa: E402
 import log            # noqa: E402
+from providers.base import jsonl_lines   # noqa: E402
 
 # The end of the transcript. The last thing said is at the bottom of the file
 # and these run to tens of megabytes.
@@ -44,7 +45,7 @@ def last_said(text):
     line of a tail read is usually cut in half.
     """
     said = ""
-    for line in text.splitlines():
+    for line in jsonl_lines(text):
         try:
             rec = json.loads(line)
         except ValueError:

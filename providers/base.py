@@ -202,6 +202,18 @@ HEAD_BYTES = 256
 COLD_BYTES = 2_000_000   # enough tail to answer 'what is it doing now'
 
 
+def jsonl_lines(text):
+    """The lines of a JSON Lines text: cut at "\\n" and nowhere else.
+
+    `str.splitlines()` also cuts at U+2028, U+2029 and U+0085, and a session
+    writes those raw inside a JSON string. The two halves of that record
+    parse as nothing, so the record, and the call or the words in it, were
+    thrown away. A last piece with no newline after it comes back too, and
+    does not parse; every reader skips what does not parse.
+    """
+    return text.split("\n")
+
+
 def read_from(path, offset):
     """Bytes appended since `offset`, up to the last complete line.
 
