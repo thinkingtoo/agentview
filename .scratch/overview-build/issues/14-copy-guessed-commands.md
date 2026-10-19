@@ -4,7 +4,9 @@
 
 **Blocked by:** 07
 
-**Status:** ready-for-agent
+**Claimed by:** Joaquin 2026-10-19 15:37
+
+**Status:** in-progress
 
 - [ ] The roster reports the guessed commands for a tile's `ask`, tested on invented lines: a quoted command, a `$` command, two commands, and prose with quotes that is not a command (no button)
 - [ ] The page shows a copy button per guessed command; copying puts the literal text on the clipboard and sends nothing to the server (smoke on a test server)

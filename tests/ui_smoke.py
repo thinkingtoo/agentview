@@ -12,16 +12,24 @@ chosen by binding port 0.
 
 Nothing here reaches a real session, and nothing here can launch anything:
 
-  * Every pass but one is *routed*. The page's HTML, the roster, the search and
-    every POST are answered by `page.route` from fixtures built below, so a
-    jump, a reopen, a revival, a rename, a snapshot never leave the browser,
-    and no request carries a real session key. A request the routes do not
-    know is aborted and fails the run.
-  * One pass is not routed (R21): it loads the page from the server, lets the
-    page poll the server's own `/api/roster` and asserts that real columns
+  * Most passes are *routed*. The page's HTML, the roster, the search and every
+    POST are answered by `page.route` from fixtures built below, so a jump, a
+    reopen, a revival, a rename, a snapshot never leave the browser, and no
+    request carries a real session key. A request the routes do not know is
+    aborted and fails the run.
+  * One pass is not routed (R21): it loads the page from the server given, lets
+    the page poll the server's own `/api/roster` and asserts that real columns
     render. It clicks nothing, writes nothing, saves no screenshot (it shows
     real sessions), and any request that is not a GET is aborted and fails.
-  * The config file is only read: its hash is taken before and after.
+  * One pass starts a server of its own (`e2e_pass`): `tests/hand_server.py`,
+    with invented sessions, a config in a new temp dir, state under the temp
+    dir, a port the system picks (8765 refused) and its pid proven with `ss`.
+    It clicks the by-hand controls and reads that config back, then restarts
+    the server on it. Only that temp dir is written, and it is removed; the
+    page may reach nothing but that server.
+  * `stale_pass` starts a server of the same kind and holds some of its own tabs
+    back, to click on cards another tab has since merged away or moved.
+  * The config file given is only read: its hash is taken before and after.
 
 Playwright is needed (`pip install playwright`); the chromium it drives must
 already be installed.
@@ -30,10 +38,13 @@ import copy
 import datetime
 import hashlib
 import json
+import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 
@@ -264,6 +275,8 @@ class Fake:
         self.posts = []        # (path, body) for every POST the page made
         self.stray = []        # anything the routes do not know
         self.answer = {}       # path -> the reply to give instead of {"ok": true}
+        self.status = {}       # path -> the HTTP status to give instead of 200 (nothing is applied then)
+        self.polls = 0         # how many times the page read /api/roster
         self.hold = False      # keep /api/jump unanswered, in `held`, until the test answers it
         self.held = []
 
@@ -291,6 +304,18 @@ class Fake:
                 for m in blk["members"]:
                     if m["key"] == b["key"]:
                         m["assigned"] = bool(b["project"])
+            self.move_tile(b["key"], b["project"])
+            for c in self.body["columns"]:
+                c["merged"] = [m for m in c.get("merged", []) if m["project"] != b["key"]]
+        elif path == "/api/pin":
+            self.pin_column(b)
+        elif path == "/api/merge":
+            cols = self.body["columns"]
+            source = next(c for c in cols if c["project"] == b["source"])
+            target = next(c for c in cols if c["project"] == b["target"])
+            target["sessions"].extend(source["sessions"])
+            target.setdefault("merged", []).append({"project": source["project"], "name": source["name"]})
+            cols.remove(source)
         elif path == "/api/order":
             pins = b["pinned"]
             for blk in self.body["blocks"]:
@@ -298,13 +323,43 @@ class Fake:
             self.body["blocks"].sort(key=lambda blk: pins.index(blk["project"])
                                      if blk["project"] in pins else len(pins))
 
+    def pin_column(self, b):
+        """The server's pin, as far as the page can tell: pinned first in pin order."""
+        cols = self.body["columns"]
+        pins = [c["project"] for c in cols if c.get("pinned")]
+        if b["action"] == "pin":
+            pins.append(b["project"])
+        elif b["action"] == "unpin":
+            pins.remove(b["project"])
+        else:
+            i, j = pins.index(b["project"]), pins.index(b["with"])
+            pins[i], pins[j] = pins[j], pins[i]
+        for c in cols:
+            c["pinned"] = c["project"] in pins
+        cols.sort(key=lambda c: (c["kind"] == "none", pins.index(c["project"]) if c["project"] in pins else len(pins)))
+
+    def move_tile(self, key, project):
+        """A hand-moved tile goes to the column asked for; the way back (an empty
+        project) leaves it where it is, which is enough for the page."""
+        cols = self.body["columns"]
+        for c in cols:
+            for t in c["sessions"]:
+                if t["key"] == key:
+                    t["assigned"] = bool(project)
+                    target = next((x for x in cols if x["project"] == project), None)
+                    if target is not None and target is not c:
+                        c["sessions"].remove(t)
+                        target["sessions"].append(t)
+                    return
+
     def handle(self, route):
         req = route.request
         url = urllib.parse.urlsplit(req.url)
-        json_ = lambda data: route.fulfill(status=200, content_type="application/json", body=json.dumps(data))
+        json_ = lambda data, status=200: route.fulfill(status=status, content_type="application/json", body=json.dumps(data))
         if req.method == "GET" and url.path in ("/", "/index.html"):
             route.fulfill(status=200, content_type="text/html; charset=utf-8", body=PAGE)
         elif req.method == "GET" and url.path == "/api/roster":
+            self.polls += 1
             json_(self.body)
         elif req.method == "GET" and url.path == "/api/search":
             json_(self.found)
@@ -314,11 +369,13 @@ class Fake:
             body = json.loads(req.post_data or "{}")
             self.posts.append((url.path, body))
             posted.append(body)
-            self.apply(url.path, body)
+            status = self.status.get(url.path, 200)
+            if status == 200:
+                self.apply(url.path, body)
             if self.hold and url.path == "/api/jump":
                 self.held.append(route)
                 return
-            json_(self.answer.get(url.path, {"ok": True, "did": "opened", "changed": False}))
+            json_(self.answer.get(url.path, {"ok": True, "did": "opened", "changed": False}), status)
         else:
             self.stray.append(f"{req.method} {req.url}")
             route.abort()
@@ -416,7 +473,7 @@ def overview_pass(browser):
           == ["m1", "m2", "m3", "m4", "m5"])
     check("the project card is its name, its state, then its movement strip and mix",
           page.locator('.ov-col[data-project="maple"] .ov-head > *')
-          .evaluate_all("els => els.map(e => e.className)") == ["ov-name", "ov-state", "ov-mv"])
+          .evaluate_all("els => els.map(e => e.className)") == ["ov-top", "ov-state", "ov-mv"])
     check("one tile per session", page.locator(".tile").count() == 8, page.locator(".tile").count())
 
     t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
@@ -1206,6 +1263,10 @@ def blocks_pass(browser):
     page.locator(f'.block[data-project="{third}"] .pin').click()
     page.wait_for_timeout(600)
     check("la ✳ lo libera", third not in fake.of("/api/order")[-1]["pinned"], fake.of("/api/order"))
+    shown = page.locator(".block:not(.orphan):not(.routines)").evaluate_all("els => els.map(e => e.dataset.project)")
+    check("the block view says which blocks it shows, on a drag and on an unpin, so a block named by an identity can be unpinned",
+          all(sorted(post.get("shown") or []) == sorted(shown) for post in fake.of("/api/order")),
+          (shown, fake.of("/api/order")))
 
     # --- assigning
     chip = page.locator(".guess").first
@@ -1344,6 +1405,498 @@ def blocks_pass(browser):
     p.close()
 
 
+def hand_roster(**names):
+    got = roster([("folder:pear", names.get("pear", "pear"), [S("p1", "Saskia")]),
+                  ("folder:maple", "maple", [S("m1", "Ilse"), S("m2", "Femi")]),
+                  ("folder:orchard", "orchard", [S("o1", "Odile")]),
+                  ("", "No project", [S("n1", "Kasper")])])
+    for c in got["columns"]:
+        c.update(pinned=False, raw=c["project"].partition(":")[2], kind="none" if c["project"] == "" else "folder")
+    return got
+
+
+def hand_pass(browser):
+    """By hand, as the page makes it: pin, arrows, unpin, rename, merge, move.
+    The routes are the fixture's; what is checked is what the page asks and shows."""
+    fake = Fake(hand_roster(pear=BOMB))
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    col = lambda p: page.locator(f'.ov-col[data-project="{p}"]')
+    order = lambda: page.locator(".ov-col").evaluate_all("els => els.map(e => e.dataset.project)")
+    posts = lambda path: fake.of(path)
+
+    check("a project card has a pin button and a merge; No project has neither",
+          col("folder:maple").locator(".ov-pin").count() == 1 and col("folder:maple").locator(".ov-merge").count() == 1
+          and col("").locator(".ov-tools").count() == 0)
+    check("nothing is pinned: no arrows anywhere and the pin is not pressed",
+          page.locator(".ov-arrow").count() == 0
+          and page.locator('.ov-pin[aria-pressed="true"]').count() == 0)
+
+    col("folder:maple").locator(".ov-pin").click()
+    page.wait_for_function("() => document.querySelector('.ov-col[data-project=\"folder:maple\"] .ov-head.pinned')")
+    col("folder:orchard").locator(".ov-pin").click()
+    page.wait_for_function("() => document.querySelectorAll('.ov-head.pinned').length === 2")
+    check("a click on the pin asks the server to pin that project, once each, by identity",
+          [{k: v for k, v in p.items() if k != "shown"} for p in posts("/api/pin")]
+          == [{"project": "folder:maple", "action": "pin"}, {"project": "folder:orchard", "action": "pin"}],
+          posts("/api/pin"))
+    check("and says which cards are pinned as the page shows them, in order (a pin by plain name can hold two)",
+          [p["shown"] for p in posts("/api/pin")] == [[], ["folder:maple"]], posts("/api/pin"))
+    check("pinned projects lead in the order they were pinned", order()[:3] == ["folder:maple", "folder:orchard", "folder:pear"], order())
+    check("a pinned card is lit and its pin is pressed",
+          col("folder:maple").locator(".ov-pin.on").get_attribute("aria-pressed") == "true"
+          and "pinned" in col("folder:maple").locator(".ov-head").get_attribute("class"))
+    arrows = lambda p: col(p).locator(".ov-arrow").evaluate_all("els => els.map(e => e.textContent)")
+    check("the first pinned card can only go after, the last only before; unpinned have none",
+          arrows("folder:maple") == ["›"] and arrows("folder:orchard") == ["‹"] and arrows("folder:pear") == [],
+          (arrows("folder:maple"), arrows("folder:orchard")))
+
+    page.locator("#q").fill("orch")
+    page.wait_for_function("() => document.querySelectorAll('.ov-col').length === 1")
+    check("a filter that hides the neighbour takes the arrow away rather than pointing at a hidden card",
+          arrows("folder:orchard") == [], arrows("folder:orchard"))
+    page.locator("#q").fill("")
+    page.wait_for_function("() => document.querySelectorAll('.ov-col').length === 4")
+    check("and clearing it gives the arrow back", arrows("folder:orchard") == ["‹"], arrows("folder:orchard"))
+
+    col("folder:maple").locator(".ov-arrow").click()
+    page.wait_for_function("() => document.querySelector('.ov-col').dataset.project === 'folder:orchard'")
+    check("an arrow swaps with the neighbour it points at, named by identity",
+          posts("/api/pin")[-1] == {"project": "folder:maple", "action": "swap", "with": "folder:orchard",
+                                    "side": "after", "shown": ["folder:maple", "folder:orchard"]}
+          and order()[:2] == ["folder:orchard", "folder:maple"], posts("/api/pin")[-1])
+
+    col("folder:orchard").locator(".ov-pin").click()
+    page.wait_for_function("() => document.querySelectorAll('.ov-head.pinned').length === 1")
+    check("the pin again unpins, and the card goes back among the others",
+          posts("/api/pin")[-1] == {"project": "folder:orchard", "action": "unpin",
+                                    "shown": ["folder:orchard", "folder:maple"]}
+          and order() == ["folder:maple", "folder:orchard", "folder:pear", ""]
+          and arrows("folder:maple") == [], order())
+
+    # Rename: the name is the field.
+    open_editor(page, col("folder:orchard").locator(".ov-name"))
+    page.locator("input.inline").fill("Orchard 2")
+    page.keyboard.press("Enter")
+    page.wait_for_function("() => !document.querySelector('input.inline')")
+    check("a click on the name edits it in place and sends the project's identity",
+          posts("/api/name") == [{"project": "folder:orchard", "label": "Orchard 2"}], posts("/api/name"))
+    check("the raw name is on hover, so a rename hides nothing",
+          col("folder:orchard").locator(".ov-name").get_attribute("title").startswith("orchard"))
+
+    # Merge: a form that waits for you, and a poll that leaves it alone.
+    col("folder:orchard").hover()
+    col("folder:orchard").locator(".ov-merge").click()
+    form = page.locator(".ov-form")
+    check("merge opens one form on that card", form.count() == 1 and col("folder:orchard").locator(".ov-form").count() == 1)
+    options = lambda: page.locator("select.pick option").evaluate_all("els => els.map(e => [e.value, e.textContent])")
+    check("it offers every other project, not itself and not No project, and shows a hostile name as text",
+          [v for v, _ in options()[1:]] == ["folder:maple", "folder:pear"]
+          and options()[2][1] == BOMB and page.locator("select.pick img").count() == 0, options())
+    poll_now(page)
+    check("a poll while the form is open does not repaint it away", page.locator(".ov-form").count() == 1)
+    page.keyboard.press("Escape")
+    check("Escape closes it and nothing is sent", page.locator(".ov-form").count() == 0 and not posts("/api/merge"))
+    col("folder:orchard").locator(".ov-merge").click()
+    page.locator("select.pick").select_option("folder:maple")
+    check("choosing is not merging: nothing is sent until the button", not posts("/api/merge"))
+    page.locator(".ov-form button", has_text="merge").click()
+    page.wait_for_function("() => !document.querySelector('.ov-form')")
+    page.wait_for_function("() => !document.querySelector('.ov-col[data-project=\"folder:orchard\"]')")
+    check("the merge button sends source and target by identity",
+          posts("/api/merge") == [{"source": "folder:orchard", "target": "folder:maple",
+                                   "shown": ["folder:maple"]}], posts("/api/merge"))
+    check("the absorbed card is gone and its session is in the other",
+          "folder:orchard" not in order() and col("folder:maple").locator(".tile").count() == 3, order())
+
+    check("the card that took it says what it includes",
+          col("folder:maple").locator(".ov-merged").inner_text().startswith("includes orchard"),
+          col("folder:maple").locator(".ov-merged").count())
+    col("folder:maple").locator(".ov-merged button").click()
+    page.wait_for_function("() => !document.querySelector('.ov-merged')")
+    check("undo moves the absorbed project into nothing, by identity, and says which card it was in",
+          posts("/api/assign") == [{"key": "folder:orchard", "project": "", "was": "folder:maple"}], posts("/api/assign"))
+    fake.posts[:] = [x for x in fake.posts if x[0] != "/api/assign"]
+
+    # Move one session.
+    tile = col("folder:maple").locator('.tile[data-sid="m2"]')
+    opacity = lambda: tile.locator(".move").evaluate("e => getComputedStyle(e).opacity")
+    box = lambda: tile.bounding_box()["height"]
+    unlit, height = opacity(), box()
+    tile.hover()
+    check("the move button is unlit until the pointer is on the tile, and lighting it moves nothing",
+          unlit == "0" and opacity() == "1" and box() == height, (unlit, opacity(), height, box()))
+    tile.locator(".move").click()
+    check("move opens a picker without the tile jumping", page.locator("select.pick").count() == 1
+          and not [p for p, _ in fake.posts if p == "/api/jump"])
+    check("it offers the other projects, not this one",
+          [v for v, _ in options()[1:]] == ["folder:pear"], options())
+    page.locator("select.pick").select_option("folder:pear")
+    page.locator(".ov-form button", has_text="move").click()
+    page.wait_for_function("() => !document.querySelector('.ov-form')")
+    page.wait_for_function("() => document.querySelector('.tile[data-sid=\"m2\"] .clear')")
+    check("the move sends the session's key and the project's identity",
+          posts("/api/assign") == [{"key": "m2", "project": "folder:pear"}], posts("/api/assign"))
+    moved = page.locator('.tile[data-sid="m2"]')
+    check("the moved tile says so, with the way back always showing",
+          moved.locator(".clear").inner_text().startswith("moved by you") and moved.locator(".clear").is_visible())
+    moved.locator(".clear").click()
+    page.wait_for_timeout(300)
+    check("the way back sends an empty project", posts("/api/assign")[-1] == {"key": "m2", "project": ""}, posts("/api/assign"))
+
+    # A refusal (409): another tab changed the card, nothing was written. The page reads
+    # the roster again and says so in one short line that stays; it does not say "not done".
+    stamp = lambda: page.locator("#stamp").inner_text()
+    logged = len(errors)
+    for label, path, act in (("a click on a card's pin", "/api/pin", lambda: col("folder:pear").locator(".ov-pin").click()),
+                             ("a rename by its field", "/api/name", None)):
+        fake.status[path] = 409
+        forget_note(page)
+        polls = fake.polls
+        if act:
+            act()
+        else:
+            open_editor(page, col("folder:pear").locator(".ov-name"))
+            page.locator("input.inline").fill("Pear 2")
+            page.keyboard.press("Enter")
+        page.wait_for_function("() => document.getElementById('stamp').textContent === 'changed in another tab, refreshed'")
+        check(f"409 on {label}: the roster is read again and the line says so", fake.polls > polls and "not done" not in stamp(), stamp())
+        check(f"409 on {label}: nothing was applied", not col("folder:pear").locator(".ov-pin.on").count()
+              and col("folder:pear").locator(".ov-name").inner_text() == BOMB, stamp())
+        fake.status.clear()
+    # Chromium logs each HTTP 409 as a console error: these two are the ones asked for, and no others.
+    refused = [e for e in errors[logged:] if "status of 409" in e]
+    errors[logged:] = [e for e in errors[logged:] if e not in refused]
+    check("409: the console line Chromium logs for each of the two refusals, and nothing else", len(refused) == 2, refused)
+    check("hand: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
+def picker_pass(browser):
+    """Two projects called alike must read differently where you choose one:
+    by kind, then by what the identity starts with (a client folder and a folder
+    are both folders), then -- two repositories -- by the identity itself."""
+    got = roster([("track:acme", "acme", [S("t1", "Ilse")]),
+                  ("folder:acme", "acme", [S("f1", "Femi")]),
+                  ("client:example.test/x/mono/acme", "acme", [S("c1", "Odile")]),
+                  ("repo:example.test/a/shop", "shop", [S("r1", "Saskia")]),
+                  ("repo:example.test/b/shop", "shop", [S("r2", "Kasper")]),
+                  ("folder:solo", "solo", [S("s1", "Bram")]),
+                  ("", "No project", [S("n1", "Ines")])])
+    kinds = {"track": "track", "repo": "repository", "client": "folder", "folder": "folder"}
+    for c in got["columns"]:
+        c.update(pinned=False, raw=c["project"].partition(":")[2],
+                 kind="none" if c["project"] == "" else kinds[c["project"].partition(":")[0]])
+    page = new_page(browser, Fake(got))
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    page.locator('.ov-col[data-project="folder:solo"]').hover()
+    page.locator('.ov-col[data-project="folder:solo"] .ov-merge').click()
+    options = page.locator("select.pick option").evaluate_all("els => els.map(e => [e.value, e.textContent])")[1:]
+    labels = [text for _, text in options]
+    check("the picker tells two projects with one name apart, whatever they share",
+          len(set(labels)) == len(labels), labels)
+    check("by kind where that is enough, by the identity's start where the kind is shared, by the identity otherwise",
+          dict(options) == {"track:acme": "acme (track)", "folder:acme": "acme (folder)",
+                            "client:example.test/x/mono/acme": "acme (client)",
+                            "repo:example.test/a/shop": "shop (repo:example.test/a/shop)",
+                            "repo:example.test/b/shop": "shop (repo:example.test/b/shop)"}, options)
+    page.close()
+
+
+def start_hand_server(root, procs):
+    """`tests/hand_server.py` on a port the system picks, state under `root`; its pid is proven with `ss`."""
+    env = {**os.environ, "XDG_STATE_HOME": str(root / "state"), "PYTHONDONTWRITEBYTECODE": "1"}
+    proc = subprocess.Popen([sys.executable, str(HERE / "hand_server.py"), str(root)],
+                            stdout=subprocess.PIPE, text=True, env=env)
+    procs.append(proc)
+    port = int(proc.stdout.readline().split()[1])
+    held = subprocess.run(["ss", "-ltnp", f"sport = :{port}"], capture_output=True, text=True).stdout
+    check("e2e: the listener on the test port is the server just started", f"pid={proc.pid}," in held and port != 8765,
+          held.strip())
+    return proc, port
+
+
+def open_hand_page(browser, port, refusals=None):
+    """A page that may reach nothing but the test server on `port`. Chromium logs every
+    HTTP 409 as a console error; a pass that makes some on purpose passes a list to collect them."""
+    page = browser.new_page(viewport={"width": 1700, "height": 2400})
+    page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
+    page.on("console", lambda m: (refusals.append(m.text) if refusals is not None and "status of 409" in m.text
+                                  else errors.append(f"console: {m.text}")) if m.type == "error" else None)
+    page.on("dialog", lambda d: (errors.append(f"dialog: {d.message}"), d.dismiss()))
+    page.route("**/*", lambda r: r.continue_() if r.request.url.startswith(f"http://127.0.0.1:{port}/")
+               else r.abort())
+    page.goto(f"http://127.0.0.1:{port}/", wait_until="load")
+    page.wait_for_selector(".ov-col")
+    return page
+
+
+def forget_note(page):
+    """Clear the line a refusal left on the page (it holds for six seconds), so that the next
+    wait for it is a wait for the next refusal and not for the last one."""
+    page.evaluate("() => { NOTE = null; document.getElementById('stamp').textContent = ''; }")
+
+
+def hold_back(page):
+    """Make a tab stale, as a picker left open does: from now on it is served the roster it
+    already has, until the first thing it POSTs -- then the real one again, for the page's
+    own refresh after a refusal."""
+    body = page.evaluate("fetch('/api/roster', {cache: 'no-store'}).then(r => r.text())")
+    state = {"posted": False}
+    page.on("request", lambda r: state.update(posted=True) if r.method == "POST" else None)
+    page.route("**/api/roster", lambda route: route.continue_() if state["posted"]
+               else route.fulfill(status=200, content_type="application/json", body=body))
+
+
+def stale_pass(browser):
+    """Two or three tabs on one real server, some of them behind: a tab clicks on a card
+    another tab has since changed, the two routes hunt 6 found. The server must refuse,
+    change nothing, and the page must read again and say so."""
+    root = pathlib.Path(tempfile.mkdtemp(prefix="stale-"))
+    cfg = root / "config.json"
+    procs = []
+    stored = lambda: json.loads(cfg.read_text())
+    line = "changed in another tab, refreshed"
+    try:
+        proc, port = start_hand_server(root, procs)
+        refused = []        # Chromium's own console line for each 409 this pass provokes
+        a, b, c = (open_hand_page(browser, port, refused) for _ in range(3))
+        col = lambda page, p: page.locator(f'.ov-col[data-project="{p}"]')
+        order = lambda page: page.locator(".ov-col").evaluate_all("els => els.map(e => e.dataset.project)")
+        wait_order = lambda page, want: page.wait_for_function(
+            "want => [...document.querySelectorAll('.ov-col')].map(e => e.dataset.project).join() === want.join()",
+            arg=want, timeout=8000)
+        def wait_for(cond):
+            for _ in range(80):
+                if cond():
+                    return
+                a.wait_for_timeout(100)
+        said = lambda page: page.locator("#stamp").inner_text()
+
+        # Hunt 6, finding 2: both tabs show maple, orchard and both click the arrow on maple.
+        for p in ("folder:maple", "folder:orchard"):
+            col(a, p).locator(".ov-pin").click()
+            wait_for(lambda p=p: p in stored().get("pinned", []))
+        b.wait_for_function("() => document.querySelectorAll('.ov-head.pinned').length === 2")
+        hold_back(b)
+        col(a, "folder:maple").locator(".ov-arrow").click()
+        wait_for(lambda: stored()["pinned"] == ["folder:orchard", "folder:maple"])
+        check("stale: tab b still shows what it showed, maple before orchard",
+              order(b)[:2] == ["folder:maple", "folder:orchard"], order(b))
+        forget_note(b)
+        col(b, "folder:maple").locator(".ov-arrow").click()
+        b.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
+        wait_order(b, ["folder:orchard", "folder:maple", "folder:pear"])
+        check("stale: the same arrow clicked in a tab that was behind does not undo the first",
+              stored()["pinned"] == ["folder:orchard", "folder:maple"] and order(a) == order(b), stored())
+
+        # Hunt 6, finding 1: orchard and pear merged into maple while b and c still show them.
+        wait_order(c, ["folder:orchard", "folder:maple", "folder:pear"])
+        hold_back(b)
+        hold_back(c)
+        for p in ("folder:orchard", "folder:pear"):
+            col(a, p).hover()
+            col(a, p).locator(".ov-merge").click()
+            a.locator("select.pick").select_option("folder:maple")
+            a.locator(".ov-form button", has_text="merge").click()
+            wait_for(lambda p=p: p in stored().get("assign", {}))
+        wait_order(a, ["folder:maple"])
+        done = stored()
+        check("stale: both merges are in the config, and maple took orchard's place among the pins",
+              done["assign"] == {"folder:orchard": "folder:maple", "folder:pear": "folder:maple"}
+              and done["pinned"] == ["folder:maple"], done)
+        check("stale: tabs b and c still show the cards that are gone", "folder:orchard" in order(b) and "folder:pear" in order(c),
+              (order(b), order(c)))
+        forget_note(b)
+        col(b, "folder:orchard").locator(".ov-pin").click()      # the star it still shows lit
+        b.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
+        wait_order(b, ["folder:maple"])
+        check("stale: the star of a card another tab merged away does not unpin the card that took its pin",
+              stored() == done and col(b, "folder:maple").locator(".ov-pin.on").count() == 1, stored())
+        forget_note(c)
+        col(c, "folder:pear").locator(".ov-pin").click()          # the star it still shows unlit
+        c.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
+        wait_order(c, ["folder:maple"])
+        check("stale: nor does one pin a project with no card",
+              stored() == done and "not done" not in said(c), stored())
+        check("stale: and the line says what happened, calmly", said(c) == line and said(b) == line, (said(b), said(c)))
+        check("stale: three clicks, three refusals, nothing else refused", len(refused) == 3, refused)
+        for page in (a, b, c):
+            page.close()
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(10)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def block_view_pass(browser):
+    """Hunts 7 and 8: the old block view after a session was moved by hand into a project and
+    that project was merged away. A tab that is up to date must be able to rename, drag and drop
+    on the session's block (the server must not call it behind); a tab that is behind, which
+    clicks the star of the block that was merged away, must be told rather than answered 200
+    with nothing unpinned."""
+    root = pathlib.Path(tempfile.mkdtemp(prefix="blocks-"))
+    cfg = root / "config.json"
+    procs = []
+    stored = lambda: json.loads(cfg.read_text())
+    line = "changed in another tab, refreshed"
+    try:
+        proc, port = start_hand_server(root, procs)
+        refused_a, refused_b = [], []
+        a, b = open_hand_page(browser, port, refused_a), open_hand_page(browser, port, refused_b)
+        post = lambda page, path, body: page.evaluate(
+            "([p, b]) => fetch(p, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Fleet': '1'},"
+            " body: JSON.stringify(b)}).then(r => r.status)", [path, body])
+        check("blocks e2e: a session moved by hand into maple, and maple pinned",
+              (post(a, "/api/assign", {"key": "fake:c", "project": "folder:maple"}),
+               post(a, "/api/pin", {"project": "folder:maple", "action": "pin", "shown": []})) == (200, 200), stored())
+
+        # Tab b is on the block view and behind when maple is merged away; it clicks the star of that block.
+        b.goto(f"http://127.0.0.1:{port}/?view=blocks", wait_until="load")
+        b.wait_for_selector(".block")
+        check("blocks e2e: tab b shows the block named for maple, pinned",
+              b.locator('.block.pinned[data-project="folder:maple"]').count() == 1,
+              b.locator(".block").evaluate_all("els => els.map(e => e.dataset.project + (e.classList.contains('pinned') ? '*' : ''))"))
+        hold_back(b)
+        check("blocks e2e: maple merged into orchard in the other tab",
+              post(a, "/api/merge", {"source": "folder:maple", "target": "folder:orchard", "shown": ["folder:maple"]}) == 200
+              and stored()["pinned"] == ["folder:orchard"], stored())
+        done = stored()
+        forget_note(b)
+        b.locator('.block[data-project="folder:maple"] .pin').click()
+        b.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
+        check("blocks e2e: the star of a block that was merged away is refused, and nothing is written",
+              stored() == done and len(refused_b) == 1, (stored(), refused_b))
+        check("blocks e2e: and the tab reads again: the block is named for orchard, still pinned",
+              b.locator('.block.pinned[data-project="folder:orchard"]').count() == 1
+              and b.locator('.block[data-project="folder:maple"]').count() == 0, b.locator(".block").count())
+        b.close()
+
+        # Tab a is up to date: its blocks are all ones it may rename.
+        a.goto(f"http://127.0.0.1:{port}/?view=blocks", wait_until="load")
+        a.wait_for_selector(".block")
+        names = a.locator(".block").evaluate_all("els => els.map(e => e.dataset.project)")
+        check("blocks e2e: its block is named by where the project went, not by the one merged away",
+              "folder:orchard" in names and "folder:maple" not in names, names)
+        block = a.locator('.block[data-project="folder:orchard"]')
+        open_editor(a, block.locator(".pname"))
+        a.locator("input.inline").fill("Orchard 2")
+        a.keyboard.press("Enter")
+        a.wait_for_function("() => !document.querySelector('input.inline')")
+        a.wait_for_timeout(500)
+        check("blocks e2e: renaming that block is accepted, and the page does not say it is behind",
+              stored().get("names") == {"folder:orchard": "Orchard 2"} and not refused_a
+              and "changed in another tab" not in a.locator("#stamp").inner_text(),
+              (stored(), refused_a))
+        a.close()
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(10)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def e2e_pass(browser):
+    """The same clicks against a real server: fake sessions, a config of its own,
+    on a port the system picked. What the page does must be in the config file
+    afterwards, and still there when the server is started again."""
+    root = pathlib.Path(tempfile.mkdtemp(prefix="hand-"))
+    cfg = root / "config.json"
+    procs = []
+
+    start = lambda: start_hand_server(root, procs)
+    look = lambda port: open_hand_page(browser, port)
+
+    stored = lambda: json.loads(cfg.read_text())
+    try:
+        proc, port = start()
+        page = look(port)
+        col = lambda p: page.locator(f'.ov-col[data-project="{p}"]')
+        order = lambda: page.locator(".ov-col").evaluate_all("els => els.map(e => e.dataset.project)")
+        wait_order = lambda want: page.wait_for_function(
+            "want => [...document.querySelectorAll('.ov-col')].map(e => e.dataset.project).join() === want.join()",
+            arg=want, timeout=8000)
+        check("e2e: three projects from the sessions, in name order", order() == ["folder:maple", "folder:orchard", "folder:pear"], order())
+
+        col("folder:pear").locator(".ov-pin").click()
+        wait_order(["folder:pear", "folder:maple", "folder:orchard"])
+        col("folder:orchard").locator(".ov-pin").click()
+        wait_order(["folder:pear", "folder:orchard", "folder:maple"])
+        check("e2e: pins are in the config in the order they were made", stored()["pinned"] == ["folder:pear", "folder:orchard"],
+              stored())
+        col("folder:orchard").locator(".ov-arrow").click()
+        wait_order(["folder:orchard", "folder:pear", "folder:maple"])
+        check("e2e: an arrow reorders the pins in the config", stored()["pinned"] == ["folder:orchard", "folder:pear"], stored())
+        col("folder:pear").locator(".ov-pin").click()
+        wait_order(["folder:orchard", "folder:maple", "folder:pear"])
+        check("e2e: unpinning takes it out of the config", stored()["pinned"] == ["folder:orchard"], stored())
+
+        open_editor(page, col("folder:maple").locator(".ov-name"))
+        page.locator("input.inline").fill("Maple tree")
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => document.querySelector('.ov-name') && [...document.querySelectorAll('.ov-name')].some(e => e.textContent === 'Maple tree')")
+        check("e2e: a rename is in the config by identity", stored()["names"] == {"folder:maple": "Maple tree"}, stored())
+
+        def merge_pear():
+            col("folder:pear").hover()
+            col("folder:pear").locator(".ov-merge").click()
+            page.locator("select.pick").select_option("folder:maple")
+            page.locator(".ov-form button", has_text="merge").click()
+            wait_order(["folder:orchard", "folder:maple"])
+
+        merge_pear()
+        check("e2e: a merge is a move of the whole project in the config",
+              stored()["assign"] == {"folder:pear": "folder:maple"}, stored())
+        check("e2e: and the card that took it says so",
+              col("folder:maple").locator(".ov-merged").inner_text().startswith("includes pear"))
+        col("folder:maple").locator(".ov-merged button").click()
+        wait_order(["folder:orchard", "folder:maple", "folder:pear"])
+        check("e2e: undo takes it back out of the config and the project is its own again",
+              stored().get("assign", {}) == {} and col("folder:maple").locator(".ov-merged").count() == 0, stored())
+        merge_pear()
+
+        # One session: moved, shown as moved, and taken back.
+        tile = col("folder:maple").locator('.tile[data-sid="fake:c"]')
+        tile.hover()
+        tile.locator(".move").click()
+        page.locator("select.pick").select_option("folder:orchard")
+        page.locator(".ov-form button", has_text="move").click()
+        page.wait_for_function("() => document.querySelector('.ov-col[data-project=\"folder:orchard\"] .tile[data-sid=\"fake:c\"] .clear')")
+        check("e2e: a session moved by hand is in the config under its own key and says so on its tile",
+              stored()["assign"] == {"folder:pear": "folder:maple", "fake:c": "folder:orchard"}
+              and col("folder:orchard").locator('.tile[data-sid="fake:c"] .clear').is_visible(), stored())
+        col("folder:orchard").locator('.tile[data-sid="fake:c"] .clear').click()
+        page.wait_for_function("() => document.querySelector('.ov-col[data-project=\"folder:maple\"] .tile[data-sid=\"fake:c\"]')")
+        check("e2e: the way back takes it out of the config and puts it where its project is",
+              stored()["assign"] == {"folder:pear": "folder:maple"}
+              and col("folder:maple").locator('.tile[data-sid="fake:c"] .clear').count() == 0, stored())
+        page.close()
+
+        # A restart: the same config, a new server.
+        proc.terminate()
+        proc.wait(10)
+        before = stored()
+        proc, port = start()
+        page = look(port)
+        check("e2e: after a restart the pins, the name and the merge are all still there",
+              order() == ["folder:orchard", "folder:maple"]
+              and page.locator('.ov-col[data-project="folder:maple"] .ov-name').inner_text() == "Maple tree"
+              and page.locator('.ov-col[data-project="folder:maple"] .tile').count() == 3, order())
+        check("e2e: and starting it did not rewrite the config", stored() == before, stored())
+        page.close()
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(10)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main():
     if len(sys.argv) != 4:
         sys.exit(__doc__)
@@ -1363,6 +1916,11 @@ def main():
         overview_pass(browser)
         needs_pass(browser)
         kinds_pass(browser)
+        hand_pass(browser)
+        picker_pass(browser)
+        e2e_pass(browser)
+        stale_pass(browser)
+        block_view_pass(browser)
         suggestion_pass(browser)
         jump_pass(browser)
         for view in ("overview", "blocks"):

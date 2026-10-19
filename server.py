@@ -14,6 +14,7 @@ from pathlib import Path
 import archive
 import embedder
 import fleet
+import hand
 import jump
 import lines
 import log
@@ -262,8 +263,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore", "snapshot", "revive",
-              "dismiss", "reopen", "ticket")
+    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "pin", "merge", "hold", "chime", "restore",
+              "snapshot", "revive", "dismiss", "reopen", "ticket")
 
     def do_POST(self):
         if not self._local():
@@ -353,41 +354,49 @@ class Handler(BaseHTTPRequestHandler):
         self._send(json.dumps({"ok": True, "chime": chime}), "application/json")
 
     def _order(self, body):
-        pinned = body.get("pinned")
-        if not isinstance(pinned, list) or not all(isinstance(p, str) for p in pinned):
-            return self.send_error(400, "expected {pinned: [project, ...]}")
-        fleet.write_config({"pinned": pinned})
-        self._send(json.dumps({"ok": True, "pinned": pinned}), "application/json")
+        self._correct(lambda config: hand.set_order(config, body.get("pinned"), body.get("shown")))
 
     def _name(self, body):
         key, label = body.get("project"), body.get("label")
         if not isinstance(key, str) or not isinstance(label, str):
             return self.send_error(400, "expected {project, label}")
-        names = fleet.config_value("names", {})
         # An empty label is how you take a rename back.
-        names.pop(key, None) if not label.strip() else names.update({key: label.strip()})
-        fleet.write_config({"names": names})
-        self._send(json.dumps({"ok": True}), "application/json")
+        self._correct(lambda config: hand.rename(config, key, label))
 
     def _assign(self, body):
         key, project = body.get("key"), body.get("project")
         if not isinstance(key, str) or not isinstance(project, str):
             return self.send_error(400, "expected {key, project}")
-        project = project.strip()
-        assign = fleet.config_value("assign", {})
-        # Empty puts the session back where its directory says it belongs.
-        assign.pop(key, None) if not project else assign.update({key: project})
-        fleet.write_config({"assign": assign})
-        self._send(json.dumps({"ok": True, "project": project}), "application/json")
+        # Empty puts it back where its directory says it belongs. A key that
+        # names a project (`track:x`, `repo:…`) moves the whole project.
+        self._correct(lambda config: hand.move(config, key, project, body.get("was")), project=project.strip())
+
+    def _pin(self, body):
+        self._correct(lambda config: hand.pin(config, body.get("project"), body.get("action"),
+                                              body.get("with"), body.get("shown"), body.get("side")))
+
+    def _merge(self, body):
+        self._correct(lambda config: hand.merge(config, body.get("source"), body.get("target"), body.get("shown")))
+
+    def _correct(self, change, **answer):
+        """Make one correction to config.json -- alone, whatever else is being
+        written -- or say why it makes no sense and change nothing. A request
+        about a card another tab has changed since the page was drawn is 409:
+        the page reads the roster again."""
+        try:
+            fleet.update_config(change)
+        except hand.Stale as why:
+            return self.send_error(409, str(why))
+        except hand.Refused as why:
+            return self.send_error(400, str(why))
+        self._send(json.dumps({"ok": True, **answer}), "application/json")
 
     def _line(self, body):
         key, text = body.get("key"), body.get("text")
         if not isinstance(key, str) or not isinstance(text, str):
             return self.send_error(400, "expected {key, text}")
         text = text.strip()
-        own = fleet.config_value("lines", {})
-        own.pop(key, None) if not text else own.update({key: text})
-        fleet.write_config({"lines": own})
+        fleet.update_config(lambda config: hand.put(config, "lines", key, text))
 
         # The tab in the terminal has to say the same thing, or you end up
         # hunting for a session whose tab still carries the old title. A

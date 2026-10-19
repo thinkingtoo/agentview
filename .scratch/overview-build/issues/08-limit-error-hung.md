@@ -4,7 +4,9 @@
 
 **Blocked by:** 07
 
-**Status:** ready-for-agent
+**Claimed by:** Bettina 2026-10-19 09:52
+
+**Status:** in-progress
 
 - [ ] Each kind is detected from fixture records and shown with its reason and context
 - [ ] A session waiting on a subagent or background job is never Hung
