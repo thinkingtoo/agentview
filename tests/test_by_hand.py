@@ -521,6 +521,19 @@ class Merges(Corrected):
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
         self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:pear"])
 
+    def test_a_config_edited_by_hand_into_the_wrong_shapes_does_not_break_a_merge(self):
+        # `assign`, `names`, `project_lines` that are not tables, and pins that are not strings
+        # (not unhashable ones: the block view's own ordering does not take those).
+        for damage in ({"assign": [], "names": 5, "project_lines": None, "pinned": [None, 3, "folder:orchard"]},
+                       {"assign": None, "pinned": "folder:orchard"},
+                       {"assign": {"fake:z": 7, "folder:pear": ["folder:orchard"]}, "pinned": [7]}):
+            self.seed(**damage)
+            self.assertEqual(self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})[0], 200)
+            got = self.stored()
+            self.assertEqual(got["assign"]["folder:orchard"], "folder:maple", damage)
+            self.assertNotIn("folder:orchard", got["pinned"], damage)
+            self.assertEqual(self.names(), ["maple", "pear"], damage)
+
     def test_merging_twice_in_a_row_carries_the_first_merge_along(self):
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
         self.post("/api/merge", {"source": "folder:maple", "target": "folder:pear"})
