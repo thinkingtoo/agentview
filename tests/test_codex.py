@@ -416,6 +416,12 @@ class Failures(Fixture):
                            rec("2026-10-19T12:05:00.000Z", "event_msg", type="task_started"))
         self.assertIsNone(got)
 
+    def test_words_that_just_fit_are_not_cut_and_one_more_is(self):
+        fits = self.failure(done(message="y" * 200, codex_error_info="other"))
+        over = self.failure(done(message="y" * 201, codex_error_info="other"))
+        self.assertEqual(fits["text"], "y" * 200)
+        self.assertEqual(over["text"], "y" * 199 + "…")
+
     def test_the_words_are_one_line_cut_to_what_a_tile_holds(self):
         got = self.failure(done(message="Too\n  many\tspaces " + "x" * 400, codex_error_info="other"))
         self.assertTrue(got["text"].startswith("Too many spaces xxx") and len(got["text"]) == 200
@@ -601,16 +607,17 @@ class Scripts(Fixture):
 
     def test_a_call_that_asks_for_something_other_than_to_leave_the_sandbox_is_not_a_question(self):
         code = code_of("ls", escalate=False).replace(
-            '"yield_time_ms"', '"sandbox_permissions":"use_default","yield_time_ms"')
+            '"yield_time_ms"', '"sandbox_permissions":"use_default","justification":"require_escalated","yield_time_ms"')
         self.assertEqual(self.asked(code), ("busy", None))
 
     def test_the_words_in_a_comment_are_not_a_question(self):
-        code = ('// sandbox_permissions: "require_escalated" is what the next one would say\n'
-                + code_of("ls", escalate=False))
-        self.assertEqual(self.asked(code), ("busy", None))
+        for comment in ('// sandbox_permissions: "require_escalated" is what the next one would say\n',
+                        '/* tools.exec_command({"sandbox_permissions":"require_escalated"}) */\n'):
+            with self.subTest(comment=comment[:12]):
+                self.assertEqual(self.asked(comment + code_of("ls", escalate=False)), ("busy", None))
 
     def test_an_apostrophe_in_a_comment_does_not_hide_the_question(self):
-        for comment in ("// don't wait for me\n", "/* it's the one that won't fit */\n"):
+        for comment in ("// don't wait for me\n", "/* don't wait for me */\n", "/* it's the one that won't fit */\n"):
             with self.subTest(comment=comment):
                 self.assertEqual(self.asked(code_of("git push", before=comment)), ("waiting", "git push"))
 

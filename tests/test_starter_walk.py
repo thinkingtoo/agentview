@@ -197,6 +197,9 @@ class Task(unittest.TestCase):
         for up in (None, "400", 400, {"a": 400}):
             with self.subTest(up=up):
                 self.assertIsNone(self.above(300, up))
+        for text in ("400", "0400", b"400", 400.0):
+            with self.subTest(text=text):
+                self.assertIsNone(self.above(300, [text]))
 
     def test_a_process_that_is_not_there_has_no_task(self):
         self.assertIsNone(self.above(999, [998]))
