@@ -21,15 +21,25 @@ Names come from [cc-agent-names](https://github.com/sweatshop-ai/cc-agent-names)
 but nothing here requires it — an unnamed session shows whatever Claude Code
 called it.
 
-## The overview, and the block view
+## The overview
 
 The main page is the **overview**: one column per project, each with a project
 card (its name) and one tile per session — name, flag, the line it works from,
 and a click that raises its terminal. The server decides which sessions share a
-column and in what order (`columns` in `/api/roster`, next to the `blocks` the
-chime and the counts read); the page prints what it is sent and decides nothing.
-Columns keep at least 230 px and the row scrolls sideways when there are more
-projects than fit. Systemd routines are not on the overview.
+column and in what order (`columns` in `/api/roster`); the page prints what it
+is sent and decides nothing. Columns keep at least 230 px and the row scrolls
+sideways when there are more projects than fit. Systemd routines are not on the
+overview.
+
+The overview is the only view. The old block view (`/?view=blocks`, with its
+fold, hold, drag and unpin) is gone, and so is `blocks` in the roster: an old
+address with that query opens the overview. What the chime, the server's marks
+and the log read is `flags`, one row per session on the machine, routines and
+finished sessions included: `{key, id, name, flag, blocked}`, with the raw flag
+the transcript gave it (`waiting`, `ready`, `tool`, `stuck` or none) and whether
+the session wrote down what blocks it. A tile may say less than its flag does
+(a long tool call is a sign, `stuck` is Hung); the chime does not, so it rings
+exactly as it did.
 
 **Which project a session is in** is decided in this order, first match wins:
 your own setting (`assign` in `config.json`); the boss's track (a boss by its
@@ -101,17 +111,15 @@ one change to `config.json`, made under a lock, so clicks made at once all
 hold (`/api/pin`, `/api/merge`, and `/api/name` and `/api/assign` as before).
 A merge is taken back from the card of the project that took it (`includes X ·
 undo`); a session you had moved into the absorbed project goes back there, its
-pin, name and line do not. The page tells `/api/pin`, `/api/merge` and
-`/api/order` which cards or blocks it shows (`shown`), because a pin written by
-plain name can hold two cards and a session moved by hand is a block of its own
-in the block view, and only the page knows which is which. A click is about
+pin, name and line do not. The page tells `/api/pin` and `/api/merge` which
+cards it shows (`shown`), because a pin written by plain name can hold two
+cards, and only the page knows which is which. A click is about
 the cards as the page drew them, and another tab may have changed them since.
 A request that names a project which has been moved away since (merged into
 another: its card is gone) is refused with 409 and
 nothing is written, whichever it is: a pin, an unpin, an arrow, a rename, a
-move or the guess chip, a merge, the block view's order, and whether the name
-is in the request's project or in the list of what the page shows (`shown`;
-the block view's unpin names its block only there). The page reads the
+move or the guess chip, a merge, and whether the name is in the request's
+project or in the list of what the page shows (`shown`). The page reads the
 roster again and says "changed in another tab, refreshed". An arrow also says
 which way it goes (`side`, before or after the neighbour it names) and is
 refused unless the two are still in that order with no card the page showed
@@ -121,15 +129,9 @@ into `config.json` by hand is not supported: it neither crashes nor loops, and
 every session still has a card, but the cards swap places and a click aimed at
 one card can land in another.
 
-In the block view a session moved by hand is a block of its own, named by the
-project it was moved into; when that project is merged away the block is named
-by where the project went, so every block the view offers is one it may pin,
-rename and drop on.
-
-The page this README describes below is still there as the **block view**, at
-`/?view=blocks` (a link in the header goes each way). Fold,
-hold, the boss nesting and the routines block exist only on the block view for
-now; the overview retires it later.
+`/api/order` and `/api/hold` went with the block view, whose drag, unpin and
+hold button were their only callers. `config.json` keeps whatever it has under
+`hold`; nothing reads it. `/api/line` stays (see *Arranging it yourself*).
 
 ## Movement: what shows a session is working
 
@@ -246,8 +248,8 @@ command that exits mid-walk, is no evidence of absence. The same goes for a
 transcript that cannot be read: with no writes to see, silence is not known.
 
 The flags the chime reads (`stuck`, `waiting`, `ready`, `tool`) are computed as
-before and stay on `blocks`; the kinds are on the tiles. Hung replaces `stuck`
-on the overview.
+before and travel in the roster's `flags`; the kinds are on the tiles. Hung
+replaces `stuck` on the overview.
 
 ## The header: counts and banners
 
@@ -315,14 +317,14 @@ showed. What is remembered is not
 "you saw this session" but *the stop you read*, so a session that works and stops
 again has a handover nobody has read. This is `finished.json` in the state folder,
 beside `seen.json`, and it is a separate fact from the chime's seen mark. **The
-marks the block view left behind do not count as having read a handover here**:
-they say a row was clicked (a jump that failed used to write one too), and the old
-row did not put what the session said in front of you. They keep driving the chime
-and the `ready` flag exactly as before; a session whose only mark is one of those
-stays a full tile, with its handover shown, until it is looked at once in the
-overview. The block view's own click on a row with no terminal (`/api/seen {key}`,
-no stop) tells the chime and reads nothing: that row shows the last prompt, not the
-handover. `fleet.mark_seen` writes both for a jump that reached the terminal.
+chime's seen marks that predate the overview do not count as having read a
+handover here**: they say a row was clicked (a jump that failed used to write one
+too), and the old row did not put what the session said in front of you. They
+keep driving the chime and the `ready` flag exactly as before; a session whose
+only mark is one of those stays a full tile, with its handover shown, until it
+is looked at once in the overview. A click with no stop (`/api/seen {key}`)
+tells the chime and reads nothing. `fleet.mark_seen` writes both for a jump that
+reached the terminal.
 
 **Pin.** The pin button on a pill keeps it open as a full tile until you unpin it
 or the session closes (`POST /api/keep {key, pinned}`; only a live session can be
