@@ -499,9 +499,9 @@ class Repositories(Cards):
             self.put("README.md", f"# tool\n\n{block}\n\nTool bundles modules.\n")
             self.assertEqual(self.line()["line"], "Tool bundles modules.")
 
-    def test_a_hundred_kilobytes_of_badge_lines_with_long_trailing_blanks_cost_nothing(self):
+    def test_twenty_kilobytes_of_badge_lines_with_long_trailing_blanks_cost_nothing(self):
         badge = "[![build](https://ci.example/badge.svg)](https://ci.example)"
-        self.put("README.md", (badge + " " * 1440 + "\n\n") * 66 + "A tool that does a thing.\n")
+        self.put("README.md", (badge + " " * 1440 + "\n\n") * 12 + "A tool that does a thing.\n")
         started = time.monotonic()
         self.assertEqual(self.line()["line"], "A tool that does a thing.")
         self.assertLess(time.monotonic() - started, 2.0)
@@ -519,6 +519,14 @@ class Repositories(Cards):
         # thousand here is the whole text to make the difference plain.
         started = time.monotonic()
         self.assertTrue(context.wordless("<" * 100_000))
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_a_badge_followed_by_a_great_many_blanks_costs_nothing(self):
+        # The break between items costs the square of a run of blanks, so blanks go first;
+        # a paragraph is cut at 1500 before this, twenty thousand make the difference plain.
+        badge = "[![build](https://ci.example/badge.svg)](https://ci.example)"
+        started = time.monotonic()
+        self.assertTrue(context.wordless(badge + " " * 20_000))
         self.assertLess(time.monotonic() - started, 1.0)
 
     def test_files_a_worktree_repeats_are_read_into_a_line_once_per_card(self):
@@ -551,6 +559,63 @@ class Repositories(Cards):
         self.put("README.md", "Prints reports.\n")
         got = self.roster(sess("a", self.loom), *[sess(f"w{i}", s) for i, s in enumerate(sides)])
         self.assertEqual(got["columns"][0]["context"]["line"], "Prints reports.")
+
+    # -- a README that is a link: a cloned repository chooses what its links point at --
+
+    KEY = "-----BEGIN KEY----- b3BlbnNzaC1rZXk -----END KEY-----\n"
+
+    def test_a_readme_that_is_a_link_out_of_the_checkout_says_nothing_of_what_it_points_at(self):
+        (self.disk / "secret.txt").write_text(self.KEY)
+        (self.loom / "README.md").symlink_to(self.disk / "secret.txt")
+        (self.loom / "AGENTS.md").symlink_to("../secret.txt")           # a relative one, too
+        got = self.context(sess("a", self.loom))
+        self.assertEqual(got["source"], "guess")
+        self.assertNotIn("KEY", got["line"] + got["full"])
+
+    def test_a_link_out_of_the_checkout_does_not_stop_the_next_file_from_describing_it(self):
+        (self.disk / "secret.txt").write_text(self.KEY)
+        (self.loom / "README.md").symlink_to(self.disk / "secret.txt")
+        self.put("CLAUDE.md", "Prints reports.\n")
+        self.assertEqual(self.line()["line"], "Prints reports.")
+
+    def test_a_readme_that_is_a_link_into_the_git_folder_is_not_read(self):
+        (self.loom / ".git" / "description").write_text(self.KEY)
+        (self.loom / "README.md").symlink_to(".git/description")
+        self.assertEqual(self.line()["source"], "guess")
+
+    def test_a_link_to_a_file_in_the_checkout_is_read(self):
+        (self.loom / "docs").mkdir()
+        self.put("docs/about.md", "Prints reports.\n")
+        (self.loom / "README.md").symlink_to("docs/about.md")
+        self.assertEqual(self.line()["line"], "Prints reports.")
+        (self.loom / "README.md").unlink()
+        (self.loom / "AGENTS.md").symlink_to("CLAUDE.md")               # as the owner's checkouts have it
+        self.put("CLAUDE.md", "Notes for Claude.\n")
+        self.assertEqual(self.line()["line"], "Notes for Claude.")
+
+    def test_a_readme_that_links_to_itself_does_not_hide_the_other_files(self):
+        (self.loom / "README.md").symlink_to("README.md")
+        self.put("AGENTS.md", "Instructions for agents.\n")
+        self.assertEqual(self.line()["line"], "Instructions for agents.")
+
+    def test_a_readme_is_read_for_its_first_twenty_thousand_characters_and_no_more(self):
+        # The first prose of 9,065 real files lies within the first 16,000 characters, but for two
+        # whose "prose" further down is a code line and a theme footer; a hundred kilobytes of junk
+        # in each of twelve files made a card cost most of a second.
+        self.put("README.md", "<div>\n" * 3000 + "\nPrints reports.\n")           # about 18,000 characters in
+        self.assertEqual(self.line()["line"], "Prints reports.")
+        self.put("README.md", "<div>\n" * 6000 + "\nPrints reports.\n")           # about 36,000
+        self.assertEqual(self.line()["source"], "guess")
+        self.put("README.md", "<div>\n" * 20000)
+        with mock.patch.object(context, "first_prose", wraps=context.first_prose) as spy:
+            self.line()
+        self.assertEqual(len(spy.call_args.args[0]), 20_000)
+
+    def test_a_goal_is_still_read_for_a_hundred_thousand_characters(self):
+        path = self.disk / "long.txt"
+        path.write_text("x" * 150_000)
+        self.assertEqual(len(context.read(path)), 100_000)
+        self.assertEqual(len(context.read(path, 20_000)), 20_000)
 
     def test_a_worktree_whose_readme_differs_is_still_read(self):
         side = self.worktree(self.loom, "loom-side")
@@ -710,10 +775,17 @@ class Repositories(Cards):
             for old in ("README.md", "AGENTS.md", "CLAUDE.md"):
                 (self.loom / old).unlink(missing_ok=True)
             with self.subTest(name):
-                self.put(name, "---\n" + "\n" * 40000 + "Loom prints reports.\n")
+                self.put(name, "---\n" + "\n" * 19000 + "Loom prints reports.\n")      # all within the 20,000 read
                 started = time.monotonic()
                 self.assertEqual(self.line()["line"], "Loom prints reports.")
                 self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_a_text_that_opens_with_dashes_and_forty_thousand_blank_lines_costs_nothing(self):
+        # Past the 20,000 a file is read for; the text itself, as the first_prose of any text.
+        started = time.monotonic()
+        self.assertEqual(context.first_prose("---\n" + "\n" * 40_000 + "Loom prints reports.\n"),
+                         "Loom prints reports.")
+        self.assertLess(time.monotonic() - started, 1.0)
 
     def test_front_matter_is_still_taken_out(self):
         self.put("README.md", "---\ntitle: Loom\ntags: [a]\n---\nPrints reports.\n")

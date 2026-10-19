@@ -15,6 +15,7 @@ safety here.
 import itertools
 import os
 import re
+from pathlib import Path
 
 import projects
 
@@ -108,17 +109,19 @@ CODE = re.compile(r"`([^`]+)`")
 FORMATTING = re.compile(r"</?(a|abbr|b|big|br|cite|code|del|em|font|i|img|ins|kbd|mark|picture|s|small|source"
                         r"|span|strike|strong|sub|sup|u)\b[^<>]*>", re.IGNORECASE)
 HTML_LINK = re.compile(r"<a\b[^<>]*>[^<]*</a>", re.IGNORECASE)
-READ = 100_000       # a goal or a README is read this far, no further
+READ = 100_000       # a goal is read this far, no further
+DESCRIPTION_READ = 20_000   # a repository's file, this far: the first prose of 9,065 real files is within 16,000 characters, bar two
+                            # where what lies further down is a code line and a theme footer
 
 
-def read(path):
+def read(path, limit=READ):
     """The start of a text file, or "" when it is no regular file or cannot be
     read: a named pipe would wait for a writer that may never come."""
     try:
         if not projects.regular(path):
             return ""
         with open(path, encoding="utf-8-sig", errors="replace") as fh:
-            return fh.read(READ)
+            return fh.read(limit)
     except OSError:
         return ""
 
@@ -412,13 +415,34 @@ def first_prose(text):
     return next((got for got in map(prose, looked_at) if got), "")
 
 
-def files_in(folder):
-    """The files directly in a folder, `{lowercase name: path}`."""
+def stays_inside(path, base):
+    """Whether a link ends up in the folder `base` (already resolved), and not
+    in its `.git`: `AGENTS.md -> CLAUDE.md` does, `README.md -> ~/.ssh/id_ed25519`
+    does not. A cloned repository chooses what its links point at."""
     try:
+        target = Path(path).resolve().relative_to(base)
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return ".git" not in target.parts
+
+
+def files_in(folder):
+    """The files directly in a folder, `{lowercase name: path}`. A link counts
+    when it stays inside the folder; one entry that cannot be looked at (a link
+    that loops) is left out and no more."""
+    found = {}
+    try:
+        base = Path(folder).resolve()
         with os.scandir(folder) as entries:
-            return {e.name.casefold(): e.path for e in entries if e.is_file()}
-    except OSError:
+            for entry in entries:
+                try:
+                    if entry.is_file() and (not entry.is_symlink() or stays_inside(entry.path, base)):
+                        found[entry.name.casefold()] = entry.path
+                except OSError:
+                    continue
+    except (OSError, RuntimeError):
         return {}
+    return found
 
 
 def placed_in(cwd, project_id):
@@ -446,7 +470,7 @@ def repository_text(rows, project_id):
     for wanted in DESCRIBED_BY:
         for found in here.values():
             path = next((found[name] for name in wanted if name in found), None)
-            body = read(path) if path else ""
+            body = read(path, DESCRIPTION_READ) if path else ""
             if body not in parsed:
                 parsed[body] = first_prose(body) if body else ""
             if parsed[body]:
