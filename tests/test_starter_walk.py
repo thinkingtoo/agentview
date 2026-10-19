@@ -7,6 +7,7 @@ R17: the walk must survive a process vanishing mid-walk, a pid the kernel
 handed to somebody else, and a process that is not ours to read.
 """
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -44,6 +45,7 @@ class Tree:
 class Walk(unittest.TestCase):
     def setUp(self):
         self.tree = Tree()
+        self.addCleanup(shutil.rmtree, self.tree.root, True)
 
     def up(self, pid):
         return procs.ancestors(self.tree.root, pid)
@@ -143,6 +145,7 @@ class Task(unittest.TestCase):
 
     def setUp(self):
         self.tree = Tree()
+        self.addCleanup(shutil.rmtree, self.tree.root, True)
 
     def above(self, pid, up):
         return procs.task_above(self.tree.root, pid, up)
@@ -175,6 +178,7 @@ class Task(unittest.TestCase):
                        "/home/alice/tasks/bg1.output/x", "tasks/bg1.output.bak", "/"):
             with self.subTest(target=target):
                 tree = Tree()
+                self.addCleanup(shutil.rmtree, tree.root, True)
                 tree.add(300, 1, 1000, stdout=target)
                 self.assertIsNone(procs.task_above(tree.root, 300, []))
 
