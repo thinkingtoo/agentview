@@ -42,7 +42,7 @@ FOLDER = "/home/alice/Projects/orchard"      # no repository there: a project by
 EARLY, MIDDLE, LATE = 1790000000000, 1790000100000, 1790000200000
 
 
-class ContextLine(TrackFixtures):
+class Cards(TrackFixtures):
     def first(self, *sessions):
         """The first column the roster draws for these sessions."""
         return self.roster(*sessions)["columns"][0]
@@ -50,6 +50,8 @@ class ContextLine(TrackFixtures):
     def context(self, *sessions):
         return self.first(*sessions)["context"]
 
+
+class ContextLine(Cards):
     def test_your_own_line_beats_every_source(self):
         loom = self.repo("loom")
         (loom / "README.md").write_text("# loom\n\nA tiny tool that prints reports.\n")
@@ -105,6 +107,102 @@ class ContextLine(TrackFixtures):
     def test_a_line_kept_under_a_plain_name_is_nobody_s(self):
         self.config = {"project_lines": {"orchard": "Not an identity"}}
         self.assertEqual(self.context(sess("a", FOLDER))["source"], "guess")
+
+
+class Tracks(Cards):
+    def setUp(self):
+        super().setUp()
+        self.loom = self.repo("loom")          # where the boss of the track below works
+
+    def goal(self, track, outcome="Customers pay with a saved card. Nothing else changes.",
+             status="OPEN", boxes=("[x] cart", "[ ] receipt", "[ ] refund"), extra=""):
+        """`pm/<track>.goal.md` the way a boss writes it."""
+        body = "".join(f"- {b}\n" for b in boxes)
+        (self.pm / f"{track}.goal.md").write_text(
+            f"# Objective \u2014 {track}\n_Status: {status}_\n\n## Outcome\n{outcome}\n\n"
+            f"## Done when\n{body}\n## Deliverables\n- [ ] a thing that is not a criterion\n{extra}")
+
+    def track(self, name="checkout", nogoal=False, **over):
+        """The column of a track whose boss works in `loom`; with a goal file unless `nogoal`."""
+        if not nogoal:
+            self.goal(name, **over)
+        return self.claude(self.boss("b", self.loom, name))["columns"][0]
+
+    def test_a_tracks_line_is_the_first_sentence_of_its_outcome_and_the_paragraph_is_the_hover(self):
+        got = self.track()["context"]
+        self.assertEqual(got, {"source": "goal", "line": "Customers pay with a saved card.",
+                               "full": "Customers pay with a saved card. Nothing else changes.",
+                               "guess": False})
+
+    def test_an_outcome_written_over_several_lines_is_one_paragraph(self):
+        got = self.track(outcome="Customers pay with\na saved card, e.g. the one\nthey used last. Then done.")["context"]
+        self.assertEqual(got["line"], "Customers pay with a saved card, e.g. the one they used last.")
+        self.assertTrue(got["full"].endswith("they used last. Then done."))
+
+    def test_a_long_first_sentence_is_cut_and_the_hover_keeps_the_whole_paragraph(self):
+        sentence = "Customers pay " + " ".join(["with"] * 60) + " a saved card."
+        got = self.track(outcome=sentence + " More.")["context"]
+        self.assertTrue(got["line"].endswith("\u2026") and len(got["line"]) <= 140)
+        self.assertEqual(got["full"], sentence + " More.")
+
+    def test_a_track_with_no_goal_file_or_no_outcome_in_it_falls_back_to_the_guess(self):
+        self.assertEqual(self.track(nogoal=True)["context"]["source"], "guess")
+        (self.pm / "checkout.goal.md").write_text("# Objective\n_Status: OPEN_\n\n## Done when\n- [ ] x\n")
+        self.assertEqual(self.track(nogoal=True)["context"]["source"], "guess")
+
+    def test_your_line_beats_the_goal(self):
+        self.config = {"project_lines": {"track:checkout": "Mine"}}
+        got = self.track()
+        self.assertEqual((got["context"]["source"], got["context"]["line"]), ("own", "Mine"))
+
+    def test_only_a_goal_of_that_track_is_ever_read(self):
+        # An identity comes from the page; a path in it must not walk out of the folder.
+        (self.disk / "secret.goal.md").write_text("## Outcome\nNot for the card.\n")
+        self.config = {"assign": {"fake:a": "track:../secret"}}
+        got = self.roster(sess("a", self.repo("orchard")))["columns"][0]
+        self.assertEqual((got["project"], got["context"]["source"]), ("track:../secret", "guess"))
+
+    # -- status and progress ---------------------------------------------------
+
+    def test_a_track_shows_its_status_word_and_how_many_boxes_are_ticked(self):
+        got = self.track(status="PAUSED \u2014 waiting on the owner")["track"]
+        self.assertEqual(got, {"status": "PAUSED",
+                               "progress": {"done": 1, "total": 3, "text": "1 of 3", "met": False}})
+
+    def test_a_met_track_shows_done_whatever_its_boxes_say(self):
+        got = self.track(status="MET 2026-10-16 \u2014 all done", boxes=("[ ] a", "[ ] b"))["track"]
+        self.assertEqual(got["status"], "MET")
+        self.assertEqual(got["progress"], {"done": 2, "total": 2, "text": "done", "met": True})
+
+    def test_a_met_track_with_no_boxes_at_all_still_shows_done(self):
+        got = self.track(status="MET", boxes=())["track"]
+        self.assertEqual(got["progress"], {"done": 0, "total": 0, "text": "done", "met": True})
+
+    def test_a_track_with_no_boxes_shows_a_status_and_no_progress(self):
+        got = self.track(boxes=())["track"]
+        self.assertEqual(got, {"status": "OPEN", "progress": None})
+
+    def test_only_the_boxes_under_done_when_count_in_any_style_and_not_in_code(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n## Outcome\nCustomers pay.\n\n"
+            "## Done when\n- [x] one\n* [X] two\n   - [ ] three, indented\n"
+            "```\n- [ ] four, in a fence\n```\nnot a box\n\n"
+            "## Deliverables\n- [x] five, another section\n")
+        got = self.track(nogoal=True)["track"]
+        self.assertEqual((got["progress"]["done"], got["progress"]["total"]), (2, 3))
+
+    def test_a_status_that_is_none_of_the_three_words_has_no_tag(self):
+        got = self.track(status="BLOCKED on a thing")["track"]
+        self.assertEqual(got["status"], "")
+        self.assertEqual(got["progress"]["text"], "1 of 3")
+
+    def test_a_repository_has_a_context_line_but_no_status_or_progress(self):
+        column = self.first(sess("a", self.loom))
+        self.assertIsNone(column["track"])
+
+    def test_the_notes_query_is_the_name_and_the_line(self):
+        self.assertEqual(self.track()["notes"],
+                         {"query": "Checkout Customers pay with a saved card."})
 
 
 if __name__ == "__main__":

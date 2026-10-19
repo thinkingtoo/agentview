@@ -646,11 +646,11 @@ def _column(rows, project, folder_rule, names, own_lines):
     rows.sort(key=lambda s: not s["boss"])
     tiles = [tile_of(m, _suggestion(m, project, folder_rule, names)) for m in rows]
     name = _column_name(project, names)
-    line = context.context_line(project, rows, own_lines)
+    line, track = context.card(project, rows, own_lines)
     return {
         "project": project["id"], "raw": project["raw"], "kind": project["kind"],
         "name": name,
-        "context": line, "track": None,
+        "context": line, "track": track,
         # What the card's notes link asks the brain, once someone clicks it.
         "notes": None if line is None else {"query": f"{name} {line['line']}".strip()},
         "strip": strip_of(rows), "summary": mix_of(tiles),
