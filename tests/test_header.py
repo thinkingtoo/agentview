@@ -8,6 +8,7 @@ Names and texts are invented.
 """
 import collections
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -104,6 +105,7 @@ class Banners(Base):
         # The folder Claude Code writes to, which is the disk that counts. A
         # folder of our own, so that the machine's real one is never asked.
         self.claude = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.claude, True)
         os.environ["CLAUDE_CONFIG_DIR"], was = str(self.claude), os.environ.get("CLAUDE_CONFIG_DIR")
         self.addCleanup(lambda: os.environ.pop("CLAUDE_CONFIG_DIR") if was is None
                         else os.environ.__setitem__("CLAUDE_CONFIG_DIR", was))
