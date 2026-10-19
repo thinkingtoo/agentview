@@ -14,6 +14,7 @@ from pathlib import Path
 import archive
 import context
 import embedder
+import finished
 import fleet
 import hand
 import jump
@@ -267,7 +268,7 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or "{}")
 
     ROUTES = ("jump", "seen", "order", "name", "line", "assign", "pin", "merge", "hold", "chime", "restore",
-              "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes")
+              "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep")
 
     def do_POST(self):
         if not self._local():
@@ -303,12 +304,31 @@ class Handler(BaseHTTPRequestHandler):
     def _seen(self, body):
         """You looked. That is all a click on a row without a terminal means,
         and it is enough: the tick goes, the count comes down."""
-        key = body.get("key")
-        if not isinstance(key, str):
-            return self.send_error(400, "expected {key}")
-        if not fleet.look(key):
+        key, stop = body.get("key"), body.get("stop")
+        # `stop` is the overview's tile saying which stop's handover it showed;
+        # the block view sends none, and reads nothing.
+        if not isinstance(key, str) or (stop is not None and (isinstance(stop, bool) or not isinstance(stop, int))):
+            return self.send_error(400, "expected {key, stop?}")
+        if not fleet.look(key, stop):
             return self.send_error(404, "no such live session")
         self._send(json.dumps({"ok": True}), "application/json")
+
+    def _keep(self, body):
+        """Pin a finished session open as a full tile, or let it shrink again.
+        (`keep`, because `/api/pin` is the project's pin: this is the glossary's
+        "Pin (a session)".)
+
+        Kept with the seen marks, not in config.json: it is a click, and it
+        ends with the session (`finished.forget`, on every poll). Only a
+        session that is alive can be pinned, the way only one can be jumped to.
+        """
+        key, pinned = body.get("key"), body.get("pinned")
+        if not isinstance(key, str) or not isinstance(pinned, bool):
+            return self.send_error(400, "expected {key, pinned: true|false}")
+        if not fleet.find(key):
+            return self.send_error(404, "no such live session")
+        finished.pin(key, pinned)
+        self._send(json.dumps({"ok": True, "pinned": pinned}), "application/json")
 
     def _jump(self, body):
         key = body.get("key")
@@ -504,6 +524,7 @@ class Handler(BaseHTTPRequestHandler):
             # forgotten: a missed round must not bring back as `ready`
             # everything you had already read.
             seen.forget(live, answered=answered)
+            finished.forget(live, answered=answered)
             if not fleet.ROUND["failed"]:
                 lines.forget({m["id"] for b in blocks for m in b["members"]})
             status = {name: {"ok": True} for name in answered}

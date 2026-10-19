@@ -57,6 +57,7 @@ failures = []
 errors = []        # page errors, console errors and dialogs, from every page
 posted = []        # every body the routed pages POSTed, from every pass
 BOMB = "<img src=x onerror=alert(1)>"
+ATTR = '"><img src=x onerror=alert(1)> x="'        # breaks out of a quoted attribute, if one is not escaped
 
 
 def check(label, ok, detail=""):
@@ -331,6 +332,8 @@ class Fake:
                 c["merged"] = [m for m in c.get("merged", []) if m["project"] != b["key"]]
         elif path == "/api/pin":
             self.pin_column(b)
+        elif path == "/api/keep":
+            self.keep(b["key"], b["pinned"])
         elif path == "/api/merge":
             cols = self.body["columns"]
             source = next(c for c in cols if c["project"] == b["source"])
@@ -344,6 +347,24 @@ class Fake:
                 blk["pinned"] = blk["project"] in pins
             self.body["blocks"].sort(key=lambda blk: pins.index(blk["project"])
                                      if blk["project"] in pins else len(pins))
+
+    def keep(self, key, pinned):
+        """The server's pin, as far as the page can tell: a pinned pill is a full
+        tile that says it is pinned, and an unpinned tile that was one shrinks."""
+        for c in self.body["columns"]:
+            if pinned:
+                for p in c.get("pills", []):
+                    if p["key"] == key:
+                        c["pills"].remove(p)
+                        c["sessions"].append({**tile(S(key, p["name"], "idle", line=p["line"], tags=p["tags"])),
+                                              "pinned": True})
+                        return
+            else:
+                for t in c["sessions"]:
+                    if t["key"] == key and t.get("pinned"):
+                        c["sessions"].remove(t)
+                        c.setdefault("pills", []).append(P(key, t["name"], 180, line=t["line"]))
+                        return
 
     def pin_column(self, b):
         """The server's pin, as far as the page can tell: pinned first in pin order."""
@@ -659,6 +680,170 @@ def overview_pass(browser):
     check("the overview has no hold button and a way to the block view",
           page.locator("#hold").is_hidden() and page.locator("#view").get_attribute("href") == "?view=blocks")
     check("overview: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
+def P(key, name, minutes, line="", via="pane", why="", tags=(), provider=""):
+    """A finished session as the server sends it: one line at the foot of a column."""
+    jump = {"via": via} if via != "none" else {"via": "none", "reason": why or "no terminal"}
+    text = f"{minutes // 60} h" if minutes >= 60 else f"{minutes} min"
+    return {"key": key, "name": name, "provider": provider, "tags": list(tags),
+            "idle": {"since": float(minutes), "text": text},
+            "line": line, "jump": jump, "find": f"{name}\n{line}".lower()}
+
+
+def with_pills(got, project, pills):
+    """The column of `project` carries `pills`; the rest carry none, as the server sends them."""
+    for c in got["columns"]:
+        c["pills"] = pills if c["project"] == project else c.get("pills", [])
+    return got
+
+
+STOP = 1790000000000          # the stop a tile's handover belongs to, as the server stamps it
+
+
+def finished_fixture():
+    got = roster([
+        ("maple", "maple", [
+            S("m1", "Vera", "busy", mv="writing · 8s ago"),
+            S("m2", "Mei", "idle", line="Release notes")]),
+        ("orchard", "orchard", [S("o1", "Odile", "idle", moving=True, mv="waiting on: Run the tests, 5 min")]),
+        ("delta", "delta", []),
+        ("harbor", "harbor", [S("k1", "Kasper", "idle", line="Tide table review", can=False)])])
+    got["columns"][0]["sessions"][1].update(
+        unread=True, handover="Release notes drafted; the docs page links to it.")
+    got["columns"][3]["sessions"][0].update(unread=True, handover=BOMB, stop=STOP)
+    for c in got["columns"]:
+        c.setdefault("pills", [])
+    got["columns"][0]["pills"] = [
+        P("p1", "Femi", 180, line="Saved-card form", tags=["boss"]),
+        P("p2", "Gus", 130, via="none", why="attached, but in no window that can be raised"),
+        P("c1", "", 200, line="Index cleanup", provider="codex")]
+    got["columns"][2]["pills"] = [P("d1", "Hanne", 600, line="Nightly rebuild"), P("d2", "Ilse", 400)]
+    got["columns"][3]["pills"] = [P("h1", BOMB, 300, line=ATTR, tags=[BOMB])]
+    return got
+
+
+def finished_pass(browser):
+    """Ticket 10: the one-line pills at the foot of a column. The page prints the
+    roster's `pills` and decides nothing: a pill counts toward nothing, its hover
+    is the working-on line, a click jumps (and a pill with nowhere to go says so
+    and posts nothing), and the pin is the server's."""
+    fake = Fake(finished_fixture())
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    col = lambda p: page.locator(f'.ov-col[data-project="{p}"]')
+    pill = lambda sid: page.locator(f'.pill[data-sid="{sid}"]')
+    tile_ = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
+
+    check("a pill shows its name and how long it has been idle",
+          pill("p1").locator(".nm").inner_text() == "Femi" and pill("p1").locator(".for").inner_text() == "3 h")
+    check("the pills are at the foot of their column, after the tiles",
+          col("maple").evaluate("e => e.lastElementChild.classList.contains('pills')")
+          and col("maple").evaluate("e => [...e.children].map(c => c.className.split(' ')[0]).join()")
+          == "ov-head,tile,tile,pills")
+    check("a pill is one line", pill("p1").bounding_box()["height"] < 34, pill("p1").bounding_box())
+    check("its working-on line is its hover", pill("p1").get_attribute("title") == "Saved-card form")
+    check("and a boss pill still says it led", pill("p1").locator(".bg-tag.boss").count() == 1)
+    check("a project with only pills is its card, ALL IDLE, with nothing counted",
+          col("delta").locator(".tile").count() == 0 and col("delta").locator(".pill").count() == 2
+          and col("delta").locator(".ov-state").inner_text() == "ALL IDLE"
+          and col("delta").locator(".mix").inner_text().strip() == "0 moving · 0 stuck · 0 idle",
+          col("delta").inner_text())
+    check("the header counts the tiles and none of the pills",
+          head_line(page).split(" · ")[:2] == ["4 sessions", "4 projects"] and head_counts(page)
+          == ["0 need you", "0 other stuck", "2 moving"], head_line(page))
+    check("a tile with an unread handover quotes it and says unread",
+          tile_("m2").locator(".said").inner_text() == "“Release notes drafted; the docs page links to it.”"
+          and tile_("m2").locator(".flag.unread").inner_text().lower() == "unread")
+
+    pill("p1").click()
+    page.wait_for_timeout(300)
+    check("a pill posts /api/jump with its key and nothing else", fake.posts == [("/api/jump", {"key": "p1"})], fake.posts)
+    check("and a jump that worked shows no reason", pill("p1").locator(".why").count() == 0)
+
+    fake.answer["/api/jump"] = {"ok": False, "reason": "wezterm cli spawn failed"}
+    pill("p1").click()
+    pill("p1").locator(".why").wait_for(timeout=3000)
+    check("a failed jump leaves its reason on the pill",
+          pill("p1").locator(".why").inner_text() == "wezterm cli spawn failed" and "failed" in pill("p1").get_attribute("class"))
+    check("and marks nothing seen", fake.of("/api/seen") == [], fake.posts)
+    poll_now(page)
+    page.wait_for_function("document.querySelectorAll('.pill .why').length === 0", timeout=3000)
+    check("until the next poll", pill("p1").locator(".why").count() == 0 and pill("p1").count() == 1)
+
+    n = len(fake.posts)
+    check("a pill with no terminal says so, greyed, before any click",
+          pill("p2").locator(".go").inner_text() == "no terminal" and "can" not in pill("p2").get_attribute("class").split()
+          and pill("p2").locator(".go").get_attribute("title") == "attached, but in no window that can be raised")
+    pill("p2").click()
+    pill("p2").locator(".why.note").wait_for(timeout=3000)
+    check("a click on it says why, and posts nothing (it marks nothing seen)",
+          len(fake.posts) == n and pill("p2").locator(".why.note").inner_text()
+          == "attached, but in no window that can be raised", fake.posts[n:])
+
+    # Pin: a pill becomes a tile that says it is pinned, and back.
+    fake.posts.clear()
+    pill("p1").hover()
+    pill("p1").locator("button.keep").click()
+    tile_("p1").wait_for(timeout=3000)
+    check("the pin button posts /api/keep and jumps nowhere", fake.posts == [("/api/keep", {"key": "p1", "pinned": True})], fake.posts)
+    check("a pinned pill is a full tile with an unpin button, and no longer a pill",
+          pill("p1").count() == 0 and tile_("p1").locator("button.keep.on").inner_text() == "unpin"
+          and tile_("p1").locator("button.keep.on").get_attribute("aria-pressed") == "true")
+    poll_now(page)
+    check("the pin survives a poll", tile_("p1").count() == 1 and pill("p1").count() == 0)
+    check("the header still counts it as nothing: an idle tile is in no count",
+          head_counts(page) == ["0 need you", "0 other stuck", "2 moving"] and head_line(page).split(" · ")[0] == "5 sessions",
+          head_line(page))
+    fake.posts.clear()
+    tile_("p1").hover()
+    tile_("p1").locator("button.keep").click()
+    pill("p1").wait_for(timeout=3000)
+    check("unpinning posts pinned false and the tile shrinks to a pill again",
+          fake.posts == [("/api/keep", {"key": "p1", "pinned": False})] and tile_("p1").count() == 0, fake.posts)
+
+    # Lighting up a count: the pills fade with the tiles that are not in it, and
+    # a column with none of those is only its card.
+    page.locator('button.hc[data-count="moving"]').click()
+    check("a lit count fades the pills, and a column with nothing lit is only its card",
+          pill("p1").evaluate("e => e.classList.contains('dim')") and col("maple").locator(".pills").is_visible()
+          and not col("delta").locator(".pills").is_visible() and not col("harbor").locator(".pills").is_visible())
+    page.locator('button.hc[data-count="moving"]').click()
+
+    # Search keeps working through pills.
+    page.fill("#q", "hanne")
+    page.wait_for_timeout(300)
+    check("the filter finds a pill by its name and its line, and keeps the column",
+          page.locator(".ov-col").count() == 1 and col("delta").locator(".pill").count() == 1
+          and col("delta").locator(".pill .nm").inner_text() == "Hanne", page.locator(".ov-col").count())
+    page.fill("#q", "")
+    page.wait_for_timeout(300)
+    check("and clearing it brings them all back", page.locator(".pill").count() == 6, page.locator(".pill").count())
+
+    # R7: a hostile name, line, tag and handover are text, in a text position and in an attribute.
+    hostile = pill("h1")
+    check("R7: markup in a pill's name, line and tag is text and builds no element",
+          page.locator('.ov-col[data-project="harbor"] img').count() == 0
+          and hostile.locator(".nm").inner_text() == BOMB and hostile.get_attribute("title") == ATTR
+          and hostile.locator(".bg-tag").inner_text().lower() == BOMB.lower()
+          and hostile.evaluate("e => [...e.attributes].map(a => a.name).sort().join()") == "class,data-sid,title")
+    check("R7: markup in an unread handover is text and builds no element",
+          tile_("k1").locator(".said").inner_text() == f"“{BOMB}”" and tile_("k1").locator("img").count() == 0)
+
+    # A session with no name of its own (Codex has none) is named by its provider, as a tile is.
+    check("a pill of a session with no name says its provider, as a tile does",
+          pill("c1").locator(".nm").inner_text() == "Codex", pill("c1").locator(".nm").inner_text())
+
+    # Reading is reading what was shown: the click on a tile with no terminal says
+    # which stop its handover belongs to, and the server reads only that one.
+    fake.posts.clear()
+    tile_("k1").click()
+    page.wait_for_timeout(300)
+    check("a click on a tile with no terminal posts the key and the stop its handover belongs to, and jumps nowhere",
+          fake.posts == [("/api/seen", {"key": "k1", "stop": STOP})], fake.posts)
+    check("finished: nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()
 
 
@@ -2340,6 +2525,117 @@ def e2e_pass(browser):
         shutil.rmtree(root, ignore_errors=True)
 
 
+def finished_e2e_pass(browser):
+    """Ticket 10 against a real server: invented sessions that stopped hours ago on
+    a throwaway server, a config of its own. A handover you have not read keeps a
+    tile; once read, a pill; a new write brings the tile back; a pin survives
+    polls and a restart and ends with the session; and what the block view
+    marked seen does not count as read."""
+    root = pathlib.Path(tempfile.mkdtemp(prefix="finished-"))
+    (root / "config.json").write_text("{}")
+    procs = []
+    clock = int(time.time() * 1000)
+    minutes = lambda n: clock - n * 60000
+    sessions = [dict(id="a", name="Ilse", cwd="/home/alice/Projects/maple", status="idle",
+                     updatedAt=minutes(300), said="Ilse rebuilt the search index."),
+                dict(id="b", name="Odile", cwd="/home/alice/Projects/maple", status="idle",
+                     updatedAt=minutes(400), said="Odile drafted the release notes."),
+                dict(id="c", name="Saskia", cwd="/home/alice/Projects/maple", status="busy",
+                     updatedAt=minutes(2), quietFor=0.1)]
+
+    def write(rows):
+        tmp = root / "sessions.json.tmp"
+        tmp.write_text(json.dumps(rows))
+        tmp.replace(root / "sessions.json")
+
+    state = lambda: json.loads((root / "finished.json").read_text()) if (root / "finished.json").exists() else {}
+    config_before = (root / "config.json").read_bytes()
+    try:
+        # What the block view left behind: Odile's stop was marked seen there.
+        (root / "seen.json").write_text(json.dumps({"fake:b": sessions[1]["updatedAt"]}))
+        write(sessions)
+        proc, port = start_hand_server(root, procs)
+        page = open_hand_page(browser, port)
+        tile = lambda sid: page.locator(f'.tile[data-sid="fake:{sid}"]')
+        pill = lambda sid: page.locator(f'.pill[data-sid="fake:{sid}"]')
+        shown = lambda: page.locator(".tile, .pill").evaluate_all(
+            "els => els.map(e => e.className.split(' ')[0] + ':' + e.dataset.sid.split(':')[1]).sort().join()")
+        wait = lambda want: page.wait_for_function(
+            "want => [...document.querySelectorAll('.tile, .pill')].map(e => e.className.split(' ')[0] + ':' + e.dataset.sid.split(':')[1]).sort().join() === want",
+            arg=want, timeout=8000)
+
+        check("finished e2e: sessions idle for hours whose handover is unread are full tiles", shown() == "tile:a,tile:b,tile:c", shown())
+        check("and each has what it told you on it, in quotes",
+              tile("a").locator(".said").inner_text() == "“Ilse rebuilt the search index.”"
+              and tile("b").locator(".said").inner_text() == "“Odile drafted the release notes.”")
+        check("R19: Odile, marked seen by the block view, is unread here all the same",
+              tile("b").locator(".flag.unread").inner_text().lower() == "unread" and not state().get("read", {}).get("fake:b"), state())
+
+        tile("a").click()
+        wait("pill:a,tile:b,tile:c")
+        check("a click that looked at Ilse's handover makes it a pill, 5 h idle",
+              pill("a").locator(".for").inner_text() == "5 h" and state()["read"] == {"fake:a": sessions[0]["updatedAt"]}, state())
+        check("the card counts what is left: the pill is in no count",
+              head_counts(page) == ["0 need you", "0 other stuck", "1 moving"], head_line(page))
+
+        pill("a").hover()
+        pill("a").locator("button.keep").click()
+        wait("tile:a,tile:b,tile:c")
+        check("pinning it makes it a tile that says unpin, and the server keeps the pin",
+              tile("a").locator("button.keep.on").inner_text() == "unpin" and state()["pinned"] == ["fake:a"], state())
+        for _ in range(2):
+            poll_now(page)
+        check("the pin survives polls", shown() == "tile:a,tile:b,tile:c", shown())
+
+        # A new write turns a pill back into a tile, and the new stop is unread.
+        tile("b").click()
+        wait("pill:b,tile:a,tile:c")
+        write([sessions[0], {**sessions[1], "status": "busy", "quietFor": 0.1, "updatedAt": minutes(0)}, sessions[2]])
+        poll_now(page)
+        wait("tile:a,tile:b,tile:c")
+        check("a new write brings Odile's tile back, working", tile("b").locator(".mv").inner_text().startswith("writing"))
+        odile = {**sessions[1], "updatedAt": minutes(1), "said": "Odile finished the second round."}
+        write([sessions[0], odile, sessions[2]])
+        poll_now(page)
+        page.wait_for_function("() => document.querySelector('.tile[data-sid=\"fake:b\"] .said')?.textContent.includes('second round')", timeout=8000)
+        check("and when it stops again its new handover is unread",
+              tile("b").locator(".said").inner_text() == "“Odile finished the second round.”", shown())
+
+        # The pin ends with the session: closed, it is forgotten; resumed, it is not pinned.
+        write([odile, sessions[2]])
+        poll_now(page)
+        wait("tile:b,tile:c")
+        page.wait_for_timeout(200)
+        check("a pinned session that closed takes its pin with it", state()["pinned"] == [], state())
+        write([sessions[0], odile, sessions[2]])
+        poll_now(page)
+        wait("tile:a,tile:b,tile:c")
+        check("resumed under the same id it is an ordinary tile with its handover unread again",
+              tile("a").locator("button.keep").count() == 0 and tile("a").locator(".said").count() == 1)
+
+        # A restart keeps what you read and what you pinned.
+        tile("a").click()
+        wait("pill:a,tile:b,tile:c")
+        pill("a").hover()
+        pill("a").locator("button.keep").click()
+        wait("tile:a,tile:b,tile:c")
+        page.close()
+        proc.terminate()
+        proc.wait(10)
+        proc, port = start_hand_server(root, procs)
+        page = open_hand_page(browser, port)
+        check("after a restart the pin is still there and the config was not touched",
+              shown() == "tile:a,tile:b,tile:c" and tile("a").locator("button.keep.on").count() == 1
+              and (root / "config.json").read_bytes() == config_before, shown())
+        page.close()
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(10)
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def main():
     if len(sys.argv) != 4:
         sys.exit(__doc__)
@@ -2359,12 +2655,14 @@ def main():
         overview_pass(browser)
         working_pass(browser)
         header_pass(browser)
+        finished_pass(browser)
         card_pass(browser)
         needs_pass(browser)
         kinds_pass(browser)
         hand_pass(browser)
         picker_pass(browser)
         e2e_pass(browser)
+        finished_e2e_pass(browser)
         stale_pass(browser)
         block_view_pass(browser)
         suggestion_pass(browser)
