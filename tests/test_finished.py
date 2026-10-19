@@ -72,6 +72,9 @@ class Pills(Finished):
         self.assertEqual(self.column(moving("a"))["pills"], [])
 
     def test_a_pill_is_its_key_its_name_its_idle_time_its_line_and_its_jump(self):
+        # With a line of its own the card does not say the title, so the title
+        # is not a repeat (ticket 05: a one-session project's card is its title).
+        self.config["project_lines"] = {"folder:maple": "Sells maple syrup online"}
         (pill,) = self.column(self.finished(
             "a", 3 * HOUR, name="Femi", canJump=True, title="Saved-card form"))["pills"]
         self.assertEqual(pill["key"], "fake:a")
@@ -80,6 +83,16 @@ class Pills(Finished):
         self.assertEqual(pill["jump"], {"via": "pane"})
         self.assertEqual(pill["idle"]["text"], "3 h")
         self.assertAlmostEqual(pill["idle"]["since"], 180, delta=1)
+
+    def test_a_pill_says_the_working_on_line_its_tile_had(self):
+        # The did the session left (kept through any later prompt) is the job it
+        # was on; a title that only repeats the card is not said (ticket 05).
+        s = self.finished("a", name="Femi", title="Maple")
+        self.line("a")
+        self.assertEqual(self.column(s)["pills"][0]["line"], "Notes page built.")
+        lines.drop("a", self.lines)
+        self.assertEqual(self.column(s)["pills"][0]["line"], "Notes page built.")   # kept did
+        self.assertEqual(self.column(self.finished("b", name="Femi", title="Maple"))["pills"][0]["line"], "")
 
     def test_a_pill_carries_its_provider_for_a_session_that_has_no_name(self):
         # Codex has no names: the page puts the provider where the name goes, as a tile does.

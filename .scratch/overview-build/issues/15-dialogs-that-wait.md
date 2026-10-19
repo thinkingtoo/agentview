@@ -4,7 +4,9 @@
 
 **Blocked by:** 08
 
-**Status:** ready-for-agent
+**Claimed by:** Bettina 2026-10-19 20:21
+
+**Status:** in-progress
 
 - [ ] The roster classifies "dialog open" with and without a `needs:` text, tested on invented registry rows: a person-opened menu (not stuck), a session pause for usage (Limit), a billing notice and a settings review (Needs you with the reason)
 - [ ] Counts from the agentview event log and the session registry: how many "dialog open" openings carry a `needs:` text, per kind; counts and kinds only

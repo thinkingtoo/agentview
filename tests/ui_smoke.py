@@ -85,8 +85,8 @@ def head_counts(page):
 # which the chime and the counts also read) and the tile the overview prints
 # (`columns`), so the two never disagree about who is waiting.
 
-def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=True, need="",
-      mv=None, moving=None, stuck=None, via=None, why="", **extra):
+def S(key, name, status="idle", flag=None, *, note="", line="", source="did", tags=(), can=True,
+      need="", mv=None, moving=None, stuck=None, via=None, why="", **extra):
     """`mv` is the movement sign's text, `moving` whether the server counts the
     session as moving (by default: busy and not stuck). `stuck` is the kind the
     server gives the tile; a session with a line that wants something gets the
@@ -98,7 +98,7 @@ def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=Tru
     if stuck is None and flag == "stuck":
         stuck = hung_kind(int(note.rstrip("m")))
     return {"key": key, "name": name, "status": status, "flag": flag, "note": note,
-            "line": line, "tags": list(tags), "can": can, "need": need, "mv": mv,
+            "line": line, "source": source, "tags": list(tags), "can": can, "need": need, "mv": mv,
             "moving": moving, "stuck": stuck, "extra": extra, "via": via, "why": why}
 
 
@@ -190,7 +190,8 @@ def tile(s):
     sign = s["mv"] or (f"waiting on: Running the full suite, {s['note'][:-1]} min"
                        if s["flag"] == "tool" else None)
     return {"key": s["key"], "name": s["name"], "provider": "claude", "status": s["status"],
-            "tags": s["tags"], "line": s["line"], "flag": flag,
+            "tags": s["tags"], "line": s["line"], "lineSource": s["source"] if s["line"] else "",
+            "flag": flag,
             "flagNote": "" if flag is None else s["note"],
             "movement": sign and {"kind": "waiting", "text": sign}, "moving": s["moving"],
             "blocked": bool(s["need"]), "need": s["need"], "stuck": s["stuck"],
@@ -1714,6 +1715,63 @@ def jump_pass(browser):
     page.close()
 
 
+def working_pass(browser):
+    """The working-on line: one line with all of it on hover, a stand-in said
+    quietly, and a class chosen only from the sources the page knows."""
+    long = "Make the cart total show VAT on every line, then the order mail, then the invoice " * 3
+    fake = Fake(roster([("maple", "maple", [
+        S("w1", "Ilse", line="Card form wired", source="did"),
+        S("w2", "Mateo", line=long, source="own"),
+        S("w3", "Noor", line="Add a retry to the sync", source="prompt"),
+        S("w4", "Pia", line="saved-cards", source="place"),
+        S("w5", "Rosa", line=BOMB, source="prompt"),
+        S("w6", "Tess", line="Checkout form", source='x" onmouseover="alert(1)'),
+        S("w7", "Una", line="")])]))
+    seen = len(errors)
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".tile")
+    page.wait_for_timeout(300)
+    line = lambda sid: page.locator(f'.tile[data-sid="{sid}"] .tline')
+    classes = lambda sid: line(sid).evaluate("e => [...e.classList].join(' ')")
+    css = lambda sid, prop: line(sid).evaluate(f"e => getComputedStyle(e).{prop}")
+    check("a line the person or the session wrote is said plainly",
+          [classes(s) for s in ("w1", "w2")] == ["tline", "tline"], [classes(s) for s in ("w1", "w2")])
+    check("the last prompt, the branch and the folder stand in, greyed",
+          [classes(s) for s in ("w3", "w4", "w5")] == ["tline stand-in"] * 3
+          and css("w3", "color") != css("w1", "color"), [classes(s) for s in ("w3", "w4", "w5")])
+    check("a source the page does not know gets no class and builds no attribute",
+          classes("w6") == "tline" and page.locator("#main [onmouseover]").count() == 0, classes("w6"))
+    check("a tile with nothing to say has no line", line("w7").count() == 0)
+    check("a long line stays one line, ends in an ellipsis and has all of it on hover",
+          line("w2").evaluate("e => e.offsetHeight") == line("w1").evaluate("e => e.offsetHeight")
+          and css("w2", "textOverflow") == "ellipsis" and css("w2", "whiteSpace") == "nowrap"
+          and line("w2").evaluate("e => e.scrollWidth > e.clientWidth")
+          and line("w2").get_attribute("title") == long, line("w2").get_attribute("title"))
+    check("markup in a line is shown as text, on the tile and in its hover",
+          line("w5").inner_text() == BOMB and line("w5").get_attribute("title") == BOMB
+          and page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0)
+    check("no dialog, no page error", len(errors) == seen, errors[seen:])
+    page.close()
+
+    # A line that does not wrap must not make its column wider than the others:
+    # the columns hold their width whatever the tiles say (ticket 09 keeps them
+    # still when a count is lit and a column shrinks to its card).
+    def widths(line, width):
+        columns = [(f"p{i}", f"p{i}", [S(f"c{i}", f"Ilse{i}", line=line if i == 0 else "short line")])
+                   for i in range(6)]
+        page = new_page(browser, Fake(roster(columns)), width=width)
+        open_at(page)
+        page.wait_for_selector(".ov-col")
+        page.wait_for_timeout(200)
+        got = page.locator(".ov-col").evaluate_all("els => els.map(e => e.offsetWidth)")
+        page.close()
+        return got
+    for width in (1000, 1700):
+        check(f"a long line does not widen its column ({width} px window)",
+              widths(long, width) == widths("short line", width), (widths(long, width), widths("short line", width)))
+
+
 def hostile_pass(browser, view):
     """R7 at the page: markup in a project, a name and a line is text."""
     s = S("h1", BOMB, "idle", line="line: " + BOMB, mv="waiting on: " + BOMB + ", 3 min")
@@ -2626,6 +2684,7 @@ def main():
         browser = pw.chromium.launch()
         real_keys = real_pass(browser, url, pid)
         overview_pass(browser)
+        working_pass(browser)
         header_pass(browser)
         finished_pass(browser)
         card_pass(browser)
