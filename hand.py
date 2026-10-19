@@ -160,21 +160,6 @@ def move(config, key, target, was=None):
     put(config, "assign", key, target)
 
 
-def set_order(config, pinned, shown=None):
-    """The block view's pins: the names of the blocks it shows, in the order
-    you left them. The projects you pinned on the overview are kept -- after
-    these -- rather than erased with every drag, unless the view shows a block
-    of that very name: a session moved by hand into a project is one, and
-    leaving it out of the list is how it is unpinned."""
-    if not isinstance(pinned, list) or not all(isinstance(p, str) for p in pinned):
-        raise Refused("expected {pinned: [project, ...]}")
-    shown = _shown(shown)
-    _current(config, *pinned, *shown)
-    kept = [p for p in _pins(config)
-            if isinstance(p, str) and projects.from_identity(p) and p not in pinned and p not in shown]
-    config["pinned"] = pinned + kept
-
-
 def _beside(pinned, shown, project, other, side):
     """Whether `project` and `other` are still in the order the arrow was drawn
     for: `side` is where the click puts `project`, after `other` or before it,

@@ -267,7 +267,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "pin", "merge", "hold", "chime", "restore",
+    ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "merge", "chime", "restore",
               "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep")
 
     def do_POST(self):
@@ -351,33 +351,17 @@ class Handler(BaseHTTPRequestHandler):
                   name=session.get("name"), **done)
         self._send(json.dumps(done), "application/json")
 
-    def _hold(self, body):
-        """Freeze the order of the cards, or let them sort themselves again.
-
-        Lives in config.json with the pins and the labels: it is a decision
-        about how you want to read the page, and it should still be true
-        tomorrow.
-        """
-        hold = body.get("hold")
-        if not isinstance(hold, bool):
-            return self.send_error(400, "expected {hold: true|false}")
-        fleet.write_config({"hold": hold})
-        self._send(json.dumps({"ok": True, "hold": hold}), "application/json")
-
     def _chime(self, body):
         """Ring, or stay quiet, when a session starts waiting on you.
 
-        Next to `hold` for the same reason: it is how you want the page to
-        behave, and it should still be true tomorrow.
+        Lives in config.json with the pins and the labels: it is how you want
+        the page to behave, and it should still be true tomorrow.
         """
         chime = body.get("chime")
         if not isinstance(chime, bool):
             return self.send_error(400, "expected {chime: true|false}")
         fleet.write_config({"chime": chime})
         self._send(json.dumps({"ok": True, "chime": chime}), "application/json")
-
-    def _order(self, body):
-        self._correct(lambda config: hand.set_order(config, body.get("pinned"), body.get("shown")))
 
     def _name(self, body):
         key, label = body.get("project"), body.get("label")
@@ -536,7 +520,6 @@ class Handler(BaseHTTPRequestHandler):
                                    "closed": closed_now(live_ids),
                                    "saved": coverage(live_ids),
                                    "providers": status,
-                                   "hold": fleet.config_value("hold", False),
                                    "chime": fleet.config_value("chime", True)}),
                        "application/json")
         elif self.path.startswith("/api/search"):

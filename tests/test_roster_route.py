@@ -53,7 +53,7 @@ class Poll(unittest.TestCase):
         self.assertEqual([f["key"] for f in got["flags"]], ["fake:a"])
         self.assertEqual([t["key"] for c in got["columns"] for t in c["sessions"]], ["fake:a"])
         self.assertEqual(sorted(got), ["banners", "chime", "closed", "columns", "counts",
-                                       "flags", "hold", "providers", "restore", "saved"])
+                                       "flags", "providers", "restore", "saved"])
         self.assertNotIn("blocks", got)
         self.assertEqual(sorted(got["counts"]), ["moving", "needs", "otherStuck"])
         self.assertIsInstance(got["banners"], list)
