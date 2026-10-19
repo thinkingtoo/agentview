@@ -20,13 +20,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 import lines
+from dialog_words import BILLING, RETRY, ULTRAPLAN, USAGE
 from test_columns import Base, session
 from test_needs_you import INJECTION, Chime
 from test_stuck_kinds import failure
 
-USAGE = "choose: continue on usage credits or switch models"
-RETRY = "choose: retry on fallback model or edit prompt"
-BILLING = "acknowledge the classifier billing notice (Enter continues in auto mode)"
 REVIEW = "invented: review the settings before they apply"
 
 
@@ -55,7 +53,7 @@ class Dialogs(Base):
         self.assertIsNone(self.stuck(menu()))
 
     def test_a_dialog_with_a_needs_text_is_needs_you_and_the_text_is_the_reason(self):
-        for words in (BILLING, RETRY, REVIEW, "choose: run ultraplan in the cloud"):
+        for words in (BILLING, RETRY, REVIEW, ULTRAPLAN):
             with self.subTest(words=words):
                 self.assertEqual(self.stuck(dialog(words)),
                                  {"kind": "needs", "source": "request",

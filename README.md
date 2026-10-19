@@ -210,7 +210,9 @@ classifier billing notice, the ultraplan choice, the auto-mode default, a
 refused turn's "retry on a fallback model or edit the prompt"). Such a dialog
 reads Needs you, and its own words are the reason. The one that is open on
 usage credits ("continue on usage credits or switch models") reads Limit,
-"Session paused", with the limit's reset time when the transcript has it. A menu
+"Session paused", or "Rate limit" with the reset time when the transcript already
+holds the limit's error; things left for you (a session line) read Needs you
+before either. A menu
 with no `needs` text stays not stuck. Only a `waiting` session's `needs` is
 read, and only beside `dialog open`: the same field is written for other
 sessions by Claude Code's classifier, and means something else there. The event
@@ -1209,7 +1211,7 @@ go looking for:
 
 | Kind | Why it is kept |
 |---|---|
-| `session.seen` / `session.gone` / `status` / `waitingFor` | Sampled from the peer files every two seconds by a thread of its own, so the history exists whether or not a browser was open. A routine that ran for four minutes at 03:00 left no trace at all before this. |
+| `session.seen` / `session.gone` / `status` / `waitingFor` / `needs` | Sampled from the peer files every two seconds by a thread of its own, so the history exists whether or not a browser was open. A routine that ran for four minutes at 03:00 left no trace at all before this. `needs` is the kind of the `needs` text a dialog carries beside `dialog open` (`usage`, `fallback`, `billing`, `ultraplan`, `auto mode`, `other`), when it arrives or goes: a label, never the words, so that openings can be counted per kind. |
 | `action` / `retitle` / `jumped` | Every POST, with what it asked for and what actually ran on the terminal. A tab that ends up called something surprising can be traced to the click that did it — which is how two tabs came to be called `RIGA`. |
 | `error` / `page.error` | Exceptions, including JavaScript ones, which used to be invisible: the poll stops, the page goes quietly stale, and nothing anywhere says why. Repeats are collapsed — the first one is the news, the next four hundred are noise. |
 | `slow` | An operation over its budget, and **no line at all** when it was fast. The 9-second poll that made clicking feel broken would have written a line a round. |

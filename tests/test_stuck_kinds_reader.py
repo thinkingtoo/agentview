@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 from providers import base, claude, procs
+import dialog_words
 import test_columns
 import test_movement_provider as mp
 from test_movement_provider import stamp, text, call, accepted
@@ -998,8 +999,8 @@ class DialogsFromTheFiles(Base):
     `needs` text is a dialog Claude Code raised itself; the usage limit that
     stopped the session is already in the transcript, and read as a Limit."""
 
-    NEEDS = "choose: run ultraplan in the cloud"
-    USAGE = "choose: continue on usage credits or switch models"
+    NEEDS = dialog_words.ULTRAPLAN
+    USAGE = dialog_words.USAGE
 
     def setUp(self):
         super().setUp()

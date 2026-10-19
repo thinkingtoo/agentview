@@ -27,7 +27,7 @@ pane does but a new tab can show it (a background session; the provider's own
 `jump` does the attaching). `noJump` is why neither, when the provider has more
 to say than "no terminal".
 
-`asking` is what the session is stopped on right now, or absent. Three shapes:
+`asking` is what the session is stopped on right now, or absent. Four shapes:
 `{"kind": "question", "questions": [{"question", "header", "multi",
 "options": [{"label", "description"}]}]}` for an open question (`questions`
 is `[]` when the dialog is open and its text is not written yet), and
@@ -37,8 +37,11 @@ prompt. `command` is present only when the prompt is for a shell command
 address for any other tool. The third, `{"kind": "request", "what"}`, is any
 other dialog that waits on the person's answer or approval (a sandbox asking
 for the network, a goal proposed), told by `what`, the provider's own name for
-it. A menu or panel the person opened themselves is not `asking` at all. The
-provider decides what is open; the core only prints what it is told.
+it. A fourth, `{"kind": "pause", "what"}`, is a session paused on usage
+credits: a dialog that waits on a choice, but the usage limit is what holds the
+session, so the core reads it as a Limit and not as Needs you. A menu or panel
+the person opened themselves is not `asking` at all. The provider decides what
+is open; the core only prints what it is told.
 
 `failure` is an API error that is the newest thing the session said, or absent:
 `{"kind": "limit" | "error", "type", "status", "text", "at", "resetsAt"}`. The

@@ -1017,32 +1017,35 @@ MENUS = ("dialog open",)
 # own dialog table, 2026-10-19). These are the texts it has, by the kind each
 # is counted under; a text not here is `other`. `usage` is "Session paused" for
 # usage credits, the one that is a limit and not a thing to decide.
-DIALOGS = {
+DIALOG_KINDS = {
     "choose: continue on usage credits or switch models": "usage",
     "choose: retry on fallback model or edit prompt": "fallback",
     "acknowledge the classifier billing notice (enter continues in auto mode)": "billing",
     "choose: run ultraplan in the cloud": "ultraplan",
     "choose: make auto mode the default permission mode": "auto mode",
 }
+USAGE = "usage"
 
 
-def dialog_needs(waiting_for, needs):
+def dialog_needs(status, waiting_for, needs):
     """What a dialog that says it is open waits on, as the words it wrote in
     `needs`, or None: a menu the person opened has none, and a `needs` beside
-    any other word is not read (another process writes it too, for a session
+    anything else is not read (another process writes it too, for a session
     that is not in a dialog at all)."""
-    if not isinstance(waiting_for, str) or waiting_for.strip().lower() not in MENUS:
+    if status != "waiting" or not isinstance(waiting_for, str) or waiting_for.strip().lower() not in MENUS:
         return None
-    return " ".join(needs.split()) or None if isinstance(needs, str) else None
+    if not isinstance(needs, str):
+        return None
+    return " ".join(needs.split()) or None
 
 
 def dialog_kind(words):
     """The kind of dialog its `needs` words belong to, as a short label to count
-    under: one of `DIALOGS`' kinds, or `other`. Never the words themselves."""
-    return DIALOGS.get(" ".join(words.split()).lower(), "other")
+    under: one of `DIALOG_KINDS`' kinds, or `other`. Never the words themselves."""
+    return DIALOG_KINDS.get(words.lower(), "other")
 
 
-def asking_of(status, waiting_for, calls, needs=None):
+def asking_of(status, waiting_for, calls, needs):
     """The dialog a session has open, or None: what Claude Code says is open
     (the peer record's status, `waitingFor` and `needs`) and what the
     transcript says it is about (the calls that have not come back).
@@ -1071,10 +1074,10 @@ def asking_of(status, waiting_for, calls, needs=None):
     if waiting_for != "permission prompt":
         word = waiting_for.strip() if isinstance(waiting_for, str) else ""
         if word.lower() in MENUS:
-            words = dialog_needs(word, needs)
+            words = dialog_needs(status, word, needs)
             if words is None:
                 return None
-            return {"kind": "pause" if dialog_kind(words) == "usage" else "request", "what": words}
+            return {"kind": "pause" if dialog_kind(words) == USAGE else "request", "what": words}
         return {"kind": "request", "what": word} if word else None
     name, inp = calls[0] if calls else ("", {})
     target = inp.get(TARGET.get(name, ""))

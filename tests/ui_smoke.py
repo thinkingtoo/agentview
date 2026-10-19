@@ -120,8 +120,7 @@ def limit_kind(resets=None, held=22.0, text=""):
 
 def pause_kind(words):
     """"Session paused" for usage credits: a Limit told by the dialog's own words."""
-    return {"kind": "limit", "source": "dialog", "reason": "Session paused",
-            "context": {"resetsAt": None, "held": None, "text": words}}
+    return {**limit_kind(None, None, words), "source": "dialog", "reason": "Session paused"}
 
 
 def error_kind(reason, text="", ago=3.0, type_="server_error"):
@@ -1442,9 +1441,9 @@ def kinds_pass(browser):
     usage = "choose: continue on usage credits or switch models"
     dialogs_p = ("dialogs", "dialogs", [
         S("d1", "Una", "waiting", "waiting", note="dialog open", stuck=request_kind(billing)),
-        S("d3", "Wen", "waiting", "waiting", note="dialog open")])
+        S("d2", "Wen", "waiting", "waiting", note="dialog open")])
     pause_p = ("pause", "pause", [
-        S("d2", "Vik", "waiting", "waiting", note="dialog open", stuck=pause_kind(usage)),
+        S("d3", "Vik", "waiting", "waiting", note="dialog open", stuck=pause_kind(usage)),
         S("d4", "Xia", "idle")])
     fake = Fake(roster([mix_p, errors_p, hung_p, limit_p, quiet_p, ask_p, dialogs_p, pause_p]))
     page = new_page(browser, fake)
@@ -1501,13 +1500,13 @@ def kinds_pass(browser):
           t("d1").locator(".flag.needs").inner_text().lower() == "needs you"
           and reason("d1") == billing[:1].upper() + billing[1:]
           and t("d1").locator(".stuck-box .say, .stuck-box .late, .stuck-box .cmd").count() == 0
-          and t("d3").locator(".stuck-box").count() == 0 and t("d3").locator(".flag.needs").count() == 0,
-          (reason("d1"), t("d3").locator(".stuck-box").count()))
+          and t("d2").locator(".stuck-box").count() == 0 and t("d2").locator(".flag.needs").count() == 0,
+          (reason("d1"), t("d2").locator(".stuck-box").count()))
     check("Session paused for usage credits is a Limit: the tag, the reason, the dialog's words, no clock",
-          t("d2").locator(".flag.limit").inner_text().lower() == "limit" and reason("d2") == "Session paused"
-          and t("d2").locator(".stuck-box .say").inner_text() == usage and late("d2") == []
-          and paint(t("d2"), "borderTopColor") == probe("--limit"),
-          (reason("d2"), late("d2"), t("d2").locator(".stuck-box .say").all_inner_texts()))
+          t("d3").locator(".flag.limit").inner_text().lower() == "limit" and reason("d3") == "Session paused"
+          and t("d3").locator(".stuck-box .say").inner_text() == usage and late("d3") == []
+          and paint(t("d3"), "borderTopColor") == probe("--limit"),
+          (reason("d3"), late("d3"), t("d3").locator(".stuck-box .say").all_inner_texts()))
 
     # Colour: the border and the dot, per kind.
     check("Error and Hung are red, Limit is purple, on the border",

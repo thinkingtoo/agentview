@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from providers import base, claude
+import dialog_words
 import test_movement_provider as mp
 from test_movement_provider import stamp, text
 
@@ -150,7 +151,7 @@ class Asking(mp.Provider):
             with self.subTest(junk=junk):
                 self.assertEqual(claude._kept(junk, "Bash"), {})
                 self.assertEqual(claude._kept(junk, "AskUserQuestion"), {})
-        self.assertEqual(claude.asking_of("waiting", "permission prompt", [("Bash", {})]),
+        self.assertEqual(claude.asking_of("waiting", "permission prompt", [("Bash", {})], None),
                          {"kind": "permission", "tool": "Bash", "command": "", "target": ""})
 
     def test_the_calls_a_prompt_is_built_from_are_always_a_name_and_an_object(self):
@@ -252,11 +253,9 @@ class Asking(mp.Provider):
     # own dialog table, 2026-10-19: the classifier billing notice, the ultraplan
     # choice, the auto-mode default, "Session paused" for a refused turn and for
     # usage). A menu the person opened has none.
-    NEEDS = {"billing": "acknowledge the classifier billing notice (Enter continues in auto mode)",
-             "ultraplan": "choose: run ultraplan in the cloud",
-             "auto mode": "choose: make auto mode the default permission mode",
-             "fallback": "choose: retry on fallback model or edit prompt"}
-    USAGE = "choose: continue on usage credits or switch models"
+    NEEDS = {"billing": dialog_words.BILLING, "ultraplan": dialog_words.ULTRAPLAN,
+             "auto mode": dialog_words.AUTO_MODE, "fallback": dialog_words.RETRY}
+    USAGE = dialog_words.USAGE
 
     def test_a_dialog_with_a_needs_text_is_a_request_told_by_that_text(self):
         for kind, needs in self.NEEDS.items():
@@ -282,7 +281,7 @@ class Asking(mp.Provider):
     def test_a_needs_text_means_something_only_beside_the_menu_word(self):
         # Another process writes `needs` too (a classifier's reading of a session
         # that waits on someone); only a dialog that says it is open is read.
-        words = "choose: run ultraplan in the cloud"
+        words = dialog_words.ULTRAPLAN
         self.assertIsNone(self.open([text(30)], status="idle", waiting_for="", needs=words))
         self.assertIsNone(self.open([text(30)], status="busy", waiting_for="dialog open", needs=words))
         self.assertEqual(self.open([text(30)], waiting_for="input needed", needs=words),
@@ -293,7 +292,7 @@ class Asking(mp.Provider):
                          {"kind": "request", "what": "sandbox request"})
 
     def test_the_menu_word_in_any_case_with_a_needs_text_is_still_that_dialog(self):
-        self.assertEqual(self.open([text(30)], waiting_for="  Dialog Open ", needs="choose: run ultraplan in the cloud")["kind"],
+        self.assertEqual(self.open([text(30)], waiting_for="  Dialog Open ", needs=dialog_words.ULTRAPLAN)["kind"],
                          "request")
 
     def test_a_waiting_session_that_names_nothing_asks_nothing(self):

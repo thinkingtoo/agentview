@@ -128,9 +128,7 @@ def needs_kind(rec):
     beside its `dialog open`, or None: a short label (`claude.dialog_kind`) so
     that openings can be counted per kind. The words are never written: a
     classifier's reading of a transcript may be in them."""
-    if rec.get("status") != "waiting":
-        return None
-    words = claude.dialog_needs(rec.get("waitingFor"), rec.get("needs"))
+    words = claude.dialog_needs(rec.get("status"), rec.get("waitingFor"), rec.get("needs"))
     return None if words is None else claude.dialog_kind(words)
 
 
@@ -143,19 +141,22 @@ def transitions(before, after):
     """
     events = []
     for pid, rec in after.items():
-        if pid not in before:
+        new = pid not in before
+        if new:
             events.append(("session.seen", {
                 "pid": pid, "name": rec.get("name"), "status": rec.get("status"),
                 "cwd": rec.get("cwd"), "entrypoint": rec.get("entrypoint"),
                 "sessionId": rec.get("sessionId")}))
-            continue
-        for field in WATCHED:
-            was, now = before[pid].get(field), rec.get(field)
-            if was != now:
-                events.append((field, {
-                    "pid": pid, "name": rec.get("name"), "from": was, "to": now,
-                    "sessionId": rec.get("sessionId")}))
-        was, now = needs_kind(before[pid]), needs_kind(rec)
+        else:
+            for field in WATCHED:
+                was, now = before[pid].get(field), rec.get(field)
+                if was != now:
+                    events.append((field, {
+                        "pid": pid, "name": rec.get("name"), "from": was, "to": now,
+                        "sessionId": rec.get("sessionId")}))
+        # A dialog already open when a session is first seen (the watcher was
+        # restarted) is one more dialog to count, whether or not anyone saw it open.
+        was, now = None if new else needs_kind(before[pid]), needs_kind(rec)
         if was != now:
             events.append(("needs", {
                 "pid": pid, "name": rec.get("name"), "from": was, "to": now,
