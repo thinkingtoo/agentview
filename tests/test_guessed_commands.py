@@ -475,6 +475,30 @@ class Guess(Base):
             with self.subTest(ask=ask):
                 self.assertEqual(self.commands(ask), [])
 
+    def test_a_dollar_followed_by_a_word_with_a_slash_or_a_dot_in_it_is_prose(self):
+        for ask in ("Should we charge in $ A/B or in euros?", "The budget is $ N/A for now, right?",
+                    "Is it $ and/or euros?", "Prices in $ e.g. for the US?", "Is $ Node.js the stack?"):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+        for ask, command in (("Run $ maple-sync next.", "maple-sync next"), ("Run $ deploy.sh --dry-run.", "deploy.sh --dry-run"),
+                             ("Run $ /usr/local/bin/maple next.", "/usr/local/bin/maple next"),
+                             ("Run $ tiroir_work next.", "tiroir_work next")):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [command])
+
+    def test_a_quote_right_after_a_flag_is_the_argument_of_that_flag(self):
+        # Pasted alone it would run on this machine what was meant for the
+        # container, the remote host or the shell inside another program.
+        for ask in ('Run docker exec -it maple-notes sh -c "rm -rf /srv/maple/cache/*" for me?',
+                    'Run ssh maple --command "sudo systemctl restart maple-notes" for me?',
+                    'Run git commit -m "rm -rf build" for me?',
+                    'Run ($ docker exec -it maple-notes sh -c "rm -rf /srv/maple/cache/*") for me?',
+                    'Run [$ docker exec -it maple-notes sh -c "rm -rf /srv/maple/cache/*"] for me?'):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+        # A flag earlier in the sentence does not reach a quote after other words.
+        self.assertEqual(self.commands('Use the -v flag, then run "make test" for me?'), ["make test"])
+
     def test_a_tool_that_nobody_says_in_a_sentence_still_needs_a_sign_in_quotes(self):
         for phrase in ("rm stale notes", "pytest fixtures", "certbot renewal", "grep results", "ls maple",
                        "mkdir build", "jq notes"):

@@ -143,7 +143,9 @@ letters, a bare number, a string, an `@` or `=`. `sudo` and its kind are
 judged by the command after them. A path starts a command only when it names a
 script (`./deploy.sh`) or a flag follows, because a path with spaces in it
 (`~/Google Drive/My Drive`) is a name. `VAR=1 cmd` counts too. After a `$` one
-word is enough if it is a known program or has a hyphen, dot or slash in it.
+word is enough if it is a known program, a path, a script by its name, or a
+lowercase name joined by hyphens or underscores (`maple-sync`); "A/B", "N/A"
+and "Node.js" after a `$` are words of a sentence.
 
 A `$` command is offered only when it is the whole of its line: nothing but
 the sentence's own full stop, `?` or `!` stands after it. Where it ends is read
@@ -182,7 +184,8 @@ cut by the line's length, one with a quote left open, a bracket that closes
 something outside it, a backtick (pasted, it would run what it holds), a quote
 that holds an escaped quote or a quote of its own kind, a quote with a space
 inside against its marks (two phrases mispaired), a quoted command that ends in
-a comma, and the quotes inside any of these. `20 $` is an amount and `$5` is
+a comma, a quote right after a flag (`sh -c "rm -rf x"`: the argument of that
+flag, meant for another shell), and the quotes inside any of these. `20 $` is an amount and `$5` is
 money, never a prompt. Only the session's own line is guessed on, the one it
 wrote as its one thing left. Words read out of its last message are shown as
 before and get no button: reading them takes out `*`, `_`, backticks and `#`,

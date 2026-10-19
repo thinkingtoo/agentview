@@ -37,16 +37,20 @@ STRAY = {
     "'": re.compile(r"(?<!\w)'|'(?!\w)"),
 }
 ESCAPED_QUOTE = re.compile(r"\\[\"`]")
+# A quote that comes right after a flag is the argument of that flag (`sh -c
+# "rm -rf x"`, `--command "sudo reboot"`), not a command of its own.
+AFTER_A_FLAG = re.compile(r"(?:^|\s)--?[\w-]+\s+$")
 NESTED_OPENER = re.compile(r"[\u201c\u00ab\u2018]")
 
-# `$ ` as a shell prompt: after a space or a colon, then a command word. `$5`
+# `$ ` as a shell prompt: after a space, a colon or an opening bracket, then a
+# command word. `$5`
 # and `$HOME` have no space after the sign, `$ 5` no command word, and `20 $`
 # is an amount. A quoted argument is one unit, so the comma in `-m "one, two"`
 # does not end the command; the end of the line does, so the match can never
 # fail and the engine never has to try the quoted and the plain way of reading
 # each quote.
 DOLLAR_COMMAND = re.compile(
-    r"(?<!\d)(?:^|[\s:])\$ +([A-Za-z./~]"
+    r"(?<!\d)(?:^|[\s:(\[{])\$ +([A-Za-z./~]"
     r"(?:\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\\n])*`|(?<!\w)'[^'\n]*'(?!\w)"
     # A flag with a comma stuck to it (`-F,`) belongs to the command when a
     # quote or another flag comes after it; "-d, then tell me" is a clause.
@@ -159,18 +163,23 @@ def reads_as_command(text):
             and (len(rest) == 1 or first not in ONE_WORD_AFTER))
 
 
+# A program of the project's own, which no list knows: lowercase words joined by
+# hyphens or underscores (`maple-sync`), or a script by its name (`deploy.sh`).
+# "A/B", "N/A", "and/or", "e.g." and "Node.js" are words of a sentence.
+OWN_PROGRAM = re.compile(r"[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+|[a-z][\w-]*\.(?:sh|bash|py|js|mjs|rb|pl)")
+
+
 def reads_as_prompted(text):
     """What follows a `$ `: the sign says it is a command, so one word is
     enough, but it must still be a program and not a word of the sentence
-    ("in $ or euros"). A program of the project's own has a hyphen, an
-    underscore, a dot or a slash in its name."""
+    ("in $ or euros")."""
     words = text.split()
-    # "/ mois" and "." are no program: a name has a letter in it.
-    if not words or not re.search(r"[A-Za-z]", words[0]):
+    if not words:
         return False
-    return (words[0] in KNOWN or words[0].startswith(PATHS)
-            or ENV_ASSIGNMENT.match(words[0]) is not None
-            or any(c in words[0] for c in "-_./"))
+    first = words[0]
+    return (first in KNOWN or first.startswith(PATHS)
+            or (first.startswith("/") and first.count("/") > 1 and re.search(r"[A-Za-z]", first) is not None)
+            or ENV_ASSIGNMENT.match(first) is not None or OWN_PROGRAM.fullmatch(first) is not None)
 
 
 QUOTED_RUN = re.compile(r"\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\\n])*`|(?<!\w)'[^'\n]*'(?!\w)")
@@ -240,7 +249,7 @@ def guess(text):
         said = m.group(1)
         # A quote that hugs a space inside (`"git commit -m "`) is the closing
         # quote of one phrase paired with the opening of the next.
-        if mark in untrusted or said != said.strip():
+        if mark in untrusted or said != said.strip() or AFTER_A_FLAG.search(text[:m.start()]):
             continue
         said = re.sub(r"^\$ +", "", said)
         if quoted_command(said):
