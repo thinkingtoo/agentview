@@ -17,12 +17,12 @@ import time
 from pathlib import Path
 
 import context
-import working
 import jump
 import lines
 import projects
 import providers
 import seen
+import working
 from providers import base
 from providers.base import CAPABILITIES, STATUSES, on_a_terminal
 
@@ -264,9 +264,10 @@ def own_line(session_id, status, asked, root=None, said="", doing=""):
     The session writes its own inside the turn it was already having -- it is
     the only thing that knows where the work stands. What it is stopped on
     belongs to that turn: the next prompt forgets `ask` and `n`, and one that
-    survives that is caught by its turn rather than by its age. Comparing ages could not do it. A moment
-    only proves a line was written somewhere inside a working stretch, and a
-    session can go idle, busy and idle again between two polls of this page.
+    survives that is caught by its turn rather than by its age. Comparing
+    ages could not do it. A moment only proves a line was written somewhere
+    inside a working stretch, and a session can go idle, busy and idle again
+    between two polls of this page.
 
     Where the work stands is not scoped to a turn: the session is on the same
     job after the next prompt, so the last `did` it wrote stays until it
@@ -280,15 +281,15 @@ def own_line(session_id, status, asked, root=None, said="", doing=""):
     # Between calls there is nothing in flight and the model is writing. The
     # page used to print your own last prompt back at you there -- words you
     # wrote and already know.
-    working = {"doing": (doing or last_words(said)) if status == "busy" else ""}
+    now = {"doing": (doing or last_words(said)) if status == "busy" else ""}
     got = lines.fresh(session_id, root)
     if got:
         shown = _shown(got)
         shown["did"] = shown["did"] or lines.kept_did(session_id, root)
-        return {**shown, **working}
+        return {**shown, **now}
     ask, n = asked
     return {"did": lines.kept_did(session_id, root), "ask": ask, "n": n,
-            "blocked": False, **working}
+            "blocked": False, **now}
 
 
 # ------------------------------------------------------------ the round
@@ -742,8 +743,8 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
     name = _column_name(project, names)
     about, track = context.card(project, rows, own_lines)
     # The column of no project has no name to repeat.
-    said = None if project is NO_PROJECT else name
-    tiles = [tile_of(m, _suggestion(m, project, folder_rule, follow, names), said, about)
+    column_says = working.repeats(None if project is NO_PROJECT else name, about)
+    tiles = [tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says)
              for m in rows]
     return {
         "project": project["id"], "raw": project["raw"], "kind": project["kind"],
@@ -788,12 +789,12 @@ def _suggestion(m, project, folder_rule, follow, names):
     return {"project": guessed["id"], "name": projects.display_name(guessed, names)}
 
 
-def tile_of(m, suggestion=None, project_name=None, about=None):
+def tile_of(m, suggestion=None, column_says=frozenset()):
     """One session as a tile: today's data, finished for the page to print.
 
     The page never has to decide which of the session's words to show.
     """
-    line, source = working.line_of(m, project_name, about)
+    line, source = working.line_of(m, column_says)
     # The chime keeps reading the flag. The tile says it another way where
     # that is the better word: a long call is a wait (the movement sign), and
     # a busy session nothing proves is moving is Hung (its kind).
@@ -1300,6 +1301,7 @@ def apply_overrides(block, names, lines):
         # Only words are a line: a hand-edited number or blank is not one.
         own = own if isinstance(own, str) and own.strip() else ""
         m["overridden"] = bool(own)
+        m["own"], m["generated"] = own, m["title"]
         if own:
             m["title"] = own
     return block

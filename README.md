@@ -642,6 +642,15 @@ not change at a prompt; it is what a tile says it is working on.
 | `ask` | The one thing it is blocked on, in its own words. |
 | `n` | How many things are left for you when its turn ends: a decision, a command to run, a mail to send, a sign-in. Counted even when it has other work, since nothing moves on them once it stops. An offer is not one. |
 
+**The line a tile says it is working on** (`working.py`) is the first of these
+that says something new: your own line (the one you click to write), the `did`,
+Claude Code's title; and with none of those, greyed, the last prompt, then the
+branch, then the folder. A line that only repeats the project's name, the
+card's context line or the session's own name is skipped for the next source,
+and a tile with nothing left has no line. It is one line, clipped by the page,
+with all of it on hover. The roster says which source it was (`lineSource`:
+`own`, `did`, `title`, `prompt`, `place`).
+
 **Words when there is one, a count when there are more.** A single blocked
 question is short enough to answer from the page. Four of them are a trip to the
 terminal, and quoting the first of four misrepresents the size of the job — so

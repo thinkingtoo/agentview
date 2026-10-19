@@ -210,6 +210,23 @@ class Turns(unittest.TestCase):
         self.assertEqual(lines.kept_did("gone", self.root), "")
         self.assertEqual(lines.kept_did("alive", self.root), "y")
 
+    def test_a_did_written_before_it_was_kept_survives_its_first_prompt(self):
+        # A line from before the kept did existed has its did in the line
+        # file alone, and the prompt is about to drop that file.
+        (self.root / "s1.json").write_text(
+            json.dumps({"did": "Card form wired", "ask": "", "n": 0, "at": 1, "by": "session",
+                        "turn": ""}), encoding="utf-8")
+        self.assertEqual(lines.kept_did("s1", self.root), "")
+        lines.begin_turn("s1", self.root)
+        self.assertEqual(lines.kept_did("s1", self.root), "Card form wired")
+
+    def test_a_prompt_does_not_replace_a_kept_did_with_an_older_one(self):
+        lines.write("s1", did="newer", root=self.root)
+        (self.root / "s1.json").write_text(
+            json.dumps({"did": "older", "at": 1, "by": "session", "turn": ""}), encoding="utf-8")
+        lines.begin_turn("s1", self.root)
+        self.assertEqual(lines.kept_did("s1", self.root), "newer")
+
     def test_a_line_is_stamped_with_the_turn_it_was_written_in(self):
         turn = lines.begin_turn("s1", self.root)
         lines.write("s1", did="x", root=self.root)

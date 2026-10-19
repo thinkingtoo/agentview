@@ -9,7 +9,8 @@ speaks instead; with nothing left the tile has no line.
 
 The roster says where the line came from. The text is whatever the session or
 the person wrote, kept as it was said: the page sets it as text and never as
-markup, so nothing is stripped for safety here.
+markup, so nothing is stripped for safety here. It is one line, whole up to a
+bound: the page clips it to the tile and shows all of it on hover.
 """
 import os
 import re
@@ -17,58 +18,62 @@ import re
 import context
 
 OWN, DID, TITLE, PROMPT, PLACE = "own", "did", "title", "prompt", "place"
-SOURCES = (OWN, DID, TITLE, PROMPT, PLACE)
-
-# The prompt is a stand-in, clipped like a context line. The rest is a line by
-# nature; the bound only keeps one poll from carrying an essay, and the hover
-# shows what the tile cuts.
-PROMPT_LIMIT = context.LINE_LIMIT
-LINE_LIMIT = 300
 
 SLUG_MARKS = re.compile(r"[\s_-]+")
 
 
-def same(text):
-    """Two lines are the same line when they differ only in case, in spacing
-    and in the marks of a slug: `my-shop` repeats `My shop`."""
+def repeat_key(text):
+    """What a line is compared by to tell a repeat.
+
+    Case, spacing and the marks of a slug are left out, so `my-shop` repeats
+    the project `My shop`.
+    """
     return " ".join(SLUG_MARKS.split(str(text).casefold())).strip()
 
 
-def folder_of(cwd):
+def repeats(project_name, about):
+    """What a column already says, for its tiles to leave out.
+
+    Its name (None for the column of no project, which has no name to repeat)
+    and its context line as the roster builds it (or None), cut and whole.
+    """
+    said = {repeat_key(project_name)} if isinstance(project_name, str) else set()
+    if about:
+        said.update((repeat_key(about["line"]), repeat_key(about["full"])))
+    said.discard("")
+    return frozenset(said)
+
+
+def _folder(cwd):
     return os.path.basename(cwd.rstrip("/")) if isinstance(cwd, str) else ""
 
 
 def _candidates(m):
-    """What the session offers, in the order it is preferred, as
-    `(source, text)`."""
-    yield OWN, m["title"] if m.get("overridden") else ""
+    """What the session offers, in the order it is preferred, as `(source, text)`.
+
+    The title is Claude Code's own: your line, which the older page reads in
+    its place, is `own`.
+    """
+    yield OWN, m.get("own")
     yield DID, m.get("did")
-    yield TITLE, "" if m.get("overridden") else m.get("title")
+    yield TITLE, m.get("generated", m.get("title"))
     yield PROMPT, m.get("prompt")
     yield PLACE, m.get("branch")
-    yield PLACE, folder_of(m.get("cwd"))
+    yield PLACE, _folder(m.get("cwd"))
 
 
-def line_of(m, project_name, about):
+def line_of(m, column_says=frozenset()):
     """`(text, source)` for a session's tile, or `("", "")`.
 
-    `project_name` is what the column is called (None for the column of no
-    project, which has no name to repeat) and `about` its context line as the
-    roster builds it, or None.
+    `column_says` is what its column already says (`repeats`).
     """
-    seen = set()
-    for said in (project_name, m.get("name")):
-        if isinstance(said, str):
-            seen.add(same(said))
-    if about:
-        seen.update((same(about["line"]), same(about["full"])))
-    seen.discard("")
+    name = repeat_key(m["name"]) if isinstance(m.get("name"), str) else ""
+    if name:
+        column_says = column_says | {name}
     for source, text in _candidates(m):
         if not isinstance(text, str):
             continue
         text = context.squash(text)
-        if not text or same(text) in seen:
-            continue
-        limit = PROMPT_LIMIT if source == PROMPT else LINE_LIMIT
-        return context.cut(text, limit), source
+        if text and repeat_key(text) not in column_says:
+            return context.cut(text, context.PARAGRAPH_MAX), source
     return "", ""

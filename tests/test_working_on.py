@@ -46,14 +46,19 @@ class Sources(Working):
         self.assertEqual(self.line(session("a", prompt="Make the cart total show VAT", branch="cart-vat")),
                          ("Make the cart total show VAT", "prompt"))
 
-    def test_a_long_prompt_is_clipped_to_a_line(self):
+    def test_a_long_prompt_is_one_line_and_the_page_clips_it(self):
         long = "Make the cart total\nshow VAT " + "and more words " * 40
         line, source = self.line(session("a", prompt=long))
-        self.assertEqual(source, "prompt")
-        self.assertTrue(line.startswith("Make the cart total show VAT and more"), line)
+        self.assertEqual((line, source), (" ".join(long.split()), "prompt"))
         self.assertNotIn("\n", line)
-        self.assertTrue(line.endswith("…"))
-        self.assertLessEqual(len(line), 140)
+
+    def test_a_line_is_carried_whole_for_the_hover_up_to_a_bound(self):
+        own = "Saved cards, the vault, the retry logic and the receipts " * 8
+        self.config["lines"] = {"fake:a": own}
+        self.assertEqual(self.line(session("a"))[0], own.strip())
+        self.config["lines"] = {"fake:a": "word " * 5000}
+        line = self.line(session("a"))[0]
+        self.assertTrue(line.endswith("\u2026") and 1000 < len(line) <= 1500, len(line))
 
     def test_with_no_prompt_the_branch_stands_in(self):
         self.assertEqual(self.line(session("a", branch="saved-cards")), ("saved-cards", "place"))
@@ -71,6 +76,11 @@ class Sources(Working):
 
     def test_the_line_is_one_line_whatever_the_words_were_written_across(self):
         self.assertEqual(self.line(session("a", title="Checkout\n  form")), ("Checkout form", "title"))
+
+    def test_when_your_own_line_repeats_the_project_the_real_title_is_next(self):
+        self.config["lines"] = {"fake:a": "Maple"}
+        self.assertEqual(self.line(session("a", title="Checkout form", prompt="Add a retry")),
+                         ("Checkout form", "title"))
 
     def test_a_hand_edited_line_that_is_not_words_is_not_a_line(self):
         for bad in (5, True, "   ", ["Saved cards"], {"line": "Saved cards"}):
