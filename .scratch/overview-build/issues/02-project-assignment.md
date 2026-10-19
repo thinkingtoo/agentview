@@ -6,7 +6,7 @@
 
 **Claimed by:** Hugo 2026-10-19 00:44
 
-**Status:** in-progress
+**Status:** done
 
 - [x] A worker in another repository than its boss sits in the boss's track column
 - [x] Two worktrees of one repository share one column; two client folders never do
