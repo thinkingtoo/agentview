@@ -620,7 +620,8 @@ class Scripts(Fixture):
 
     def test_the_words_in_a_comment_are_not_a_question(self):
         for comment in ('// sandbox_permissions: "require_escalated" is what the next one would say\n',
-                        '/* tools.exec_command({"sandbox_permissions":"require_escalated"}) */\n'):
+                        '/* tools.exec_command({"sandbox_permissions":"require_escalated"}) */\n',
+                        '/*\n tools.exec_command({"sandbox_permissions":"require_escalated"})\n*/\n'):
             with self.subTest(comment=comment[:12]):
                 self.assertEqual(self.asked(comment + code_of("ls", escalate=False)), ("busy", None))
 
@@ -693,6 +694,9 @@ class Scripts(Fixture):
                 'text("next: tools.exec_command({cmd: \'git push\', sandbox_permissions: \'require_escalated\'}) once tests pass");\n')
         self.assertEqual(self.asked(code), ("busy", None))
 
+    def test_a_script_may_begin_with_a_regular_expression(self):
+        self.assertEqual(self.asked('/"/.test(s);\n' + code_of("git push")), ("waiting", "git push"))
+
     def test_a_slash_that_divides_opens_no_regular_expression(self):
         call = 'await tools.exec_command({cmd: "git push", sandbox_permissions: "require_escalated"});'
         for left, right in (("a", "b"), ("(a)", "(b)"), ("xs[0]", "ys[1]"), ("4", "5"), ('"x"', '"y"')):
@@ -761,7 +765,7 @@ class Scripts(Fixture):
         self.assertEqual(self.asked(code_of("first") + code_of("second")), ("waiting", "first"))
 
     def test_a_call_never_closed_asks_for_nothing_whatever_follows_it(self):
-        code = 'tools.exec_command({cmd:"x", sandbox_permissions:"require_escalated"'
+        code = 'tools.exec_command({cmd:"x", sandbox_permissions:"require_escalated", prefix_rule:["git"]'
         self.assertEqual(self.asked(code), ("busy", None))
         self.assertEqual(self.asked(code + "\n" + code_of("git push")), ("waiting", "git push"))
 
