@@ -226,6 +226,29 @@ The flags the chime reads (`stuck`, `waiting`, `ready`, `tool`) are computed as
 before and stay on `blocks`; the kinds are on the tiles. Hung replaces `stuck`
 on the overview.
 
+## The header: counts and banners
+
+The header counts what the person is wanted for, from the roster's `counts`:
+**3 need you** (a tile that says Needs you), **3 other stuck** (Error, Hung or
+Limit) and **5 moving**. A session is in one count: stuck wins over moving, so
+a session that needs you while a job runs is counted as needing you, and an
+idle session is in none. Routines are not on the overview, so they are in none.
+Each tile carries the count it is in (`counted`), so the page counts nothing and
+decides nothing.
+
+A click on a count lights up those sessions, fades the rest and shrinks every
+column with none to its card (the column keeps its width). A second click on the
+same count clears it; a click on another count moves the light. A count of
+nothing is not a button, and a lit count that falls to nothing clears itself.
+
+A condition of the whole machine is one **banner** across the top of the page,
+from the roster's `banners`, never a kind on a tile: every session is held by it
+alike. A full disk is free space under `disk_full_mb` (default 500, in
+megabytes) on the disk that holds Claude Code's own folder (`CLAUDE_CONFIG_DIR`,
+default `~/.claude`), where transcripts are written. It says "Disk full: 212 MB
+left where sessions write". A disk that cannot be read is no banner. The page
+prints a banner's words as text and looks for nothing of its own.
+
 ## After a reboot
 
 tmux-resurrect brings tmux back, but every pane that ran Claude comes back as
@@ -678,8 +701,8 @@ identity settles what an age could only estimate.
 **A read ask fills the words and does not raise the count.** Extraction can see
 a question. It cannot tell one that stops the session from one that offers to do
 more, and a tab that says `(6)` has to mean six. Every line records who wrote
-it; only a session speaking for itself joins `waiting` and `stuck` in the header
-and the tab title, and leads its block.
+it; only a session speaking for itself joins `waiting` and `stuck` in the block
+view's header and the tab title, and leads its block.
 
 **While it works, the line is the call in flight** — *Editing fleet.py*,
 *Reading 3 files*, or, for a Bash call, the description the caller already

@@ -302,6 +302,27 @@
   .stuck-box button.copy { margin-left:auto; font-size:12px; padding:2px 9px; }
   .tile.jumped { animation:flash .7s ease-out; }
   .tile.failed { animation:flash-bad 1.4s ease-out; }
+  /* The header's counts: each is a button that lights up its sessions. */
+  .hc { padding:1px 9px; font-size:12.5px; font-weight:650; font-variant-numeric:tabular-nums; }
+  .hc.needs { color:var(--wait); }
+  .hc.otherStuck { color:var(--bad); }
+  .hc.moving { color:var(--busy); }
+  .hc[aria-pressed="true"] { border-color:currentColor; background:color-mix(in srgb,currentColor 14%,transparent); }
+  .hc:disabled { color:var(--faint); cursor:default; border-color:var(--line); }
+  .hc:disabled:hover { color:var(--faint); border-color:var(--line); }
+  /* Lit: the sessions in the count that was clicked. The rest fade, and a
+     column with none is only its card. Columns keep their width. */
+  .tile.dim { opacity:.3; }
+  .tile.lit { box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent); }
+  .ov-col.shrunk .tile { display:none; }
+  /* A condition of the whole machine, across the top under the header's row.
+     The negative margin cancels the header's own 14px 20px padding, so the band
+     runs edge to edge and sits flush with the header's bottom. */
+  #banners { flex:1 0 100%; margin:0 -20px -14px; }
+  #banners:empty { display:none; }
+  .banner { padding:6px 20px; font-size:13px; font-weight:600; overflow-wrap:anywhere;
+            color:var(--bad); background:color-mix(in srgb,var(--bad) 12%,var(--bg));
+            border-top:1px solid color-mix(in srgb,var(--bad) 40%,transparent); }
   .viewlink { color:var(--faint); font-size:12px; text-decoration:none; white-space:nowrap; }
   .viewlink:hover { color:var(--accent); }
 #restore[hidden], #closed[hidden], #closedlist[hidden], #hold[hidden] { display: none; }
@@ -385,6 +406,7 @@ header button { white-space: nowrap; }
   <button id="sound"></button>
   <button id="hold" title="stop the cards moving while you read them"></button>
   <a id="view" class="viewlink"></a>
+  <div id="banners" role="status"></div>
 </header>
 <div id="closedlist" hidden></div>
 <div id="found" hidden></div>
@@ -407,6 +429,9 @@ let MUZZLED = false;        // wanted to ring, and the browser would not have it
 let ORDER = { blocks: [], members: {} };   // and where that was
 let PAINTED = [];           // the order you see, which the DOM no longer is
 let PROVIDERS = {};         // who answered the last poll, and who did not
+let COUNTS = {};            // the roster's header counts: needs, stuck, moving
+let BANNERS = [];           // what is wrong with the whole machine, as the roster said
+let LIGHT = "";             // the count you clicked, whose sessions are lit up -- "" for none
 const OPEN = new Set();     // sessions you unfolded by hand
 let query = "";
 let editing = false;
@@ -888,7 +913,7 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { blocks: all, columns, hold, chime, providers, restore, saved, closed } = await r.json();
+    const { blocks: all, columns, counts, banners, hold, chime, providers, restore, saved, closed } = await r.json();
     drawRestore(restore);
     drawClosed(closed);
     drawSave(saved);
@@ -902,6 +927,8 @@ async function load() {
     announce(all);
     LATEST = all;
     COLUMNS = columns || [];
+    COUNTS = counts || {};
+    BANNERS = Array.isArray(banners) ? banners : [];
     paint();
   } catch (e) {
     document.getElementById("stamp").textContent = "server unreachable";
@@ -939,13 +966,20 @@ function paint() {
     asking ? `<span class="alarm asking">${asking} asking</span>` : "",
     ready ? `<span class="alarm ready">${ready} ready</span>` : "",
   ].filter(Boolean).join(" · ");
-  document.getElementById("count").innerHTML =
+  // One provider down is that provider's badge, not a blank page.
+  const down = Object.entries(PROVIDERS).filter(([, p]) => !p.ok).map(([name, p]) =>
+        ` &nbsp;·&nbsp; <span class="alarm" title="${esc(p.error)}">${esc(name)} down</span>`).join("");
+  const shown = VIEW === "overview" ? filteredColumns(COLUMNS) : [];
+  // A lit count that has emptied since (the question was answered) has nothing
+  // left to light: it clears, rather than hide every session.
+  if (LIGHT && !countOf(LIGHT)) LIGHT = "";
+  drawBanners();
+  if (VIEW === "overview") drawHead(shown, down);
+  else document.getElementById("count").innerHTML =
     `${total} sessions · ${busy} busy · ${blocks.filter(b => !b.routines).length} projects`
     + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
     + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "")
-    // One provider down is that provider's badge, not a blank page.
-    + Object.entries(PROVIDERS).filter(([, p]) => !p.ok).map(([name, p]) =>
-        ` &nbsp;·&nbsp; <span class="alarm" title="${esc(p.error)}">${esc(name)} down</span>`).join("");
+    + down;
   const wants = waiting + stuck + asking;
   document.title = wants ? `(${wants}) agentview` : "agentview";
   if (VIEW === "blocks") {
@@ -955,7 +989,7 @@ function paint() {
     PAINTED = blocks.filter(b => !b.orphan && !b.routines).map(b => b.project);
     place(blocks.length ? blocks.map(block).join("") : nothing());
   } else {
-    overview(filteredColumns(COLUMNS));
+    overview(shown);
   }
   document.getElementById("stamp").textContent = stampText();
 }
@@ -997,6 +1031,59 @@ function overview(cols) {
   main.scrollLeft = x;
 }
 
+// The words of the header's three counts. The roster counts; this is only how
+// each is said, and what a click on it lights up (`counted` on a tile).
+const COUNT_WORD = { needs: n => n === 1 ? "needs you" : "need you",
+                     otherStuck: () => "other stuck", moving: () => "moving" };
+
+// The count the page shows for a key: the roster's number when it is a whole
+// number above nothing, and 0 for anything else. The header and the clear-on-
+// empty both read it, so a count that prints as 0 is never one that is lit.
+const countOf = k => Number.isInteger(COUNTS[k]) && COUNTS[k] > 0 ? COUNTS[k] : 0;
+
+// The overview's header: what is on the page, then the roster's three counts,
+// each a button that lights up its sessions. A count of nothing has nothing to
+// light, so its button is off. Written again only when it changed, so that a
+// click is never lost to a repaint between its press and its release.
+let HEAD_SHOWN = "";
+function drawHead(cols, down) {
+  const all = list => list.reduce((a, c) => a + c.sessions.length, 0);
+  const total = all(cols), everyone = all(COLUMNS);
+  const buttons = Object.keys(COUNT_WORD).map(k => {
+    const n = countOf(k);
+    return `<button class="hc ${k}" data-count="${k}" aria-pressed="${LIGHT === k}" ${n ? "" : "disabled"}
+      title="${n ? "light up these sessions; click again to clear" : "none"}">${n} ${COUNT_WORD[k](n)}</button>`;
+  }).join(" &nbsp;·&nbsp; ");
+  const html = `${total} ${total === 1 ? "session" : "sessions"} · ${cols.length} ${cols.length === 1 ? "project" : "projects"}`
+    + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
+    + ` &nbsp;·&nbsp; ${buttons}${down}`;
+  if (html === HEAD_SHOWN) return;
+  HEAD_SHOWN = html;
+  // Rebuilding the buttons drops the focus from the one that has it, so a
+  // keyboard press (Enter to light, Enter again to clear) would stop at the
+  // first. Put it back on the button of the same count.
+  const held = document.activeElement?.closest("button.hc")?.dataset.count;
+  document.getElementById("count").innerHTML = html;
+  if (held && known(COUNT_WORD, held)) document.querySelector(`#count button.hc[data-count="${held}"]`)?.focus();
+}
+
+// What is wrong with the whole machine: one band each, as the roster named it.
+// The roster is the only place this comes from, and its words are text. Written
+// again only when the list changed, like the header.
+let BANNERS_SHOWN = "";
+function drawBanners() {
+  const list = BANNERS.filter(b => b && typeof b.text === "string" && b.text);
+  const key = JSON.stringify(list);
+  if (key === BANNERS_SHOWN) return;
+  BANNERS_SHOWN = key;
+  document.getElementById("banners").replaceChildren(...list.map(b => {
+    const el = document.createElement("div");
+    el.className = "banner";
+    el.textContent = b.text;
+    return el;
+  }));
+}
+
 // What a table says about a key, and nothing a plain object inherits: a kind
 // the server calls "constructor" is not on the list.
 const known = (table, key) => Object.prototype.hasOwnProperty.call(table, key) ? table[key] : "";
@@ -1011,7 +1098,9 @@ function column(c) {
   const said = known(STATE_WORD, c.state);
   const word = said || (c.state ? String(c.state).toUpperCase() : "");
   const st = said ? c.state : "other";
-  return `<section class="ov-col" data-project="${esc(c.project)}">
+  // Lit up: a column with none of those sessions is only its card.
+  const shrunk = LIGHT && !c.sessions.some(t => t.counted === LIGHT);
+  return `<section class="ov-col ${shrunk ? "shrunk" : ""}" data-project="${esc(c.project)}">
     <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${contextOf(c)}${footOf(c)}${movementOf(c)}${mergedOf(c)}</div>
     ${c.sessions.map(tile).join("")}
   </section>`;
@@ -1130,7 +1219,8 @@ function tile(t) {
   const can = via === "pane" || via === "attach";
   const tags = (t.tags || []).map(g =>
     `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
-  return `<div class="tile ${can ? "can" : ""} ${alarm}" data-sid="${esc(t.key)}">
+  const light = !LIGHT ? "" : t.counted === LIGHT ? " lit" : " dim";
+  return `<div class="tile ${can ? "can" : ""} ${alarm}${light}" data-sid="${esc(t.key)}">
     <div class="rhead">
       ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${moveButton(t)}${jumpLabel(t, via)}
     </div>
@@ -1995,6 +2085,15 @@ document.getElementById("sound").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: JSON.stringify({ chime: CHIME }),
   }).catch(() => {});
+});
+
+// A click on a count lights up its sessions; a second click on the same one
+// clears it, and a click on another moves the light.
+document.getElementById("count").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-count]");
+  if (!b || b.disabled || !known(COUNT_WORD, b.dataset.count)) return;
+  LIGHT = LIGHT === b.dataset.count ? "" : b.dataset.count;
+  paint();
 });
 
 // Any click at all counts as that gesture, so the first one anywhere on the

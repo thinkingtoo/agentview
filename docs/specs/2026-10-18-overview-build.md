@@ -155,8 +155,8 @@ working as today.
 
 - Top level:
   - `columns`, in display order;
-  - `counts`: needs you, other stuck, moving;
-  - `banners`;
+  - `counts`: needs you, other stuck, moving (keys `needs`, `otherStuck`, `moving`);
+  - `banners`: each `{kind, text}`, the text being what the page prints across the top;
   - what search, closed and the chime read today, unchanged.
 - **Column**:
   - project identity and display name, with the raw name;
@@ -177,7 +177,9 @@ working as today.
   - unread handover text;
   - jump (pane, attach, none) with a reason when none;
   - suggestion (No project only);
-  - pinned.
+  - pinned;
+  - `counted`: the header count the session is in (`needs`, `otherStuck`, `moving`) or none; the page
+    lights the tiles whose `counted` names the count that was clicked.
 - Pill: key, name, idle since, working-on line, jump.
 
 **Rules fixed by the design**
