@@ -3,6 +3,7 @@ everything it carried before. A fake provider stands behind it and every
 store is a throwaway; no real session is read and no real terminal is touched.
 """
 import json
+import shutil
 import sys
 import tempfile
 import threading
@@ -24,6 +25,7 @@ from test_providers import Fake, minimal
 class Poll(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         (tmp / "config.json").write_text("{}")
         fake = Fake([minimal(id="a", name="Ilse", cwd="/home/alice/Projects/maple", canJump=True)])
         for target, new in (("fleet.CONFIG", tmp / "config.json"),

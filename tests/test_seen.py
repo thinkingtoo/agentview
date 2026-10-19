@@ -1,4 +1,4 @@
-import json, sys, tempfile, unittest
+import json, shutil, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -8,6 +8,7 @@ import seen
 class Seen(unittest.TestCase):
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "seen.json"
+        self.addCleanup(shutil.rmtree, self.path.parent, True)
 
     def test_a_session_you_have_never_looked_at_is_ready(self):
         self.assertTrue(seen.ready("s1", 100, seen.load(self.path)))

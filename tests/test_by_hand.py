@@ -6,6 +6,7 @@ with its own config. Nothing here reads the real `~/.claude/pm`, the real tmux
 or the real `config.json`. Names and texts are invented.
 """
 import json
+import shutil
 import sys
 import tempfile
 import threading
@@ -274,6 +275,7 @@ class Served(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, True)
         self.cfg = self.tmp / "config.json"
         self.cfg.write_text("{}")
         self.fake = Fake([minimal(id="a", name="Ilse", cwd="/home/alice/Projects/maple"),

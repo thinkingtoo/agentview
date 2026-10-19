@@ -1,4 +1,4 @@
-import json, sys, tempfile, unittest
+import json, shutil, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -14,6 +14,7 @@ def write(path, records, mode="a"):
 class IncrementalScan(unittest.TestCase):
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "t.jsonl"
+        self.addCleanup(shutil.rmtree, self.path.parent, True)
         claude._cache.clear()
 
     def test_only_the_new_lines_are_read_the_second_time(self):
@@ -110,6 +111,7 @@ class InFlight(unittest.TestCase):
 
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "t.jsonl"
+        self.addCleanup(shutil.rmtree, self.path.parent, True)
         claude._cache.clear()
 
     def test_a_call_with_no_result_yet_is_in_flight(self):
@@ -151,6 +153,7 @@ class WhatItIsDoing(unittest.TestCase):
 
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "t.jsonl"
+        self.addCleanup(shutil.rmtree, self.path.parent, True)
         claude._cache.clear()
 
     def test_the_call_in_flight_names_the_work(self):
@@ -199,6 +202,7 @@ class WhatItIsDoing(unittest.TestCase):
 class WhatItSaidLast(unittest.TestCase):
     def setUp(self):
         self.path = Path(tempfile.mkdtemp()) / "t.jsonl"
+        self.addCleanup(shutil.rmtree, self.path.parent, True)
         claude._cache.clear()
 
     def test_a_new_prompt_clears_the_last_thing_it_said(self):

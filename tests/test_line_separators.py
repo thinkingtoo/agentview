@@ -14,6 +14,7 @@ Stop hook's `last_said`.
 import datetime
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -81,6 +82,7 @@ def expected(sep):
 class Reader(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, True)
         self.path = self.dir / "proj" / "sid.jsonl"
         claude._cache.clear()
         claude.SUBS.cache.clear()
@@ -202,6 +204,7 @@ class BossMarker(unittest.TestCase):
 
     def test_the_first_line_runs_to_the_newline_not_to_a_separator(self):
         cfg = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, cfg, True)
         sid = "11111111-1111-1111-1111-111111111111"
         markers = cfg / "pm" / ".boss-sessions"
         markers.mkdir(parents=True)
@@ -230,6 +233,7 @@ class Codex(unittest.TestCase):
     def fixture(self):
         """A live Codex session over a fake `~/.codex` and `/proc`: the folder and its rollout's path."""
         home = test_codex.Home()
+        self.addCleanup(shutil.rmtree, home.root, True)
         home.thread()
         home.lock()
         home.holder(4242)
