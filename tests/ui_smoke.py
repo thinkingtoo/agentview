@@ -65,14 +65,41 @@ def sha(path):
 # (`columns`), so the two never disagree about who is waiting.
 
 def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=True, need="",
-      mv=None, moving=None, via=None, why="", **extra):
+      mv=None, moving=None, stuck=None, via=None, why="", **extra):
     """`mv` is the movement sign's text, `moving` whether the server counts the
-    session as moving (by default: busy and not stuck)."""
+    session as moving (by default: busy and not stuck). `stuck` is the kind the
+    server gives the tile; a session with a line that wants something gets the
+    line's kind, as the server does."""
     if moving is None:
         moving = status == "busy" and flag != "stuck"
+    if stuck is None and need:
+        stuck = needs("line", "1 thing left for you", {"text": need})
     return {"key": key, "name": name, "status": status, "flag": flag, "note": note,
             "line": line, "tags": list(tags), "can": can, "need": need, "mv": mv,
-            "moving": moving, "extra": extra, "via": via, "why": why}
+            "moving": moving, "stuck": stuck, "extra": extra, "via": via, "why": why}
+
+
+def needs(source, reason, context):
+    """What the server says of a session that waits on you."""
+    return {"kind": "needs", "source": source, "reason": reason, "context": context}
+
+
+def asks(question, options, header="Publish", multi=False):
+    return needs("question", "Question", {"questions": [
+        {"question": question, "header": header, "multi": multi,
+         "options": [{"label": l, "description": d} for l, d in options]}]})
+
+
+def prompts(tool, command="", target="", copy=None):
+    return needs("permission", "Permission prompt", {
+        "tool": tool, "command": command, "target": target,
+        "copy": bool(command) if copy is None else copy})
+
+
+def state_of(sessions):
+    if any(s["stuck"] for s in sessions):
+        return "needs"
+    return "moving" if any(s["moving"] for s in sessions) else "idle"
 
 
 def member(s, project):
@@ -106,7 +133,7 @@ def tile(s):
             "tags": s["tags"], "line": s["line"], "flag": flag,
             "flagNote": "" if flag is None else s["note"],
             "movement": sign and {"kind": "waiting", "text": sign}, "moving": s["moving"],
-            "blocked": bool(s["need"]), "need": s["need"],
+            "blocked": bool(s["need"]), "need": s["need"], "stuck": s["stuck"],
             "jump": jump_field(s),
             "find": f"{s['name']}\n{s['line']}".lower()}
 
@@ -138,7 +165,7 @@ def roster(projects, **top):
         columns.append({"project": key, "name": name, "raw": key,
                         "kind": "none" if orphan else "folder",
                         "strip": STRIPS.get(key, [0] * 29 + [2]), "summary": mix(sessions),
-                        "sessions": [tile(s) for s in sessions]})
+                        "state": state_of(sessions), "sessions": [tile(s) for s in sessions]})
     return {"blocks": blocks, "columns": columns, "hold": False, "chime": True, "providers": {},
             "restore": None, "closed": [], "saved": None, **top}
 
@@ -309,8 +336,14 @@ class Fake:
             route.abort()
 
 
-def new_page(browser, fake, width=1700):
-    page = browser.new_page(viewport={"width": width, "height": 2400})
+def new_page(browser, fake, width=1700, clipboard=False):
+    """A routed page. `clipboard` grants the page the clipboard, which the
+    browser gives only to a secure origin: open it at `http://localhost/`."""
+    if clipboard:
+        page = browser.new_context(viewport={"width": width, "height": 2400},
+                                   permissions=["clipboard-read", "clipboard-write"]).new_page()
+    else:
+        page = browser.new_page(viewport={"width": width, "height": 2400})
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
     page.on("console", lambda m: errors.append(f"console: {m.text}") if m.type == "error" else None)
     page.on("dialog", lambda d: (errors.append(f"dialog: {d.message}"), d.dismiss()))
@@ -393,9 +426,9 @@ def overview_pass(browser):
     check("sessions in the order the server sent",
           page.locator('.ov-col[data-project="maple"] .tile').evaluate_all("els => els.map(e => e.dataset.sid)")
           == ["m1", "m2", "m3", "m4", "m5"])
-    check("the project card is its name, then its movement strip and mix",
+    check("the project card is its name, its state, then its movement strip and mix",
           page.locator('.ov-col[data-project="maple"] .ov-head > *')
-          .evaluate_all("els => els.map(e => e.className)") == ["ov-top", "ov-mv"])
+          .evaluate_all("els => els.map(e => e.className)") == ["ov-top", "ov-state", "ov-mv"])
     check("one tile per session", page.locator(".tile").count() == 8, page.locator(".tile").count())
 
     t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
@@ -438,8 +471,8 @@ def overview_pass(browser):
           t("m1").locator(".go:not(.none)").inner_text() == "open ↗"
           and t("m5").locator(".go:not(.none)").count() == 0)
     check("a session that wrote down what it is blocked on shows it, whatever its flag",
-          t("m3").locator(".need").inner_text() == "Which table should I drop?"
-          and t("m2").locator(".need").count() == 0)
+          t("m3").locator(".stuck-box .say").inner_text() == "Which table should I drop?"
+          and t("m2").locator(".stuck-box").count() == 0)
 
     # Geometry: box 3.
     widths = page.locator(".ov-col").evaluate_all("els => els.map(e => e.offsetWidth)")
@@ -545,6 +578,184 @@ def overview_pass(browser):
     check("the overview has no hold button and a way to the block view",
           page.locator("#hold").is_hidden() and page.locator("#view").get_attribute("href") == "?view=blocks")
     check("overview: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
+def needs_pass(browser):
+    """Ticket 07: Needs you on the tile and the state on the card, and the copy
+    button on a command and nowhere else. Fixtures are invented; so is every
+    question and command in them."""
+    cmd = "git push origin feature/maple-notes"
+    maple = ("maple", "maple", [
+        S("q1", "Vera", "waiting", "waiting", note="input needed", line="Port the importer",
+          stuck=asks("Publish the notes page under /docs?",
+                     [("Yes, under /docs", "Linked from the sidebar"), ("No, keep it private", "")])),
+        S("q2", "Mei", "waiting", "waiting", note="permission prompt", line="Ship the notes",
+          stuck=prompts("Bash", cmd)),
+        S("q3", "Nour", "waiting", "waiting", note="permission prompt", line="Edit the notes",
+          stuck=prompts("Edit", target="/home/alice/Projects/maple/notes.md")),
+        S("q4", "Aziz", "idle", "ready", line="Notes drafted",
+          stuck=needs("line", "3 things left for you", {"text": ""})),
+        S("q5", "Dmitri", "idle", line="Tests green", need="Which branch should it go on?"),
+        S("q6", "Elin", "busy", line="Writing the changelog"),
+        S("q7", "Ines", "waiting", "waiting", note="input needed", line="Ask about the schema",
+          stuck=needs("question", "Question", {"questions": []}))])
+    orchard = ("orchard", "orchard", [S("o1", "Frode", "busy", line="Pruning the schema", mv="writing · 8s ago")])
+    pmd = ("pmd", "pmd", [S("p1", "Lennart", "idle", line="Plan the cutover")])
+    body = roster([maple, orchard, pmd])
+    # Minutes the server did not see, in a card of each colour that tints the strip.
+    next(c for c in body["columns"] if c["project"] == "pmd")["strip"] = [None] * 4 + [0] * 25 + [1]
+    fake = Fake(body)
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
+    head = lambda project: page.locator(f'.ov-col[data-project="{project}"] .ov-head')
+    probe = lambda v: page.evaluate("""v => { const d = document.createElement('div'); d.style.color = `var(${v})`;
+      document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c }""", v)
+
+    # The three sources, each with its reason and its context.
+    check("an open question: the reason, the question and every option",
+          t("q1").locator(".stuck-box .reason").inner_text() == "Question"
+          and "Publish the notes page under /docs?" in t("q1").locator(".qtext").inner_text()
+          and t("q1").locator("li .ol").all_inner_texts() == ["Yes, under /docs", "No, keep it private"]
+          and t("q1").locator("li .od").all_inner_texts() == [" — Linked from the sidebar"])
+    check("an open permission prompt: the reason, the tool and the whole command",
+          t("q2").locator(".stuck-box .reason").inner_text() == "Permission prompt"
+          and t("q2").locator(".tool").inner_text().lower() == "bash"
+          and t("q2").locator("code").inner_text() == cmd)
+    check("a prompt for a tool with no command shows what it would touch",
+          t("q3").locator(".tool").inner_text().lower() == "edit"
+          and t("q3").locator("code").inner_text() == "/home/alice/Projects/maple/notes.md")
+    check("several things left: the count, in the reason",
+          t("q4").locator(".stuck-box .reason").inner_text() == "3 things left for you"
+          and t("q4").locator(".say").count() == 0)
+    check("one thing left: the count and the ask",
+          t("q5").locator(".stuck-box .reason").inner_text() == "1 thing left for you"
+          and t("q5").locator(".say").inner_text() == "Which branch should it go on?")
+    check("an open question not written down yet: the reason, no options, and a plain note",
+          t("q7").locator(".stuck-box .reason").inner_text() == "Question"
+          and t("q7").locator(".stuck-box li").count() == 0
+          and t("q7").locator(".stuck-box .late").inner_text() == "Its question is not in the transcript yet."
+          and "needs" in t("q7").get_attribute("class"))
+    check("a session that needs nothing has no box",
+          t("q6").locator(".stuck-box").count() == 0 and "needs" not in t("q6").get_attribute("class"))
+    check("a tile that needs you is marked, in amber, and says it once",
+          all("needs" in t(k).get_attribute("class") for k in ("q1", "q2", "q3", "q4", "q5", "q7"))
+          and t("q1").locator(".flag.needs").inner_text().lower() == "needs you"
+          and t("q1").locator(".flag.waiting").count() == 0
+          and t("q1").evaluate("e => getComputedStyle(e).borderTopColor") == probe("--wait"))
+
+    # The copy button: on a command, never elsewhere.
+    check("copy is on the command and on nothing else",
+          page.locator("button.copy").count() == 1 and t("q2").locator("button.copy").count() == 1)
+
+    # The card: the state is its second line, never above the name, in its colour.
+    box = lambda loc: loc.bounding_box()
+    for project, word in (("maple", "NEEDS YOU"), ("orchard", "MOVING"), ("pmd", "ALL IDLE")):
+        h = head(project)
+        name, state = box(h.locator(".ov-name")), box(h.locator(".ov-state"))
+        check(f"{project}: the state word reads {word}", h.locator(".ov-state").inner_text() == word,
+              h.locator(".ov-state").inner_text())
+        check(f"{project}: the state word sits under the name, never above or beside it",
+              state["y"] >= name["y"] + name["height"] - 1 and state["y"] > name["y"], (name, state))
+    # The card is always coloured by its state: the top edge, a light tint, the
+    # word and the strip's bars -- grey for a card with nothing moving too.
+    plain = page.evaluate("""() => { const d = document.createElement('div'); d.style.background = 'var(--card)';
+      document.body.appendChild(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c }""")
+    for project, var in (("maple", "--wait"), ("orchard", "--busy"), ("pmd", "--idle")):
+        h = head(project)
+        paint = lambda loc, prop: loc.evaluate(f"e => getComputedStyle(e).{prop}")
+        check(f"{project}: the card's top edge, word and bars take the state's colour",
+              paint(h, "borderTopColor") == probe(var) and paint(h.locator(".ov-state"), "color") == probe(var)
+              and paint(h.locator(".strip i:not(.u):not(.z)").first, "backgroundColor") == probe(var),
+              (paint(h, "borderTopColor"), paint(h.locator(".ov-state"), "color"), probe(var)))
+        check(f"{project}: the card has a light tint of its own", paint(h, "backgroundColor") != plain,
+              paint(h, "backgroundColor"))
+
+    # A minute the server did not see is a dotted stub in every card, whatever
+    # its state tints the bars with: never a bar, and never a filled one.
+    for project in ("maple", "pmd"):
+        stubs = head(project).locator(".strip i.u")
+        check(f"{project}: a minute not seen stays a dotted stub, with no fill of the state's colour",
+              stubs.count() > 0 and all(stubs.nth(i).evaluate("e => getComputedStyle(e).backgroundColor")
+                                        == "rgba(0, 0, 0, 0)" for i in range(stubs.count())),
+              [stubs.nth(i).evaluate("e => getComputedStyle(e).backgroundColor") for i in range(stubs.count())])
+
+    # The reason is part of what the tile knows. A click that jumps clears the
+    # jump's own note and nothing else, whether the jump works or fails.
+    kept = lambda k, word: t(k).locator(".stuck-box .reason").all_inner_texts() == [word]
+    t("q1").locator(".nm").click()
+    page.wait_for_timeout(150)
+    check("a click on a Needs-you tile that jumps keeps its reason", kept("q1", "Question"))
+    fake.answer["/api/jump"] = {"ok": False, "reason": "no pane for it"}
+    t("q2").locator(".nm").click()
+    page.wait_for_timeout(150)
+    check("a jump that fails says why on the tile and keeps the reason",
+          kept("q2", "Permission prompt") and t("q2").locator(".why").all_inner_texts() == ["no pane for it"],
+          t("q2").locator(".why").all_inner_texts())
+    del fake.answer["/api/jump"]
+
+    # Copy does not answer the session and does not jump.
+    posts = len(fake.posts)
+    t("q2").locator("button.copy").click()
+    page.wait_for_timeout(200)
+    check("clicking copy sends nothing to the server: no jump, no seen mark, no answer",
+          len(fake.posts) == posts, fake.posts[posts:])
+    check("and the tile does not flash as jumped", "jumped" not in t("q2").get_attribute("class"))
+    check("the button says copied", t("q2").locator("button.copy").inner_text() == "copied")
+    page.close()
+
+    # Copy puts the command on the clipboard, character for character.
+    page = new_page(browser, fake, clipboard=True)
+    page.goto("http://localhost/", wait_until="load")
+    page.wait_for_selector(".tile")
+    page.locator('.tile[data-sid="q2"] button.copy').click()
+    page.wait_for_timeout(200)
+    check("the clipboard holds the command", page.evaluate("navigator.clipboard.readText()") == cmd)
+    page.context.close()
+
+    # R7 at the page: question, options, header, command, tool, target and ask are text.
+    nasty = f"echo {BOMB}\nls 'a b' \"c\""
+    hostile = ("maple", "maple", [
+        S("h1", "Vera", "waiting", "waiting", note="input needed",
+          stuck=asks(BOMB, [(BOMB, BOMB)], header=BOMB, multi=True)),
+        S("h2", "Mei", "waiting", "waiting", note="permission prompt", stuck=prompts(BOMB, nasty)),
+        S("h3", "Nour", "waiting", "waiting", note="permission prompt", stuck=prompts(BOMB, target=BOMB)),
+        S("h4", "Aziz", "idle", need=BOMB)])
+    fake2 = Fake(roster([hostile]))
+    page = new_page(browser, fake2, clipboard=True)
+    seen = len(errors)
+    page.goto("http://localhost/", wait_until="load")
+    page.wait_for_selector(".tile")
+    page.wait_for_timeout(300)
+    text = page.locator("#main").inner_text()
+    # The header and the tool are set in capitals by the page's CSS, and
+    # `inner_text` returns them so: compare without case.
+    check("R7: markup in a question, header, option, command, tool, target and ask is shown as text",
+          text.lower().count(BOMB.lower()) == 9, text.lower().count(BOMB.lower()))
+    check("R7: and builds no element from it",
+          page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0
+          and page.evaluate("() => document.querySelectorAll('#main *').length < 200"))
+    page.locator('.tile[data-sid="h2"] button.copy').click()
+    page.wait_for_timeout(200)
+    check("R7: copy copies the literal command, markup, line break and quotes included",
+          page.evaluate("navigator.clipboard.readText()") == nasty, page.evaluate("navigator.clipboard.readText()"))
+    check("R7: no dialog, no page error", len(errors) == seen, errors[seen:])
+    page.context.close()
+
+    # Where the page has no clipboard API (plain http on a name that is not
+    # localhost), copy still works through the selection fallback.
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".tile")
+    page.evaluate("""() => { window.__copied = null;
+      document.addEventListener('copy', () => { window.__copied = document.getSelection().toString(); }); }""")
+    check("the fallback case really has no clipboard API", page.evaluate("typeof navigator.clipboard") == "undefined")
+    t("q2").locator("button.copy").click()
+    page.wait_for_timeout(200)
+    check("without a clipboard API, copy falls back to the selection and copies the command",
+          page.evaluate("window.__copied") == cmd, page.evaluate("window.__copied"))
     page.close()
 
 
@@ -1170,6 +1381,7 @@ def main():
         browser = pw.chromium.launch()
         real_keys = real_pass(browser, url, pid)
         overview_pass(browser)
+        needs_pass(browser)
         hand_pass(browser)
         e2e_pass(browser)
         suggestion_pass(browser)

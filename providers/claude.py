@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 import lines
-from providers import procs, registry
+from providers import base, procs, registry
 from providers.base import (Provider, Tailed, on_a_terminal,
                             read_from as _read_from)
 
@@ -293,7 +293,7 @@ def _tasks(state, rec):
 def _blank_state():
     return {**_blank_counts(),
             "title": "", "prompt": "", "branch": "", "tasks": {},
-            "uses": {}, "done": set(), "said": "", "spoke": "",
+            "uses": {}, "done": set(), "said": "", "spoke": "", "msg": "",
             "sent": collections.Counter(),
             "paths": collections.deque(maxlen=400)}
 
@@ -331,6 +331,13 @@ def _absorb(state, text):
         # past it, the result is never coming and nothing is running.
         if kind in ("user", "assistant") and rec.get("timestamp"):
             state["spoke"] = max(state["spoke"], rec["timestamp"])
+        # The message these records belong to: a message's calls are written
+        # as one record each, and a result for one of them is not the session
+        # moving on from the others.
+        mid = (rec.get("message") or {}).get("id")
+        mid = mid if isinstance(mid, str) else ""
+        if kind == "assistant" and not rec.get("isSidechain"):
+            state["msg"] = mid
         # A subagent must never speak for the session it works for.
         if kind == "assistant" and not rec.get("isSidechain"):
             for part in content:
@@ -344,7 +351,7 @@ def _absorb(state, text):
                 if part.get("id"):
                     state["uses"][part["id"]] = (
                         rec.get("timestamp"), part.get("name") or "",
-                        _kept(part.get("input")))
+                        _kept(part.get("input"), part.get("name") or ""), mid)
                 # Who it works with: every peer it has messaged. `to` is
                 # the address -- a name, sometimes with a disambiguating ref.
                 if part.get("name") == "SendMessage":
@@ -437,11 +444,42 @@ KEEP = ("description", "command", "file_path", "notebook_path", "path",
 ASK_LIMIT = lines.LIMIT
 
 
-def _kept(inp):
+def _kept(inp, name=""):
     if not isinstance(inp, dict):
         return {}
-    return {k: v[:200] for k, v in inp.items()
+    kept = {k: v[:200] for k, v in inp.items()
             if k in KEEP and isinstance(v, str)}
+    # Two calls are what a person may be asked about, so they keep what the
+    # person needs to read: a shell command whole (a prompt shows it, and it
+    # is copied), and a question with its options. Both bounded.
+    if name == "Bash" and isinstance(inp.get("command"), str):
+        kept["command"] = inp["command"][:base.COMMAND_LIMIT + 1]
+    elif name == "AskUserQuestion":
+        kept["questions"] = _questions(inp.get("questions"))
+    return kept
+
+
+def _questions(value):
+    """An AskUserQuestion's questions, as the page reads them and no longer
+    than a tile holds."""
+    def words(v, limit):
+        return v.strip()[:limit] if isinstance(v, str) else ""
+
+    out = []
+    for q in value[:base.MAX_QUESTIONS] if isinstance(value, list) else ():
+        if not isinstance(q, dict) or not words(q.get("question"), base.QUESTION_LEN):
+            continue
+        out.append({
+            "question": words(q.get("question"), base.QUESTION_LEN),
+            "header": words(q.get("header"), base.LABEL_LEN),
+            "multi": q.get("multiSelect") is True,
+            "options": [{"label": words(o.get("label"), base.LABEL_LEN),
+                         "description": words(o.get("description"), base.HINT_LEN)}
+                        for o in q["options"][:base.MAX_OPTIONS]
+                        if isinstance(o, dict)]
+                       if isinstance(q.get("options"), list) else [],
+        })
+    return out
 
 
 def activity(calls):
@@ -504,6 +542,10 @@ def _view(state, now):
     # flag the session `tool 40m` on every busy poll for the rest of the day.
     running = [call for tid, call in state["uses"].items()
                if tid not in state["done"] and call[0] and call[0] >= state["spoke"]]
+    # What it has asked and not been answered in its newest message, oldest
+    # first: the calls a dialog can be about.
+    asked = [(call[1], call[2]) for tid, call in state["uses"].items()
+             if tid not in state["done"] and call[3] == state["msg"]]
     stamps = [call[0] for call in running]
     pending = None
     if stamps:
@@ -519,11 +561,12 @@ def _view(state, now):
             # The raw last message: the core shapes it into the one line the
             # card shows, and reads the ask out of the whole of it.
             "said": state["said"],
-            "doing": activity([(name, inp) for _, name, inp in running]),
+            "doing": activity([(call[1], call[2]) for call in running]),
             # Liveliest correspondent first: a boss's team, in the order it
             # actually deals with them.
             "sent": [name for name, _ in state["sent"].most_common()],
             "pending": pending,
+            "calls": asked,
             "writes": _strip(state, now),
             # Open background shells, oldest first, with how long each has run.
             "tasks": sorted(({"id": tid, "label": t["label"],
@@ -594,7 +637,8 @@ def scan_session(path, now=None):
 
 
 EMPTY = {"title": "", "prompt": "", "branch": "", "paths": [], "said": "",
-         "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": []}
+         "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": [],
+         "calls": []}
 
 
 def _peers(cfg):
@@ -665,6 +709,38 @@ def _processes(rec, summary, status, shells):
     return [t for t in tasks if t["id"] in seen["tasks"]], seen["cpu"]
 
 
+def asking_of(status, waiting_for, calls):
+    """The dialog a session has open, or None: what Claude Code says is open
+    (the peer record's status and `waitingFor`) and what the transcript says
+    it is about (the calls that have not come back).
+
+    A question is Claude Code's `input needed`, with the unanswered
+    AskUserQuestion as its content. Claude Code writes that call into the
+    transcript late -- minutes after the dialog opens, sometimes hours -- so
+    until the read finds it the question is open with nothing to show
+    (`questions` empty), and fills in on the read that does. A permission
+    prompt is Claude Code's own `permission prompt`, about the oldest call
+    still waiting -- a running call is not one, and a menu (`dialog open`) is
+    neither.
+    """
+    if status != "waiting":
+        return None
+    for name, inp in calls:
+        if name == "AskUserQuestion" and inp.get("questions"):
+            return {"kind": "question", "questions": inp["questions"]}
+    if waiting_for == "input needed":
+        return {"kind": "question", "questions": []}
+    if waiting_for != "permission prompt":
+        return None
+    name, inp = calls[0] if calls else ("", {})
+    target = inp.get(TARGET.get(name, ""))
+    return {"kind": "permission", "tool": name,
+            # Only a shell command is a command. Another tool may well have a
+            # field called that, and what it holds is not for a terminal.
+            "command": inp.get("command", "") if name == "Bash" else "",
+            "target": target if isinstance(target, str) and name != "Bash" else ""}
+
+
 def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None, rivals=()):
     """The facts about one live peer, with its transcript summary attached.
 
@@ -708,6 +784,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # Claude Code's own words for what it is blocked on, and the last
         # thing it said to you. Neither is generated here.
         "waitingFor": rec.get("waitingFor") or "",
+        "asking": asking_of(status, rec.get("waitingFor") or "", summary["calls"]),
         "said": summary["said"],
         "boss": boss,
         # The name of the boss's tracker, which is the project its workers

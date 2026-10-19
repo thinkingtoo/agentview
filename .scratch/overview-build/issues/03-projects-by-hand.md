@@ -4,7 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Claimed by:** Joaquin 2026-10-19 09:47
+
+**Status:** in-progress
 
 - [ ] Moving a repository into a project places a new session from that repository there
 - [ ] A single-session move ends with that session
