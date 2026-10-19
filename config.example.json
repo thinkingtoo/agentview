@@ -17,6 +17,8 @@
   "stuck_after_minutes": 5,
   "_hung": "How long a busy session may go without a write, a CPU-using shell under it or a live background job before the overview counts it as not moving, and calls it Hung. A number of minutes more than nothing; anything else is 10.",
   "hung_after_minutes": 10,
+  "_disk": "The overview puts a banner across the top when the disk that holds Claude Code's folder has less than this many megabytes free. A number more than nothing; anything else is 500.",
+  "disk_full_mb": 500,
   "_long_tool": "While a tool call is running the transcript is silent, so silence proves nothing. Only a call outstanding this many minutes is worth mentioning, and it is shown as news, not as an alarm.",
   "long_tool_minutes": 20,
   "_waiting": "A helper spawned by /btw sits in `waiting` for a few seconds. Only a question left unanswered this long is worth flagging.",

@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -21,7 +22,7 @@ import lines
 import projects
 import providers
 import seen
-from providers import base
+from providers import base, claude
 from providers.base import CAPABILITIES, STATUSES, on_a_terminal
 
 
@@ -677,7 +678,8 @@ def roster(providers=None):
     columns = columns_of(blocks)
     for s in everyone:
         s.pop("paths", None)
-    return {"blocks": blocks, "columns": columns}
+    return {"blocks": blocks, "columns": columns, "counts": counts_of(columns),
+            "banners": banners_of()}
 
 
 def columns_of(blocks):
@@ -702,6 +704,60 @@ def columns_of(blocks):
                 _column_order(rows, by_key[rows[0]["key"]], names, pinned))
                for rows in grouped.values()]
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
+
+
+def counted_in(tile):
+    """Which of the header's three counts a tile is in, or None: what needs the
+    person, what else is stuck, what is moving. Stuck wins over moving, as it
+    does in the card's mix: a session that needs you needs you with a job
+    running. An idle session is in none."""
+    if tile["stuck"]:
+        return "needs" if tile["stuck"]["kind"] == "needs" else "stuck"
+    return "moving" if tile["moving"] else None
+
+
+def counts_of(columns):
+    """The header's counts, over every tile on the page. Routines are not in
+    `columns`, so they are not in these."""
+    counts = {"needs": 0, "stuck": 0, "moving": 0}
+    for column in columns:
+        for tile in column["sessions"]:
+            kind = tile["counted"]
+            if kind:
+                counts[kind] += 1
+    return counts
+
+
+# Under this much free space the disk is full, as far as a session writing a
+# transcript is concerned: a write that large may fail. `disk_full_mb` in the
+# config says another number.
+DISK_FULL_MB = 500
+MB = 1024 * 1024
+
+# Under a name of its own, so that a test can answer for the disk.
+disk_usage = shutil.disk_usage
+
+
+def banners_of():
+    """What is wrong with the whole machine, said once across the top of the
+    page: each a `kind` and the `text` to print. Never a kind of stuck on a
+    tile -- every session on the machine is held by it alike. The page prints
+    these and looks for nothing of its own."""
+    banners = []
+    try:
+        free = disk_usage(claude.claude_dir()).free
+    except OSError:
+        free = None          # a disk that cannot be read is not known to be full
+    if free is not None and free < positive_value("disk_full_mb", DISK_FULL_MB) * MB:
+        banners.append({"kind": "disk",
+                        "text": f"Disk full: {size_text(free)} left where sessions write"})
+    return banners
+
+
+def size_text(size):
+    """A number of bytes the way a person reads free space: '212 MB', '1.5 GB'."""
+    mb = size / MB
+    return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{int(mb)} MB"
 
 
 # The kinds of stuck, most urgent first. The tile says the first that holds for
@@ -782,6 +838,7 @@ def tile_of(m, suggestion=None):
     # that is the better word: a long call is a wait (the movement sign), and
     # a busy session nothing proves is moving is Hung (its kind).
     flag = None if m["flag"] in ("tool", "stuck") else m["flag"]
+    stuck = stuck_of(m)
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
         "status": m["status"], "suggestion": suggestion,
@@ -792,7 +849,10 @@ def tile_of(m, suggestion=None):
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
         "movement": m["movement"], "moving": m["moving"],
-        "stuck": stuck_of(m),
+        "stuck": stuck,
+        # The header count the tile is in, for the page to light it up when
+        # that count is clicked.
+        "counted": counted_in({"stuck": stuck, "moving": m["moving"]}),
         # The chime rings for a blocked session whatever its flag says, so the
         # tile carries what it is asking, the way the old row did.
         "blocked": m["blocked"], "need": need_of(m),

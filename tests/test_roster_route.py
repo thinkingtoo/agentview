@@ -52,8 +52,10 @@ class Poll(unittest.TestCase):
         got = self.poll()
         self.assertEqual([m["key"] for b in got["blocks"] for m in b["members"]], ["fake:a"])
         self.assertEqual([t["key"] for c in got["columns"] for t in c["sessions"]], ["fake:a"])
-        self.assertEqual(sorted(got), ["blocks", "chime", "closed", "columns", "hold",
-                                       "providers", "restore", "saved"])
+        self.assertEqual(sorted(got), ["banners", "blocks", "chime", "closed", "columns", "counts",
+                                       "hold", "providers", "restore", "saved"])
+        self.assertEqual(sorted(got["counts"]), ["moving", "needs", "stuck"])
+        self.assertIsInstance(got["banners"], list)
 
     def test_the_page_is_served_with_a_query_on_it(self):
         # `?view=blocks` is how the old block view stays reachable; the page
