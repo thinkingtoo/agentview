@@ -105,6 +105,14 @@ def rename(config, project, label):
         config["names"][project] = named["raw"]
 
 
+def line(config, project, text):
+    """Your own context line for a project, kept under its identity. An empty
+    one takes it back, and the source the roster finds takes its place."""
+    _named(project)
+    _current(config, project)
+    put(config, "project_lines", project, text)
+
+
 def _moved_to(config, project):
     """The project this one was moved into -- merged into, or moved as a whole --
     or None when it is its own card. What the page writes is one step deep: a

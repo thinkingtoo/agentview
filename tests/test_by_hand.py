@@ -48,7 +48,7 @@ class Moves(TrackFixtures):
                                  name="Odile"))
         self.assertEqual(sorted(self.keys(self.column(later, "track:checkout"))),
                          ["claude:a", "claude:b", "claude:n"])
-        self.assertEqual(self.names(later), ["checkout"])
+        self.assertEqual(self.names(later), ["Checkout"])
 
     def test_moving_a_track_takes_every_session_of_the_track_with_it(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
@@ -56,7 +56,7 @@ class Moves(TrackFixtures):
         got = self.claude(self.boss("b", orchard, "docs"),
                           self.worker("w", orchard, "docs", name="Mateo"),
                           sess("a", loom, name="Femi"))
-        self.assertEqual(self.names(got), ["loom"])
+        self.assertEqual(self.names(got), ["Loom"])
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["claude:a", "claude:b", "claude:w"])
 
     def test_a_move_only_takes_the_sessions_the_project_would_have_had(self):
@@ -74,13 +74,13 @@ class Moves(TrackFixtures):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         self.config = {"assign": {LOOM: "orchard"}}
         got = self.claude(sess("a", loom), sess("b", orchard))
-        self.assertEqual(self.names(got), ["orchard"])
+        self.assertEqual(self.names(got), ["Orchard"])
         self.assertEqual(sorted(self.keys(got["columns"][0])), ["claude:a", "claude:b"])
 
     def test_a_project_moved_onto_itself_stays_where_it_is(self):
         loom = self.repo("loom")
         self.config = {"assign": {LOOM: LOOM}}
-        self.assertEqual(self.names(self.claude(sess("a", loom))), ["loom"])
+        self.assertEqual(self.names(self.claude(sess("a", loom))), ["Loom"])
 
     def test_sessions_with_no_project_cannot_be_moved_as_a_whole(self):
         # `""` is not a project, so an empty key is not a way to move them all.
@@ -115,7 +115,7 @@ class Moves(TrackFixtures):
                                   "repo:example.com/alice/pear": "orchard"}}
         got = self.claude(sess("a", loom), sess("b", orchard), sess("c", pear))
         self.assertEqual(self.column(got, ORCHARD)["merged"],
-                         [{"project": LOOM, "name": "The loom"}, {"project": "track:docs", "name": "docs"}])
+                         [{"project": LOOM, "name": "The loom"}, {"project": "track:docs", "name": "Docs"}])
         self.assertEqual([c["merged"] for c in got["columns"] if c["project"] != ORCHARD], [])
 
     def test_the_move_of_one_session_beats_the_move_of_its_repository(self):
@@ -133,7 +133,7 @@ class Moves(TrackFixtures):
         self.config = {"assign": {LOOM: ORCHARD, "claude:a": LOOM, "claude:b": "loom"}}
         got = self.claude(sess("a", pear, name="Femi"), sess("b", pear, name="Odile"),
                           sess("c", loom, name="Ilse"), sess("d", orchard, name="Saskia"))
-        self.assertEqual(self.names(got), ["orchard"])
+        self.assertEqual(self.names(got), ["Orchard"])
         self.assertEqual(sorted(self.keys(got["columns"][0])),
                          ["claude:a", "claude:b", "claude:c", "claude:d"])
 
@@ -150,9 +150,9 @@ class Moves(TrackFixtures):
         for target in (MAPLE, "maple"):             # by identity, and by the plain name
             with self.subTest(target=target):
                 got = self.claude(self.lost(orchard, assign={ORCHARD: target}), sess("b", maple))
-                self.assertEqual(self.names(got), ["maple", "No project"])
+                self.assertEqual(self.names(got), ["Maple", "No project"])
                 tile = self.column(got, "")["sessions"][0]
-                self.assertEqual(tile["suggestion"], {"project": MAPLE, "name": "maple"})
+                self.assertEqual(tile["suggestion"], {"project": MAPLE, "name": "Maple"})
 
     def test_the_guess_follows_a_chain_of_moves_and_stops_at_a_cycle(self):
         orchard, maple, pear = self.repo("orchard"), self.repo("maple"), self.repo("pear")
@@ -160,17 +160,17 @@ class Moves(TrackFixtures):
         chain = self.claude(self.lost(orchard, assign={ORCHARD: MAPLE, MAPLE: pear_id}),
                             sess("b", maple), sess("c", pear))
         self.assertEqual(self.column(chain, "")["sessions"][0]["suggestion"],
-                         {"project": pear_id, "name": "pear"})
+                         {"project": pear_id, "name": "Pear"})
         swap = self.claude(self.lost(orchard, assign={ORCHARD: MAPLE, MAPLE: ORCHARD}),
                            sess("b", maple), sess("c", orchard))
         self.assertEqual(self.column(swap, "")["sessions"][0]["suggestion"],
-                         {"project": MAPLE, "name": "maple"})
+                         {"project": MAPLE, "name": "Maple"})
 
     def test_a_project_moved_twice_lands_where_the_last_move_leads(self):
         loom, orchard, pear = self.repo("loom"), self.repo("orchard"), self.repo("pear")
         self.config = {"assign": {LOOM: ORCHARD, ORCHARD: "repo:example.com/alice/pear"}}
         got = self.claude(sess("a", loom), sess("b", orchard), sess("c", pear))
-        self.assertEqual(self.names(got), ["pear"])
+        self.assertEqual(self.names(got), ["Pear"])
         self.assertEqual(len(got["columns"][0]["sessions"]), 3)
 
     def test_a_longer_cycle_of_moves_ends_too_and_every_session_has_a_place(self):
@@ -239,7 +239,7 @@ class OldConfig(TrackFixtures):
         loom = self.repo("loom")
         self.config = {"assign": {"claude:loom": "track:checkout", "claude:checkout": ORCHARD}}
         got = self.claude(sess("a", loom, name="Femi"))
-        self.assertEqual(self.names(got), ["loom"])
+        self.assertEqual(self.names(got), ["Loom"])
 
 
 class Landed(unittest.TestCase):
@@ -383,6 +383,16 @@ class Concurrency(Served):
         self.assertEqual((got["assign"], got["names"]),
                          ({"folder:plum": "folder:pear"}, {"folder:maple": "Maple tree"}))
 
+    def test_your_own_lines_for_many_projects_at_once_each_keep_their_own_entry(self):
+        # Ticket 04's route goes through the same lock as the rest.
+        self.slow()
+        codes = self.together(*[("/api/context", {"project": f"folder:p{n}", "text": f"About {n}"}) for n in range(6)],
+                              ("/api/name", {"project": "folder:maple", "label": "Maple tree"}))
+        self.assertEqual(codes, [200] * 7)
+        got = self.stored()
+        self.assertEqual(got["project_lines"], {f"folder:p{n}": f"About {n}" for n in range(6)})
+        self.assertEqual(got["names"], {"folder:maple": "Maple tree"})
+
     def test_no_write_leaves_a_temp_file_behind(self):
         self.slow()
         self.together(*[("/api/name", {"project": f"folder:p{n}", "label": f"P{n}"}) for n in range(6)])
@@ -420,11 +430,11 @@ class Corrected(Served):
 
 class Pins(Corrected):
     def test_pinning_puts_a_project_first_and_pins_keep_the_order_they_were_made_in(self):
-        self.assertEqual(self.names(), ["maple", "orchard", "pear"])
+        self.assertEqual(self.names(), ["Maple", "Orchard", "Pear"])
         self.assertEqual(self.pin("folder:pear")[0], 200)
         self.assertEqual(self.pin("folder:orchard")[0], 200)
         self.assertEqual(self.stored()["pinned"], ["folder:pear", "folder:orchard"])
-        self.assertEqual(self.names(), ["pear", "orchard", "maple"])
+        self.assertEqual(self.names(), ["Pear", "Orchard", "Maple"])
         self.assertEqual([c["pinned"] for c in self.columns()], [True, True, False])
 
     def test_pinning_twice_pins_once(self):
@@ -436,21 +446,21 @@ class Pins(Corrected):
         self.seed(pinned=["folder:pear", "folder:orchard", "folder:maple"])
         self.assertEqual(self.pin("folder:orchard", "swap", **{"with": "folder:pear"})[0], 200)
         self.assertEqual(self.stored()["pinned"], ["folder:orchard", "folder:pear", "folder:maple"])
-        self.assertEqual(self.names(), ["orchard", "pear", "maple"])
+        self.assertEqual(self.names(), ["Orchard", "Pear", "Maple"])
 
     def test_a_swap_over_a_pin_that_has_no_column_still_moves_what_you_can_see(self):
         # The pin of a project nobody is working in is kept, but it takes no
         # place on the page: the arrow must change what you see, not a hidden slot.
         self.seed(pinned=["folder:pear", "folder:gone", "folder:orchard"])
         self.pin("folder:orchard", "swap", **{"with": "folder:pear"})
-        self.assertEqual(self.names(), ["orchard", "pear", "maple"])
+        self.assertEqual(self.names(), ["Orchard", "Pear", "Maple"])
         self.assertEqual(self.stored()["pinned"], ["folder:orchard", "folder:gone", "folder:pear"])
 
     def test_pinning_again_unpins_and_the_project_goes_back_among_the_others(self):
         self.seed(pinned=["folder:pear", "folder:orchard"])
         self.assertEqual(self.pin("folder:pear", "unpin")[0], 200)
         self.assertEqual(self.stored()["pinned"], ["folder:orchard"])
-        self.assertEqual(self.names(), ["orchard", "maple", "pear"])
+        self.assertEqual(self.names(), ["Orchard", "Maple", "Pear"])
         self.assertFalse(self.column("folder:pear")["pinned"])
 
     def test_a_pin_written_by_plain_name_counts_as_pinned_and_unpins(self):
@@ -464,7 +474,7 @@ class Pins(Corrected):
         self.pin("folder:maple")
         self.pin("folder:maple", "swap", **{"with": "folder:pear"})
         self.serve()                         # a new server, the same config file
-        self.assertEqual(self.names(), ["maple", "pear", "orchard"])
+        self.assertEqual(self.names(), ["Maple", "Pear", "Orchard"])
 
     def test_no_project_cannot_be_pinned_and_a_malformed_request_is_refused(self):
         for body in ({"project": "", "action": "pin"}, {"project": "folder:pear", "action": "juggle"},
@@ -484,7 +494,7 @@ class Renames(Corrected):
     def test_a_rename_is_the_name_on_the_column_and_survives_a_restart(self):
         self.assertEqual(self.post("/api/name", {"project": "folder:maple", "label": "Maple tree"})[0], 200)
         self.serve()
-        self.assertEqual(self.names(), ["Maple tree", "orchard", "pear"])
+        self.assertEqual(self.names(), ["Maple tree", "Orchard", "Pear"])
         self.assertEqual(self.column("folder:maple")["raw"], "maple")
 
     def test_taking_a_rename_back_shows_the_raw_name_even_after_an_older_plain_name_rename(self):
@@ -492,7 +502,7 @@ class Renames(Corrected):
         self.assertIn("The old name", self.names())
         self.post("/api/name", {"project": "folder:maple", "label": "Maple tree"})
         self.post("/api/name", {"project": "folder:maple", "label": ""})
-        self.assertEqual(self.names(), ["maple", "orchard", "pear"])
+        self.assertEqual(self.names(), ["maple", "Orchard", "Pear"])
 
     def test_renaming_keeps_the_pin_the_line_and_the_moves_of_the_project(self):
         # R10: a rename changes what the column says, nothing it is known by.
@@ -512,7 +522,7 @@ class Merges(Corrected):
     def test_merging_puts_every_session_of_the_project_into_the_other_and_survives_a_restart(self):
         self.assertEqual(self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})[0], 200)
         self.serve()
-        self.assertEqual(self.names(), ["maple", "pear"])
+        self.assertEqual(self.names(), ["Maple", "Pear"])
         self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:d"])
         self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:maple"})
 
@@ -538,7 +548,7 @@ class Merges(Corrected):
         self.assertNotIn("folder:orchard", got["names"])
         # What the roster shows: all of it in one pinned column; the plain
         # name that meant the absorbed project goes with it.
-        self.assertEqual(self.names(), ["maple"])
+        self.assertEqual(self.names(), ["Maple"])
         self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:c", "fake:d"])
         self.assertTrue(self.column("folder:maple")["pinned"])
 
@@ -568,7 +578,7 @@ class Merges(Corrected):
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
         self.assertEqual(self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})[0], 409)
         self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:maple"})
-        self.assertEqual(self.names(), ["maple", "pear"])
+        self.assertEqual(self.names(), ["Maple", "Pear"])
         self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:d"])
 
     def test_the_target_steps_into_the_place_the_source_had_among_the_pins(self):
@@ -592,13 +602,13 @@ class Merges(Corrected):
             got = self.stored()
             self.assertEqual(got["assign"]["folder:orchard"], "folder:maple", damage)
             self.assertNotIn("folder:orchard", got["pinned"], damage)
-            self.assertEqual(self.names(), ["maple", "pear"], damage)
+            self.assertEqual(self.names(), ["Maple", "Pear"], damage)
 
     def test_merging_twice_in_a_row_carries_the_first_merge_along(self):
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
         self.post("/api/merge", {"source": "folder:maple", "target": "folder:pear"})
         self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:pear", "folder:maple": "folder:pear"})
-        self.assertEqual(self.names(), ["pear"])
+        self.assertEqual(self.names(), ["Pear"])
 
     def test_a_merge_that_names_no_project_or_the_same_one_twice_is_refused(self):
         for body in ({"source": "", "target": "folder:maple"}, {"source": "folder:maple", "target": ""},
@@ -612,9 +622,9 @@ class TakenBack(Corrected):
     def test_a_merge_is_taken_back_by_moving_the_project_into_nothing(self):
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
         self.assertEqual(self.column("folder:maple")["merged"],
-                         [{"project": "folder:orchard", "name": "orchard"}])
+                         [{"project": "folder:orchard", "name": "Orchard"}])
         self.post("/api/assign", {"key": "folder:orchard", "project": ""})
-        self.assertEqual(self.names(), ["maple", "orchard", "pear"])
+        self.assertEqual(self.names(), ["Maple", "Orchard", "Pear"])
         self.assertEqual(self.keys("folder:orchard"), ["fake:b"])
         self.assertEqual(self.column("folder:maple")["merged"], [])
 
@@ -760,10 +770,10 @@ class OneNameTwoCards(Corrected):
 class MovedByRoute(Corrected):
     def test_a_whole_project_moved_by_the_assign_route_holds_and_can_be_taken_back(self):
         self.assertEqual(self.post("/api/assign", {"key": "folder:pear", "project": "folder:maple"})[0], 200)
-        self.assertEqual(self.names(), ["maple", "orchard"])
+        self.assertEqual(self.names(), ["Maple", "Orchard"])
         self.assertEqual(self.stored()["assign"], {"folder:pear": "folder:maple"})
         self.post("/api/assign", {"key": "folder:pear", "project": ""})
-        self.assertEqual(self.names(), ["maple", "orchard", "pear"])
+        self.assertEqual(self.names(), ["Maple", "Orchard", "Pear"])
         self.assertEqual(self.stored()["assign"], {})
 
     def test_a_project_cannot_be_moved_into_itself_or_into_nothing_by_name(self):
@@ -834,7 +844,7 @@ class TwoTabs(Corrected):
         self.seed(assign={"folder:orchard": "folder:maple"})        # the other tab's move
         self.assertEqual(self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})[0], 409)
         self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:maple"})
-        self.assertEqual(self.names(), ["maple", "pear"])
+        self.assertEqual(self.names(), ["Maple", "Pear"])
         self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:d"])
 
     def test_the_chip_and_the_picker_of_the_card_it_landed_in_land_there(self):
@@ -849,7 +859,7 @@ class TwoTabs(Corrected):
         self.seed(assign={"folder:pear": "folder:maple", "folder:orchard": "folder:pear"})
         self.assertEqual(self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})[0], 409)
         self.assertEqual(self.stored()["assign"], {"folder:pear": "folder:maple", "folder:orchard": "folder:pear"})
-        self.assertEqual(self.names(), ["maple"])
+        self.assertEqual(self.names(), ["Maple"])
 
     def test_a_merge_from_a_tab_that_is_behind_does_not_close_a_ring_of_three_either(self):
         # orchard into maple (one tab), pear into orchard (another); then maple merged into pear.
@@ -866,7 +876,7 @@ class TwoTabs(Corrected):
         self.assertEqual(self.post("/api/merge", {"source": "folder:pear", "target": "folder:orchard"})[0], 409)
         self.assertEqual(self.stored(), after)
         self.assertEqual(after["pinned"], ["folder:pear"])
-        self.assertEqual(self.names(), ["pear", "maple"])
+        self.assertEqual(self.names(), ["Pear", "Maple"])
 
     def test_the_same_two_merges_in_the_other_order_end_in_the_same_place(self):
         self.seed(pinned=["folder:pear"])
@@ -939,6 +949,15 @@ class StaleTabs(Corrected):
         self.refused("/api/pin", {"project": "folder:pear", "action": "swap", "with": "folder:orchard"}, pinned=pins)
         self.refused("/api/pin", {"project": "folder:pear", "action": "swap", "with": "folder:orchard",
                                   "side": "after"}, pinned=pins)
+
+    def test_the_own_line_of_a_card_that_was_merged_away_is_refused(self):
+        self.refused("/api/context", {"project": "folder:orchard", "text": "Sells apples"})
+        self.refused("/api/context", {"project": "folder:orchard", "text": ""})
+
+    def test_the_own_line_of_the_card_that_took_the_merge_is_written(self):
+        self.seed(**self.MERGED)
+        self.assertEqual(self.post("/api/context", {"project": "folder:maple", "text": "Sells apples"})[0], 200)
+        self.assertEqual(self.stored()["project_lines"], {"folder:maple": "Sells apples"})
 
     def test_rename_of_a_card_that_was_merged_away_is_refused(self):
         self.refused("/api/name", {"project": "folder:orchard", "label": "Orchard 2"})

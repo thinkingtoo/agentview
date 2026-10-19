@@ -48,6 +48,47 @@ kind (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track
 and a repository that share a name stay two projects; `pinned`, `names` and
 `assign` take an identity, or a plain name as they did before.
 
+## What a project is about
+
+Under a project's name the card says what it is about, in one line cut at about
+140 characters (the whole text is the hover). The first of these that exists:
+
+1. **Your own line**, written in place on the card (click the line) and kept in
+   `config.json` as `project_lines`, keyed by the project's identity, so a track
+   and a repository with one name never share a line. An empty line takes it back.
+2. **A track's goal**: the first sentence of `## Outcome` (or a bold
+   `**Outcome:**` label) in `~/.claude/pm/<track>.goal.md`. Beside the name, the
+   `_Status:` word (OPEN, PAUSED, MET) and "N of M" from the boxes under
+   `## Done when` (or `**Done when:**`); a MET track says "done" whatever its
+   boxes say.
+3. **A repository's own words**: the first prose paragraph of its README, else of
+   `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, which
+   includes a language switcher with its current language in plain text,
+   tables, lists, code, a paragraph of only code or only `&nbsp;`, HTML blocks,
+   link definitions and `@` includes skipped; a table or a list directly under
+   a line ends it). A quote under the title counts as the description, its
+   marks and GitHub's `[!NOTE]` marker taken off. Read from the main checkout, so every
+   worktree says the same (a card looks at the main checkout and three more at
+   most, reads each distinct text once, and no more than the first 20,000
+   characters of a file). A link counts as the file only while it stays inside
+   the checkout: `AGENTS.md -> CLAUDE.md` is read, `README.md -> ~/.ssh/id_ed25519`
+   is not, a cloned repository chooses where its links point. The line is a reminder, not a rendering of the page:
+   links give their label, images say nothing, formatting tags go, and code
+   stays as written.
+4. **A guess**: the two latest session titles, greyed, with "add a line".
+
+The default name is the slug made readable (`overview-build` is "Overview
+build"; the brand stays lowercase) with the raw name on hover; a name you give
+in `names` is shown exactly as you wrote it. The No project column has no line.
+
+The **notes** link on a card searches your own notes for the project's name and
+line, on a click and never before, and shows the top three hits. It needs a local
+file, like meaning search does: `~/.config/tiroir/agentview-brain.env` (or the
+path in `$AGENTVIEW_BRAIN_ENV`), mode 0600, with `BRAIN_URL` (the notes
+service's MCP address) and `BRAIN_AUTH` (the whole Authorization header value).
+A file others can read is refused. Without it the link says "notes search is
+not set up here". The notes are never where a context line comes from.
+
 **By hand**, on the overview: click a project's name to rename it (its raw name
 stays on hover); the ☆ on its card pins it, and the ‹ › on a pinned card move
 it along the pinned ones, the ★ again unpins; **merge…** puts all of the

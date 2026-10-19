@@ -39,6 +39,8 @@ import time
 import urllib.parse
 from pathlib import Path
 
+import localenv
+
 DEFAULT_ENV = "~/.config/tiroir/agentview-embedder.env"
 ENV_VAR = "AGENTVIEW_EMBEDDER_ENV"
 BATCH = 100              # the service refuses more texts than this in one call
@@ -204,16 +206,6 @@ def config_path():
     return Path(os.environ.get(ENV_VAR) or DEFAULT_ENV).expanduser()
 
 
-def _read_env(path):
-    got = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            name, _, value = line.partition("=")
-            got[name.strip()] = value.strip().strip("'\"")
-    return got
-
-
 def load(path=None):
     """The embedder the local config names. Always an Embedder: when there is
     no config, or it cannot be used, the Embedder says so on its first call.
@@ -230,7 +222,7 @@ def load(path=None):
         emb = Embedder(problem="the embedder's config file is readable by others; chmod 600 it")
     else:
         try:
-            env = _read_env(path)
+            env = localenv.read_env(path)
         except (OSError, UnicodeDecodeError):
             env = {}
         if env.get("EMBEDDER_URL") and env.get("EMBEDDER_API_KEY"):

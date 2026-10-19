@@ -629,6 +629,163 @@ def overview_pass(browser):
     page.close()
 
 
+def card_pass(browser):
+    """The project card: the name with its raw form on hover, a track's status and
+    progress, the context line (cut, whole on hover, edited in place), and the
+    notes link, which searches on a click and not before."""
+    def column(body, project, **over):
+        next(c for c in body["columns"] if c["project"] == project).update(over)
+
+    def ctx(source, line, full=None, guess=False):
+        return {"source": source, "line": line, "full": full or line, "guess": guess}
+
+    body = roster([("checkout", "Checkout rework", [S("c1", "Ilse", "idle", line="Saved cards")]),
+                   ("shipped", "Shipped", [S("s1", "Femi", "idle")]),
+                   ("repo:example.com/alice/loom", "Loom", [S("l1", "Odile", "idle")]),
+                   ("folder:orchard", "Orchard", [S("o2", "Mateo", "idle")]),
+                   (BOMB, BOMB, [S("b1", "Quill", "idle")]),
+                   ("", "No project", [S("n1", "Rosalie", "idle")])])
+    column(body, "checkout", kind="track", raw="checkout",
+           track={"status": "OPEN", "progress": {"done": 3, "total": 7, "text": "3 of 7", "met": False}},
+           context=ctx("goal", "Customers pay with a saved card.",
+                       "Customers pay with a saved card. Nothing else changes."),
+           notes={"query": "Checkout rework Customers pay with a saved card."})
+    column(body, "shipped", kind="track", raw="shipped",
+           track={"status": "MET", "progress": {"done": 4, "total": 4, "text": "done", "met": True}},
+           context=ctx("goal", "A public docs site."), notes={"query": "Shipped A public docs site."})
+    column(body, "repo:example.com/alice/loom", kind="repository", raw="loom", name="Loom",
+           context=ctx("readme", "Prints reports for the shop."), track=None,
+           notes={"query": "Loom Prints reports for the shop."})
+    column(body, "folder:orchard", kind="folder", raw="orchard", name="Orchard",
+           context=ctx("guess", "Card form \u00b7 Receipt export", guess=True), track=None,
+           notes={"query": "Orchard Card form \u00b7 Receipt export"})
+    # Texts that land in attributes (the hover, the raw name, the query) get a quote that would
+    # end the attribute and start one of its own.
+    BREAK = '" onfocus="alert(1)" autofocus="'
+    column(body, BOMB, kind="track", raw=BOMB + BREAK, track={"status": BOMB, "progress": {
+               "done": 1, "total": 2, "text": "1 of 2 " + BOMB, "met": False}},
+           context=ctx("goal", "line: " + BOMB, "full: " + BOMB + BREAK), notes={"query": "q " + BOMB + BREAK})
+    column(body, "", context=None, track=None, notes=None)
+    fake = Fake(body)
+    fake.answer["/api/notes"] = {"ok": True, "hits": [
+        {"title": "Note one", "path": "Clients/one.md", "snippet": "Invented words one."},
+        {"title": BOMB, "path": "Clients/two.md", "snippet": "Words " + BOMB}]}
+    seen = len(errors)
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    col = lambda project: page.locator(f'.ov-col[data-project="{project}"]')
+
+    after = lambda loc: loc.evaluate("e => { const s = getComputedStyle(e, '::after'); return [s.content, s.color] }")
+    name = col("checkout").locator(".ov-name")
+    check("the name is printed readable, and the raw slug shows only on hover, in grey",
+          name.inner_text() == "Checkout rework" and after(name)[0] == "none")
+    name.hover()
+    check("hovering the name adds the raw slug after it, in grey",
+          after(name) == ['"checkout"', "rgb(138, 146, 158)"], after(name))
+    page.mouse.move(5, 700)
+    check("the raw slug is offered when the name is not it, and No project has none",
+          col("repo:example.com/alice/loom").locator(".ov-name").get_attribute("data-raw") == "loom"
+          and col("").locator(".ov-name").get_attribute("data-raw") is None)
+    check("a track shows its status word, a repository none",
+          col("checkout").locator(".ov-tag").inner_text() == "OPEN"
+          and col("shipped").locator(".ov-tag.met").inner_text() == "MET"
+          and col("repo:example.com/alice/loom").locator(".ov-tag").count() == 0)
+    check("progress is N of M with a bar, and no percentage",
+          col("checkout").locator(".ov-prog").inner_text().startswith("3 of 7")
+          and "%" not in col("checkout").locator(".ov-prog").inner_text()
+          and col("checkout").locator(".ov-bar i").evaluate("e => Math.round(e.offsetWidth / e.parentElement.offsetWidth * 100)") == 43)
+    check("a met track says done and its bar is full",
+          col("shipped").locator(".ov-prog").inner_text().startswith("done")
+          and col("shipped").locator(".ov-bar i").evaluate("e => e.offsetWidth === e.parentElement.offsetWidth"))
+    check("a repository has no progress bar", col("repo:example.com/alice/loom").locator(".ov-bar").count() == 0)
+    check("the context line sits under the name, whole on hover",
+          col("checkout").locator(".ov-ctx").inner_text() == "Customers pay with a saved card."
+          and col("checkout").locator(".ov-ctx").get_attribute("title")
+          == "Customers pay with a saved card. Nothing else changes.")
+    check("the card is the name, its state, the line, the progress, then the strip",
+          col("checkout").locator(".ov-head > *").evaluate_all("els => els.map(e => e.className.split(' ')[0])")
+          == ["ov-top", "ov-state", "ov-ctx", "ov-prog", "ov-mv"])
+    check("a guess is greyed and offers to add a line; a source does not",
+          "add a line" in col("folder:orchard").locator(".ov-ctx.maybe").inner_text()
+          and col("checkout").locator(".ov-ctx.maybe").count() == 0
+          and "add a line" not in col("checkout").locator(".ov-ctx").inner_text())
+    check("the No project card has no context line and no notes link",
+          col("").locator(".ov-ctx").count() == 0 and col("").locator(".ov-notes").count() == 0)
+    check("markup in a name, a status, a line and a count is text, and builds nothing",
+          BOMB in col(BOMB).locator(".ov-name").inner_text() and BOMB in col(BOMB).locator(".ov-tag").inner_text()
+          and BOMB in col(BOMB).locator(".ov-ctx").inner_text() and BOMB in col(BOMB).locator(".ov-prog").inner_text()
+          and page.locator("#main img, #main [onerror]").count() == 0)
+    check("a quote in a hover, a raw name or a query cannot start an attribute of its own",
+          page.locator("#main [onfocus], #main [autofocus]").count() == 0
+          and col(BOMB).locator(".ov-name").get_attribute("data-raw") == BOMB + BREAK
+          and col(BOMB).locator(".ov-ctx").get_attribute("title") == "full: " + BOMB + BREAK
+          and col(BOMB).locator(".ov-notes").get_attribute("data-query") == "q " + BOMB + BREAK)
+
+    # The line, edited where it stands.
+    check("no search has been made before any click", fake.of("/api/notes") == [])
+    col("repo:example.com/alice/loom").locator(".ov-ctx").click()
+    page.wait_for_selector("input.inline")
+    check("editing a line of the README starts from nothing, not from the README",
+          page.locator("input.inline").input_value() == "")
+    page.locator("input.inline").fill("The shop's report printer")
+    page.locator("input.inline").press("Enter")
+    page.wait_for_timeout(300)
+    check("saving posts the project identity and the text",
+          fake.of("/api/context") == [{"project": "repo:example.com/alice/loom", "text": "The shop's report printer"}],
+          fake.posts)
+    fake.body = copy.deepcopy(body)
+    column(fake.body, "repo:example.com/alice/loom", context=ctx("own", "The shop's report printer"))
+    poll_now(page)
+    col("repo:example.com/alice/loom").locator(".ov-ctx").click()
+    page.wait_for_selector("input.inline")
+    check("editing your own line starts from it", page.locator("input.inline").input_value() == "The shop's report printer")
+    page.locator("input.inline").press("Escape")
+    page.wait_for_timeout(200)
+    check("Escape changes nothing", len(fake.of("/api/context")) == 1)
+
+    # The notes link: nothing until the click, then one search, and it stays through polls.
+    link = col("checkout").locator(".ov-notes")
+    link.click()
+    page.wait_for_selector('.ov-col[data-project="checkout"] .ov-hits .hit-title')
+    check("a click searches once, with the name and the line",
+          fake.of("/api/notes") == [{"query": "Checkout rework Customers pay with a saved card."}], fake.posts)
+    check("the top hits are printed as text under the card",
+          col("checkout").locator(".hit-title").all_inner_texts() == ["Note one", BOMB]
+          and "Invented words one." in col("checkout").locator(".ov-hits").inner_text()
+          and page.locator("#main img, #main [onerror]").count() == 0)
+    poll_now(page)
+    check("a poll keeps the hits and searches nothing more",
+          col("checkout").locator(".ov-hits .hit-title").count() == 2 and len(fake.of("/api/notes")) == 1)
+    col("checkout").locator(".ov-notes").click()
+    page.wait_for_timeout(200)
+    check("a second click puts them away", col("checkout").locator(".ov-hits").count() == 0
+          and len(fake.of("/api/notes")) == 1)
+    fake.answer["/api/notes"] = {"ok": False, "reason": "notes search is not set up here"}
+    col("shipped").locator(".ov-notes").click()
+    page.wait_for_selector('.ov-col[data-project="shipped"] .ov-hits')
+    page.wait_for_function("() => document.querySelector('.ov-col[data-project=\"shipped\"] .ov-hits').innerText.includes('not set up')")
+    check("when there is no search the card says so", "notes search is not set up here"
+          in col("shipped").locator(".ov-hits").inner_text())
+    # An answer that comes in while you are typing a line must not take the field away,
+    # and an answer that is not the shape the server promises must not break the page.
+    fake.answer["/api/notes"] = {"ok": True}
+    col("repo:example.com/alice/loom").locator(".ov-ctx").click()
+    page.wait_for_selector("input.inline")
+    page.locator("input.inline").fill("half a sentence")
+    page.evaluate("document.querySelector('.ov-col[data-project=\"folder:orchard\"] .ov-notes').click()")
+    page.wait_for_timeout(500)
+    check("a notes answer that arrives mid-edit leaves the field and what you typed alone",
+          page.locator("input.inline").count() == 1 and page.locator("input.inline").input_value() == "half a sentence")
+    page.locator("input.inline").press("Escape")
+    page.wait_for_selector('.ov-col[data-project="folder:orchard"] .ov-hits')
+    check("and it shows once you are done, an answer without hits as nothing found",
+          col("folder:orchard").locator(".ov-hits").inner_text() == "nothing found")
+    check("card: no dialog, no page error", len(errors) == seen, errors[seen:])
+    check("card: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
 def needs_pass(browser):
     """Ticket 07: Needs you on the tile and the state on the card, and the copy
     button on a command and nowhere else. Fixtures are invented; so is every
@@ -1853,7 +2010,7 @@ def e2e_pass(browser):
         check("e2e: a merge is a move of the whole project in the config",
               stored()["assign"] == {"folder:pear": "folder:maple"}, stored())
         check("e2e: and the card that took it says so",
-              col("folder:maple").locator(".ov-merged").inner_text().startswith("includes pear"))
+              col("folder:maple").locator(".ov-merged").inner_text().startswith("includes Pear"))   # the default name, made readable
         col("folder:maple").locator(".ov-merged button").click()
         wait_order(["folder:orchard", "folder:maple", "folder:pear"])
         check("e2e: undo takes it back out of the config and the project is its own again",
@@ -1914,6 +2071,7 @@ def main():
         browser = pw.chromium.launch()
         real_keys = real_pass(browser, url, pid)
         overview_pass(browser)
+        card_pass(browser)
         needs_pass(browser)
         kinds_pass(browser)
         hand_pass(browser)

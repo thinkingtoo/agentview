@@ -6,6 +6,7 @@ fake provider, the way `test_providers` and `test_round` reach the core.
 Names and texts are invented.
 """
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,7 @@ def session(sid, project="maple", **over):
 class Base(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         self.config = {}
         fleet.CONFIG, was = tmp / "config.json", fleet.CONFIG
         self.addCleanup(setattr, fleet, "CONFIG", was)
@@ -54,14 +56,14 @@ class Columns(Base):
     def test_the_roster_has_columns_beside_the_unchanged_blocks(self):
         got = self.roster(session("a", "maple"), session("b", "orchard"))
         self.assertEqual(sorted(b["project"] for b in got["blocks"]), ["maple", "orchard"])
-        self.assertEqual(sorted(c["name"] for c in got["columns"]), ["maple", "orchard"])
+        self.assertEqual(sorted(c["name"] for c in got["columns"]), ["Maple", "Orchard"])
 
     def test_columns_come_in_the_order_of_the_blocks_with_no_project_last(self):
         self.config = {"pinned": ["orchard", "maple"]}
         got = self.roster(session("a", "maple"), session("b", None),
                           session("c", "orchard"))
         self.assertEqual([c["name"] for c in got["columns"]],
-                         ["orchard", "maple", "No project"])
+                         ["Orchard", "Maple", "No project"])
         self.assertEqual([b["project"] for b in got["blocks"]],
                          ["orchard", "maple", "No project"])
 
@@ -69,13 +71,13 @@ class Columns(Base):
         got = self.roster(session("a", "maple"),
                           session("r", None, routine="nightly-report"))
         self.assertEqual([b["project"] for b in got["blocks"]], ["maple", "Routines"])
-        self.assertEqual([c["name"] for c in got["columns"]], ["maple"])
+        self.assertEqual([c["name"] for c in got["columns"]], ["Maple"])
 
     def test_a_column_names_its_project_and_keeps_the_raw_name(self):
         got = self.roster(session("a", "maple"))
         self.assertEqual(
             {k: got["columns"][0][k] for k in ("project", "name", "raw", "kind")},
-            {"project": "folder:maple", "name": "maple", "raw": "maple", "kind": "folder"})
+            {"project": "folder:maple", "name": "Maple", "raw": "maple", "kind": "folder"})
 
     def test_your_own_name_for_a_project_is_the_name_and_the_raw_one_stays(self):
         self.config = {"names": {"maple": "Maple syrup"}}

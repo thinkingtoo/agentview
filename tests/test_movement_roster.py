@@ -262,7 +262,7 @@ class Strip(Base):
     def test_each_project_has_its_own_strip(self):
         got = self.roster(session("a", "maple", writes=strip(s29=1)),
                           session("b", "orchard", writes=strip(s29=9)))
-        self.assertEqual({c["name"]: c["strip"][29] for c in got["columns"]},
+        self.assertEqual({c["raw"]: c["strip"][29] for c in got["columns"]},
                          {"maple": 1, "orchard": 9})
 
 
