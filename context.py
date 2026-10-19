@@ -73,7 +73,7 @@ FENCE = re.compile(r"^\s*(```|~~~)")
 # The rest of a heading line is taken whole and its closing marks are cut in
 # Python: a pattern that tries to find them itself backtracks cubically on a
 # line of many spaces, and this runs on every poll.
-HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)$")
+HEADING = re.compile(r"^\s{0,3}(#{1,6})(?:\s+(.*))?$")
 CLOSING_MARKS = re.compile(r"(?:^|\s)#+\s*$")
 # `**Outcome:** text` or `**Outcome**: text`: some goal files label a section
 # in bold, on a line of its own or with its text after it, not with a heading.
@@ -126,7 +126,7 @@ def unfenced(text):
 
 def heading_text(heading):
     """The words of a heading line, without its closing marks."""
-    return CLOSING_MARKS.sub("", heading.group(2)).strip()
+    return CLOSING_MARKS.sub("", heading.group(2) or "").strip()
 
 
 def section(lines, title):
@@ -226,8 +226,9 @@ def track_card(track):
         progress = {"done": done, "total": total, "text": f"{done} of {total}", "met": False}
     else:
         progress = None
-    outcome = next((plain(" ".join(p)[:PARAGRAPH_MAX]) for p in paragraphs(section(lines, "outcome"))
-                    if not HEADING.match(p[0])), "")
+    said = without_comments("\n".join(section(lines, "outcome"))).splitlines()
+    outcome = next((plain(" ".join(p)[:PARAGRAPH_MAX]) for p in paragraphs(said)
+                    if not (HEADING.match(p[0]) or HTML_BLOCK.match(p[0]))), "")
     outcome = "" if bare_tag(outcome) else outcome
     return outcome, {"status": status, "progress": progress}
 
@@ -235,7 +236,7 @@ def track_card(track):
 # ------------------------------------------------------------- the repository
 
 OPENS = re.compile(r"`[^`\n]+`|<!--")
-FRONT_MATTER = re.compile(r"\A\s*---\s*\n.*?\n---\s*(?:\n|\Z)", re.DOTALL)
+FRONT_MATTER = re.compile(r"\A\s*---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", re.DOTALL)
 INCLUDE = re.compile(r"^\s*@\S+\s*$")
 REFERENCE = re.compile(r"^\s*\[[^\]]+\]:\s")
 RULE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")

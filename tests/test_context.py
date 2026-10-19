@@ -264,6 +264,36 @@ class Tracks(Cards):
         got = self.track(nogoal=True)
         self.assertEqual((got["context"]["line"], got["track"]["progress"]["text"]), ("Customers pay.", "1 of 1"))
 
+    def test_a_comment_in_the_outcome_is_not_part_of_it(self):
+        for outcome, line in (("<!-- one sentence: the state afterwards -->\nCustomers pay with a saved card.",
+                               "Customers pay with a saved card."),
+                              ("<!-- a note\n\nover a blank line -->\nCustomers pay with a saved card.",
+                               "Customers pay with a saved card."),
+                              ("Customers <!-- hidden --> pay with a saved card.", "Customers pay with a saved card."),
+                              ("Use `<!--` to open a comment.", "Use <!-- to open a comment.")):
+            with self.subTest(outcome=outcome):
+                got = self.track(outcome=outcome)["context"]
+                self.assertEqual((got["source"], got["line"]), ("goal", line))
+        for outcome in ("<!-- one sentence -->", "<!-- never closed\nCustomers pay."):
+            with self.subTest(outcome=outcome):
+                self.assertEqual(self.track(outcome=outcome)["context"]["source"], "guess")
+
+    def test_an_outcome_that_is_an_html_block_is_no_outcome(self):
+        for outcome in ("<div>Customers pay.</div>", "<p align=\"center\">\nCustomers pay.\n</p>"):
+            with self.subTest(outcome=outcome):
+                self.assertEqual(self.track(outcome=outcome)["context"]["source"], "guess")
+
+    def test_a_heading_of_marks_alone_before_the_outcome_does_not_stop_the_goal_being_read(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "#\n_Status: OPEN_\n\n##\n\n## Outcome\nCustomers pay.\n\n## Done when\n- [x] one\n")
+        got = self.track(nogoal=True)
+        self.assertEqual((got["context"]["line"], got["track"]["progress"]["text"]), ("Customers pay.", "1 of 1"))
+
+    def test_a_heading_of_marks_alone_inside_the_outcome_is_not_part_of_it(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n## Outcome\n###\nCustomers pay with a saved card.\n")
+        self.assertEqual(self.track(nogoal=True)["context"]["line"], "Customers pay with a saved card.")
+
     def test_an_outcome_with_tags_in_it_is_not_a_placeholder(self):
         for outcome, line in (("<b>Customers</b> pay with a saved <i>card</i>. Then done.",
                                "Customers pay with a saved card."),
@@ -443,6 +473,30 @@ class Repositories(Cards):
         started = time.monotonic()
         self.assertEqual(self.line()["line"], "Prints reports for the shop.")
         self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_a_readme_that_opens_with_dashes_and_a_great_many_blank_lines_costs_nothing(self):
+        for name in ("README.md", "AGENTS.md", "CLAUDE.md"):
+            for old in ("README.md", "AGENTS.md", "CLAUDE.md"):
+                (self.loom / old).unlink(missing_ok=True)
+            with self.subTest(name):
+                self.put(name, "---\n" + "\n" * 40000 + "Loom prints reports.\n")
+                started = time.monotonic()
+                self.assertEqual(self.line()["line"], "Loom prints reports.")
+                self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_front_matter_is_still_taken_out(self):
+        self.put("README.md", "---\ntitle: Loom\ntags: [a]\n---\nPrints reports.\n")
+        self.assertEqual(self.line()["line"], "Prints reports.")
+        self.put("README.md", "\n---\r\ntitle: Loom\r\n---  \r\nPrints reports.\n")
+        self.assertEqual(self.line()["line"], "Prints reports.")
+
+    def test_a_heading_of_marks_alone_is_a_heading_and_ends_the_paragraph(self):
+        self.put("README.md", "#\nLoom prints reports.\n")
+        self.assertEqual(self.line()["line"], "Loom prints reports.")
+        self.put("README.md", "Loom prints\n##\nreports for the shop.\n")
+        self.assertEqual(self.line()["line"], "Loom prints")
+        self.put("README.md", "#hashtag and ####### too many\n")
+        self.assertEqual(self.line()["line"], "#hashtag and ####### too many")
 
     def test_a_heading_with_closing_marks_is_still_a_heading(self):
         self.put("README.md", "# Loom #\n\n## Install ##\n\nPrints reports for the shop.\n")
