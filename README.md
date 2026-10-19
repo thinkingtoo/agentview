@@ -21,6 +21,62 @@ Names come from [cc-agent-names](https://github.com/sweatshop-ai/cc-agent-names)
 but nothing here requires it — an unnamed session shows whatever Claude Code
 called it.
 
+## The overview, and the block view
+
+The main page is the **overview**: one column per project, each with a project
+card (its name) and one tile per session — name, flag, the line it works from,
+and a click that raises its terminal. The server decides which sessions share a
+column and in what order (`columns` in `/api/roster`, next to the `blocks` the
+chime and the counts read); the page prints what it is sent and decides nothing.
+Columns keep at least 230 px and the row scrolls sideways when there are more
+projects than fit. Systemd routines are not on the overview.
+
+The page this README describes below is still there as the **block view**, at
+`/?view=blocks` (a link in the header goes each way). Rename, pin, assign, fold,
+hold, the boss nesting and the routines block exist only on the block view for
+now; the overview retires it later.
+
+## Movement: what shows a session is working
+
+A tile says whether its session is alive, in its own words: `writing · 8s ago`,
+`waiting on: Run the unit tests, 12 min`, `idle 14 min`, or nothing. A session
+is **moving** when any of these holds, and the evidence is read from what Claude
+Code already writes, never from a model:
+
+- it, or one of its subagents, wrote a transcript record recently (a busy
+  session counts as moving for `hung_after_minutes`, default 10, after its last
+  write);
+- a command it is waiting on has a shell of its own under its pid using CPU
+  (two looks of `/proc` a few seconds apart; the shells are the direct children
+  whose command line names `shell-snapshots`, so MCP servers and their helpers
+  never count);
+- it started a background command (a background Bash or a Monitor) and has not
+  been told it ended (a `task-notification`, or its own `TaskStop`), and the
+  shell writing to that task's own output file is still alive. A shell that
+  belongs to something else does not stand in for it, which is why a resumed
+  session's tasks from the process that died are not running.
+
+The peer `status` is never evidence: it is written when it changes and has no
+heartbeat. For a provider that reports no writes at all, the moment the status
+changed to busy counts like a write, for `hung_after_minutes` and no longer.
+An idle session is idle whatever its subagents wrote before it stopped, and a
+session waiting on a dialog is not "writing". CPU with no call in flight is a
+shell left behind and proves nothing.
+Any command or job counts for at most six hours (`WAIT_MAX_MINUTES` in
+`fleet.py`); past that the tile still says what it waits on, and the session
+stops counting as moving.
+
+Each project card draws a **strip**: one bar per minute for the last 30,
+oldest first, the records written by all of the project's sessions and their
+subagents (a record without a timestamp, such as a title, is not a write). The
+counters ride on the incremental tail the reader already keeps; they add no
+read. After a restart a transcript is read from its last 2 MB, so the minutes
+before that window are **unknown**, not empty: the strip leaves them as dotted
+stubs, and a minute any session in the project could not see is unknown for the
+project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session that
+needs you is stuck even while a job runs, and a busy session nothing proves is
+moving counts as stuck.
+
 ## After a reboot
 
 tmux-resurrect brings tmux back, but every pane that ran Claude comes back as
@@ -521,10 +577,39 @@ Then `wmctrl` raises the window. A session inside tmux inside WezTerm needs two
 of these in the right order — selecting the tmux pane achieves nothing while the
 WezTerm tab stays hidden.
 
-Sessions Claude Code spawned itself have a pty but no window, and are not
-clickable. They are also the ones that **survive closing their view** — a
-background worker belongs to the daemon, not to a terminal, so exiting detaches
-you without stopping it. The uptime is what gives that away.
+A background session (`claude --bg`) belongs to the daemon, not to a terminal,
+so exiting its view detaches you without stopping it; the uptime is what gives
+that away. It has no window of its own, but one click still reaches it, and the
+tile says which way before you click:
+
+| The tile says | When | The click |
+|---|---|---|
+| `open ↗` | the session is at a terminal, or a `claude attach` already shows it in one | raises that window |
+| `attach ↗` | a background session nobody is attached to | opens a new WezTerm tab running `claude attach <job id>` |
+| `no terminal` (greyed, the reason on hover) | nothing could be raised: a headless session, an attach in a window no route reaches, or an attach on a name two background sessions share | nothing; the click only marks it read |
+
+The page never opens a second copy of a running session. `claude attach` is
+found by its command line, whether it was given the job id, the session id or
+part of the name, and a click after the first one, or a second click while the
+new tab has not yet become a process, waits instead of opening another (five
+seconds when WezTerm was running, thirty when its window had to start first).
+A `claude attach` inside a tmux pane is followed through tmux to the window
+that shows the pane. What
+reaches the command line is the job id from the peer file, and only if it is
+eight hex digits; nothing in the request does. It is the same guard as every
+other action (a local page, the `X-Fleet` header).
+
+Two things the page cannot see. A name that fits two background sessions
+(`claude attach harbor` while "Harbor review" and "Harbor build" both run)
+could mean either, so both tiles say `no terminal` instead of guessing; give
+`claude attach` the job id and the page knows. And a session renamed with
+`/rename` after it was attached by name cannot be told from one that is not
+attached: its tile offers `attach ↗` while the old name is the only thing the
+viewer's command line holds.
+
+A jump marks the session read only once its terminal was reached. When it
+fails, the reason shows on the tile until the next poll and what the session
+said stays unread.
 
 **Requires X11.** Window raising uses `wmctrl`; under Wayland a client cannot
 raise another client's window, and the in-emulator half would still work while
@@ -532,6 +617,8 @@ the window stayed where it was. Also needs whichever of `wezterm`, `tmux` and
 `qdbus` you actually use — each route is skipped if its tool is missing.
 
 ## Arranging it yourself
+
+*Block view (`/?view=blocks`).*
 
 The order is recomputed every few seconds: whichever project has someone
 **busy** leads, ties broken by most recent activity, and `No project` always
@@ -569,6 +656,8 @@ project and lives forever.
 
 ## A boss and its team
 
+*Block view (`/?view=blocks`); on the overview a boss is a tile with a `boss` tag.*
+
 A session registered as a boss by the claude-boss plugin coordinates other
 sessions and does no implementation work itself. On the page it **leads its
 project block** whatever the activity, carries a `boss` badge, and names the
@@ -600,6 +689,8 @@ they message the boss, so the hub of the graph is not the boss. Only the
 marker says who is running the team.
 
 ## Routines keep to themselves
+
+*Block view (`/?view=blocks`); the overview leaves routines out.*
 
 A systemd timer firing `claude -p` is a session like any other, and there are
 six of them here — `nightly-report` every 20 minutes, `gpu-watch`
@@ -883,11 +974,28 @@ Silence is the normal state of the file.
 python3 -m unittest discover -s tests
 ```
 
-`tests/ui_smoke.py` is separate: it drives the real page with Playwright
-against a running server — rename, line override, drag-to-pin, unpin, folding,
-the routines block — and is not part of `unittest discover`. Run it with
-`python3 tests/ui_smoke.py`. It puts back everything it touched, **including
-the tab titles it renamed**: an override does not only live in `config.json`.
+`tests/ui_smoke.py` is separate: it drives the page with Playwright (the
+overview's columns, the chime, the filter, search, the closed list, and the old
+block view at `/?view=blocks` with its rename, pin, assign, fold and hold) and is
+not part of `unittest discover`. Run it by hand against a throwaway server, never
+the one on 8765:
+
+```bash
+python3 tests/ui_smoke.py http://127.0.0.1:PORT/ /path/to/that/server/config.json SERVER_PID
+```
+
+All three arguments are required. Every pass but one is routed: the page, the
+roster and every POST are answered from fixtures by `page.route`, so no jump,
+reopen, revive or rename can reach a terminal, and the smoke writes nothing. The
+one unrouted pass loads the test server's own roster read-only (no clicks, any
+non-GET request aborted, no screenshot) and asserts that columns render.
+
+The movement tests (`tests/test_movement_*.py`) run on invented transcripts, a
+fake `/proc` and fake providers, never on a real session: writes per minute and
+the cold-start window, subagents counted once under their parent, background
+tasks opened and closed, which shells and CPU count (and which never do), a
+process vanishing mid-walk, the sign on each tile and the strip and mix on each
+card.
 
 The unit tests cover the things worth covering: route selection for each
 terminal (including tmux-inside-WezTerm and a headless session with nowhere to
