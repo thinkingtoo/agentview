@@ -317,7 +317,7 @@ def prose(par):
                      if i and (INTERRUPTS.match(line) or HTML_BLOCK.match(line))), len(par))]
     raw = " ".join(par)[:PARAGRAPH_MAX]
     text = plain(raw)
-    return "" if bare_tag(text) or not has_words(raw) or link_row(raw) else text
+    return "" if bare_tag(text) or link_row(raw) else text
 
 
 def table_delimiter(line):
@@ -326,20 +326,13 @@ def table_delimiter(line):
     return "|" in line and "-" in line and re.fullmatch(r"[\s|:-]+", line) is not None
 
 
-def has_words(raw):
-    """Whether markdown has words of its own: not only links, badges and tags,
-    like a row of badges or the switcher between a README's languages."""
-    rest = HTML_LINK.sub("", LINK.sub("", IMAGE.sub("", raw)))
-    return re.search(r"\w", TAGS.sub("", rest)) is not None
-
-
 def link_row(raw):
-    """Whether markdown is a row of links, like the switcher between a README's
-    languages with the current one in plain text. Its items are links, a word
-    or three of plain text (the language), or a lead-in ending with a colon;
-    the plain ones are no more than the links, and none is a sentence. A link
-    inside a sentence makes it prose. (A row with no link and no words is
-    `has_words`' to say.)"""
+    """Whether markdown says nothing in words of its own: a row of badges, of
+    tags, or of links, like the switcher between a README's languages with the
+    current one in plain text. Its items are links, a word or three of plain
+    text (the language), or a lead-in ending with a colon; the plain ones are
+    no more than the links, and none is a sentence. A link inside a sentence
+    makes it prose."""
     marked = HTML_LINK.sub(LINK_MARK, LINK.sub(LINK_MARK, IMAGE.sub("", raw)))
     links = plain_items = 0
     for item in map(squash, ITEM_BREAK.split(re.sub(r"[*_]+", "", TAGS.sub("", marked)))):
