@@ -4,7 +4,9 @@
 
 **Blocked by:** 08
 
-**Status:** ready-for-agent
+**Claimed by:** Bettina 2026-10-19 17:54
+
+**Status:** in-progress
 
 - [ ] The roster returns the three counts
 - [ ] Clicking a count lights up and shrinks; clicking again clears (smoke run by hand)
