@@ -77,6 +77,20 @@ class OnDisk(unittest.TestCase):
         self.assertEqual(self.p.limit(), {"name": "Codex", "at": int((NOW - 300) * 1000),
                                           "resetsAt": 1792420500000})
 
+    def test_a_refusal_that_holds_a_line_separator_is_read_whole(self):
+        # A session writes U+2028, U+2029 and U+0085 raw inside a JSON string; only "\\n" ends a record.
+        for sep in ("\u2028", "\u2029", "\u0085"):
+            with self.subTest(sep=ascii(sep)):
+                path = rollout(self.home, "19", "a" * 36, refused(NOW - 300, "2:35 PM") | {
+                    "payload": {"type": "task_complete", "error": {
+                        "message": f"You hit{sep}it. " + LIMIT % "2:35 PM", "codex_error_info": "usage_limit_exceeded"}}})
+                path.write_text(path.read_text(encoding="utf-8").replace(json.dumps(sep)[1:-1], sep), encoding="utf-8")
+                self.assertIn(sep, path.read_text(encoding="utf-8"))
+                self.assertEqual(self.limit()["resetsAt"], 1792420500000)
+                self.p.done_tail.cache.clear()
+                self.p.looked = None
+                path.unlink()
+
     def test_a_turn_that_finished_well_later_lifts_it(self):
         rollout(self.home, "19", "a" * 36, refused(NOW - 600))
         rollout(self.home, "19", "b" * 36, finished(NOW - 60))
