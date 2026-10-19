@@ -6,14 +6,14 @@
 
 **Claimed by:** Bettina 2026-10-19 01:25
 
-**Status:** in-progress
+**Status:** done
 
 - [x] Each of the three sources yields Needs you with the right reason and context
 - [x] The copy button appears on commands only
 - [x] The card's state word sits under the name, never above it
 - [x] Flags for the chime are unchanged
 
-**Evidence (Bettina, 2026-10-19, branch `overview/07-needs-you`, final head `72cd368`: the branch merged with origin/dev `5f91553`, so with tickets 06 (movement), 11 (jump) and 02 (project assignment). Pushed. Status stays `in-progress` until the boss's merge order). Gate: the Mistral GO is waived for this ticket by the owner's decision of 2026-10-19 and replaced by an independent Claude Opus bug hunt that comes back `HUNT: CLEAN` on the final head (item 9).**
+**Evidence (Bettina, 2026-10-19, branch `overview/07-needs-you`, final head `72cd368`: the branch merged with origin/dev `5f91553`, so with tickets 06 (movement), 11 (jump) and 02 (project assignment). Pushed. Merged on the boss's merge order of 2026-10-19). Gate: `/home/tiroir/Projects/agentview-wt/reviews/opus-hunt-07-2.md`, `HUNT: CLEAN` on `72cd368`; the Mistral GO is waived for this ticket by the owner's decision of 2026-10-19 and replaced by that independent Claude Opus bug hunt (item 9).**
 
 1. Tests: `python3 -m unittest discover -s tests` on `72cd368`, `PYTHONDONTWRITEBYTECODE=1`, private `TMPDIR`: 910 tests, OK (skipped=1). `tests/test_needs_you.py` and `tests/test_needs_you_reader.py` together: 68. The one known flake, `test_scope_check` (ticket `scope-check-flake`), failed once in the run on the previous head `54f1ccc`; on `72cd368` the file alone ran clean 4 of 4 and the full suite ran clean.
 
