@@ -9,4 +9,5 @@
 - [ ] No caller reads `blocks` any more and it is gone from the roster
 - [ ] The chime rings as before (flags still computed), search, closed and reopen work
 - [ ] The tab title's count equals the header's "need you" count, tested
+- [ ] An unbreakable word (a 40-character file name) in the movement sign (`.tile .mv`) or the No-project chip (`.guess`) wraps inside its column (`overflow-wrap: anywhere`), checked in the smoke (found by 05's hunt 4)
 - [ ] The full test suite passes and the smoke run by hand passes
