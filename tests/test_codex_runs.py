@@ -208,6 +208,14 @@ class Alone(Base):
         self.assertEqual(tiles["codex:o"]["tags"], ["codex", "exec"])
         self.assertEqual(tiles["codex:p"]["tags"], ["codex"])
 
+    def test_a_row_whose_run_is_not_a_name_is_not_a_run(self):
+        for odd in ("", "   ", "\n", 5, 1.5, True, None, ["codex exec"], {"run": "x"}):
+            with self.subTest(odd=odd):
+                _, tiles = self.run_tile(session("x", status="busy", pid=4242, ancestors=[200, 100], run=odd),
+                                         claude=[starter()])
+                self.assertEqual(tiles["codex:x"]["tags"], ["codex"])
+                self.assertNotIn("waiting on", tiles["claude:s"]["movement"]["text"])
+
     def test_an_interactive_codex_session_is_a_tile_that_is_not_exec(self):
         _, tiles = self.run_tile(session("i", status="idle", pid=4242, ancestors=[100]), claude=[starter()])
         self.assertEqual(tiles["codex:i"]["tags"], ["codex"])
