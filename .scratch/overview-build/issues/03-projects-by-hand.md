@@ -6,7 +6,7 @@
 
 **Claimed by:** Joaquin 2026-10-19 09:47
 
-**Status:** in-progress
+**Status:** done
 
 - [x] Moving a repository into a project places a new session from that repository there
 - [x] A single-session move ends with that session
@@ -14,9 +14,17 @@
 - [x] Pinning, reordering and unpinning a project from its card is stored in `pinned` and orders the columns (roster test plus smoke run)
 - [x] Covered through `roster()` with a test config
 
-## Evidence (Joaquin, 2026-10-19; branch `overview/03-by-hand`, gate head `702624b`)
+## Evidence (Joaquin, 2026-10-19; branch `overview/03-by-hand`, gate head `6d7c6c8`; merged to origin/dev as `6c3d69f`)
 
-Mistral round 3 `VERDICT: GO` on 702624b (`reviews/mistral-review-03-3.md`; rounds 1 and 2 NO-GO, no real bug among 18 findings, replies with evidence in `replies-03-1.md` and `replies-03-2.md`). Code-review (Standards and Spec) done before it; real findings fixed. Unit suite 962 tests OK (skipped=1); page smoke `tests/ui_smoke.py` 227 checks green on a port-0 test server; the owner's `config.json` sha256 769cd744b9dbcb57e3e749af216faa2156b52185115194b43fec4409d35fc802 before and after. History check clean (7 commits, 0 non-noreply identities). Not merged: waits for the boss's order.
+**Final gate:** Opus hunt 9 on `6d7c6c8` ended `HUNT: CLEAN` (`reviews/opus-hunt-03-9.md`). Unit suite 1018 tests OK (skipped=1) and page smoke `tests/ui_smoke.py` 253 checks green on a port-0 test server, both run on the merge commit's tree; the owner's `config.json` sha256 769cd744b9dbcb57e3e749af216faa2156b52185115194b43fec4409d35fc802 before and after. History check clean (16 commits, 0 non-noreply identities). R23 (the files of the branch, gate head against the merge) empty, and the whole tree equal to the gate head's. Merged on the boss's order, detached merge on origin/dev (`412d21d`), pushed as `6c3d69f`; the branch is deleted on origin and locally. The repo has no CI workflows, so there are no checks to wait for.
+
+**Gate history:** Mistral round 3 `VERDICT: GO` on `702624b` (`reviews/mistral-review-03-3.md`; rounds 1 and 2 NO-GO, no real bug among 18 findings, replies with evidence in `replies-03-1.md` and `replies-03-2.md`). Code-review (Standards and Spec) done before it; real findings fixed. Mistral rounds 4, 5 and 6 stalled with no real bug; from there the gate was the Opus hunt on the final head (the owner's standing waiver, `overview-build.worker-rules`). Opus hunts 1 to 9 (`reviews/opus-hunt-03-1.md` to `opus-hunt-03-9.md`, replies in `opus-replies-03-1.md` to `-7.md`) found 13 real bugs, all fixed test-first; hunt 7 (a false 409 in the block view) and hunt 8 (a stale `shown` unpin answered 200 and did nothing) were the last two.
+
+**The stale-tab guard (hunts 4 to 6 found one family three times; closed in one place on the boss's ruling):** a tab that is behind acts on a card another tab has merged away or moved. `hand._current` refuses (HTTP 409, nothing written) any project identity a by-hand route names that has been moved away since the page was drawn: G1 every route (`/api/pin`, `/api/name`, `/api/assign`, `/api/merge`, `/api/order`, and every name in the `shown` list they carry), G2 the arrow carries `side` and `hand._beside` refuses it unless the pair is still in the order it was drawn for, G3 the undo of a merge carries `was`, G4 the page reads the roster again and says "changed in another tab, refreshed" for six seconds, G5 the block view names a moved session after where the moves end (`projects.landed`), so every block name the roster offers is accepted by the block view's own requests.
+
+**Ruled out of scope (ruling B):** a ring of moves written into `config.json` by hand. A finding counts as a bug only if the page, or a config the page writes, reaches it; a hand-written ring neither crashes nor loops, and every action aimed at either of its cards answers 409.
+
+**Seen at the last hunt, not counted:** an unpin from a block view that is behind can remove a pin another tab added since, for a card the block view shows as a block of its own. The block view's `/api/order` sets the pin state of every block its tab shows, last write wins, as on origin/dev (where it drops every pin the list leaves out, even from an up-to-date tab; this branch drops only the shown ones). Nothing is lost from an up-to-date tab. The boss has it for a ruling on whether it belongs with the absolute actions.
 
 - Box 1: `tests/test_by_hand.py` `Moves.test_moving_a_repository_into_a_project_places_a_new_session_from_it_there` (a session that starts later, in a second clone of the remote, lands in the track), `test_moving_a_track_takes_every_session_of_the_track_with_it`.
 - Box 2: `Moves.test_a_single_session_move_ends_with_that_session` (the next session started where it started is not carried along, no column left behind). Entries for ended sessions are not deleted from `config.json` on purpose: a closed conversation reopens with the same key (`server._reopen`, `claude:<sid>`), and its move should still hold.
