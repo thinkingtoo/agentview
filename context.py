@@ -12,6 +12,7 @@ Every text in here is whatever a file or a session said, kept as it was said:
 the page prints it as text and never as markup, so nothing is stripped for
 safety here.
 """
+import itertools
 import os
 import re
 
@@ -19,6 +20,7 @@ import projects
 
 LINE_LIMIT = 140     # about: the line is cut between words, full text on hover
 PARAGRAPH_MAX = 1500  # no text is carried longer: the hover is a hover, and every poll carries it
+PARAGRAPHS_LOOKED_AT = 300   # the first prose of 8,926 real files was at most the 102nd paragraph, the 99.9th percentile the 17th
 GUESS_TITLES = 2
 GUESS_JOIN = " · "
 ELLIPSIS = "…"
@@ -399,9 +401,12 @@ def wordless(raw):
 
 
 def first_prose(text):
-    """The first paragraph of a markdown text that is prose, or ""."""
+    """The first paragraph of a markdown text that is prose, or "". Only the
+    first PARAGRAPHS_LOOKED_AT are looked at: a file of a hundred kilobytes of
+    one-character paragraphs would cost a card seconds."""
     text = without_comments(FRONT_MATTER.sub("", text, count=1))
-    return next((got for got in map(prose, paragraphs(unfenced(text))) if got), "")
+    looked_at = itertools.islice(paragraphs(unfenced(text)), PARAGRAPHS_LOOKED_AT)
+    return next((got for got in map(prose, looked_at) if got), "")
 
 
 def files_in(folder):

@@ -504,6 +504,19 @@ class Repositories(Cards):
         self.assertEqual(self.line()["line"], "A tool that does a thing.")
         self.assertLess(time.monotonic() - started, 2.0)
 
+    def test_a_readme_of_thirty_thousand_one_character_paragraphs_costs_a_card_nothing(self):
+        for name in ("README.md", "AGENTS.md", "CLAUDE.md"):
+            self.put(name, ",\n\n" * 33_334)
+        started = time.monotonic()
+        self.assertEqual(self.line()["source"], "guess")
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_the_first_prose_may_come_after_a_hundred_paragraphs_of_badges_and_not_after_a_thousand(self):
+        self.put("README.md", "# loom\n\n" + "![b](b.svg)\n\n" * 150 + "Loom prints reports.\n")
+        self.assertEqual(self.line()["line"], "Loom prints reports.")
+        self.put("README.md", "# loom\n\n" + "![b](b.svg)\n\n" * 1000 + "Loom prints reports.\n")
+        self.assertEqual(self.line()["source"], "guess")
+
     def test_a_paragraph_over_the_limit_is_not_cut_inside_a_link(self):
         filler = " ".join(["reports"] * 184)
         text = f"{filler} See [the documentation](https://example.com/docs/index.html) for more."
