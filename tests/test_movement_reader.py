@@ -548,6 +548,28 @@ class TurnEnd(Base):
     def test_a_compaction_after_an_api_error_leaves_the_turn_over(self):
         self.assertTrue(self.over(record(3001), self.api_error(3000), *self.compaction(60)))
 
+    # Hunt 08-6, ruled 2026-10-19: Claude Code writes an assistant record of its
+    # own when it resumes a session (model `<synthetic>`, not marked as an
+    # error). The model was not called, so an error is still the last word.
+
+    def no_response(self, seconds_ago, **extra):
+        return {"type": "assistant", "timestamp": at(seconds_ago), "isApiErrorMessage": False,
+                "message": {"model": "<synthetic>", "content": [{"type": "text", "text": "No response requested."}]},
+                **extra}
+
+    def test_the_no_response_record_does_not_open_a_turn_that_ended_on_an_api_error(self):
+        resume = record(20, "user", isMeta=True)
+        self.assertTrue(self.over(record(30), self.api_error(29), resume, self.no_response(19)))
+        self.assertTrue(self.over(record(30), self.api_error(29), self.no_response(19)))
+        self.assertFalse(self.over(record(30), self.api_error(29), resume, self.no_response(19), record(10)))
+
+    def test_with_no_error_before_it_the_no_response_record_opens_the_turn_like_any_reply(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(29)}
+        self.assertFalse(self.over(record(30), end, self.no_response(19)))
+
+    def test_a_subagents_no_response_record_is_not_the_sessions(self):
+        self.assertTrue(self.over(record(30), self.api_error(29), self.no_response(19, isSidechain=True)))
+
 
 def started(seconds_ago, tool_id, command="pytest -q", description="Run the unit tests"):
     """The session asked for a command to run in the background."""

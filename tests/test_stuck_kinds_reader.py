@@ -84,6 +84,15 @@ def tool_result(seconds_ago, **over):
             "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}, **over}
 
 
+def no_response(seconds_ago, **over):
+    """What Claude Code writes by itself when it resumes a session: an assistant
+    record whose model is `<synthetic>`, with nothing to mark it as an error.
+    The model was not called (46 in 5,915 transcripts; 4ee54ae6, 41760d93)."""
+    return {"type": "assistant", "timestamp": stamp(seconds_ago), "isSidechain": False, "isApiErrorMessage": False,
+            "message": {"id": "msg_none", "role": "assistant", "model": "<synthetic>",
+                        "content": [{"type": "text", "text": "No response requested."}]}, **over}
+
+
 # Everything Claude Code writes after an error that is not a turn (the types
 # seen after real errors on this machine, by count).
 BOOKKEEPING = [
@@ -422,6 +431,57 @@ class Automated(Base):
         # It answers a call the model made before: the model has not spoken since.
         got = self.failure([api_error(120), tool_result(60)])
         self.assertEqual(got and got["kind"], "limit")
+
+    # Hunt 08-6, ruled 2026-10-19: an assistant record whose model is
+    # `<synthetic>` is Claude Code's own, not the model answering. 4ee54ae6
+    # (2026-09-18) was "Not logged in" at 08:38:41, resumed at 08:40:38 with a
+    # meta "Continue from where you left off." and the synthetic "No response
+    # requested." in the same second; the account was not logged in, the next
+    # real reply came at 08:49:05, and the tile had lost the Error 8.5 minutes
+    # before it.
+
+    def test_the_no_response_record_after_a_resume_leaves_the_error(self):
+        resume = prompt(60, "Continue from where you left off.", isMeta=True)
+        error = api_error(120, "authentication_failed", 401, "An invented failure", None)
+        for tail in ([resume, no_response(59)], [no_response(59)], [resume, no_response(59), no_response(58)]):
+            with self.subTest(records=len(tail)):
+                got = self.failure([text(300), error, turn_end(119, "turn_duration"), *tail])
+                self.assertEqual((got["kind"], got["type"]), ("error", "authentication_failed"))
+        got = self.failure([text(300), api_error(120), resume, no_response(59)])
+        self.assertEqual((got["kind"], got["resetsAt"]), ("limit", RESET * 1000))
+
+    def test_the_turn_stays_over_for_it_and_the_models_reply_after_it_clears_both(self):
+        resume = prompt(60, "Continue from where you left off.", isMeta=True)
+        claude._cache.clear()
+        self.session([text(300), api_error(120), resume, no_response(59)])
+        self.assertTrue(self.live()[0]["turnOver"])
+        self.assertIsNone(self.failure([text(300), api_error(120), resume, no_response(59), text(30)]))
+        claude._cache.clear()
+        self.session([text(300), api_error(120), resume, no_response(59), text(30)])
+        self.assertFalse(self.live()[0]["turnOver"])
+
+    def test_the_no_response_record_written_to_the_file_later_leaves_the_error(self):
+        self.session([text(300), api_error(120)])
+        for rec, held in ((prompt(90, "Continue from where you left off.", isMeta=True), True),
+                          (no_response(89), True), (text(30), False)):
+            with self.transcript.open("a") as fh:
+                fh.write(json.dumps(rec) + "\n")
+            self.assertEqual(self.live()[0]["failure"] is not None, held, rec["type"])
+
+    def test_a_synthetic_record_is_only_the_models_if_its_model_is_not_the_marker(self):
+        # `<synthetic>` is the whole test: another model name, or none, is a reply.
+        for message in ({"model": "claude-opus-5"}, {"model": ""}, {}, {"model": None}):
+            with self.subTest(message=message):
+                rec = no_response(59)
+                rec["message"] = {**{k: v for k, v in rec["message"].items() if k != "model"}, **message}
+                self.assertIsNone(self.failure([text(300), api_error(120), rec]))
+
+    def test_the_no_response_record_when_no_error_holds_opens_the_turn_like_any_reply(self):
+        # Nothing changes for a session that was not on an error.
+        claude._cache.clear()
+        self.session([text(300), turn_end(200), no_response(60)])
+        self.assertFalse(self.live()[0]["turnOver"])
+        self.assertIsNone(self.live()[0]["failure"])
 
     def test_a_notification_that_says_it_is_not_typed_is_not_typed_whatever_its_words(self):
         # `origin` says who wrote a record; its words say nothing.

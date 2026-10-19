@@ -47,9 +47,9 @@ error `error`); `type` is the error's own name, `status` its HTTP status or
 None, `text` the words it carries, `at` and `resetsAt` milliseconds since 1970
 (`resetsAt` None when the error names no reset time). It is gone once the
 model answers or the person types something -- not when the session merely
-writes bookkeeping of its own, and not for a notification or a message from
-another session, which call no model while the error holds -- so a provider
-must clear it itself.
+writes bookkeeping of its own or a reply Claude Code wrote itself with no model
+call, and not for a notification or a message from another session, which call
+no model while the error holds -- so a provider must clear it itself.
 
 `lastTool` is the newest call the session made, answered or not:
 `{"text", "at"}`, said the way `doing` is, with `at` in milliseconds.

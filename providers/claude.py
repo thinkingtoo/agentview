@@ -368,24 +368,34 @@ def _typed(rec):
     return not _first_words(rec).lstrip().startswith(NOT_TYPED)
 
 
+def _synthetic(rec):
+    """Is this assistant record one Claude Code wrote itself, with no model call?
+
+    Its model is `<synthetic>`: the API errors carry it, and so does the "No
+    response requested." that a resumed session gets (46 records in 5,915
+    transcripts, 2 of them after an error).
+    """
+    return _dict(rec.get("message")).get("model") == "<synthetic>"
+
+
 def _resumes(rec):
     """Does this record end an API error that was the session's last word?
 
     The model answering, the summary of a compaction (a model call that worked)
     or the person typing. Nothing else calls the model: a task notification or a
     message from another session waits in the queue while a rate limit holds or
-    the account is logged out, and a tool's result answers a call made before
-    the error.
+    the account is logged out, a tool's result answers a call made before the
+    error, and a reply Claude Code wrote itself (`_synthetic`) is not the model's.
     """
-    return rec.get("type") == "assistant" or _compaction(rec) or _typed(rec)
+    return (rec.get("type") == "assistant" and not _synthetic(rec)) or _compaction(rec) or _typed(rec)
 
 
 def _failure(state, rec):
     """Is the session's last turn an API error?
 
     `state["failure"]` is set by an API error that is the newest conversational
-    record and cleared by `_resumes`: the model's reply, a compaction, a prompt
-    the person typed. Records Claude Code writes on its own after an error (a
+    record and cleared by `_resumes`: the model's reply (not one Claude Code
+    wrote itself), a compaction, a prompt the person typed. Records Claude Code writes on its own after an error (a
     turn duration, a title, a queued line, a snapshot) are not the session
     moving on, and neither is a user record that asks the model nothing (a slash
     command run locally, a `!` line) or one that nobody typed (a notification, a
