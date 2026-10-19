@@ -90,15 +90,20 @@ OPENERS = "\"'\u201c\u2018(["
 # brackets allowed inside it (`Rule_(math)`, `3.10%20(min)`), or with a
 # reference, `[text][ref]`.
 POINTS_TO = r"(?:\((?:[^()]|\([^()]*\))*\)|\[[^\]]*\])"
-LINK = re.compile(r"\[([^\]]*)\]" + POINTS_TO)
-IMAGE = re.compile(r"!\[[^\]]*\]" + POINTS_TO)
+# A link's label or an image's alt text may hold one level of brackets (`[![alt [x]](b.svg)](u)`). It is one
+# character at a time inside the star: a `+` in there backtracks without end.
+ALT = r"(?:[^\[\]]|\[[^\[\]]*\])*"
+LINK = re.compile(rf"\[({ALT})\]" + POINTS_TO)
+# An image with no address of its own, `![name]`, is one too: it takes its
+# address from a definition below, as a badge row written with references does.
+IMAGE = re.compile(rf"!\[{ALT}\](?:{POINTS_TO})?")
 BOLD = re.compile(r"(\*\*|__)(.+?)\1")
 CODE = re.compile(r"`([^`]+)`")
-# Tags that only format a word: they go, their text stays. An image says
-# nothing here, as `![]()` does. Any other tag is left as it was written, and
+# Tags that only format a word: they go, their text stays. An image (`<img>`,
+# or a `<picture>` with its `<source>`s) says nothing here, as `![]()` does. Any other tag is left as it was written, and
 # the page prints it as text.
-FORMATTING = re.compile(r"</?(a|abbr|b|big|br|cite|code|del|em|font|i|img|ins|kbd|mark|s|small|span|strike"
-                        r"|strong|sub|sup|u)\b[^<>]*>", re.IGNORECASE)
+FORMATTING = re.compile(r"</?(a|abbr|b|big|br|cite|code|del|em|font|i|img|ins|kbd|mark|picture|s|small|source"
+                        r"|span|strike|strong|sub|sup|u)\b[^<>]*>", re.IGNORECASE)
 HTML_LINK = re.compile(r"<a\b[^<>]*>[^<]*</a>", re.IGNORECASE)
 READ = 100_000       # a goal or a README is read this far, no further
 
@@ -200,6 +205,34 @@ def plain(text):
     return squash(re.sub(r"\0(\d+)\0", lambda at: spans[int(at.group(1))], text).replace("`", ""))
 
 
+def clipped(text):
+    """The text, or when it is longer than a paragraph may be, its start up to
+    the last space that stands outside a link or an image: a link cut in half
+    would leave `[text](url` at the end of the hover. The cut comes before any
+    pattern runs (they are quadratic on runs of `[`). With no such space in
+    the second half, the plain cut."""
+    if len(text) <= PARAGRAPH_MAX:
+        return text
+    square = round_ = 0                 # open `[`; open `(` of the address right after a `]`
+    after_label = False
+    space = -1
+    for at, char in enumerate(text[:PARAGRAPH_MAX]):
+        if round_:
+            round_ += (char == "(") - (char == ")")
+        elif char == "[":
+            square += 1
+        elif char == "]" and square:
+            square -= 1
+            after_label = not square
+            continue
+        elif char == "(" and after_label:
+            round_ = 1
+        elif char.isspace() and not square:
+            space = at
+        after_label = False
+    return text[:space] if space >= PARAGRAPH_MAX // 2 else text[:PARAGRAPH_MAX]
+
+
 def first_sentence(text):
     for end in SENTENCE_END.finditer(text):
         after = end.group(1)
@@ -239,7 +272,7 @@ def track_card(track):
     else:
         progress = None
     said = without_comments("\n".join(section(lines, "outcome"))).splitlines()
-    outcome = next((plain(" ".join(p)[:PARAGRAPH_MAX]) for p in paragraphs(said)
+    outcome = next((plain(clipped(" ".join(p))) for p in paragraphs(said)
                     if not (HEADING.match(p[0]) or HTML_BLOCK.match(p[0]))), "")
     outcome = "" if bare_tag(outcome) else outcome
     return outcome, {"status": status, "progress": progress}
@@ -250,10 +283,15 @@ def track_card(track):
 OPENS = re.compile(r"`[^`\n]+`|<!--")
 FRONT_MATTER = re.compile(r"\A\s*---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", re.DOTALL)
 INCLUDE = re.compile(r"^\s*@\S+\s*$")
-REFERENCE = re.compile(r"^\s*\[[^\]]+\]:\s")
+REFERENCE = re.compile(r"^\s*\[[^\]]+\]:")      # CommonMark wants no space after the colon, footnotes too
 RULE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
 SETEXT = re.compile(r"^\s*(=+|-+)\s*$")
-NOT_PROSE = re.compile(r"^(\s{4,}|\t|[-*+]\s|\d+[.)]\s|\||>)")
+NOT_PROSE = re.compile(r"^(\s{4,}|\t|[-*+]\s|\d+[.)]\s|\|)")
+# A quote under the title is where many READMEs put their one-line description;
+# its marks go and what it holds is read like any paragraph (a list, a table or
+# code in it is not prose). GitHub's alert marker (`> [!NOTE]`) is not its text.
+QUOTE = re.compile(r"^\s{0,3}(?:>\s?)+")
+ALERT = re.compile(r"^\s*\[![A-Za-z]+\]\s*$")
 # What starts a block in the middle of a paragraph, so the paragraph ends
 # before it: a list (a numbered one only from 1) or a quote.
 INTERRUPTS = re.compile(r"^\s{0,3}([-*+]\s|1[.)]\s|>)")
@@ -268,6 +306,8 @@ HTML_BLOCK = re.compile(rf"^\s{{0,3}}(?:</?(?:{BLOCK_TAGS})(?:[\s/>]|$)|<[A-Za-z
 # Between the items of a row: a bar, a dot, a slash, a comma, a spaced dash,
 # or what follows a colon.
 ITEM_BREAK = re.compile(r"\s*[|·•/,;]\s*|\s+[-–—]\s+|(?<=:)\s+")
+# An entity is a spacer or a sign, not a word: `&nbsp;` between badges says nothing.
+ENTITY = re.compile(r"&(?:#\d+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);")
 LINK_MARK = ""
 # README, then the instructions for agents, then Claude's own: AGENTS.md is
 # the file a project writes about itself, CLAUDE.md often only includes it.
@@ -300,8 +340,14 @@ def without_comments(text):
 
 def prose(par):
     """The text of a paragraph that is prose, or "" when it is a heading,
-    a list, a table, a quote, code, a badge row, an HTML block or an
-    include."""
+    a list, a table, code, a badge row, an HTML block or an include. A quote
+    is read for what it holds."""
+    if QUOTE.match(par[0]):                         # a quote: its marks off, to its first blank line
+        par = [QUOTE.sub("", line) for line in par]
+        par = par[next((i for i, line in enumerate(par) if line.strip()), len(par)):]
+        par = par[:next((i for i, line in enumerate(par) if not line.strip()), len(par))]
+        if par and ALERT.match(par[0]):
+            par = par[1:]
     for i, line in enumerate(par):                  # a title with its underline, dashes too
         if i and SETEXT.match(line):
             par = par[i + 1:]
@@ -315,9 +361,9 @@ def prose(par):
         return ""
     par = par[:next((i for i, line in enumerate(par)
                      if i and (INTERRUPTS.match(line) or HTML_BLOCK.match(line))), len(par))]
-    raw = " ".join(par)[:PARAGRAPH_MAX]
+    raw = clipped(" ".join(par))
     text = plain(raw)
-    return "" if bare_tag(text) or link_row(raw) else text
+    return "" if bare_tag(text) or wordless(raw) else text
 
 
 def table_delimiter(line):
@@ -326,16 +372,17 @@ def table_delimiter(line):
     return "|" in line and "-" in line and re.fullmatch(r"[\s|:-]+", line) is not None
 
 
-def link_row(raw):
-    """Whether markdown says nothing in words of its own: a row of badges, of
-    tags, or of links, like the switcher between a README's languages with the
-    current one in plain text. Its items are links, a word or three of plain
-    text (the language), or a lead-in ending with a colon; the plain ones are
-    no more than the links, and none is a sentence. A link inside a sentence
-    makes it prose."""
-    marked = HTML_LINK.sub(LINK_MARK, LINK.sub(LINK_MARK, IMAGE.sub("", raw)))
+def wordless(raw):
+    """Whether a paragraph says nothing in words of its own: a row of badges,
+    of tags, or of links, like the switcher between a README's languages with
+    the current one in plain text; or spacers (`&nbsp;`), or a command or a
+    snippet in backticks and nothing else. Its items are links, a word or
+    three of plain text (the language), or a lead-in ending with a colon; the
+    plain ones are no more than the links, and none is a sentence. A link or a
+    code span inside a sentence makes it prose."""
+    marked = CODE.sub("", HTML_LINK.sub(LINK_MARK, LINK.sub(LINK_MARK, IMAGE.sub("", raw))))
     links = plain_items = 0
-    for item in map(squash, ITEM_BREAK.split(re.sub(r"[*_]+", "", TAGS.sub("", marked)))):
+    for item in map(squash, ITEM_BREAK.split(re.sub(r"[*_]+", "", ENTITY.sub(" ", TAGS.sub("", marked))))):
         linked = LINK_MARK in item
         worded = re.search(r"\w", item) is not None
         if linked and worded:

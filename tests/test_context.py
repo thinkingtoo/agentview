@@ -183,6 +183,15 @@ class Tracks(Cards):
         got = self.track(outcome="<REPLACE: one sentence.>")
         self.assertEqual(got["context"]["source"], "guess")
 
+    def test_an_outcome_over_the_limit_is_not_cut_inside_a_link(self):
+        filler = " ".join(["reports"] * 184)
+        text = f"{filler} See [the documentation](https://example.com/docs/index.html) for more."
+        cut_at = text.index("](") + 2
+        self.assertLess(cut_at, 1500)
+        self.assertGreater(text.index(")", cut_at), 1500)
+        got = self.track(outcome=text)["context"]
+        self.assertEqual(got["full"], filler + " See")
+
     def test_an_outcome_written_over_several_lines_is_one_paragraph(self):
         got = self.track(outcome="Customers pay with\na saved card, e.g. the one\nthey used last. Then done.")["context"]
         self.assertEqual(got["line"], "Customers pay with a saved card, e.g. the one they used last.")
@@ -422,6 +431,95 @@ class Repositories(Cards):
             self.put("README.md", f"# loom\n\n{row}\n\nA tiny tool that prints reports.\n")
             self.assertEqual(self.line()["line"], "A tiny tool that prints reports.", row)
 
+    def test_a_badge_row_of_shortcut_images_or_with_brackets_in_the_alt_text_is_not_prose(self):
+        badges = ["[![gh-workflow-image]][gh-workflow-url] [![npm-image]][npm-url] [![license-image]][license-url]",
+                  "[![codecov]](https://codecov.example/github/x/loom)\n[![npm]](https://npm.example/package/loom)",
+                  "[![NPM Worklets publish [Nightly]](https://ci.example/x/y/badge.svg)](https://ci.example/x/y)",
+                  "![shortcut] ![a][b]", "![shortcut] [Docs](docs/index.md)"]
+        for row in badges:
+            with self.subTest(row=row):
+                self.put("README.md", f"### Nightly CI state\n\n{row}\n\nLoom prints reports.\n")
+                self.assertEqual(self.line()["line"], "Loom prints reports.")
+
+    def test_a_paragraph_of_nothing_but_entities_is_a_spacer_and_not_prose(self):
+        for spacer in ("&nbsp;", "&#160;", "&#xA0;", "&nbsp; &nbsp; &nbsp;", "<br>&nbsp;"):
+            with self.subTest(spacer=spacer):
+                self.put("README.md", f'<img align="right" src="logo.svg">\n\n{spacer}\n\n# Loom\n\n'
+                                      "The fastest report printer for Node.js and browser.\n")
+                self.assertEqual(self.line()["line"], "The fastest report printer for Node.js and browser.")
+
+    def test_badges_spaced_with_entities_are_still_a_badge_row(self):
+        self.put("README.md", "[![npm](https://img.example/v.svg)](https://npm.example/loom) &nbsp;\n"
+                              "[![tests](https://ci.example/badge.svg)](https://ci.example/loom) &nbsp;\n\n"
+                              "Loom prints reports.\n")
+        self.assertEqual(self.line()["line"], "Loom prints reports.")
+
+    def test_an_entity_in_a_sentence_stays_as_it_was_written(self):
+        self.put("README.md", "&copy; 2026 Loom prints reports &amp; invoices.\n")
+        self.assertEqual(self.line()["line"], "&copy; 2026 Loom prints reports &amp; invoices.")
+
+    def test_a_paragraph_that_is_only_code_is_not_prose(self):
+        for code in ("`npm install loom`", "`example.js`.", "`loom(value, other, [custom], [thisArg])`",
+                     "`var loom = require('loom')`", "`a` `b`"):
+            with self.subTest(code=code):
+                self.put("README.md", f"# loom\n\n## Installation\n\n{code}\n\n## Features\n\n"
+                                      "Loom implements a subset of the reports.\n")
+                self.assertEqual(self.line()["line"], "Loom implements a subset of the reports.")
+
+    def test_a_sentence_with_code_in_it_is_still_prose(self):
+        for text in ("Run `make`.", "Run `make`", "`make` builds it.", "Use `a` or `b`", "Run: `make`"):
+            with self.subTest(text=text):
+                self.put("README.md", f"{text}\n\nMore prose here.\n")
+                self.assertEqual(self.line()["line"], text.replace("`", ""))
+
+    def test_reference_definitions_are_not_prose_with_or_without_a_space_after_the_colon(self):
+        for defs in ("[npm-url]:https://npm.example/package/loom\n[npm-image]:https://img.example/npm/v/loom.svg",
+                     "[npm-url]: https://npm.example/package/loom\n[npm-image]: <https://img.example/v.svg> \"npm\"",
+                     "[^1]: A footnote for the text.\n[^note]:Another one."):
+            with self.subTest(defs=defs):
+                self.put("README.md", f"# loom\n\n[![NPM version][npm-image]][npm-url]\n\n{defs}\n\n"
+                                      "A cross platform solution to node's spawn.\n")
+                self.assertEqual(self.line()["line"], "A cross platform solution to node's spawn.")
+
+    def test_a_shortcut_reference_in_a_sentence_keeps_its_marks(self):
+        self.put("README.md", "Loom prints [reports] for the shop.\n")
+        self.assertEqual(self.line()["line"], "Loom prints [reports] for the shop.")
+
+    def test_a_link_label_with_brackets_in_it_is_still_the_label(self):
+        self.put("README.md", "Loom prints [the [beta] reports](https://loom.example/r) for the shop.\n")
+        self.assertEqual(self.line()["line"], "Loom prints the [beta] reports for the shop.")
+
+    def test_a_badge_block_longer_than_a_paragraph_is_still_a_badge_block(self):
+        badge = "[![b{i}](https://img.example/badge/" + "x" * 80 + "-{i}.svg)](https://example.com/{i})"
+        row = [badge.format(i=i) for i in range(14)]
+        self.assertGreater(len(" ".join(row)), 1500)
+        for block in ("\n".join(row), " ".join(row)):
+            self.put("README.md", f"# tool\n\n{block}\n\nTool bundles modules.\n")
+            self.assertEqual(self.line()["line"], "Tool bundles modules.")
+
+    def test_a_paragraph_over_the_limit_is_not_cut_inside_a_link(self):
+        filler = " ".join(["reports"] * 184)
+        text = f"{filler} See [the documentation](https://example.com/docs/index.html) for more."
+        self.assertIn("](", text[:1500])
+        self.assertNotIn(")", text[1495:1500])           # the limit falls inside the address
+        self.put("README.md", text + "\n")
+        self.assertEqual(self.line()["full"], filler + " See")
+
+    def test_a_paragraph_over_the_limit_is_not_cut_at_a_space_inside_an_address(self):
+        filler = " ".join(["reports"] * 182)
+        text = f'{filler} See [docs](https://example.com/d "the documentation title") for more.'
+        space = text.index(' "the')
+        self.assertLess(space, 1500)
+        self.assertGreater(text.index(")", space), 1500)    # the limit falls in the title of the link
+        self.put("README.md", text + "\n")
+        self.assertEqual(self.line()["full"], filler + " See")
+
+    def test_a_link_with_no_space_to_cut_at_falls_back_to_the_plain_cut(self):
+        self.put("README.md", "Intro [" + "word" * 500 + "](https://example.com/x) outro.\n")
+        got = self.line()
+        self.assertEqual(len(got["full"]), 1500)
+        self.assertTrue(got["line"].startswith("Intro [wordword"))
+
     def test_a_link_whose_address_has_brackets_in_it_is_its_label(self):
         self.put("README.md", "Loom follows [the rule](https://en.wikipedia.org/wiki/Rule_(math)) for reports.\n")
         self.assertEqual(self.line()["line"], "Loom follows the rule for reports.")
@@ -438,15 +536,53 @@ class Repositories(Cards):
         self.put("README.md", "Loom prints reports\nin the year\n2019. Wow\n")
         self.assertEqual(self.line()["line"], "Loom prints reports in the year 2019. Wow")
 
-    def test_headings_badges_html_blocks_lists_tables_quotes_and_code_are_not_prose(self):
+    def test_headings_badges_html_blocks_lists_tables_code_and_what_quotes_hold_are_not_prose(self):
         self.put("README.md", "---\ntitle: Loom\n---\n<!-- a comment\nover lines -->\n"
                               "Loom\n====\n\n<p align=\"center\"><img src=\"logo.png\"></p>\n\n"
                               "<h1 align=\"center\"><b>Loom</b> the reports</h1>\n\n"
                               "![badge](b.svg) [![ci](c.svg)](https://ci.example)\n\n"
-                              "- not prose\n- a list\n\n| a | b |\n|---|---|\n\n> a quote\n\n"
+                              "- not prose\n- a list\n\n| a | b |\n|---|---|\n\n> - a quote\n> | holding a list |\n\n"
                               "```\nnot prose either\n```\n\n    indented code\n\n"
                               "---\n\n[ref]: https://example.com\n\nFinally some prose.\n")
         self.assertEqual(self.line()["line"], "Finally some prose.")
+
+    def test_a_quote_is_prose_in_document_order_with_its_marks_taken_off(self):
+        for text, line in (("> Convert a camelized string into a lowercased one", "Convert a camelized string into a lowercased one"),
+                           ("> A tiny tool that prints\n> reports for the shop.", "A tiny tool that prints reports for the shop."),
+                           ("> A tiny tool\nthat prints reports.", "A tiny tool that prints reports."),
+                           (">A tiny tool that prints reports.", "A tiny tool that prints reports."),
+                           ("> > A tiny tool that prints reports.", "A tiny tool that prints reports."),
+                           ("> First paragraph of the quote.\n>\n> Second paragraph of it.", "First paragraph of the quote."),
+                           (">\n> Text after an empty first line.", "Text after an empty first line."),
+                           ("> **Loom** prints [reports](x) for the shop.", "Loom prints reports for the shop.")):
+            with self.subTest(text=text):
+                self.put("README.md", f"# decamelize\n\n{text}\n\n## Install\n\n```\n$ npm install decamelize\n```\n\n"
+                                      "## API\n\n#### input\n\nType: `string`\n")
+                self.assertEqual(self.line()["line"], line)
+
+    def test_a_github_alert_marker_is_not_the_text_of_the_quote(self):
+        for marker in ("[!NOTE]", "[!WARNING]", "[!tip]"):
+            with self.subTest(marker=marker):
+                self.put("README.md", f"# loom\n\n> {marker}\n> Loom is in beta.\n\nOther text here.\n")
+                self.assertEqual(self.line()["line"], "Loom is in beta.")
+        self.put("README.md", "# loom\n\n> [!NOTE]\n\nOther text here.\n")
+        self.assertEqual(self.line()["line"], "Other text here.")
+
+    def test_a_quote_that_holds_a_list_a_table_a_heading_or_code_is_not_prose(self):
+        for quoted in ("> - one\n> - two", "> 1. one\n> 2. two", "> | a | b |\n> |---|---|\n> | 1 | 2 |", "> | a | b |\n> | 1 | 2 |",
+                       "> # A heading", ">     indented code", "> ```\n> code\n> ```\n>\n> ---", "> <div>html</div>",
+                       "> [!NOTE]\n> - a list"):
+            with self.subTest(quoted=quoted):
+                self.put("README.md", f"# loom\n\n{quoted}\n\nLoom prints reports.\n")
+                self.assertEqual(self.line()["line"], "Loom prints reports.")
+
+    def test_a_quote_still_ends_the_paragraph_above_it(self):
+        self.put("README.md", "Loom prints reports\n> a quote after it\n")
+        self.assertEqual(self.line()["line"], "Loom prints reports")
+
+    def test_a_sentence_with_a_greater_than_sign_in_it_is_still_prose(self):
+        self.put("README.md", "Loom turns a > b into reports.\n")
+        self.assertEqual(self.line()["line"], "Loom turns a > b into reports.")
 
     def test_a_setext_title_directly_above_its_text_does_not_hide_the_text(self):
         self.put("README.md", "Loom\n====\nPrints reports for the shop.\n")
@@ -552,6 +688,19 @@ class Repositories(Cards):
             with self.subTest(text=text):
                 self.put("README.md", f"{text}\n\n## Install\n\nRun `make`.\n")
                 self.assertEqual(self.line()["line"], line)
+
+    def test_a_picture_in_a_line_of_text_is_an_image_and_not_text(self):
+        self.put("README.md", '_Your support would be greatly appreciated_\n'
+                              '<a href="https://polar.example/x"><picture>'
+                              '<source media="(prefers-color-scheme: dark)" srcset="https://polar.example/dark.svg">'
+                              '<img alt="Tiers" src="https://polar.example/light.svg"></picture></a>\n\n'
+                              '# Tinybench\n\nBenchmark your code easily with Tinybench.\n')
+        self.assertEqual(self.line()["line"], "_Your support would be greatly appreciated_")
+        self.put("README.md", 'Loom <picture><source srcset="d.svg"><img src="l.svg"></picture> prints reports.\n')
+        self.assertEqual(self.line()["line"], "Loom prints reports.")
+        self.put("README.md", '<a href="x"><picture><source srcset="d.svg"><img src="l.svg"></picture></a>\n\n'
+                              "Loom prints reports.\n")
+        self.assertEqual(self.line()["line"], "Loom prints reports.")
 
     def test_an_html_block_ends_the_paragraph_before_it(self):
         self.put("README.md", "Prints reports for the shop.\n<div>\n  <img src=\"logo.png\">\n</div>\n")
