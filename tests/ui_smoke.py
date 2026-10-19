@@ -1027,6 +1027,10 @@ def blocks_pass(browser):
     page.locator(f'.block[data-project="{third}"] .pin').click()
     page.wait_for_timeout(600)
     check("la ✳ lo libera", third not in fake.of("/api/order")[-1]["pinned"], fake.of("/api/order"))
+    shown = page.locator(".block:not(.orphan):not(.routines)").evaluate_all("els => els.map(e => e.dataset.project)")
+    check("the block view says which blocks it shows, on a drag and on an unpin, so a block named by an identity can be unpinned",
+          all(sorted(post.get("shown") or []) == sorted(shown) for post in fake.of("/api/order")),
+          (shown, fake.of("/api/order")))
 
     # --- assigning
     chip = page.locator(".guess").first
@@ -1198,8 +1202,11 @@ def hand_pass(browser):
     col("folder:orchard").locator(".ov-pin").click()
     page.wait_for_function("() => document.querySelectorAll('.ov-head.pinned').length === 2")
     check("a click on the pin asks the server to pin that project, once each, by identity",
-          posts("/api/pin") == [{"project": "folder:maple", "action": "pin"},
-                                {"project": "folder:orchard", "action": "pin"}], posts("/api/pin"))
+          [{k: v for k, v in p.items() if k != "shown"} for p in posts("/api/pin")]
+          == [{"project": "folder:maple", "action": "pin"}, {"project": "folder:orchard", "action": "pin"}],
+          posts("/api/pin"))
+    check("and says which cards are pinned as the page shows them, in order (a pin by plain name can hold two)",
+          [p["shown"] for p in posts("/api/pin")] == [[], ["folder:maple"]], posts("/api/pin"))
     check("pinned projects lead in the order they were pinned", order()[:3] == ["folder:maple", "folder:orchard", "folder:pear"], order())
     check("a pinned card is lit and its pin is pressed",
           col("folder:maple").locator(".ov-pin.on").get_attribute("aria-pressed") == "true"
@@ -1220,13 +1227,15 @@ def hand_pass(browser):
     col("folder:maple").locator(".ov-arrow").click()
     page.wait_for_function("() => document.querySelector('.ov-col').dataset.project === 'folder:orchard'")
     check("an arrow swaps with the neighbour it points at, named by identity",
-          posts("/api/pin")[-1] == {"project": "folder:maple", "action": "swap", "with": "folder:orchard"}
+          posts("/api/pin")[-1] == {"project": "folder:maple", "action": "swap", "with": "folder:orchard",
+                                    "shown": ["folder:maple", "folder:orchard"]}
           and order()[:2] == ["folder:orchard", "folder:maple"], posts("/api/pin")[-1])
 
     col("folder:orchard").locator(".ov-pin").click()
     page.wait_for_function("() => document.querySelectorAll('.ov-head.pinned').length === 1")
     check("the pin again unpins, and the card goes back among the others",
-          posts("/api/pin")[-1] == {"project": "folder:orchard", "action": "unpin"}
+          posts("/api/pin")[-1] == {"project": "folder:orchard", "action": "unpin",
+                                    "shown": ["folder:orchard", "folder:maple"]}
           and order() == ["folder:maple", "folder:orchard", "folder:pear", ""]
           and arrows("folder:maple") == [], order())
 
@@ -1260,7 +1269,8 @@ def hand_pass(browser):
     page.wait_for_function("() => !document.querySelector('.ov-form')")
     page.wait_for_function("() => !document.querySelector('.ov-col[data-project=\"folder:orchard\"]')")
     check("the merge button sends source and target by identity",
-          posts("/api/merge") == [{"source": "folder:orchard", "target": "folder:maple"}], posts("/api/merge"))
+          posts("/api/merge") == [{"source": "folder:orchard", "target": "folder:maple",
+                                   "shown": ["folder:maple"]}], posts("/api/merge"))
     check("the absorbed card is gone and its session is in the other",
           "folder:orchard" not in order() and col("folder:maple").locator(".tile").count() == 3, order())
 
@@ -1299,6 +1309,38 @@ def hand_pass(browser):
     page.wait_for_timeout(300)
     check("the way back sends an empty project", posts("/api/assign")[-1] == {"key": "m2", "project": ""}, posts("/api/assign"))
     check("hand: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
+def picker_pass(browser):
+    """Two projects called alike must read differently where you choose one:
+    by kind, then by what the identity starts with (a client folder and a folder
+    are both folders), then -- two repositories -- by the identity itself."""
+    got = roster([("track:acme", "acme", [S("t1", "Ilse")]),
+                  ("folder:acme", "acme", [S("f1", "Femi")]),
+                  ("client:example.test/x/mono/acme", "acme", [S("c1", "Odile")]),
+                  ("repo:example.test/a/shop", "shop", [S("r1", "Saskia")]),
+                  ("repo:example.test/b/shop", "shop", [S("r2", "Kasper")]),
+                  ("folder:solo", "solo", [S("s1", "Bram")]),
+                  ("", "No project", [S("n1", "Ines")])])
+    kinds = {"track": "track", "repo": "repository", "client": "folder", "folder": "folder"}
+    for c in got["columns"]:
+        c.update(pinned=False, raw=c["project"].partition(":")[2],
+                 kind="none" if c["project"] == "" else kinds[c["project"].partition(":")[0]])
+    page = new_page(browser, Fake(got))
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    page.locator('.ov-col[data-project="folder:solo"]').hover()
+    page.locator('.ov-col[data-project="folder:solo"] .ov-merge').click()
+    options = page.locator("select.pick option").evaluate_all("els => els.map(e => [e.value, e.textContent])")[1:]
+    labels = [text for _, text in options]
+    check("the picker tells two projects with one name apart, whatever they share",
+          len(set(labels)) == len(labels), labels)
+    check("by kind where that is enough, by the identity's start where the kind is shared, by the identity otherwise",
+          dict(options) == {"track:acme": "acme (track)", "folder:acme": "acme (folder)",
+                            "client:example.test/x/mono/acme": "acme (client)",
+                            "repo:example.test/a/shop": "shop (repo:example.test/a/shop)",
+                            "repo:example.test/b/shop": "shop (repo:example.test/b/shop)"}, options)
     page.close()
 
 
@@ -1436,6 +1478,7 @@ def main():
         overview_pass(browser)
         needs_pass(browser)
         hand_pass(browser)
+        picker_pass(browser)
         e2e_pass(browser)
         suggestion_pass(browser)
         jump_pass(browser)

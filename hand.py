@@ -35,6 +35,34 @@ def _pins(config):
     return list(got) if isinstance(got, list) else []
 
 
+def _shown(shown):
+    """What the page says it shows -- project identities or block names -- or
+    nothing, for a caller that does not say."""
+    if shown is None:
+        return []
+    if not isinstance(shown, list) or not all(isinstance(s, str) for s in shown):
+        raise Refused("shown must be a list of names")
+    return shown
+
+
+def _spread(pinned, shown):
+    """A pin written by plain name, from before projects had identities (the
+    block view still writes them), pins every project that carries the name --
+    a track and a folder can share one. Where the page shows more than one of
+    them, the pin is written out as one pin each, in the order the page shows
+    them, so that each can be moved, unpinned or merged on its own."""
+    shown = [(ident, got) for ident in shown if (got := projects.from_identity(ident))]
+    out = []
+    for pin in pinned:
+        mine = [ident for ident, got in shown if projects.from_identity(pin) is None
+                and projects.is_pin_of(pin, got)] if isinstance(pin, str) else []
+        if not mine:
+            out.append(pin)
+        else:
+            out.extend(i for i in mine if i not in out and i not in pinned)
+    return out
+
+
 def put(config, field, key, value):
     """Set `config[field][key]`, or take it out when the value is empty."""
     table = _table(config, field)
@@ -66,23 +94,28 @@ def move(config, key, target):
     put(config, "assign", key, target)
 
 
-def set_order(config, pinned):
-    """The block view's pins: the plain names it shows, in the order you left
-    them. It knows nothing of identities, so the projects you pinned on the
-    overview are kept -- after these -- rather than erased with every drag."""
+def set_order(config, pinned, shown=None):
+    """The block view's pins: the names of the blocks it shows, in the order
+    you left them. The projects you pinned on the overview are kept -- after
+    these -- rather than erased with every drag, unless the view shows a block
+    of that very name: a session moved by hand into a project is one, and
+    leaving it out of the list is how it is unpinned."""
     if not isinstance(pinned, list) or not all(isinstance(p, str) for p in pinned):
         raise Refused("expected {pinned: [project, ...]}")
-    kept = [p for p in _pins(config) if isinstance(p, str) and projects.from_identity(p) and p not in pinned]
+    shown = _shown(shown)
+    kept = [p for p in _pins(config)
+            if isinstance(p, str) and projects.from_identity(p) and p not in pinned and p not in shown]
     config["pinned"] = pinned + kept
 
 
-def pin(config, project, action, other=None):
+def pin(config, project, action, other=None, shown=None):
     """`pin` puts a project last among the pinned, `unpin` takes it out, `swap`
     changes places with another pinned project -- the one beside it on the
     page, which is not the one beside it in the list when a pin names a
-    project nobody is working in."""
+    project nobody is working in. `shown` is the pinned projects the page
+    shows, in order: it is what tells apart two that share a pin by plain name."""
     mine = _named(project)
-    pinned = _pins(config)
+    pinned = _spread(_pins(config), _shown(shown))
     at = projects.pin_rank(mine, pinned)
     if action == "pin":
         if at is None:
@@ -101,26 +134,29 @@ def pin(config, project, action, other=None):
     config["pinned"] = pinned
 
 
-def merge(config, source, target):
+def merge(config, source, target, shown=None):
     """Put everything of one project into another, and carry with it all that
     was said about the first: the sessions it will have (a move of the whole
-    project, so it holds), whatever was moved into it, its place among the
+    project, so it holds), the projects moved into it, its place among the
     pinned, its context line. Its name goes: the target keeps its own.
 
-    Nothing is left pointing at `source`, so a project absorbed twice over,
-    or one that was itself the target of an earlier merge, ends in one place.
+    No project is left moved into `source`, so one absorbed twice over, or one
+    that was itself the target of an earlier merge, ends in one place. A session
+    you moved there is left as you moved it: it follows the project, and taking
+    the merge back puts it where you had put it.
     """
     gone, kept = _named(source, "source"), _named(target, "target")
     if source == target:
         raise Refused("a project cannot be merged into itself")
+    shown = _shown(shown)
     assign = _table(config, "assign")
     for key, value in assign.items():
-        if isinstance(value, str) and value.strip() == source:
+        if isinstance(value, str) and value.strip() == source and projects.from_identity(key):
             assign[key] = target
     assign[source] = target
     config["assign"] = {k: v for k, v in assign.items() if k != v}
 
-    pinned, out = _pins(config), []
+    pinned, out = _spread(_pins(config), shown), []
     had = projects.pin_rank(kept, pinned) is not None
     for p in pinned:
         if projects.is_pin_of(p, gone) and not projects.is_pin_of(p, kept):

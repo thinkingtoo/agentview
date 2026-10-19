@@ -474,8 +474,10 @@ class Merges(Corrected):
         got = self.stored()
         self.assertEqual(got["pinned"], ["folder:pear", "folder:maple"])
         self.assertEqual(got["project_lines"], {"folder:maple": "Picking season"})
+        # A project moved into it goes with it; a session you moved there stays
+        # as you moved it (it follows the project), so taking the merge back gives it back.
         self.assertEqual(got["assign"], {"folder:orchard": "folder:maple", "folder:pear": "folder:maple",
-                                         "fake:a": "folder:maple", "fake:d": "orchard"})
+                                         "fake:a": "folder:orchard", "fake:d": "orchard"})
         self.assertNotIn("folder:orchard", got["names"])
         # What the roster shows: all of it in one pinned column; the plain
         # name that meant the absorbed project goes with it.
@@ -483,14 +485,14 @@ class Merges(Corrected):
         self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:c", "fake:d"])
         self.assertTrue(self.column("folder:maple")["pinned"])
 
-    def test_nothing_is_left_pointing_at_the_absorbed_project_but_its_own_move(self):
+    def test_no_project_is_left_moved_into_the_absorbed_one_but_its_own_move_and_your_sessions(self):
         self.seed(pinned=["folder:orchard"], names={"folder:orchard": "Orchard 2"},
                   project_lines={"folder:orchard": "Picking season"},
                   assign={"folder:pear": "folder:orchard", "fake:a": "folder:orchard"})
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
         got = self.stored()
         pointing = [k for k, v in got["assign"].items() if v == "folder:orchard"]
-        self.assertEqual(pointing, [])
+        self.assertEqual(pointing, ["fake:a"])      # a session you moved: it follows the project
         for field in ("pinned", "names", "project_lines"):
             self.assertNotIn("folder:orchard", got[field], field)
 
@@ -558,6 +560,15 @@ class TakenBack(Corrected):
         self.assertEqual(self.keys("folder:orchard"), ["fake:b"])
         self.assertEqual(self.column("folder:maple")["merged"], [])
 
+    def test_taking_a_merge_back_gives_back_the_sessions_you_had_moved_into_it(self):
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:orchard"})
+        self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
+        self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+        self.post("/api/assign", {"key": "folder:orchard", "project": ""})
+        self.assertEqual(self.keys("folder:orchard"), ["fake:b", "fake:c"])
+        self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:d"])
+        self.assertEqual(self.stored()["assign"], {"fake:c": "folder:orchard"})
+
 
 class BlockViewPins(Corrected):
     """The old block view still writes `pinned`, from the names it knows."""
@@ -576,6 +587,85 @@ class BlockViewPins(Corrected):
         self.seed(pinned=["folder:pear", "folder:orchard"])
         self.post("/api/order", {"pinned": ["folder:orchard", "maple"]})
         self.assertEqual(self.stored()["pinned"], ["folder:orchard", "maple", "folder:pear"])
+
+
+class BlockViewUnpins(Corrected):
+    """A session moved by hand into a project is a block of its own, named by
+    the project's identity, in the old block view -- and that view must be able
+    to unpin it, or drag it, like any other."""
+
+    def setUp(self):
+        super().setUp()
+        self.seed(assign={"fake:c": "folder:maple"}, pinned=["folder:maple", "folder:pear"])
+
+    def pinned_blocks(self):
+        return [b["project"] for b in self.poll()["blocks"] if b["pinned"]]
+
+    def test_the_block_view_unpins_a_block_that_is_named_by_an_identity(self):
+        self.assertIn("folder:maple", self.pinned_blocks())
+        shown = [b["project"] for b in self.poll()["blocks"]]
+        self.assertEqual(self.post("/api/order", {"pinned": [], "shown": shown})[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["folder:pear"])
+        self.assertNotIn("folder:maple", self.pinned_blocks())
+
+    def test_what_the_block_view_did_not_show_stays_pinned_after_its_own_drag(self):
+        self.assertEqual(self.post("/api/order", {"pinned": ["folder:maple"], "shown": ["folder:maple", "orchard"]})[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:pear"])
+
+    def test_a_list_of_what_it_shows_that_is_not_a_list_of_names_is_refused(self):
+        for shown in ("folder:maple", [3], {"a": 1}):
+            self.assertEqual(self.post("/api/order", {"pinned": [], "shown": shown})[0], 400, shown)
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:pear"])
+
+
+class OneNameTwoCards(Corrected):
+    """A pin written before projects had identities names a project by its
+    plain name, which a track and a folder can share: two cards, one pin. What
+    the page shows -- the pinned cards in their order -- says which is which."""
+
+    def setUp(self):
+        super().setUp()
+        self.seed(pinned=["maple", "folder:orchard"], assign={"fake:c": "track:maple"})
+        self.shown = ["track:maple", "folder:maple", "folder:orchard"]
+
+    def order(self):
+        return [c["project"] for c in self.columns()]
+
+    def test_the_two_cards_share_the_pin_as_the_page_shows_it(self):
+        self.assertEqual(self.order(), self.shown)
+        self.assertEqual([c["pinned"] for c in self.columns()], [True, True, True])
+
+    def test_the_arrow_between_them_swaps_them(self):
+        self.assertEqual(self.pin("track:maple", "swap", **{"with": "folder:maple", "shown": self.shown})[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["folder:maple", "track:maple", "folder:orchard"])
+        self.assertEqual(self.order(), ["folder:maple", "track:maple", "folder:orchard"])
+
+    def test_unpinning_one_leaves_the_other_pinned(self):
+        self.assertEqual(self.pin("folder:maple", "unpin", shown=self.shown)[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["track:maple", "folder:orchard"])
+        self.assertEqual({c["project"]: c["pinned"] for c in self.columns()},
+                         {"track:maple": True, "folder:maple": False, "folder:orchard": True})
+
+    def test_merging_one_into_another_project_leaves_the_other_pinned(self):
+        self.assertEqual(self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard",
+                                                  "shown": self.shown})[0], 200)
+        self.assertEqual(self.stored()["pinned"], ["track:maple", "folder:orchard"])
+
+    def test_a_pin_that_names_nobody_on_the_page_stays_as_written(self):
+        self.seed(pinned=["maple", "gone"], assign={"fake:c": "track:maple"})
+        self.pin("folder:maple", "unpin", shown=["track:maple", "folder:maple"])
+        self.assertEqual(self.stored()["pinned"], ["track:maple", "gone"])
+
+    def test_without_the_list_the_pin_is_read_as_before(self):
+        self.pin("folder:maple", "unpin")
+        self.assertEqual(self.stored()["pinned"], ["folder:orchard"])
+
+    def test_a_list_that_is_not_a_list_of_projects_is_refused(self):
+        for shown in ("track:maple", [3], {"a": 1}):
+            self.assertEqual(self.pin("folder:maple", "unpin", shown=shown)[0], 400, shown)
+            self.assertEqual(self.post("/api/merge", {"source": "folder:maple", "target": "folder:pear",
+                                                      "shown": shown})[0], 400, shown)
+        self.assertEqual(self.stored()["pinned"], ["maple", "folder:orchard"])
 
 
 class MovedByRoute(Corrected):

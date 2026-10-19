@@ -1379,7 +1379,7 @@ main.addEventListener("drop", async ev => {
   await fetch("/api/order", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ pinned }),
+    body: JSON.stringify({ pinned, shown: order }),
   });
   load();
 });
@@ -1408,7 +1408,7 @@ main.addEventListener("click", async ev => {
   await fetch("/api/order", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ pinned: current.filter(p => p !== holder.dataset.project) }),
+    body: JSON.stringify({ pinned: current.filter(p => p !== holder.dataset.project), shown: PAINTED }),
   });
   load();
 });
@@ -1427,11 +1427,20 @@ async function correct(path, body) {
   load();
 }
 
-// Other projects you can put something in, named so two with one name differ.
+// Other projects you can put something in, named so two with one name differ:
+// by kind, then (a client folder and a folder are both folders) by what the
+// identity starts with, then -- two repositories called alike -- by the identity.
 function projectOptions(except) {
   const open = COLUMNS.filter(c => c.kind !== "none" && c.project !== except);
-  const twice = new Set(open.map(c => c.name).filter((n, i, all) => all.indexOf(n) !== i));
-  return open.map(c => `<option value="${esc(c.project)}">${esc(c.name)}${twice.has(c.name) ? ` (${esc(c.kind)})` : ""}</option>`).join("");
+  const prefix = c => c.project.split(":", 1)[0];
+  const tag = c => {
+    const same = open.filter(o => o.name === c.name);
+    if (same.length < 2) return "";
+    if (same.filter(o => o.kind === c.kind).length < 2) return ` (${c.kind})`;
+    if (same.filter(o => prefix(o) === prefix(c)).length < 2) return ` (${prefix(c)})`;
+    return ` (${c.project})`;
+  };
+  return open.map(c => `<option value="${esc(c.project)}">${esc(c.name)}${esc(tag(c))}</option>`).join("");
 }
 
 // Closed once: taking out the button you pressed fires its focusout, and that
@@ -1482,15 +1491,18 @@ document.getElementById("main").addEventListener("click", async ev => {
   if (!act || act.closest(".ov-form")) return;
   ev.stopPropagation();
   const what = act.dataset.act;
-  if (what === "pin" || what === "unpin") return correct("/api/pin", { project, action: what });
-  if (what === "swap") return correct("/api/pin", { project, action: "swap", with: act.dataset.with });
+  // The server is told which cards are pinned as you see them: a pin written
+  // by plain name can hold two cards, and only the page knows which is which.
+  const shown = COLUMNS.filter(c => c.pinned).map(c => c.project);
+  if (what === "pin" || what === "unpin") return correct("/api/pin", { project, action: what, shown });
+  if (what === "swap") return correct("/api/pin", { project, action: "swap", with: act.dataset.with, shown });
   if (what === "unmerge") return correct("/api/assign", { key: act.dataset.from, project: "" });
   if (what === "merge-form") {
     picker(col.querySelector(".ov-head"), `merge all of it into
         <select class="pick" aria-label="merge into">
         <option value="" disabled selected>choose…</option>${projectOptions(project)}</select>
         <button data-act="go">merge</button><button data-act="cancel">cancel</button>`,
-      into => correct("/api/merge", { source: project, target: into }));
+      into => correct("/api/merge", { source: project, target: into, shown }));
   }
 });
 

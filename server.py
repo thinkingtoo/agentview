@@ -354,7 +354,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(json.dumps({"ok": True, "chime": chime}), "application/json")
 
     def _order(self, body):
-        self._correct(lambda config: hand.set_order(config, body.get("pinned")))
+        self._correct(lambda config: hand.set_order(config, body.get("pinned"), body.get("shown")))
 
     def _name(self, body):
         key, label = body.get("project"), body.get("label")
@@ -373,10 +373,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _pin(self, body):
         self._correct(lambda config: hand.pin(config, body.get("project"), body.get("action"),
-                                              body.get("with")))
+                                              body.get("with"), body.get("shown")))
 
     def _merge(self, body):
-        self._correct(lambda config: hand.merge(config, body.get("source"), body.get("target")))
+        self._correct(lambda config: hand.merge(config, body.get("source"), body.get("target"), body.get("shown")))
 
     def _correct(self, change, **answer):
         """Make one correction to config.json -- alone, whatever else is being
