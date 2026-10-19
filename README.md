@@ -78,6 +78,11 @@ into `config.json` by hand is not supported: it neither crashes nor loops, and
 every session still has a card, but the cards swap places and a click aimed at
 one card can land in another.
 
+In the block view a session moved by hand is a block of its own, named by the
+project it was moved into; when that project is merged away the block is named
+by where the project went, so every block the view offers is one it may pin,
+rename and drop on.
+
 The page this README describes below is still there as the **block view**, at
 `/?view=blocks` (a link in the header goes each way). Fold,
 hold, the boss nesting and the routines block exist only on the block view for

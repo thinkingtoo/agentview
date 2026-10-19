@@ -343,6 +343,27 @@ def merged_into(assigned):
     return {into: sorted(keys) for into, keys in out.items()}
 
 
+def landed(assigned, value):
+    """The project identity a session assigned to `value` is in once the moves of
+    whole projects are followed -- `assigned` holds those too, keyed by identity.
+    The block view names a session you moved after this, and a project you
+    merged away is no longer one it can be asked to pin, rename or drop on. A
+    value that is not a project's identity (a plain name, anything else) is
+    returned as it is, and so is one nothing was moved from. It always ends: a
+    project is not visited twice."""
+    if not isinstance(value, str) or not from_identity(value.strip()):
+        return value
+    here, seen = value.strip(), set()
+    while here not in seen:
+        seen.add(here)
+        step = assigned.get(here)
+        step = step.strip() if isinstance(step, str) else ""
+        if not from_identity(step) or step in seen:
+            break
+        here = step
+    return here if here != value.strip() else value
+
+
 def _is_assigned(assigned, key):
     return isinstance(assigned.get(key), str) and bool(assigned[key].strip())
 

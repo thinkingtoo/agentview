@@ -1323,6 +1323,7 @@ def hand_pass(browser):
     for label, path, act in (("a click on a card's pin", "/api/pin", lambda: col("folder:pear").locator(".ov-pin").click()),
                              ("a rename by its field", "/api/name", None)):
         fake.status[path] = 409
+        forget_note(page)
         polls = fake.polls
         if act:
             act()
@@ -1403,6 +1404,12 @@ def open_hand_page(browser, port, refusals=None):
     return page
 
 
+def forget_note(page):
+    """Clear the line a refusal left on the page (it holds for six seconds), so that the next
+    wait for it is a wait for the next refusal and not for the last one."""
+    page.evaluate("() => { NOTE = null; document.getElementById('stamp').textContent = ''; }")
+
+
 def hold_back(page):
     """Make a tab stale, as a picker left open does: from now on it is served the roster it
     already has, until the first thing it POSTs -- then the real one again, for the page's
@@ -1449,6 +1456,7 @@ def stale_pass(browser):
         wait_for(lambda: stored()["pinned"] == ["folder:orchard", "folder:maple"])
         check("stale: tab b still shows what it showed, maple before orchard",
               order(b)[:2] == ["folder:maple", "folder:orchard"], order(b))
+        forget_note(b)
         col(b, "folder:maple").locator(".ov-arrow").click()
         b.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
         wait_order(b, ["folder:orchard", "folder:maple", "folder:pear"])
@@ -1472,11 +1480,13 @@ def stale_pass(browser):
               and done["pinned"] == ["folder:maple"], done)
         check("stale: tabs b and c still show the cards that are gone", "folder:orchard" in order(b) and "folder:pear" in order(c),
               (order(b), order(c)))
+        forget_note(b)
         col(b, "folder:orchard").locator(".ov-pin").click()      # the star it still shows lit
         b.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
         wait_order(b, ["folder:maple"])
         check("stale: the star of a card another tab merged away does not unpin the card that took its pin",
               stored() == done and col(b, "folder:maple").locator(".ov-pin.on").count() == 1, stored())
+        forget_note(c)
         col(c, "folder:pear").locator(".ov-pin").click()          # the star it still shows unlit
         c.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
         wait_order(c, ["folder:maple"])
@@ -1486,6 +1496,48 @@ def stale_pass(browser):
         check("stale: three clicks, three refusals, nothing else refused", len(refused) == 3, refused)
         for page in (a, b, c):
             page.close()
+    finally:
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+                proc.wait(10)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def block_view_pass(browser):
+    """Hunt 7: the old block view of a tab that is up to date, after a session was moved by
+    hand into a project and that project was merged away. The session's block must be one the
+    view may rename, drag and drop on: the server must not call this tab behind."""
+    root = pathlib.Path(tempfile.mkdtemp(prefix="blocks-"))
+    cfg = root / "config.json"
+    procs = []
+    stored = lambda: json.loads(cfg.read_text())
+    try:
+        proc, port = start_hand_server(root, procs)
+        refused = []
+        page = open_hand_page(browser, port, refused)
+        post = lambda path, body: page.evaluate(
+            "([p, b]) => fetch(p, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Fleet': '1'},"
+            " body: JSON.stringify(b)}).then(r => r.status)", [path, body])
+        check("blocks e2e: a session moved by hand, then its project merged away",
+              (post("/api/assign", {"key": "fake:c", "project": "folder:maple"}),
+               post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})) == (200, 200), stored())
+        page.goto(f"http://127.0.0.1:{port}/?view=blocks", wait_until="load")
+        page.wait_for_selector(".block")
+        names = page.locator(".block").evaluate_all("els => els.map(e => e.dataset.project)")
+        check("blocks e2e: its block is named by where the project went, not by the one merged away",
+              "folder:orchard" in names and "folder:maple" not in names, names)
+        block = page.locator('.block[data-project="folder:orchard"]')
+        open_editor(page, block.locator(".pname"))
+        page.locator("input.inline").fill("Orchard 2")
+        page.keyboard.press("Enter")
+        page.wait_for_function("() => !document.querySelector('input.inline')")
+        page.wait_for_timeout(500)
+        check("blocks e2e: renaming that block is accepted, and the page does not say it is behind",
+              stored().get("names") == {"folder:orchard": "Orchard 2"} and not refused
+              and "changed in another tab" not in page.locator("#stamp").inner_text(),
+              (stored(), refused))
+        page.close()
     finally:
         for proc in procs:
             if proc.poll() is None:
@@ -1612,6 +1664,7 @@ def main():
         picker_pass(browser)
         e2e_pass(browser)
         stale_pass(browser)
+        block_view_pass(browser)
         suggestion_pass(browser)
         jump_pass(browser)
         for view in ("overview", "blocks"):

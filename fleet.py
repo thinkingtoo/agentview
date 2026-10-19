@@ -470,7 +470,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
     # Keyed to the moment it stopped, so a session that works and stops
     # again is ready once more without anything having to clear it.
     unseen = seen.ready(key, updated, marks)
-    project = assigned.get(key) or resolve_project(cwd, shelves)
+    project = projects.landed(assigned, assigned.get(key)) or resolve_project(cwd, shelves)
     # Only guess for the ones that have nothing better -- the guess costs a
     # vote over every path touched, and a session with a real cwd does not
     # need it. A routine is never guessed for.

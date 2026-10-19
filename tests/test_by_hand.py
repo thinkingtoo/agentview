@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 import lines
 import log
+import projects
 import seen
 import server
 from test_providers import Fake, minimal
@@ -239,6 +240,32 @@ class OldConfig(TrackFixtures):
         self.config = {"assign": {"claude:loom": "track:checkout", "claude:checkout": ORCHARD}}
         got = self.claude(sess("a", loom, name="Femi"))
         self.assertEqual(self.names(got), ["loom"])
+
+
+class Landed(unittest.TestCase):
+    """`projects.landed`: the project a session you moved is in once the moves of
+    whole projects are followed (what the block view names its block after)."""
+
+    def test_it_follows_the_moves_of_whole_projects_to_the_end(self):
+        assigned = {"fake:c": "folder:maple", "folder:maple": "folder:orchard", "folder:orchard": "folder:pear"}
+        self.assertEqual(projects.landed(assigned, "folder:maple"), "folder:pear")
+        self.assertEqual(projects.landed(assigned, " folder:orchard "), "folder:pear")
+
+    def test_a_value_nothing_was_moved_from_comes_back_as_it_was(self):
+        for value in ("folder:maple", " folder:maple ", "maple", "", None, 7, ["folder:maple"]):
+            self.assertEqual(projects.landed({"fake:c": "folder:maple"}, value), value)
+
+    def test_a_session_key_or_a_plain_name_is_not_followed(self):
+        # `assigned` keys sessions too; only a project's identity is looked up for a way on.
+        assigned = {"fake:c": "folder:maple", "maple": "folder:orchard", "folder:maple": "plain name"}
+        self.assertEqual(projects.landed(assigned, "maple"), "maple")
+        self.assertEqual(projects.landed(assigned, "folder:maple"), "folder:maple")
+
+    def test_a_ring_written_by_hand_ends(self):
+        for assigned in ({"folder:a": "folder:b", "folder:b": "folder:a"},
+                         {"folder:a": "folder:b", "folder:b": "folder:c", "folder:c": "folder:a"},
+                         {"folder:a": "folder:a"}):
+            self.assertIn(projects.landed(assigned, "folder:a"), ("folder:a", "folder:b", "folder:c"))
 
 
 class Served(unittest.TestCase):
@@ -747,6 +774,54 @@ class MovedByRoute(Corrected):
         self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
         self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:c", "fake:d"])
         self.assertEqual(self.stored()["assign"], {"fake:c": "folder:maple"})
+
+
+class BlockViewAfterAMerge(Corrected):
+    """Hunt 7: the block view names a session moved by hand after the project it
+    was moved into. When that project is merged away, an up-to-date tab must not
+    be told it is behind: every block the roster offers takes the block view's
+    own requests (drag it, rename it, drop a row on it)."""
+
+    def blocks(self):
+        return [b["project"] for b in self.poll()["blocks"] if b["project"] and not b.get("routines")]
+
+    def asked_of(self, name):
+        return [self.post("/api/order", {"pinned": [name], "shown": self.blocks()})[0],
+                self.post("/api/name", {"project": name, "label": "Renamed"})[0],
+                self.post("/api/assign", {"key": "fake:a", "project": name})[0]]
+
+    def test_a_session_moved_into_a_project_that_is_merged_away_sits_in_a_block_that_is_still_there(self):
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
+        self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
+        names = self.blocks()
+        self.assertIn("folder:orchard", names)          # Saskia's block: where the moves end
+        self.assertNotIn("folder:maple", names)
+        for name in names:
+            self.assertEqual(self.asked_of(name), [200, 200, 200], name)
+
+    def test_the_same_through_a_longer_way(self):
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
+        self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
+        self.post("/api/merge", {"source": "folder:orchard", "target": "folder:pear"})
+        names = self.blocks()
+        self.assertNotIn("folder:maple", names)
+        self.assertNotIn("folder:orchard", names)
+        for name in names:
+            self.assertEqual(self.asked_of(name), [200, 200, 200], name)
+
+    def test_the_overview_and_the_block_view_still_agree_on_where_the_session_is(self):
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
+        self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
+        self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+        block = next(b for b in self.poll()["blocks"] if any(m["key"] == "fake:c" for m in b["members"]))
+        self.assertEqual(block["project"], "folder:orchard")
+
+    def test_taking_the_merge_back_gives_the_session_its_block_back(self):
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
+        self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
+        self.post("/api/assign", {"key": "folder:maple", "project": "", "was": "folder:orchard"})
+        self.assertIn("folder:maple", self.blocks())
+        self.assertNotIn("folder:orchard", self.blocks())
 
 
 class TwoTabs(Corrected):
