@@ -74,7 +74,8 @@ SENTENCE_END = re.compile(r"""[.!?]["'\u201d\u2019)\]]*(?=\s+[A-Z0-9"\u201c\u201
 LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 BOLD = re.compile(r"(\*\*|__)(.+?)\1")
-READ = 200_000       # a goal or a README is read this far, no further
+READ = 100_000       # a goal or a README is read this far, no further
+PARAGRAPH_MAX = 1500  # and a paragraph this far: the hover is a hover, and every poll carries it
 
 
 def read(path):
@@ -169,14 +170,13 @@ def track_card(track):
         progress = {"done": done, "total": total, "text": f"{done} of {total}", "met": False}
     else:
         progress = None
-    outcome = next((plain(" ".join(p)) for p in paragraphs(section(lines, "outcome"))
+    outcome = next((plain(" ".join(p)[:PARAGRAPH_MAX]) for p in paragraphs(section(lines, "outcome"))
                     if not HEADING.match(p[0])), "")
     return outcome, {"status": status, "progress": progress}
 
 
 # ------------------------------------------------------------- the repository
 
-COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 FRONT_MATTER = re.compile(r"\A\s*---\s*\n.*?\n---\s*(?:\n|\Z)", re.DOTALL)
 INCLUDE = re.compile(r"^\s*@\S+\s*$")
 REFERENCE = re.compile(r"^\s*\[[^\]]+\]:\s")
@@ -188,6 +188,23 @@ TAGS = re.compile(r"<[^>]*>")
 # the file a project writes about itself, CLAUDE.md often only includes it.
 DESCRIBED_BY = (("readme.md", "readme.markdown", "readme.txt", "readme"),
                 ("agents.md",), ("claude.md",))
+
+
+def without_comments(text):
+    """The text with its HTML comments taken out. One that never closes runs to
+    the end, as it does when the README is shown. Found with `find`, not a
+    pattern: a pattern tries every `<!--` against the whole rest of the file."""
+    out, at = [], 0
+    while True:
+        start = text.find("<!--", at)
+        if start < 0:
+            out.append(text[at:])
+            return "".join(out)
+        out.append(text[at:start])
+        end = text.find("-->", start + 4)
+        if end < 0:
+            return "".join(out)
+        at = end + 3
 
 
 def prose(par):
@@ -202,7 +219,7 @@ def prose(par):
             break
     if not par or HEADING.match(par[0]) or NOT_PROSE.match(par[0]):
         return ""
-    text = plain(" ".join(par))
+    text = plain(" ".join(par)[:PARAGRAPH_MAX])
     if text.startswith("<") and text.endswith(">"):
         return ""
     return text if re.search(r"\w", TAGS.sub("", text)) else ""
@@ -210,7 +227,7 @@ def prose(par):
 
 def first_prose(text):
     """The first paragraph of a markdown text that is prose, or ""."""
-    text = COMMENT.sub("", FRONT_MATTER.sub("", text, count=1))
+    text = without_comments(FRONT_MATTER.sub("", text, count=1))
     return next((got for got in map(prose, paragraphs(unfenced(text))) if got), "")
 
 
@@ -230,9 +247,9 @@ def repository_text(rows):
     there, so that the line is the same whichever worktree a session is in
     and whichever session comes first."""
     roots = {}
-    for m in sorted(rows, key=lambda m: m["key"]):
-        for rank, root in enumerate(projects.checkouts(m["cwd"])):
-            roots.setdefault(root, rank)
+    for cwd in sorted({m["cwd"] for m in rows}):
+        for rank, root in enumerate(projects.checkouts(cwd)):
+            roots[root] = min(rank, roots.get(root, rank))
     for root in sorted(roots, key=lambda r: (roots[r], str(r))):
         for wanted in DESCRIBED_BY:
             path = named(root, wanted)

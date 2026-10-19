@@ -9,6 +9,7 @@ repository, the real config or the brain. Names and texts are invented.
 """
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -279,6 +280,22 @@ class Repositories(Cards):
                 (self.loom / old).unlink(missing_ok=True)
             self.put(name, text)
             self.assertEqual(self.line()["line"], f"Prints {HOSTILE} reports.", name)
+
+    def test_a_comment_that_never_closes_ends_the_text_and_costs_nothing(self):
+        self.put("README.md", "Prints reports.\n\n" + "<!-- note\n" * 20000)
+        started = time.monotonic()
+        self.assertEqual(self.line()["line"], "Prints reports.")
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_a_paragraph_that_is_a_wall_of_text_is_cut_before_it_is_read(self):
+        self.put("README.md", "word " * 50000 + "\n")
+        got = self.line()
+        self.assertTrue(got["line"].endswith("\u2026"))
+        self.assertLessEqual(len(got["full"]), 1500)
+
+    def test_a_comment_in_the_middle_of_a_line_is_taken_out_of_it(self):
+        self.put("README.md", "Prints <!-- hidden --> reports.\n\n<!-- one\ntwo -->\nAnd more.\n")
+        self.assertEqual(self.line()["line"], "Prints reports.")
 
     def test_a_readme_wins_over_the_instructions(self):
         self.put("README.md", "Prints reports.\n")
