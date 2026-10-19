@@ -11,7 +11,6 @@ import os
 import shutil
 import sqlite3
 import sys
-import shutil
 import tempfile
 import time
 import unittest
