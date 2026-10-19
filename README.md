@@ -48,6 +48,47 @@ kind (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track
 and a repository that share a name stay two projects; `pinned`, `names` and
 `assign` take an identity, or a plain name as they did before.
 
+## What a project is about
+
+Under a project's name the card says what it is about, in one line cut at about
+140 characters (the whole text is the hover). The first of these that exists:
+
+1. **Your own line**, written in place on the card (click the line) and kept in
+   `config.json` as `project_lines`, keyed by the project's identity, so a track
+   and a repository with one name never share a line. An empty line takes it back.
+2. **A track's goal**: the first sentence of `## Outcome` (or a bold
+   `**Outcome:**` label) in `~/.claude/pm/<track>.goal.md`. Beside the name, the
+   `_Status:` word (OPEN, PAUSED, MET) and "N of M" from the boxes under
+   `## Done when` (or `**Done when:**`); a MET track says "done" whatever its
+   boxes say.
+3. **A repository's own words**: the first prose paragraph of its README, else of
+   `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, which
+   includes a language switcher with its current language in plain text,
+   tables, lists, code, a paragraph of only code or only `&nbsp;`, HTML blocks,
+   link definitions and `@` includes skipped; a table or a list directly under
+   a line ends it). A quote under the title counts as the description, its
+   marks and GitHub's `[!NOTE]` marker taken off. Read from the main checkout, so every
+   worktree says the same (a card looks at the main checkout and three more at
+   most, reads each distinct text once, and no more than the first 20,000
+   characters of a file). A link counts as the file only while it stays inside
+   the checkout: `AGENTS.md -> CLAUDE.md` is read, `README.md -> ~/.ssh/id_ed25519`
+   is not, a cloned repository chooses where its links point. The line is a reminder, not a rendering of the page:
+   links give their label, images say nothing, formatting tags go, and code
+   stays as written.
+4. **A guess**: the two latest session titles, greyed, with "add a line".
+
+The default name is the slug made readable (`overview-build` is "Overview
+build"; the brand stays lowercase) with the raw name on hover; a name you give
+in `names` is shown exactly as you wrote it. The No project column has no line.
+
+The **notes** link on a card searches your own notes for the project's name and
+line, on a click and never before, and shows the top three hits. It needs a local
+file, like meaning search does: `~/.config/tiroir/agentview-brain.env` (or the
+path in `$AGENTVIEW_BRAIN_ENV`), mode 0600, with `BRAIN_URL` (the notes
+service's MCP address) and `BRAIN_AUTH` (the whole Authorization header value).
+A file others can read is refused. Without it the link says "notes search is
+not set up here". The notes are never where a context line comes from.
+
 **By hand**, on the overview: click a project's name to rename it (its raw name
 stays on hover); the ☆ on its card pins it, and the ‹ › on a pinned card move
 it along the pinned ones, the ★ again unpins; **merge…** puts all of the
@@ -118,7 +159,12 @@ session waiting on a dialog is not "writing". CPU with no call in flight is a
 shell left behind and proves nothing.
 Any command or job counts for at most six hours (`WAIT_MAX_MINUTES` in
 `fleet.py`); past that the tile still says what it waits on, and the session
-stops counting as moving.
+stops counting as moving once `hung_after_minutes` more have passed (the
+ten minutes are counted from the moment the six hours ended, not from the last
+write). The same count runs from the last time CPU was seen moving under a
+command it waits on: a command that burned CPU two minutes ago is a session
+that was moving two minutes ago. That time is kept per session, not per
+command, and in memory only: after a restart, CPU from before it is unknown.
 
 Each project card draws a **strip**: one bar per minute for the last 30,
 oldest first, the records written by all of the project's sessions and their
@@ -127,9 +173,158 @@ counters ride on the incremental tail the reader already keeps; they add no
 read. After a restart a transcript is read from its last 2 MB, so the minutes
 before that window are **unknown**, not empty: the strip leaves them as dotted
 stubs, and a minute any session in the project could not see is unknown for the
-project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session that
-needs you is stuck even while a job runs, and a busy session nothing proves is
-moving counts as stuck.
+project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session is
+stuck when its tile carries a kind (below), even while a job runs. A menu the
+person opened (`dialog open`) is not stuck, and neither is a busy session whose
+processes could not be read.
+
+## Stuck: Needs you, Error, Hung, Limit
+
+A tile that is stopped says so with a **kind**: a tag, a border and a dot in the
+kind's colour, a reason, and what the person needs to decide before they jump.
+A session has the most urgent kind that holds, in this order, and the card's
+state word (under its name) is the most urgent of its sessions':
+**NEEDS YOU** (amber), **ERROR** and **HUNG** (red), **LIMIT** (purple), then
+MOVING (green) and ALL IDLE (grey).
+
+| kind | when | reason | context |
+|---|---|---|---|
+| Needs you | an open question, an open permission prompt, another request that waits on the person (below), a dialog that says what it waits on (below), or a session line with things left | Question, Permission prompt, Sandbox request, Worker request, Goal proposal, the dialog's own words, "3 things left for you" | the question and its options; the tool and its command; the request's name and nothing more; the line's ask |
+| Error | an API or auth error is the session's last word | Overloaded, Auth error, Server error, or the error's own name | the error's words and how long ago |
+| Hung | busy, and nothing shows it moving for `hung_after_minutes` (default 10) | "Not moving for 14 min" | the last tool it called and how long ago |
+| Limit | the usage limit is the session's last word, or a "Session paused" dialog is open on usage credits | Rate limit, Session paused | when it resets (the error carries it) and how long it has been held; for the dialog, its own words |
+
+A `waiting` session says what it waits on (`waitingFor`, Claude Code's own
+word). `input needed` is a question and `permission prompt` a permission
+prompt; `sandbox request` (a sandboxed command wants the network), `worker
+request` (a teammate's worker asks) and `goal proposal` (Claude proposes a
+session goal) each wait on an approval, and read Needs you under their own
+name. `dialog open` is a menu or panel the person opened themselves: not
+stuck. A word this page has not met reads Needs you too, since Claude Code only
+says `waiting` when it waits on someone. The chime rings for every one of them,
+as before.
+
+A dialog Claude Code raises itself, and that waits on a choice, also says
+`dialog open`, but beside it the registry may carry a `needs` text (the
+classifier billing notice, the ultraplan choice, the auto-mode default, a
+refused turn's "retry on a fallback model or edit the prompt"). Such a dialog
+reads Needs you, and its own words are the reason. The one that is open on
+usage credits ("continue on usage credits or switch models") reads Limit,
+"Session paused", or "Rate limit" with the reset time when the transcript already
+holds the limit's error; things left for you (a session line) read Needs you
+before either. A menu
+with no `needs` text stays not stuck. Only a `waiting` session's `needs` is
+read, and only beside `dialog open`: the same field is written for other
+sessions by Claude Code's classifier, and means something else there. The event
+log notes when a `needs` text arrives or goes, as a kind (`usage`, `fallback`,
+`billing`, `ultraplan`, `auto mode`, `other`) and never as the words.
+
+Known limits (Claude Code 2.1.295, checked 2026-10-19): an interactive session's
+status writer leaves `needs` out, so none of the 24 live registry rows had one
+and these dialogs still read as a menu until a Claude Code writes it; the managed
+settings review has no `needs` text in Claude Code's own table, so it cannot be
+told from a menu the person opened; and a refused turn has no marker in the
+transcript that has been seen next to the dialog, so it is not detected from
+the transcript either.
+
+A failure (a Limit or an Error) is **the last word** until the model answers or
+you type: a reply of the model's own, a prompt you typed, a compaction. What
+nobody typed does not end it, because it does not call the model: a task
+notification, a message from another session, a tool's result, the prompt a
+skill expands. Neither do the records Claude Code writes on its own after an
+error (a turn duration, a title, a queued line, a snapshot, the "No response
+requested." it writes when it resumes a session and no model was called), nor a
+slash command run locally or a `!` shell line. A subagent's records are not the
+session's. Until then the tile stays Error or Limit and is not turned into Hung.
+
+Hung is `moving` turned round (see Movement), so a session waiting on a
+subagent, a background job or a command using CPU is never Hung, for the six
+hours such evidence counts and `hung_after_minutes` after. It is also not
+said when `/proc` could not answer: the first look at a command after a restart
+has nothing to compare its CPU with, and a folder that will not be read, or a
+command that exits mid-walk, is no evidence of absence. The same goes for a
+transcript that cannot be read: with no writes to see, silence is not known.
+
+The flags the chime reads (`stuck`, `waiting`, `ready`, `tool`) are computed as
+before and stay on `blocks`; the kinds are on the tiles. Hung replaces `stuck`
+on the overview.
+
+## The header: counts and banners
+
+The header counts what the person is wanted for, from the roster's `counts`:
+**3 need you** (a tile that says Needs you), **3 other stuck** (Error, Hung or
+Limit) and **5 moving**. A session is in one count: stuck wins over moving, so
+a session that needs you while a job runs is counted as needing you, and an
+idle session is in none. Routines are not on the overview, so they are in none.
+Each tile carries the count it is in (`counted`), so the page counts nothing and
+decides nothing.
+
+A click on a count lights up those sessions, fades the rest and shrinks every
+column with none to its card (the column keeps its width). A second click on the
+same count clears it; a click on another count moves the light. A count of
+nothing is not a button, and a lit count that falls to nothing clears itself.
+
+A condition of the whole machine is one **banner** across the top of the page,
+from the roster's `banners`, never a kind on a tile: every session is held by it
+alike. A full disk is free space under `disk_full_mb` (default 500, in
+megabytes) on the disk that holds Claude Code's own folder (`CLAUDE_CONFIG_DIR`,
+default `~/.claude`), where transcripts are written. It says "Disk full: 212 MB
+left where sessions write". A disk that cannot be read is no banner. The page
+prints a banner's words as text and looks for nothing of its own.
+
+## Finished sessions: pills
+
+A session that has been **idle for `finished_after_minutes`** (default 120, a
+number of minutes more than nothing, else 120) leaves its column's tiles for a
+**pill** at the foot of the column, in the roster's `pills`: its name, how long
+it has been idle, the working-on line as the hover, and a click that jumps the
+way a tile's does. A pill with nowhere to go says "no terminal" before the click,
+and a click on it says why and does nothing: it posts nothing and marks nothing
+seen. Pills are never hidden.
+
+It is finished only when **all** of these hold, and any one failing keeps the
+full tile however old it is:
+
+- idle, and nothing shows a sign of life: the registry's stop and the newest write
+  to its transcript are both `finished_after_minutes` old, a provider's strip of
+  writes has none in the last half hour, and no background job runs under it;
+- **its handover read**, in the overview (below);
+- nothing left for the person: no open question or prompt, no `n` above nothing,
+  no Error, Hung or Limit;
+- not pinned.
+
+Pills are counted in nothing: not the card's state (a project of pills alone is
+ALL IDLE), not its mix, not its strip (unless the project has nothing but pills,
+which then has the strip they have), not the header's counts (the page's
+"N sessions" counts tiles). Any sign of life -- a prompt, a write, a stuck kind -- makes it a tile
+again, and it shrinks again after the next two hours idle.
+
+**Reading a handover.** A tile that has stopped and has not been read shows what
+the session said, in quotes, and an "unread" tag (a session that said nothing has
+the tag and no quote: "no words" may be a transcript that could not be read, so it
+too wants a look before it is forgotten). A jump that reached the
+terminal, or a click on a tile that has none, reads it -- the click names the stop
+the tile showed (`POST /api/seen {key, stop}`), and only that stop is read: a
+session that stopped again since the page's last poll has a handover the page never
+showed. What is remembered is not
+"you saw this session" but *the stop you read*, so a session that works and stops
+again has a handover nobody has read. This is `finished.json` in the state folder,
+beside `seen.json`, and it is a separate fact from the chime's seen mark. **The
+marks the block view left behind do not count as having read a handover here**:
+they say a row was clicked (a jump that failed used to write one too), and the old
+row did not put what the session said in front of you. They keep driving the chime
+and the `ready` flag exactly as before; a session whose only mark is one of those
+stays a full tile, with its handover shown, until it is looked at once in the
+overview. The block view's own click on a row with no terminal (`/api/seen {key}`,
+no stop) tells the chime and reads nothing: that row shows the last prompt, not the
+handover. `fleet.mark_seen` writes both for a jump that reached the terminal.
+
+**Pin.** The pin button on a pill keeps it open as a full tile until you unpin it
+or the session closes (`POST /api/keep {key, pinned}`; only a live session can be
+pinned). A pinned idle session is an ordinary idle tile. The pin is in
+`finished.json`, not in `config.json`, and is dropped when a poll in which its
+provider answered no longer lists the session (so a missed poll does not unpin
+anything).
 
 A command a session leaves for you in its line gets a **copy** button. The
 session-line hook is unchanged, so `ask` is free text and `ask_commands.py`
@@ -625,6 +820,14 @@ appended since. A partial final line is left for next time; a file that shrank
 or whose opening bytes changed is read again from scratch. Cold **14.4s →
 0.84s**, warm **0.28s → 0.03s**.
 
+A record ends at `\n` and nowhere else, as JSON Lines says. Python's
+`str.splitlines()` also cuts at U+2028, U+2029 and U+0085, which a session
+writes raw inside a JSON string, and the two halves of the cut record parse as
+nothing: its title, its tool call, its words and its write in the strip were
+thrown away. Every reader of a transcript or a rollout now cuts at `\n` only:
+the readers of bytes on `b"\n"`, the readers of text with
+`providers.base.jsonl_lines`.
+
 A jump asks WezTerm and tmux first and only enumerates Konsole over D-Bus if
 neither claimed the session, and validates the pid from the peer files alone
 rather than building the whole page. The click is also acknowledged before the
@@ -645,17 +848,28 @@ a working session printed **your own last prompt back at you**.
 
 So the session is asked. Two hooks, and neither of them interrupts anything.
 
-**`UserPromptSubmit` starts the turn** (`hooks/turn_line.py`). It forgets the
-previous line — the prompt you just typed is the answer to whatever the session
-was blocked on — and injects one short paragraph asking for the next one. The
-session then writes its line as an ordinary action inside the turn it was
-already having.
+**`UserPromptSubmit` starts the turn** (`hooks/turn_line.py`). It forgets what
+the previous line was blocked on — the prompt you just typed is the answer to
+it — and injects one short paragraph asking for the next line. The session then
+writes its line as an ordinary action inside the turn it was already having.
+What it forgets is `ask` and `n`. The `did` stays (`lines.kept_did`, a file of
+its own beside the line) until the session writes another, because the job does
+not change at a prompt; it is what a tile says it is working on.
 
 | Field | What it is |
 |---|---|
-| `did` | Where the work stands. One sentence, in the language of the conversation. It **replaces** the `ai-title` line, which becomes its fallback. |
+| `did` | Where the work stands. One sentence, in the language of the conversation. It **replaces** the `ai-title` line, which becomes its fallback. It is kept across prompts, until a newer one is written. |
 | `ask` | The one thing it is blocked on, in its own words. |
 | `n` | How many things are left for you when its turn ends: a decision, a command to run, a mail to send, a sign-in. Counted even when it has other work, since nothing moves on them once it stops. An offer is not one. |
+
+**The line a tile says it is working on** (`working.py`) is the first of these
+that says something new: your own line (the one you click to write), the `did`,
+Claude Code's title; and with none of those, greyed, the last prompt, then the
+branch, then the folder. A line that only repeats the project's name, the
+card's context line or the session's own name is skipped for the next source,
+and a tile with nothing left has no line. It is one line, clipped by the page,
+with all of it on hover. The roster says which source it was (`lineSource`:
+`own`, `did`, `title`, `prompt`, `place`).
 
 **Words when there is one, a count when there are more.** A single blocked
 question is short enough to answer from the page. Four of them are a trip to the
@@ -695,8 +909,8 @@ identity settles what an age could only estimate.
 **A read ask fills the words and does not raise the count.** Extraction can see
 a question. It cannot tell one that stops the session from one that offers to do
 more, and a tab that says `(6)` has to mean six. Every line records who wrote
-it; only a session speaking for itself joins `waiting` and `stuck` in the header
-and the tab title, and leads its block.
+it; only a session speaking for itself joins `waiting` and `stuck` in the block
+view's header and the tab title, and leads its block.
 
 **While it works, the line is the call in flight** — *Editing fleet.py*,
 *Reading 3 files*, or, for a Bash call, the description the caller already
@@ -990,7 +1204,8 @@ Tuesday* with the same grey dot. So the page works out one flag per session:
 | **green, breathing** | Working | `busy` |
 
 **Ready is keyed to the moment it stopped**, not to the session
-(`~/.local/state/agentview/seen.json`). A session that works again and stops
+(`~/.local/state/agentview/seen.json`; `finished.json` beside it holds the
+handovers read in the overview and the pins). A session that works again and stops
 again carries a new `statusUpdatedAt`, so it comes back as ready by itself —
 nothing has to be cleared and nothing can go stale. Clicking a card marks it
 seen, whether or not the jump lands. A ready row prints **the last thing the
@@ -1127,7 +1342,7 @@ go looking for:
 
 | Kind | Why it is kept |
 |---|---|
-| `session.seen` / `session.gone` / `status` / `waitingFor` | Sampled from the peer files every two seconds by a thread of its own, so the history exists whether or not a browser was open. A routine that ran for four minutes at 03:00 left no trace at all before this. |
+| `session.seen` / `session.gone` / `status` / `waitingFor` / `needs` | Sampled from the peer files every two seconds by a thread of its own, so the history exists whether or not a browser was open. A routine that ran for four minutes at 03:00 left no trace at all before this. `needs` is the kind of the `needs` text a dialog carries beside `dialog open` (`usage`, `fallback`, `billing`, `ultraplan`, `auto mode`, `other`), when it arrives or goes: a label, never the words, so that openings can be counted per kind. |
 | `action` / `retitle` / `jumped` | Every POST, with what it asked for and what actually ran on the terminal. A tab that ends up called something surprising can be traced to the click that did it — which is how two tabs came to be called `RIGA`. |
 | `error` / `page.error` | Exceptions, including JavaScript ones, which used to be invisible: the poll stops, the page goes quietly stale, and nothing anywhere says why. Repeats are collapsed — the first one is the news, the next four hundred are noise. |
 | `slow` | An operation over its budget, and **no line at all** when it was fast. The 9-second poll that made clicking feel broken would have written a line a round. |

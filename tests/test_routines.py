@@ -43,7 +43,9 @@ def session(name, routine="", project=None, **kw):
             "boss": False, "team": [], "blocked": False, "n": 0,
             "provider": "claude", "title": "", "did": "", "ask": "", "prompt": "",
             "cwd": "", "canJump": False, "waitingFor": "", "quietFor": None,
-            "toolFor": None, "movement": None, "moving": False, "asking": None}
+            "toolFor": None, "movement": None, "moving": False, "asking": None,
+            "failure": None, "lastTool": None, "procsUnknown": False, "silentFor": None,
+            "idleFor": None, "unread": False, "pinned": False, "said": ""}
     base.update(kw)
     return base
 

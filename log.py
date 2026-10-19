@@ -123,6 +123,15 @@ def peers(cfg):
     return out
 
 
+def needs_kind(rec):
+    """The kind of dialog a waiting session has open, from the `needs` text
+    beside its `dialog open`, or None: a short label (`claude.dialog_kind`) so
+    that openings can be counted per kind. The words are never written: a
+    classifier's reading of a transcript may be in them."""
+    words = claude.dialog_needs(rec.get("status"), rec.get("waitingFor"), rec.get("needs"))
+    return None if words is None else claude.dialog_kind(words)
+
+
 def transitions(before, after):
     """What changed between two samples, as events ready to be written.
 
@@ -132,18 +141,26 @@ def transitions(before, after):
     """
     events = []
     for pid, rec in after.items():
-        if pid not in before:
+        new = pid not in before
+        if new:
             events.append(("session.seen", {
                 "pid": pid, "name": rec.get("name"), "status": rec.get("status"),
                 "cwd": rec.get("cwd"), "entrypoint": rec.get("entrypoint"),
                 "sessionId": rec.get("sessionId")}))
-            continue
-        for field in WATCHED:
-            was, now = before[pid].get(field), rec.get(field)
-            if was != now:
-                events.append((field, {
-                    "pid": pid, "name": rec.get("name"), "from": was, "to": now,
-                    "sessionId": rec.get("sessionId")}))
+        else:
+            for field in WATCHED:
+                was, now = before[pid].get(field), rec.get(field)
+                if was != now:
+                    events.append((field, {
+                        "pid": pid, "name": rec.get("name"), "from": was, "to": now,
+                        "sessionId": rec.get("sessionId")}))
+        # A dialog already open when a session is first seen (the watcher was
+        # restarted) is one more dialog to count, whether or not anyone saw it open.
+        was, now = None if new else needs_kind(before[pid]), needs_kind(rec)
+        if was != now:
+            events.append(("needs", {
+                "pid": pid, "name": rec.get("name"), "from": was, "to": now,
+                "sessionId": rec.get("sessionId")}))
     for pid, rec in before.items():
         if pid not in after:
             events.append(("session.gone", {
@@ -235,7 +252,7 @@ def render(rec):
     rest = {k: v for k, v in rec.items() if k not in ("at", "kind")}
     who = rest.pop("name", None)
     head = f"{at}  {kind:<14}" + (f"{who:<10}" if who else " " * 10)
-    if kind in WATCHED:
+    if kind in WATCHED or kind == "needs":
         return head + f"{rest.get('from')} -> {rest.get('to')}"
     if kind == "error":
         return head + f"{rest.get('where')}: {rest.get('error')}"

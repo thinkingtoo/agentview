@@ -6,6 +6,7 @@ fake provider, the way `test_providers` and `test_round` reach the core.
 Names and texts are invented.
 """
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -27,6 +28,7 @@ def session(sid, project="maple", **over):
 class Base(unittest.TestCase):
     def setUp(self):
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
         self.config = {}
         fleet.CONFIG, was = tmp / "config.json", fleet.CONFIG
         self.addCleanup(setattr, fleet, "CONFIG", was)
@@ -54,14 +56,14 @@ class Columns(Base):
     def test_the_roster_has_columns_beside_the_unchanged_blocks(self):
         got = self.roster(session("a", "maple"), session("b", "orchard"))
         self.assertEqual(sorted(b["project"] for b in got["blocks"]), ["maple", "orchard"])
-        self.assertEqual(sorted(c["name"] for c in got["columns"]), ["maple", "orchard"])
+        self.assertEqual(sorted(c["name"] for c in got["columns"]), ["Maple", "Orchard"])
 
     def test_columns_come_in_the_order_of_the_blocks_with_no_project_last(self):
         self.config = {"pinned": ["orchard", "maple"]}
         got = self.roster(session("a", "maple"), session("b", None),
                           session("c", "orchard"))
         self.assertEqual([c["name"] for c in got["columns"]],
-                         ["orchard", "maple", "No project"])
+                         ["Orchard", "Maple", "No project"])
         self.assertEqual([b["project"] for b in got["blocks"]],
                          ["orchard", "maple", "No project"])
 
@@ -69,13 +71,13 @@ class Columns(Base):
         got = self.roster(session("a", "maple"),
                           session("r", None, routine="nightly-report"))
         self.assertEqual([b["project"] for b in got["blocks"]], ["maple", "Routines"])
-        self.assertEqual([c["name"] for c in got["columns"]], ["maple"])
+        self.assertEqual([c["name"] for c in got["columns"]], ["Maple"])
 
     def test_a_column_names_its_project_and_keeps_the_raw_name(self):
         got = self.roster(session("a", "maple"))
         self.assertEqual(
             {k: got["columns"][0][k] for k in ("project", "name", "raw", "kind")},
-            {"project": "folder:maple", "name": "maple", "raw": "maple", "kind": "folder"})
+            {"project": "folder:maple", "name": "Maple", "raw": "maple", "kind": "folder"})
 
     def test_your_own_name_for_a_project_is_the_name_and_the_raw_one_stays(self):
         self.config = {"names": {"maple": "Maple syrup"}}
@@ -90,6 +92,12 @@ class Columns(Base):
 
 
 class Tiles(Base):
+    def setUp(self):
+        super().setUp()
+        # With a line of its own the card does not say the session titles, and
+        # a tile's title is not a repeat of it.
+        self.config = {"project_lines": {"folder:maple": "Sells maple syrup online"}}
+
     def test_a_tile_says_who_it_is_what_it_is_on_and_how_to_reach_it(self):
         tile = self.tile(session("a", name="Ilse", status="busy", canJump=True,
                                  title="Checkout form"))
@@ -116,7 +124,7 @@ class Tiles(Base):
 
     def test_your_own_line_beats_what_the_session_wrote(self):
         self.wrote("a", "Card form wired to the vault, tests green.")
-        self.config = {"lines": {"fake:a": "Saved cards"}}
+        self.config["lines"] = {"fake:a": "Saved cards"}
         self.assertEqual(self.tile(session("a", title="Checkout form"))["line"], "Saved cards")
 
     def test_a_line_that_only_repeats_the_name_is_left_out(self):
@@ -131,8 +139,11 @@ class Tiles(Base):
         self.assertEqual(self.flag_of(status="waiting", waitingFor="input needed"),
                          ("waiting", "input needed"))
 
-    def test_a_busy_session_gone_quiet_is_stuck_and_says_for_how_long(self):
-        self.assertEqual(self.flag_of(status="busy", quietFor=17.2), ("stuck", "17m"))
+    def test_a_busy_session_gone_quiet_is_hung_on_the_tile_not_a_stuck_flag(self):
+        # The chime keeps the `stuck` flag (the blocks); the tile says Hung and for how long.
+        tile = self.tile(session("a", status="busy", quietFor=17.2))
+        self.assertEqual((tile["flag"], tile["flagNote"]), (None, ""))
+        self.assertEqual((tile["stuck"]["kind"], tile["stuck"]["reason"]), ("hung", "Not moving for 17 min"))
 
     def test_a_long_tool_call_is_no_flag_on_the_tile_but_a_sign(self):
         # The `tool` flag is replaced by the movement sign ("waiting on: ...,
@@ -185,7 +196,7 @@ class Tiles(Base):
         # The page prints these as text (tests/ui_smoke.py checks that); the
         # roster must not strip or mangle them on the way.
         hostile = "<img src=x onerror=alert(1)>"
-        self.config = {"names": {"maple": hostile}}
+        self.config["names"] = {"maple": hostile}
         column = self.roster(session("a", name=hostile, title="Fix " + hostile))["columns"][0]
         self.assertEqual((column["name"], column["sessions"][0]["name"], column["sessions"][0]["line"]),
                          (hostile, hostile, "Fix " + hostile))

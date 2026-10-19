@@ -9,19 +9,24 @@ import collections
 import concurrent.futures
 import functools
 import json
+import math
 import os
 import re
+import shutil
 import threading
 import time
 from pathlib import Path
 
 import ask_commands
+import context
+import finished
 import jump
 import lines
 import projects
 import providers
 import seen
-from providers import base
+import working
+from providers import base, claude
 from providers.base import CAPABILITIES, STATUSES, on_a_terminal
 
 
@@ -87,6 +92,16 @@ def read_config():
 def config_value(key, default):
     got = read_config().get(key, default)
     return got if isinstance(got, type(default)) else default
+
+
+def positive_value(key, default):
+    """A config number (a whole number or a fraction) that is more than
+    nothing, else the default: minutes for `hung_after_minutes` and
+    `finished_after_minutes`, megabytes for `disk_full_mb`. `config_value` takes any value of the default's type, and 0
+    or less would call everything quiet hung at once."""
+    got = read_config().get(key, default)
+    ok = isinstance(got, (int, float)) and not isinstance(got, bool) and 0 < got < float("inf")
+    return got if ok else default
 
 
 # The page can send a rename, a move and a pin in the same breath, and the
@@ -251,26 +266,34 @@ def own_line(session_id, status, asked, root=None, said="", doing=""):
     """The two lines a card shows, and whether the session is stopped on you.
 
     The session writes its own inside the turn it was already having -- it is
-    the only thing that knows where the work stands. A line belongs to that
-    turn: the next prompt forgets it, and one that survives that is caught by
-    its turn rather than by its age. Comparing ages could not do it. A moment
-    only proves a line was written somewhere inside a working stretch, and a
-    session can go idle, busy and idle again between two polls of this page.
+    the only thing that knows where the work stands. What it is stopped on
+    belongs to that turn: the next prompt forgets `ask` and `n`, and one that
+    survives that is caught by its turn rather than by its age. Comparing
+    ages could not do it. A moment only proves a line was written somewhere
+    inside a working stretch, and a session can go idle, busy and idle again
+    between two polls of this page.
 
-    Everything else here is what to show until the session has written one:
-    the ask read out of the last thing it said. That fills the words and does
-    not raise the count. A provider without a hook lives on this fallback --
-    it shows the right words and never rings.
+    Where the work stands is not scoped to a turn: the session is on the same
+    job after the next prompt, so the last `did` it wrote stays until it
+    writes another.
+
+    Everything else here is what to show until the session has written a line
+    this turn: the ask read out of the last thing it said. That fills the
+    words and does not raise the count. A provider without a hook lives on
+    this fallback -- it shows the right words and never rings.
     """
     # Between calls there is nothing in flight and the model is writing. The
     # page used to print your own last prompt back at you there -- words you
     # wrote and already know.
-    working = {"doing": (doing or last_words(said)) if status == "busy" else ""}
+    now = {"doing": (doing or last_words(said)) if status == "busy" else ""}
     got = lines.fresh(session_id, root)
     if got:
-        return {**_shown(got), **working}
+        shown = _shown(got)
+        shown["did"] = shown["did"] or lines.kept_did(session_id, root)
+        return {**shown, **now}
     ask, n = asked
-    return {"did": "", "ask": ask, "n": n, "blocked": False, **working}
+    return {"did": lines.kept_did(session_id, root), "ask": ask, "n": n,
+            "blocked": False, **now}
 
 
 # ------------------------------------------------------------ the round
@@ -324,13 +347,14 @@ def sessions(providers=None):
         shelves = config()
         assigned = config_value("assign", {})
         marks = seen.load()
+        remembered = finished.load()
         thresholds = {
             "after": config_value("stuck_after_minutes", 5),
             "tool_after": config_value("long_tool_minutes", 20),
             "waiting_after": config_value("waiting_after_seconds", 20) / 60,
             # How long a busy session may go without a sign of life before
             # it counts as not moving.
-            "hung_after": config_value("hung_after_minutes", 10),
+            "hung_after": positive_value("hung_after_minutes", 10),
         }
         now = time.time()
         out, failed, answered = [], {}, set()
@@ -341,7 +365,7 @@ def sessions(providers=None):
                 continue
             answered.add(p.name)
             for raw in got:
-                row = normalize(p, raw, shelves, assigned, marks, thresholds, now)
+                row = normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered)
                 if row:
                     out.append(row)
         ROUND["failed"], ROUND["answered"] = failed, answered
@@ -368,19 +392,32 @@ def find(key):
     return None
 
 
-def look(key):
+def look(key, shown=None):
     """You looked at this session. Looking is looking, whether or not its
-    terminal comes to the front -- or exists."""
+    terminal comes to the front -- or exists: the chime hears of it.
+
+    The handover is read only when the overview's tile put it in front of you,
+    and then only the stop that tile showed (`shown`): the block view says no
+    stop, and a session that stopped again since the page's last poll has a
+    handover nobody has shown you.
+    """
     hit = find(key)
     if not hit:
         return None
-    mark_seen(key, hit[1])
+    stamp = _int(hit[1].get("updatedAt"))
+    mark_seen(key, hit[1], read=bool(stamp) and shown == stamp)
     return hit
 
 
-def mark_seen(key, s):
-    """Note that you have seen this session as it is now."""
-    seen.mark(key, _int(s.get("updatedAt")))
+def mark_seen(key, s, read=True):
+    """Note that you have seen this session as it is now: for the chime, and --
+    unless `read` is off -- as a handover read in the overview (`finished.py`
+    says why those are two). A terminal that came to the front shows the
+    session as it is now, so a jump reads it."""
+    stamp = _int(s.get("updatedAt"))
+    seen.mark(key, stamp)
+    if read:
+        finished.mark_read(key, stamp)
 
 
 def jump_to(p, s):
@@ -413,12 +450,38 @@ MAX_EXTRAS = 8
 EXTRA_LEN = 40
 
 
+# The largest whole number a float holds exactly, and so the largest a page or
+# a clock sum can take: a provider's number beyond it is not a count or a time.
+MAX_COUNT = 2 ** 53
+
+
 def _int(value):
-    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+    """A provider's number as a whole number; 0 when it is not one (a bool, text,
+    nan, infinity, or beyond what a float holds exactly)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    try:
+        got = int(value)
+    except (OverflowError, ValueError):
+        return 0
+    return got if abs(got) <= MAX_COUNT else 0
 
 
 def _minutes(value):
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+    """A provider's number as minutes; None when it is not one, as for `_int`."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        got = float(value)
+    except OverflowError:
+        return None
+    return got if math.isfinite(got) else None
+
+
+def _age(value):
+    """Minutes ago as a provider says it: a number that is not less than nothing, or None."""
+    got = _minutes(value)
+    return got if got is not None and got >= 0 else None
 
 
 def _text(value):
@@ -448,9 +511,10 @@ def extras_of(value):
     return kept
 
 
-def normalize(p, raw, shelves, assigned, marks, thresholds, now):
+def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
     """One provider's facts, made into the row the page draws. None if the
-    session is not even minimally conforming."""
+    session is not even minimally conforming. `remembered` is what the overview
+    keeps (`finished.load()`): the handovers you read and the sessions you pinned."""
     if not isinstance(raw, dict):
         return None
     sid = raw.get("id")
@@ -467,6 +531,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
     in_flight = _minutes(raw.get("toolFor"))
     waiting_for = _text(raw.get("waitingFor"))
     said = _text(raw.get("said"))
+    handover = last_words(said)
     paths = [x for x in (raw.get("paths") or []) if isinstance(x, str)]
     # Keyed to the moment it stopped, so a session that works and stops
     # again is ready once more without anything having to clear it.
@@ -496,14 +561,20 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
             named=bool(waiting_for), unseen=unseen)
     sub_quiet = _minutes(raw.get("subQuiet"))
     tasks = tasks_of(raw.get("bgTasks"))
-    sign, moving = movement_of(
+    sign, moving, silent = movement_of(
         status=status, quiet=quiet, sub_quiet=sub_quiet, in_flight=in_flight,
         doing=_text(raw.get("doing")), cpu=bool(raw.get("shellCpu")), tasks=tasks,
         status_for=(now * 1000 - updated) / 60000 if updated else None,
-        hung_after=thresholds.get("hung_after", 10))
+        hung_after=thresholds.get("hung_after", 10), cpu_ago=_age(raw.get("shellCpuAgo")),
+        turn_over=raw.get("turnOver") is True)
     moves = {"writes": writes_of(raw.get("writes")), "subQuiet": sub_quiet,
              "bgTasks": tasks, "shellCpu": bool(raw.get("shellCpu")),
-             "movement": sign, "moving": moving}
+             "movement": sign, "moving": moving,
+             # Minutes with no sign of life, for a busy session; and whether
+             # /proc could not say what runs under it. Only a provider saying
+             # so is believed: Hung is a claim, and it waits for a look that can tell.
+             "silentFor": None if silent is None else round(silent, 1),
+             "procsUnknown": raw.get("procsUnknown") is True}
     row = {}
     for k, default in DEFAULTS.items():
         got = raw.get(k)
@@ -528,14 +599,26 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         "waitingFor": waiting_for,
         # What it left you with, and the ask read out of it. The provider
         # hands over the raw text; the sentence is made here.
-        "said": last_words(said),
+        "said": handover,
         "boss": bool(raw.get("boss")),
         "team": [x for x in (raw.get("team") or []) if isinstance(x, str)],
         "bg": bool(raw.get("bg")),
         "flag": flag,
         **moves,
         "canJump": can_jump,
+        # What the overview needs to tell a finished session from an idle one.
+        "idleFor": idle_for(status, updated, quiet, moves["writes"], now),
+        # Stopped, and what it told you is not read in the overview -- whether or not
+        # it said anything: a session with no words still wants a look before it
+        # is forgotten, since "no words" may be a transcript that could not be read.
+        "unread": status == "idle" and bool(updated) and not finished.is_read(key, updated, remembered),
+        # Held open by you (a session pin: `finished.py`). `pinned` on a column is the project's.
+        "pinned": key in remembered["pinned"],
         "asking": asking_of(raw.get("asking")),
+        # How it stopped, if an API error is its last word; and the last call
+        # it made (what a hung session was doing).
+        "failure": failure_of(raw.get("failure"), now),
+        "lastTool": tool_of(raw.get("lastTool"), now),
         # A provider that cannot jump has no terminal to attach to: the field is emptied.
         "attach": row["attach"] if "jump" in caps else "",
         "extras": extras_of(raw.get("extras")),
@@ -545,6 +628,27 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
                    doing=_text(raw.get("doing"))),
     })
     return row
+
+
+def idle_for(status, updated, quiet, writes, now):
+    """Minutes an idle session has shown no sign of life, or None when that
+    cannot be told: it is not idle, or it has no stop to count from.
+
+    The registry's stop is one clock; the newest write to the transcript is
+    another, and a write after the stop is a sign of life the status has not
+    caught up with, so the session has been idle only since the latest of them.
+    A provider's strip of writes (one slot per minute, this minute last) says
+    the same for the last half hour.
+    """
+    if status != "idle" or not updated:
+        return None
+    since = max(0.0, (now * 1000 - updated) / 60000)
+    if quiet is not None:
+        since = min(since, max(0.0, quiet))
+    for ago, count in enumerate(reversed(writes or ())):
+        if count:
+            return min(since, float(ago))
+    return since
 
 
 # ---------------------------------------------------------------- roster
@@ -632,7 +736,12 @@ def roster(providers=None):
     columns = columns_of(blocks)
     for s in everyone:
         s.pop("paths", None)
-    return {"blocks": blocks, "columns": columns}
+    return {"blocks": blocks, "columns": columns, "counts": counts_of(columns),
+            "banners": banners_of()}
+
+
+# A session idle this long, with nothing pending, is finished.
+FINISHED_AFTER = 120
 
 
 def columns_of(blocks):
@@ -646,6 +755,7 @@ def columns_of(blocks):
     """
     folder_rule = functools.partial(resolve_project, shelves=config())
     names = config_value("names", {})
+    own_lines = config_value("project_lines", {})
     pinned = config_value("pinned", [])
     members = [m for b in blocks if not b["routines"] for m in b["members"]]
     by_key, follow = projects.place(members, folder_rule, config_value("assign", {}))
@@ -653,18 +763,85 @@ def columns_of(blocks):
     for m in members:
         grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
     merged = projects.merged_into(config_value("assign", {}))
-    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, follow, names, pinned, merged),
+    finished_after = positive_value("finished_after_minutes", FINISHED_AFTER)
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, follow, names, pinned, merged, own_lines,
+                        finished_after),
                 _column_order(rows, by_key[rows[0]["key"]], names, pinned))
                for rows in grouped.values()]
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
 
 
+# The header's three counts: what needs the person, what else is stuck (Error,
+# Hung or Limit), what is moving. `otherStuck` and not `stuck`, which in
+# the glossary includes Needs you.
+COUNT_KINDS = ("needs", "otherStuck", "moving")
+
+
+def counted_in(stuck, moving):
+    """Which of the header's counts a session is in, or None, from its tile's
+    `stuck` kind and whether it is moving. Stuck wins over moving, as it does
+    in the card's mix: a session that needs you needs you with a job running.
+    An idle session is in none."""
+    if stuck:
+        return "needs" if stuck["kind"] == "needs" else "otherStuck"
+    return "moving" if moving else None
+
+
+def counts_of(columns):
+    """The header's counts, over every tile on the page. Routines are not in
+    `columns`, so they are not in these."""
+    counts = dict.fromkeys(COUNT_KINDS, 0)
+    for column in columns:
+        for tile in column["sessions"]:
+            if tile["counted"]:
+                counts[tile["counted"]] += 1
+    return counts
+
+
+# Under this much free space the disk is full, as far as a session writing a
+# transcript is concerned: a write that large may fail. `disk_full_mb` in the
+# config says another number.
+DISK_FULL_MB = 500
+MB = 1024 * 1024
+
+# Under a name of its own, so that a test can answer for the disk.
+disk_usage = shutil.disk_usage
+
+
+def banners_of():
+    """What is wrong with the whole machine, said once across the top of the
+    page: each a `kind` and the `text` to print. Never a kind of stuck on a
+    tile -- every session on the machine is held by it alike. The page prints
+    these and looks for nothing of its own."""
+    banners = []
+    try:
+        free = disk_usage(claude.claude_dir()).free
+    except OSError:
+        free = None          # a disk that cannot be read is not known to be full
+    if free is not None and free < positive_value("disk_full_mb", DISK_FULL_MB) * MB:
+        banners.append({"kind": "disk",
+                        "text": f"Disk full: {size_text(free)} left where sessions write"})
+    return banners
+
+
+def size_text(size):
+    """A number of bytes the way a person reads free space: '212 MB', '1.5 GB'."""
+    mb = size / MB
+    return f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{int(mb)} MB"
+
+
+# The kinds of stuck, most urgent first. The tile says the first that holds for
+# its session, and the card the first that holds for any of its sessions.
+STUCK_ORDER = ("needs", "error", "hung", "limit")
+
+
 def state_of(tiles):
     """The card's one word, from its sessions: the most urgent decides. Needs
-    you, then moving, then all idle; the other kinds of stuck take their place
-    between them when the roster learns them."""
-    if any(t["stuck"] and t["stuck"]["kind"] == "needs" for t in tiles):
-        return "needs"
+    you, Error, Hung, Limit, then moving, then all idle."""
+    kinds = {t["stuck"]["kind"] for t in tiles if t["stuck"]}
+    for kind in STUCK_ORDER:
+        if kind in kinds:
+            return kind
     return "moving" if any(t["moving"] for t in tiles) else "idle"
 
 
@@ -673,21 +850,38 @@ def _column_name(project, names):
             else names.get("No project") or "No project")
 
 
-def _column(rows, project, folder_rule, follow, names, pinned, merged):
+def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines, finished_after):
     # A boss leads its column, whatever the activity: who leads before who
     # works. The rest are in the order the blocks have always used.
     rows = order_members(list(rows))
     rows.sort(key=lambda s: not s["boss"])
-    tiles = [tile_of(m, _suggestion(m, project, folder_rule, follow, names)) for m in rows]
+    name = _column_name(project, names)
+    about, track = context.card(project, rows, own_lines)
+    # The column of no project has no name to repeat.
+    column_says = working.repeats(None if project is NO_PROJECT else name, about)
+    made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says))
+            for m in rows]
+    # Finished sessions leave the tiles for the foot of the column, and with
+    # them everything the tiles are counted in: the card's state, its summary,
+    # the header. A column of pills alone has no tiles, so it reads all idle.
+    shrinks = [is_finished(m, t, finished_after) for m, t in made]
+    tiles = [t for (m, t), shrunk in zip(made, shrinks) if not shrunk]
+    pills = sorted((pill_of(m, t) for (m, t), shrunk in zip(made, shrinks) if shrunk),
+                   key=lambda p: (p["idle"]["since"], p["key"]))
     return {
         "project": project["id"], "raw": project["raw"], "kind": project["kind"],
-        "name": _column_name(project, names),
+        "name": name,
         "pinned": _pin_rank(project, pinned) is not None,
         # What you moved into this project, which the page can take back.
         "merged": [{"project": ident, "name": projects.display_name(projects.from_identity(ident), names)}
                    for ident in merged.get(project["id"], [])],
-        "strip": strip_of(rows), "summary": mix_of(tiles),
-        "state": state_of(tiles), "sessions": tiles,
+        "context": about, "track": track,
+        # What the card's notes link asks the brain, once someone clicks it.
+        "notes": None if about is None else {"query": context.notes_query(name, about)},
+        # What the tiles wrote; a project of pills alone has the strip they have.
+        "strip": strip_of([m for (m, _), shrunk in zip(made, shrinks) if not shrunk] or rows),
+        "summary": mix_of(tiles),
+        "state": state_of(tiles), "sessions": tiles, "pills": pills,
     }
 
 
@@ -719,30 +913,59 @@ def _suggestion(m, project, folder_rule, follow, names):
     return {"project": guessed["id"], "name": projects.display_name(guessed, names)}
 
 
-def tile_of(m, suggestion=None):
+def is_finished(m, tile, after):
+    """Idle for `after` minutes and not held open, its handover read, and nothing
+    left for you. Any sign of life -- a prompt, a write, a job -- or any kind of
+    stuck is a tile again, and a session with things left for you (`n`) is wanted
+    however old it is. Unread, it stays a tile: a pill is also a way of not looking."""
+    return (m["idleFor"] is not None and m["idleFor"] >= after
+            and not m["unread"] and not m["pinned"] and m["n"] <= 0
+            and not m["moving"] and not tile["stuck"])
+
+
+def pill_of(m, tile):
+    """A finished session as the one line at the foot of its column."""
+    since = round(m["idleFor"], 1)
+    return {"key": m["key"], "name": m["name"], "provider": m["provider"], "tags": tile["tags"],
+            # In none of the header's counts, so the page lights it up as it does any tile.
+            "counted": None,
+            "idle": {"since": since, "text": span_text(since)},
+            "line": tile["line"], "jump": tile["jump"],
+            # What the filter box looks through, as it does for a tile.
+            "find": tile["find"]}
+
+
+def tile_of(m, suggestion=None, column_says=frozenset()):
     """One session as a tile: today's data, finished for the page to print.
 
     The page never has to decide which of the session's words to show.
     """
-    # Your words first, then the session's, then Claude Code's title -- and
-    # nothing at all when that only says the name again.
-    line = m["title"] if m["overridden"] else (m["did"] or m["title"])
-    # The chime keeps reading the flag. The tile says it through the movement
-    # sign instead where the sign is the better word: a long call is a wait,
-    # and a session that is moving is not stuck.
-    flag = None if m["flag"] == "tool" or (m["flag"] == "stuck" and m["moving"]) else m["flag"]
+    line, source = working.line_of(m, column_says)
+    # The chime keeps reading the flag. The tile says it another way where
+    # that is the better word: a long call is a wait (the movement sign), and
+    # a busy session nothing proves is moving is Hung (its kind).
+    flag = None if m["flag"] in ("tool", "stuck") else m["flag"]
     stuck = stuck_of(m)
+    # The chime's `ready` is another question and is not touched.
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
         "status": m["status"], "suggestion": suggestion,
+        "unread": m["unread"], "handover": m["said"] if m["unread"] else "",
+        # The stop that handover belongs to: what a click on the tile reads.
+        "stop": m["updatedAt"],
+        # Held open as a full tile by you, until you unpin it or it closes.
+        "pinned": m["pinned"],
         # Put where it is by hand: the page offers the way back.
         "assigned": bool(m.get("assigned")),
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
-        "line": "" if line.strip() == m["name"].strip() else line,
+        "line": line, "lineSource": source,
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
         "movement": m["movement"], "moving": m["moving"],
         "stuck": stuck,
+        # The header count the tile is in, for the page to light it up when
+        # that count is clicked.
+        "counted": counted_in(stuck, m["moving"]),
         # Named for what it is: a guess, unlike the exact command of a
         # permission prompt in `stuck.context`.
         "guessedCommands": guessed_commands_of(m, stuck),
@@ -750,9 +973,12 @@ def tile_of(m, suggestion=None):
         # tile carries what it is asking, the way the old row did.
         "blocked": m["blocked"], "need": need_of(m),
         # What the filter box looks through, so the page does not have to know
-        # which of a session's words are searchable.
-        "find": "\n".join(m[k] for k in ("name", "title", "did", "ask", "prompt",
-                                         "cwd", "branch")).lower(),
+        # which of a session's words are searchable. Claude Code's own title
+        # too when your line is laid over it: the tile shows it when yours
+        # only repeats the project.
+        "find": "\n".join([m[k] for k in ("name", "title", "did", "ask", "prompt",
+                                          "cwd", "branch")]
+                          + ([m["generated"]] if m["overridden"] else [])).lower(),
     }
 
 
@@ -760,9 +986,74 @@ def stuck_of(m):
     """Why a session is stopped, as a kind with a reason and its context, or
     None. The flags the chime reads are not touched: this is for the page.
 
-    Needs you has three sources at one level -- an open question, an open
-    permission prompt, a session line with things left -- and the dialog that
-    is open now is the one shown over a line written a turn ago.
+    One session may be several things; the tile says the most urgent, in the
+    order the card does (`STUCK_ORDER`): Needs you, Error, Hung, Limit.
+    """
+    needs = needs_of(m)
+    if needs:
+        return needs
+    failure = m["failure"]
+    if failure and failure["kind"] == "error":
+        return {"kind": "error", "source": "api",
+                "reason": error_words(failure["type"], failure["status"]),
+                "context": {"type": failure["type"], "text": failure["text"],
+                            "ago": failure["held"]}}
+    if is_hung(m):
+        tool = m["lastTool"]
+        return {"kind": "hung", "source": "silence",
+                "reason": f"Not moving for {span_text(m['silentFor'])}",
+                "context": {"tool": tool["text"] if tool else "",
+                            "ago": tool["ago"] if tool else None}}
+    if failure:
+        return {"kind": "limit", "source": "api", "reason": "Rate limit",
+                "context": {"resetsAt": failure["resetsAt"], "held": failure["held"],
+                            "text": failure["text"]}}
+    asking = m["asking"]
+    if asking and asking["kind"] == "pause":
+        # "Session paused" for usage credits, with no error in the transcript
+        # to say so: the dialog's own words are all there is. The error, when
+        # it is there, is read above and tells the reset time as well.
+        return {"kind": "limit", "source": "dialog", "reason": "Session paused",
+                "context": {"resetsAt": None, "held": None, "text": asking["what"]}}
+    return None
+
+
+def is_hung(m):
+    """Busy, and nothing shows it moving: no write of its own or a subagent's
+    inside `hung_after_minutes`, no command using CPU, no open background job.
+    That is `moving` turned round, plus two cases where it must not be said: a
+    /proc that could not answer (a restart, a race, an unreadable folder), and
+    a provider that cannot see the session's writes (no transcript to read), so
+    that silence is not known to be silence."""
+    return (m["status"] == "busy" and not m["moving"] and not m["procsUnknown"]
+            and m["silentFor"] is not None)
+
+
+def error_words(error_type, status):
+    """The error's type, said short: overloaded, auth, server, or its own name."""
+    if status == 529 or "overloaded" in error_type:
+        return "Overloaded"
+    if error_type == "authentication_failed" or status in (401, 403):
+        return "Auth error"
+    if error_type == "server_error" or (status or 0) >= 500:
+        return "Server error"
+    if error_type in ("", "error"):
+        return "API error"
+    return _sentence(error_type.replace("_", " ").strip())
+
+
+def _sentence(words):
+    """The words with a capital to begin: how a reason is said."""
+    return words[:1].upper() + words[1:]
+
+
+def needs_of(m):
+    """Needs you, or None.
+
+    Needs you has four sources at one level -- an open question, an open
+    permission prompt, another request waiting on the person (a sandbox, a
+    worker, a goal proposal), a session line with things left -- and the
+    dialog that is open now is the one shown over a line written a turn ago.
     """
     asking = m["asking"]
     if asking and asking["kind"] == "question":
@@ -775,6 +1066,9 @@ def stuck_of(m):
                             # Half a command pasted into a terminal is worse
                             # than none.
                             "copy": bool(asking["command"].strip()) and not asking["cut"]}}
+    if asking and asking["kind"] == "request":
+        return {"kind": "needs", "source": "request", "reason": _sentence(asking["what"]),
+                "context": {"what": asking["what"]}}
     if m["blocked"]:
         # The session's own line only: one read out of its last words is a
         # guess, and the chime does not believe it either.
@@ -951,6 +1245,11 @@ def asking_of(value):
                               "multi": bool(q.get("multi")),
                               "options": options})
         return {"kind": "question", "questions": questions} if questions or listed == [] else None
+    if value.get("kind") in ("request", "pause"):
+        # A dialog that waits on the person and is neither: told by its name.
+        # A `pause` is one that is open on usage credits, which is a limit.
+        what = " ".join(_text(value.get("what")).split())[:LABEL_LEN]
+        return {"kind": value["kind"], "what": what} if what else None
     if value.get("kind") == "permission":
         # A provider hands over a command only when it is one, and one longer
         # than the limit arrives with a character to spare: that is how a cut
@@ -962,6 +1261,35 @@ def asking_of(value):
                 "cut": len(command) > COMMAND_LIMIT,
                 "target": " ".join(_text(value.get("target")).split())[:HINT_LEN]}
     return None
+
+
+FAILURE_LEN = base.FAILURE_LEN
+
+
+def failure_of(value, now):
+    """What a provider says stopped a session -- an API error that is the last
+    thing it said -- as the page may print it, or None. `kind` is the
+    provider's call (`limit` or `error`); `held` is minutes since it happened,
+    and never less than nothing for a clock that is ahead of ours."""
+    if not isinstance(value, dict) or value.get("kind") not in ("limit", "error"):
+        return None
+    at = base.milliseconds(value.get("at"))
+    return {"kind": value["kind"],
+            "type": " ".join(_text(value.get("type")).split())[:LABEL_LEN],
+            "status": base.whole_number(value.get("status")),
+            "text": " ".join(_text(value.get("text")).split())[:FAILURE_LEN],
+            "held": None if at is None else max(0.0, round((now * 1000 - at) / 60000, 1)),
+            "resetsAt": base.milliseconds(value.get("resetsAt"))}
+
+
+def tool_of(value, now):
+    """The last call a session made, in words, and how many minutes ago; or None."""
+    if not isinstance(value, dict):
+        return None
+    words, at = " ".join(_text(value.get("text")).split())[:HINT_LEN], base.milliseconds(value.get("at"))
+    if not words or at is None:
+        return None
+    return {"text": words, "ago": max(0.0, round((now * 1000 - at) / 60000, 1))}
 
 
 def ago_text(minutes):
@@ -979,8 +1307,10 @@ def span_text(minutes):
     return "<1 min" if minutes < 1 else ago_text(minutes)
 
 
-def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after):
-    """What shows that a session is alive: (the sign for its tile, moving).
+def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after,
+                cpu_ago=None, turn_over=False):
+    """What shows that a session is alive: (the sign for its tile, moving, and
+    for a busy session the minutes since its last sign of life, else None).
 
     Moving is any of: it or a subagent wrote recently; a command it is
     waiting on has CPU under its shell; a background job it started is open
@@ -991,6 +1321,20 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     The sign is for the person: writing, waiting on something and since
     when, or idle since when. A session that wrote nothing it can show and
     waits on nothing has none.
+
+    A busy session that is not moving is Hung (`is_hung`), and the third value
+    is how long: since its last sign of life of any kind, which is the
+    youngest of its newest write, the last time CPU moved under a command it
+    is waiting on, and the moment each job or command stopped counting at
+    `WAIT_MAX_MINUTES`. A provider that cannot see its writes (no transcript
+    to read) gives None, and the session is not called Hung. `cpu_ago` is how
+    many minutes ago a provider last saw that CPU move, if it knows.
+
+    A busy session whose last word ended its turn (`turn_over`: a turn end, or an
+    API error as the reply) has nothing running of its own: its own writes are
+    not signs of life, and it has no clock to be Hung by. It is moving only while a subagent writes, the way a
+    lead waits on its team. The status may go on saying busy for hours, as it
+    does for a lead with teammates, and that is not a hang.
     """
     # An idle session's last records ended its turn, and a subagent that wrote
     # before that is history: both say the session stopped. A session waiting
@@ -998,7 +1342,7 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     # are the session working.
     if status == "idle":
         sub_quiet = None
-    own = quiet if status == "busy" else None
+    own = quiet if status == "busy" and not turn_over else None
     latest = min((m for m in (own, sub_quiet) if m is not None), default=None)
     call = in_flight is not None
     jobs = sorted(tasks, key=lambda t: -t["since"])
@@ -1011,7 +1355,20 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     # a write would, and no longer. The status has no heartbeat.
     unknown = (status == "busy" and quiet is None and sub_quiet is None
                and status_for is not None and status_for < hung_after)
-    recent = status == "busy" and latest is not None and latest < hung_after
+    # Only a write the provider could see says how long it has been quiet. The
+    # moment the status changed does not: it is not a heartbeat either way.
+    # Writes are not the only sign: a command whose CPU moved a minute ago, or a
+    # job that stopped counting a minute ago, is a session that was moving a
+    # minute ago, so the quiet is counted from the youngest of them.
+    silent = None
+    if status == "busy" and latest is not None and not turn_over:
+        signs = [latest]
+        cpu_age = 0.0 if cpu else cpu_ago
+        if call and cpu_age is not None:
+            signs.append(max(cpu_age, in_flight - WAIT_MAX_MINUTES))
+        signs.extend(max(0.0, t["since"] - WAIT_MAX_MINUTES) for t in jobs)
+        silent = min(signs)
+    recent = silent is not None and silent < hung_after
     moving = bool(evidence or unknown or recent)
 
     def writing(minutes):
@@ -1019,7 +1376,7 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
                 "text": f"writing · {ago_text(minutes)} ago"}
 
     if latest is not None and latest * 60 <= WRITING_SECS:
-        return writing(latest), moving
+        return writing(latest), moving, silent
     if call or jobs or subagent:
         if call:
             on, since = doing or "a command", in_flight
@@ -1029,13 +1386,13 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
         else:
             on, since = "a subagent", quiet if quiet is not None else sub_quiet
         return {"kind": "waiting", "on": on, "since": round(since, 1),
-                "text": f"waiting on: {on}, {span_text(since)}"}, moving
+                "text": f"waiting on: {on}, {span_text(since)}"}, moving, silent
     if recent:
-        return writing(latest), moving
+        return writing(latest), moving, silent
     if status == "idle":
         return {"kind": "idle", "since": round(status_for, 1) if status_for is not None else None,
-                "text": "idle" if status_for is None else f"idle {span_text(status_for)}"}, moving
-    return None, moving
+                "text": "idle" if status_for is None else f"idle {span_text(status_for)}"}, moving, silent
+    return None, moving, silent
 
 
 def strip_of(members):
@@ -1051,12 +1408,14 @@ def strip_of(members):
 
 
 def mix_of(tiles):
-    """'2 moving · 1 stuck · 0 idle' as counts. Stuck wins over moving: a
-    session that needs you needs you even with a job running. A busy session
-    nothing proves is moving is stuck, the way the design calls hung."""
+    """'2 moving · 1 stuck · 0 idle' as counts. Stuck is a kind on the tile, the
+    same word the card's state is made of: a session counted here has one,
+    and one without (a menu the person opened, a busy session /proc could not
+    vouch for) is not. Stuck wins over moving: a session that needs you needs
+    you even with a job running."""
     mix = {"moving": 0, "stuck": 0, "idle": 0}
     for t in tiles:
-        if t["blocked"] or t["flag"] in ("waiting", "stuck") or (t["status"] == "busy" and not t["moving"]):
+        if t["stuck"]:
             mix["stuck"] += 1
         elif t["moving"]:
             mix["moving"] += 1
@@ -1123,7 +1482,10 @@ def apply_overrides(block, names, lines):
     block["renamed"] = block["project"] in names
     for m in block["members"]:
         own = lines.get(m.get("key"))
+        # Only words are a line: a hand-edited number or blank is not one.
+        own = own if isinstance(own, str) and own.strip() else ""
         m["overridden"] = bool(own)
+        m["own"], m["generated"] = own, m["title"]
         if own:
             m["title"] = own
     return block

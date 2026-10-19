@@ -21,7 +21,7 @@ from pathlib import Path
 
 import lines
 from providers import base, procs, registry
-from providers.base import (Provider, Tailed, on_a_terminal,
+from providers.base import (Provider, Tailed, on_a_terminal, jsonl_lines,
                             read_from as _read_from)
 
 
@@ -159,7 +159,7 @@ def boss_marker(sid, cfg=None):
         return None
     finally:
         os.close(fd)
-    return (text.splitlines() or [""])[0].strip()
+    return text.partition("\n")[0].strip()
 
 
 def is_boss(sid, cfg=None):
@@ -170,6 +170,10 @@ def is_boss(sid, cfg=None):
 # How many outstanding calls to remember. Only the newest matters, but a
 # message can carry several in parallel and each one deserves its place.
 MAX_USES = 64
+
+# How many of the directories a session has worked in to remember: where a
+# teammate it spawns may write (`_subagent_files`).
+MAX_CWDS = 8
 
 
 # Movement is counted per minute, 30 of them, as the records go by. A minute
@@ -290,8 +294,194 @@ def _tasks(state, rec):
                 tasks.pop(task.group(1), None)
 
 
+def _dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+# What Claude Code writes when the person runs a slash command, or a `!` shell
+# line, at the prompt: user records, but nothing is asked of the model.
+LOCAL_RECORDS = ("<local-command-caveat>", "<local-command-stdout>", "<local-command-stderr>",
+                 "<command-name>", "<command-message>",
+                 "<bash-input>", "<bash-stdout>", "<bash-stderr>")
+
+
+def _first_words(rec):
+    """The text of a user record: its string, or the first text part of a list."""
+    content = _dict(rec.get("message")).get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                return part["text"]
+    return ""
+
+
+def _local(rec):
+    """Is this user record only the person using Claude Code's own commands?"""
+    return rec.get("type") == "user" and _first_words(rec).lstrip().startswith(LOCAL_RECORDS)
+
+
+def _api_error(rec):
+    """Is this Claude Code's synthetic reply for an API error?"""
+    return rec.get("type") == "assistant" and rec.get("isApiErrorMessage") is True
+
+
+def _compaction(rec):
+    """Is this the summary Claude Code writes when it compacts a session, by
+    itself while the session is idle or at the person's /compact? A user record
+    in form only: the model was asked to summarise, not to go on. (At a
+    /compact the command is usually written first as an ordinary user record,
+    which does open the turn; the summary after it changes nothing.)"""
+    return rec.get("type") == "user" and rec.get("isCompactSummary") is True
+
+
+# What a user record that nobody typed begins with, in a Claude Code that does
+# not say so in `origin`: a job's notice, a teammate's message (bare, or after
+# the sentence Claude Code 2.1.291 to 2.1.295 puts before it: 340 records of 14
+# days), and the notice of the person's interrupt (40 records, all in list form).
+NOT_TYPED = ("<task-notification>", "<teammate-message", "Another Claude session sent a message",
+             "[Request interrupted by user")
+
+
+def _typed(rec):
+    """Is this user record the person typing at the prompt?
+
+    A Claude Code that writes `origin` says who wrote the record: `human`, or
+    `task-notification`, or `peer` (a message from another session); anything
+    but `human` is a machine's, and so is a kind not yet invented. Older ones
+    wrote none, and then a user record is the person's unless it is a tool's
+    result, a meta record (a skill's expanded prompt, a hook's text) or one of
+    the notices above.
+    """
+    if rec.get("type") != "user":
+        return False
+    origin = rec.get("origin")
+    if origin is not None:
+        return _dict(origin).get("kind") == "human"
+    if rec.get("isMeta"):
+        return False
+    content = _dict(rec.get("message")).get("content")
+    if isinstance(content, list) and any(
+            isinstance(part, dict) and part.get("type") == "tool_result" for part in content):
+        return False
+    return not _first_words(rec).lstrip().startswith(NOT_TYPED)
+
+
+def _synthetic(rec):
+    """Is this assistant record one Claude Code wrote itself, with no model call?
+
+    Its model is `<synthetic>`: the API errors carry it, and so does the "No
+    response requested." that a resumed session gets (46 records in 5,915
+    transcripts, 2 of them after an error).
+    """
+    return _dict(rec.get("message")).get("model") == "<synthetic>"
+
+
+def _resumes(rec):
+    """Does this record end an API error that was the session's last word?
+
+    The model answering, the summary of a compaction (a model call that worked)
+    or the person typing. Nothing else calls the model: a task notification or a
+    message from another session waits in the queue while a rate limit holds or
+    the account is logged out, a tool's result answers a call made before the
+    error, and a reply Claude Code wrote itself (`_synthetic`) is not the model's.
+    """
+    return (rec.get("type") == "assistant" and not _synthetic(rec)) or _compaction(rec) or _typed(rec)
+
+
+def _failure(state, rec):
+    """Is the session's last turn an API error?
+
+    `state["failure"]` is set by an API error that is the newest conversational
+    record and cleared by `_resumes`: the model's reply (not one Claude Code
+    wrote itself), a compaction, a prompt the person typed. Records Claude Code writes on its own after an error (a
+    turn duration, a title, a queued line, a snapshot) are not the session
+    moving on, and neither is a user record that asks the model nothing (a slash
+    command run locally, a `!` line) or one that nobody typed (a notification, a
+    message from another session, a tool's result, a meta prompt): the model
+    has not been called again, or has not answered yet. A subagent's records
+    are not the session's.
+    Claude Code marks the error itself (`isApiErrorMessage`) and names it
+    (`error`); a rate limit also carries the quota, with the reset time.
+    """
+    if rec.get("type") not in ("user", "assistant") or rec.get("isSidechain") or _local(rec):
+        return
+    if not _api_error(rec):
+        if _resumes(rec):
+            state["failure"] = None
+        return
+    name, status = rec.get("error"), rec.get("apiErrorStatus")
+    content = _dict(rec.get("message")).get("content")
+    words = next((" ".join(part["text"].split()) for part in content if isinstance(part, dict)
+                  and part.get("type") == "text" and isinstance(part.get("text"), str)),
+                 "") if isinstance(content, list) else ""
+    seconds = _seconds_of(rec.get("timestamp"))
+    quota = _dict(rec.get("quotaLimits")).get("resetsAt")
+    if base.milliseconds(quota, seconds=True) is None:
+        quota = _dict(_dict(rec.get("apiErrorParams")).get("rate_limit_info")).get("resetsAt")
+    state["failure"] = {
+        "kind": "limit" if name == "rate_limit" else "error",
+        "type": name if isinstance(name, str) else "",
+        "status": base.whole_number(status),
+        "text": words if len(words) <= base.FAILURE_LEN else words[:base.FAILURE_LEN - 1].rstrip() + "…",
+        "at": None if seconds is None else int(seconds * 1000),
+        "resetsAt": base.milliseconds(quota, seconds=True)}
+
+
+# The system records that end a turn: the summary of the stop hooks, and the
+# turn's duration. A stop hook may send the session on, and then the model
+# speaks again within seconds (455 of the 8,648 summaries on this machine, the
+# longest wait 15 s), which opens the turn again.
+TURN_ENDS = ("turn_duration", "stop_hook_summary")
+
+
+def _turn(state, rec):
+    """Is the session's last word the end of a turn?
+
+    `state["over"]` is set by a turn-end record the session itself wrote, or by
+    an API error that is its reply (the model could not answer; Claude Code
+    writes a turn end after most of these, not after all, so the error itself
+    ends the turn), and cleared by anything that asks the model something (a
+    prompt, a message to it, a tool result, its own reply) -- except while an
+    API error is still the session's last word. `_failure` runs first and has
+    then left `state["failure"]` set, and only what clears the error opens the
+    turn again: a notification or a message from another session does not call
+    the model.
+    Bookkeeping, a notice, a user record that asks the model nothing (a slash
+    command run locally) and the summary of a compaction leave it as it is. A
+    subagent's records are not the session's.
+
+    The peer registry may go on saying `busy` once a turn is over -- it does for
+    a session that has teammates, until the session ends -- so this is what
+    tells a lead that finished from one that is working.
+    """
+    if rec.get("isSidechain"):
+        return
+    kind = rec.get("type")
+    if kind == "system":
+        if rec.get("subtype") in TURN_ENDS:
+            state["over"] = True
+    elif kind in ("user", "assistant") and not _local(rec) and not _compaction(rec):
+        state["over"] = state["failure"] is not None
+
+
+def _places(state, rec):
+    """The directories the session has worked in, the newest last. A session
+    that moves keeps its transcript in the folder it started in, and a teammate
+    it spawns later writes in the folder of the directory it was in then."""
+    cwd = rec.get("cwd")
+    if not isinstance(cwd, str) or not cwd or rec.get("isSidechain"):
+        return
+    state["cwds"].pop(cwd, None)
+    state["cwds"][cwd] = True
+    while len(state["cwds"]) > MAX_CWDS:
+        del state["cwds"][next(iter(state["cwds"]))]
+
+
 def _blank_state():
     return {**_blank_counts(),
+            "failure": None, "tool": None, "over": False, "cwds": {},
             "title": "", "prompt": "", "branch": "", "tasks": {},
             "uses": {}, "done": set(), "said": "", "spoke": "", "msg": "",
             "sent": collections.Counter(),
@@ -301,13 +491,16 @@ def _blank_state():
 def _absorb(state, text):
     """Fold newly written lines into what we already know."""
     home = str(Path.home())
-    for line in text.splitlines():
+    for line in jsonl_lines(text):
         try:
             rec = json.loads(line)
         except ValueError:
             continue
         _count(state, rec)
         _tasks(state, rec)
+        _failure(state, rec)
+        _turn(state, rec)
+        _places(state, rec)
         kind = rec.get("type")
         if kind == "ai-title" and rec.get("aiTitle"):
             state["title"] = rec["aiTitle"]
@@ -348,10 +541,13 @@ def _absorb(state, text):
             if not isinstance(part, dict):
                 continue
             if part.get("type") == "tool_use":
+                called, kept = part.get("name") or "", _kept(part.get("input"), part.get("name") or "")
                 if part.get("id"):
-                    state["uses"][part["id"]] = (
-                        rec.get("timestamp"), part.get("name") or "",
-                        _kept(part.get("input"), part.get("name") or ""), mid)
+                    state["uses"][part["id"]] = (rec.get("timestamp"), called, kept, mid)
+                # The newest call the session itself made, answered or not.
+                if (kind == "assistant" and not rec.get("isSidechain")
+                        and _seconds_of(rec.get("timestamp")) is not None):
+                    state["tool"] = (rec["timestamp"], called, kept)
                 # Who it works with: every peer it has messaged. `to` is
                 # the address -- a name, sometimes with a disambiguating ref.
                 if part.get("name") == "SendMessage":
@@ -390,7 +586,7 @@ def _cold(state, path):
     if not state["title"]:
         # A title set early and never again needs the whole file.
         head_text, _ = _read_from(path, 0)
-        for line in head_text.splitlines():
+        for line in jsonl_lines(head_text):
             try:
                 rec = json.loads(line)
             except ValueError:
@@ -401,7 +597,7 @@ def _cold(state, path):
 
 def _absorb_counts(state, text):
     """A subagent's file: nothing is read out of it but when it wrote."""
-    for line in text.splitlines():
+    for line in jsonl_lines(text):
         try:
             rec = json.loads(line)
         except ValueError:
@@ -567,6 +763,12 @@ def _view(state, now):
             "sent": [name for name, _ in state["sent"].most_common()],
             "pending": pending,
             "calls": asked,
+            "failure": dict(state["failure"]) if state["failure"] else None,
+            "lastTool": _last_tool(state["tool"]),
+            # Whether its last word was the end of a turn, and the directories
+            # it has worked in (oldest first): what the registry cannot say.
+            "turnOver": state["over"],
+            "cwds": list(state["cwds"]),
             "writes": _strip(state, now),
             # Open background shells, oldest first, with how long each has run.
             "tasks": sorted(({"id": tid, "label": t["label"],
@@ -576,7 +778,101 @@ def _view(state, now):
                             key=lambda t: -t["since"])}
 
 
-def _subagents(path, now):
+def _last_tool(call):
+    """The newest call, said the way `doing` says one, and when it was made."""
+    if not call:
+        return None
+    return {"text": activity([(call[1], call[2])]) or "a tool",
+            "at": int(_seconds_of(call[0]) * 1000)}
+
+
+def _entries(folder):
+    try:
+        return list(os.scandir(folder))
+    except OSError:
+        return []
+
+
+# A named teammate does not write under the session's folder. It writes a
+# transcript of its own beside the session's, and its first message says whose
+# team it is in: `teamName: session-<first 8 characters of the session's id>`.
+# What team a file is in is read once, from its first lines, and kept.
+TEAM_LINES = 24
+MAX_TEAMS = 4096
+_UNDECIDED = object()
+_teams = {}
+
+
+def _team_of(path):
+    """The team a transcript says it is in, in its first message: its name; None
+    for a session of its own; `_UNDECIDED` while the file has no message yet."""
+    try:
+        with open(path, "rb") as fh:
+            for _ in range(TEAM_LINES):
+                line = fh.readline()
+                if not line:
+                    return _UNDECIDED
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and rec.get("type") in ("user", "assistant"):
+                    team = rec.get("teamName")
+                    return team if isinstance(team, str) else None
+    except OSError:
+        return _UNDECIDED
+    return None
+
+
+def _team(entry, now):
+    """The team of a transcript beside the session's. A file is looked into
+    while it is being written, which is how a teammate is met; one first seen
+    untouched for longer than the strip shows is not looked into at all, so
+    the many old transcripts in a project folder cost a stat and no more."""
+    key = (entry.path, entry.inode())
+    if key in _teams:
+        return _teams[key]
+    try:
+        if (now - entry.stat().st_mtime) / 60 > KEEP_MINUTES:
+            return None
+    except OSError:
+        return None
+    team = _team_of(entry.path)
+    if team is _UNDECIDED:
+        return None
+    if len(_teams) >= MAX_TEAMS:
+        _teams.clear()
+    _teams[key] = team
+    return team
+
+
+def _subagent_files(path, now, cwds=()):
+    """The transcripts the session's subagents write. A background agent writes
+    `<session>/subagents/agent-*.jsonl`, the agents of a workflow one folder
+    deeper, `<session>/subagents/workflows/<run>/agent-*.jsonl`, and a named
+    teammate a transcript of its own in the session's project folder -- or in
+    the project folder of a directory the session has since moved to (`cwds`)."""
+    found = []
+    for entry in _entries(path.with_suffix("") / "subagents"):
+        if entry.name == "workflows" and entry.is_dir():
+            for run in _entries(entry.path):
+                if run.is_dir():
+                    found.extend(e for e in _entries(run.path) if e.name.endswith(".jsonl"))
+        elif entry.name.endswith(".jsonl"):
+            found.append(entry)
+    team = f"session-{path.stem[:8]}"
+    folders = [path.parent]
+    for cwd in cwds:
+        folder = path.parent.parent / registry._encode(cwd)
+        if folder not in folders:
+            folders.append(folder)
+    for folder in folders:
+        found.extend(e for e in _entries(folder)
+                     if e.name.endswith(".jsonl") and e.name != path.name and _team(e, now) == team)
+    return found
+
+
+def _subagents(path, now, cwds=()):
     """The session's subagents: their transcript states, and how many minutes
     ago the newest of them wrote (None when it has none).
 
@@ -585,15 +881,8 @@ def _subagents(path, now):
     nothing lists them as peers. A file untouched for longer than the strip
     shows cannot add to it, and is not even opened.
     """
-    folder = path.with_suffix("") / "subagents"
     states, quiet = [], None
-    try:
-        entries = list(os.scandir(folder))
-    except OSError:
-        return states, quiet
-    for entry in entries:
-        if not entry.name.endswith(".jsonl"):
-            continue
+    for entry in _subagent_files(path, now, cwds):
         try:
             mtime = entry.stat().st_mtime
         except OSError:
@@ -630,7 +919,7 @@ def scan_session(path, now=None):
     if view["writes"] is None:
         return view
     now = time.time() if now is None else now
-    subs, view["subQuiet"] = _subagents(path, now)
+    subs, view["subQuiet"] = _subagents(path, now, view["cwds"])
     for state in subs:
         view["writes"] = _add(view["writes"], _strip(state, now))
     return view
@@ -638,7 +927,7 @@ def scan_session(path, now=None):
 
 EMPTY = {"title": "", "prompt": "", "branch": "", "paths": [], "said": "",
          "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": [],
-         "calls": []}
+         "calls": [], "failure": None, "lastTool": None, "turnOver": False, "cwds": []}
 
 
 def _peers(cfg):
@@ -698,21 +987,68 @@ def _processes(rec, summary, status, shells):
     writes to its own output file is alive: a task whose shell died and sent
     no notice (the session was resumed, say) is not running, and another
     command's shell does not make it so.
+
+    `unread` is whether `/proc` could not say: it would not answer, or this is
+    the first look at a command and there is nothing to compare its CPU with.
+    Then "no CPU" is not "uses none", and a caller that wants to call the
+    session hung must wait for a look that can tell. `cpu_ago` is how many
+    minutes ago CPU was last seen moving, whether or not it moves now.
     """
+    nothing = {"tasks": [], "cpu": False, "cpu_ago": None, "unread": False}
     tasks = summary["tasks"]
     if shells is None or not rec.get("pid") or not (
             tasks or (status == "busy" and summary["pending"] is not None)):
-        return [], False
+        return nothing
     seen = shells.look(rec["pid"])
     if seen is None:
-        return [], False
-    return [t for t in tasks if t["id"] in seen["tasks"]], seen["cpu"]
+        return {**nothing, "unread": True}
+    return {"tasks": [t for t in tasks if t["id"] in seen["tasks"]], "cpu": seen["cpu"] is True,
+            "cpu_ago": shells.cpu_ago(rec["pid"]), "unread": seen["cpu"] is None}
 
 
-def asking_of(status, waiting_for, calls):
+# The one word Claude Code uses for a `waiting` session that is not asking the
+# person anything: a menu or panel they opened themselves. Every other word it
+# writes (input needed, permission prompt, sandbox request, worker request,
+# goal proposal) waits on an answer or an approval.
+MENUS = ("dialog open",)
+
+# A dialog Claude Code raises itself, and that waits on the person, says
+# `dialog open` too, but writes a `needs` text beside it (read out of 2.1.295's
+# own dialog table, 2026-10-19). These are the texts it has, by the kind each
+# is counted under; a text not here is `other`. `usage` is "Session paused" for
+# usage credits, the one that is a limit and not a thing to decide.
+DIALOG_KINDS = {
+    "choose: continue on usage credits or switch models": "usage",
+    "choose: retry on fallback model or edit prompt": "fallback",
+    "acknowledge the classifier billing notice (enter continues in auto mode)": "billing",
+    "choose: run ultraplan in the cloud": "ultraplan",
+    "choose: make auto mode the default permission mode": "auto mode",
+}
+USAGE = "usage"
+
+
+def dialog_needs(status, waiting_for, needs):
+    """What a dialog that says it is open waits on, as the words it wrote in
+    `needs`, or None: a menu the person opened has none, and a `needs` beside
+    anything else is not read (another process writes it too, for a session
+    that is not in a dialog at all)."""
+    if status != "waiting" or not isinstance(waiting_for, str) or waiting_for.strip().lower() not in MENUS:
+        return None
+    if not isinstance(needs, str):
+        return None
+    return " ".join(needs.split()) or None
+
+
+def dialog_kind(words):
+    """The kind of dialog its `needs` words belong to, as a short label to count
+    under: one of `DIALOG_KINDS`' kinds, or `other`. Never the words themselves."""
+    return DIALOG_KINDS.get(words.lower(), "other")
+
+
+def asking_of(status, waiting_for, calls, needs):
     """The dialog a session has open, or None: what Claude Code says is open
-    (the peer record's status and `waitingFor`) and what the transcript says
-    it is about (the calls that have not come back).
+    (the peer record's status, `waitingFor` and `needs`) and what the
+    transcript says it is about (the calls that have not come back).
 
     A question is Claude Code's `input needed`, with the unanswered
     AskUserQuestion as its content. Claude Code writes that call into the
@@ -721,7 +1057,12 @@ def asking_of(status, waiting_for, calls):
     (`questions` empty), and fills in on the read that does. A permission
     prompt is Claude Code's own `permission prompt`, about the oldest call
     still waiting -- a running call is not one, and a menu (`dialog open`) is
-    neither.
+    neither. Any other word it names is a request waiting on the person (a
+    sandbox asking for the network, a teammate's worker, a goal it proposes),
+    and is told by that word; a word this reader has not met is one too, since
+    Claude Code only says `waiting` when it waits on someone. A menu
+    (`dialog open`) is told by its `needs` text when it has one, and a dialog
+    that is open on usage credits is a `pause` and not a request: it is a limit.
     """
     if status != "waiting":
         return None
@@ -731,7 +1072,13 @@ def asking_of(status, waiting_for, calls):
     if waiting_for == "input needed":
         return {"kind": "question", "questions": []}
     if waiting_for != "permission prompt":
-        return None
+        word = waiting_for.strip() if isinstance(waiting_for, str) else ""
+        if word.lower() in MENUS:
+            words = dialog_needs(status, word, needs)
+            if words is None:
+                return None
+            return {"kind": "pause" if dialog_kind(words) == USAGE else "request", "what": words}
+        return {"kind": "request", "what": word} if word else None
     name, inp = calls[0] if calls else ("", {})
     target = inp.get(TARGET.get(name, ""))
     return {"kind": "permission", "tool": name,
@@ -764,7 +1111,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
     routine = routine_of(rec, cfg)
     track = boss_marker(sid, cfg)
     boss = track is not None
-    background, cpu = _processes(rec, summary, status, shells)
+    under = _processes(rec, summary, status, shells)
     return {
         "id": sid,
         "name": rec.get("name") or "(unnamed)",
@@ -784,7 +1131,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # Claude Code's own words for what it is blocked on, and the last
         # thing it said to you. Neither is generated here.
         "waitingFor": rec.get("waitingFor") or "",
-        "asking": asking_of(status, rec.get("waitingFor") or "", summary["calls"]),
+        "asking": asking_of(status, rec.get("waitingFor") or "", summary["calls"], rec.get("needs")),
         "said": summary["said"],
         "boss": boss,
         # The name of the boss's tracker, which is the project its workers
@@ -808,8 +1155,16 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # tasks with a live shell behind them, and CPU under a shell.
         "writes": summary["writes"],
         "subQuiet": summary["subQuiet"],
-        "bgTasks": background,
-        "shellCpu": cpu,
+        "bgTasks": under["tasks"],
+        "shellCpu": under["cpu"],
+        "shellCpuAgo": under["cpu_ago"],
+        "procsUnknown": under["unread"],
+        # An API error as the newest thing the session said, and the last
+        # call it made: what Limit, Error and Hung are told from.
+        "failure": summary["failure"],
+        "lastTool": summary["lastTool"],
+        # Its last word ended a turn, whatever the registry says it is doing.
+        "turnOver": summary["turnOver"],
     }
 
 

@@ -86,7 +86,8 @@ class Shells(Base):
     def test_the_first_sight_is_never_cpu(self):
         shell = self.fake.add(200, SESSION, cmd=BASH)
         self.fake.add(300, shell, cmd="python3\0", ticks=9999)
-        self.assertEqual(self.look(0), {"shells": 1, "cpu": False, "tasks": []})
+        # Nothing to compare with yet: not "uses none" (False), which takes a second look.
+        self.assertEqual(self.look(0), {"shells": 1, "cpu": None, "tasks": []})
 
     def test_a_shell_that_is_alive_but_idle_is_not_cpu(self):
         shell = self.fake.add(200, SESSION, cmd=BASH)
@@ -112,6 +113,93 @@ class Shells(Base):
         self.look(0)
         self.fake.burn(worker, 5000)
         self.assertFalse(self.look(3600)["cpu"])
+
+
+class CpuAgo(Base):
+    """When CPU was last seen moving under a session, for as long as it is
+    worth remembering: the movement rule counts silence from the last sign of
+    life of any kind, and CPU a minute ago is a sign. `look` says nothing of it."""
+
+    def burning(self):
+        shell = self.fake.add(200, SESSION, cmd=BASH)
+        return self.fake.add(300, shell, cmd="python3\0", ticks=10)
+
+    def test_a_session_whose_cpu_was_never_seen_moving_has_no_time(self):
+        self.burning()
+        self.look(0)
+        self.look(3)
+        self.assertIsNone(self.watch.cpu_ago(SESSION, now=3))
+
+    def test_a_session_nothing_was_looked_at_has_no_time(self):
+        self.assertIsNone(self.watch.cpu_ago(SESSION, now=0))
+        self.assertIsNone(self.watch.cpu_ago(999, now=0))
+
+    def test_the_time_is_minutes_since_the_last_look_that_saw_it_move(self):
+        worker = self.burning()
+        self.look(0)
+        self.fake.burn(worker, 400)
+        self.assertTrue(self.look(3)["cpu"])
+        self.assertEqual(self.watch.cpu_ago(SESSION, now=3), 0.0)
+        self.assertEqual(self.watch.cpu_ago(SESSION, now=303), 5.0)
+
+    def test_it_outlives_the_few_seconds_look_says_cpu_for(self):
+        worker = self.burning()
+        self.look(0)
+        self.fake.burn(worker, 400)
+        self.look(3)
+        self.assertFalse(self.look(30)["cpu"])
+        self.assertEqual(self.watch.cpu_ago(SESSION, now=63), 1.0)
+
+    def test_a_later_burst_moves_it_forward(self):
+        worker = self.burning()
+        self.look(0)
+        self.fake.burn(worker, 400)
+        self.look(3)
+        self.look(600)
+        self.fake.burn(worker, 900)
+        self.look(603)
+        self.assertEqual(self.watch.cpu_ago(SESSION, now=663), 1.0)
+
+    def test_it_is_forgotten_after_six_hours(self):
+        worker = self.burning()
+        self.look(0)
+        self.fake.burn(worker, 400)
+        self.look(3)
+        self.look(6 * 3600 + 4)
+        self.assertEqual(self.watch.cpu_ago(SESSION, now=6 * 3600 + 4), None)
+
+    def test_it_is_kept_just_inside_six_hours(self):
+        worker = self.burning()
+        self.look(0)
+        self.fake.burn(worker, 400)
+        self.look(3)
+        self.look(6 * 3600 + 2)
+        self.assertAlmostEqual(self.watch.cpu_ago(SESSION, now=6 * 3600 + 2), 359.98, places=1)
+
+    def test_it_belongs_to_the_session_looked_at(self):
+        other = 101
+        self.fake.add(other, cmd="claude\0")
+        shell = self.fake.add(210, other, cmd=BASH)
+        worker = self.fake.add(310, shell, cmd="python3\0", ticks=10)
+        self.look(0)
+        self.watch.look(other, now=0)
+        self.fake.burn(worker, 400)
+        self.assertTrue(self.watch.look(other, now=3)["cpu"])
+        self.assertIsNone(self.watch.cpu_ago(SESSION, now=3))
+        self.assertEqual(self.watch.cpu_ago(other, now=3), 0.0)
+
+    def test_the_answer_of_look_has_no_new_key(self):
+        worker = self.burning()
+        self.look(0)
+        self.fake.burn(worker, 400)
+        self.assertEqual(set(self.look(3)), {"shells", "cpu", "tasks"})
+
+    def test_a_clock_that_went_backwards_gives_no_negative_time(self):
+        worker = self.burning()
+        self.look(100)
+        self.fake.burn(worker, 400)
+        self.look(103)
+        self.assertEqual(self.watch.cpu_ago(SESSION, now=50), 0.0)
 
 
 class UnrelatedProcesses(Base):
@@ -149,7 +237,7 @@ class Races(Base):
         shell = self.fake.add(200, SESSION, cmd=BASH)
         self.fake.add(300, shell, cmd="python3\0", ticks=1)
         self.fake.vanish(300)
-        self.assertEqual(self.look(0), {"shells": 1, "cpu": False, "tasks": []})
+        self.assertEqual(self.look(0), {"shells": 1, "cpu": None, "tasks": []})
 
     def test_a_shell_that_exits_between_the_list_and_the_read_is_not_a_shell(self):
         self.fake.add(200, SESSION, cmd=BASH)
@@ -237,7 +325,7 @@ class BackgroundOutputs(Base):
         # R17: the descriptor is gone, or not ours.
         shell = self.fake.add(200, SESSION, cmd=BASH, out=OUT % "bk7q2m9xa")
         (self.fake.root / str(shell) / "fd" / "1").unlink()
-        self.assertEqual(self.look(0), {"shells": 1, "cpu": False, "tasks": []})
+        self.assertEqual(self.look(0), {"shells": 1, "cpu": None, "tasks": []})
 
 
 if __name__ == "__main__":

@@ -39,6 +39,10 @@ Putting everything of one project into another by hand, so that the first is gon
 A short line under a project's name that reminds the person what the project is about.
 _Avoid_: description, summary
 
+**Project card**:
+The top of a project's column: its name, what it is about (the context line), for a track its status and how many of its boxes are ticked, and its movement.
+_Avoid_: header, title bar
+
 **Working-on line**:
 A short line under a session's name that says what job the session is on, not what it is doing this minute.
 _Avoid_: subject, status line
@@ -54,8 +58,30 @@ _Avoid_: dashboard, roster
 A session that cannot move on without something changing, of a kind the overview can name.
 
 **Needs you**:
-A kind of stuck: the session cannot go on until the person answers, approves, or does something themselves, such as running a command, sending a mail or buying something.
+A kind of stuck: the session cannot go on until the person answers, approves, or does something themselves, such as running a command, sending a mail or buying something. A dialog Claude Code raises itself counts when it says what it waits on; a menu the person opened does not.
 _Avoid_: waiting, ready, your turn
+
+**Limit**:
+A kind of stuck: the usage limit was reached and the session's last word is that error, or a "Session paused" dialog is open on usage credits. It goes on by itself when the limit resets, or when the person tells it to.
+_Avoid_: rate limit error, throttled
+
+**Error**:
+A kind of stuck: any other API or authentication error is the session's last word (overloaded, auth, server). It ends the way any Failure does.
+_Avoid_: crash
+
+**Failure**:
+The API error that is a session's last word: a Limit if it is the usage limit, an Error for any other. It ends when the model is asked or says anything again; a slash command run locally, or a `!` shell line, does not end it.
+
+**Hung**:
+A kind of stuck: the session is busy and nothing shows it moving, for ten minutes (`hung_after_minutes`) counted from its last sign of life of any kind. Waiting on a subagent, a background job or a command using CPU is moving, not Hung, for the six hours such a wait counts and the ten minutes after; so is a session whose processes could not be read.
+_Avoid_: frozen, stalled, the old `stuck` flag
+
+**Header counts**:
+The three numbers at the top of the overview: sessions that need you, other stuck (an Error, a Hung or a Limit), and moving. The roster counts them and each session is in at most one, stuck winning over moving. A click on a count lights up its sessions and shrinks the columns with none to their card; a second click clears it.
+_Avoid_: alarms, busy
+
+**Banner**:
+A band across the top of the page for a condition of the whole machine, such as a full disk, rather than of one session. It comes from the roster's `banners` and nowhere else: a session or an error that talks about a full disk is not one.
 
 **Guessed command**:
 A command found in the free text of a session's line for the person, quoted or after a `$`, that the person can copy with one click. It is a guess and is sometimes wrong, and a copy never answers the session.
@@ -67,8 +93,18 @@ One click that puts the terminal showing a session in front of the person. A ses
 A background session that a `claude attach` already shows in some window. The jump then goes to that window, never to a second copy, because two windows would write one conversation.
 
 **Finished**:
-A session that has been idle for hours with nothing left for the person and its handover read. It stays one click away, because finished sessions are often picked up again.
+A session that has been idle for hours (`finished_after_minutes`, 120) with nothing left for the person and its handover read in the overview. It stays one click away, because finished sessions are often picked up again.
 _Avoid_: dead, forgotten, closed
+
+**Pill**:
+A finished session as one line at the foot of its project's column: name and idle time, its working-on line on hover, a click jumps. Counted in nothing. Any sign of life makes it a tile again.
+_Avoid_: badge, chip
+
+**Pin (a session)**:
+Holding a finished session open as a full tile until it is unpinned or the session closes. Kept in agentview's own state, not in config. Not the pin on a project card, which puts the project first.
+
+**Handover read**:
+The person has seen what the session said when it stopped, as of that stop, in the overview: a jump that reached the terminal, or a click on a tile with none, which reads the stop that tile showed and no later one. Separate from the chime's seen mark, which the block view also wrote and which a failed jump once wrote too; those old marks do not finish a session.
 
 **Movement**:
 Visible evidence that a session is still making progress, including while it waits on CI or tests.

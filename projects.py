@@ -17,6 +17,7 @@ none -- with a guess from the files it touched offered as a suggestion.
 import collections
 import os
 import re
+import stat
 from pathlib import Path
 
 from providers import claude
@@ -31,6 +32,16 @@ NO_PROJECT = {"id": "", "kind": "none", "raw": ""}
 def pm_dir():
     """Where claude-boss keeps its trackers. A function so a test can move it."""
     return claude.claude_dir() / "pm"
+
+
+def regular(path):
+    """Whether a path is a regular file, or a link to one. Reading a named pipe
+    waits for a writer that may never come, so a file that is read on every
+    poll is looked at first."""
+    try:
+        return stat.S_ISREG(os.stat(path).st_mode)
+    except OSError:
+        return False
 
 
 def _project(prefix, key, raw):
@@ -49,11 +60,28 @@ def from_identity(ident):
     return _project(prefix, key, _last(key) if prefix in ("repo", "client") else key)
 
 
+# Words that keep their own case, even first in a name.
+BRANDS = ("tiroir",)
+SLUG_BREAK = re.compile(r"[-_\s]+")
+
+
+def pretty(raw):
+    """A slug as words: hyphens and underscores become spaces and the first
+    letter is a capital. The brand stays lowercase."""
+    words = [w for w in SLUG_BREAK.split(raw) if w]
+    if not words:
+        return raw
+    words = [w.casefold() if w.casefold() in BRANDS else w for w in words]
+    if words[0] not in BRANDS:
+        words[0] = words[0][:1].upper() + words[0][1:]
+    return " ".join(words)
+
+
 def display_name(project, names):
-    """What the card says: your name for the project, else the raw one. Your
-    names are keyed by the project's identity, or -- as they were before
-    projects had one -- by its raw name."""
-    return names.get(project["id"]) or names.get(project["raw"]) or project["raw"]
+    """What the card says: your name for the project, exactly as you wrote
+    it, else the raw one made readable. Your names are keyed by the project's
+    identity, or -- as they were before projects had one -- by its raw name."""
+    return names.get(project["id"]) or names.get(project["raw"]) or pretty(project["raw"])
 
 
 def is_pin_of(pin, project):
@@ -87,17 +115,35 @@ def _repository(cwd):
             return git.resolve(), here.relative_to(d)
         if git.is_file():
             try:
-                admin = d / git.read_text(encoding="utf-8").split(":", 1)[1].strip()
-            except (OSError, IndexError):
+                target = git.read_text(encoding="utf-8").split(":", 1)[1].strip()
+                if "\0" in target:                         # no path has one
+                    raise ValueError
+                admin = d / target
+            except (OSError, ValueError, IndexError):     # ValueError: not text
                 return None
             # A worktree names its parent's `.git`; a submodule's own folder
             # is the repository.
             try:
                 common = (admin / (admin / "commondir").read_text(encoding="utf-8").strip()).resolve()
-            except OSError:
+            except (OSError, ValueError):
                 common = admin.resolve()
             return common, here.relative_to(d)
     return None
+
+
+def checkouts(cwd):
+    """The folders the repository of a launch folder is checked out in: its
+    main checkout first -- the one all its worktrees share -- then the
+    checkout the folder is in, if that is another. Empty when there is none."""
+    found = _repository(cwd) if cwd and os.path.isabs(cwd) else None
+    if not found:
+        return []
+    common, inside = found
+    own = Path(cwd)
+    for _ in inside.parts:
+        own = own.parent
+    main = common.parent if common.name == ".git" else None
+    return [main, own] if main and main != own else [own]
 
 
 SECTION = re.compile(r'^\s*\[\s*remote\s+"([^"]+)"\s*\]\s*$')
@@ -264,7 +310,10 @@ def _roster_names(track):
     if not TRACK_NAME.match(track):
         return set()
     try:
-        with open(pm_dir() / f"{track}.md", encoding="utf-8", errors="replace") as fh:
+        path = pm_dir() / f"{track}.md"
+        if not regular(path):
+            return set()
+        with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read(TRACKER_READ)
     except OSError:
         return set()

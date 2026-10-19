@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import log
+import dialog_words
 
 
 def peer(pid, name, status="busy", cwd="/home/alice", started=None):
@@ -45,6 +46,86 @@ class Transitions(unittest.TestCase):
     def test_a_session_moving_house_is_recorded(self):
         got = self.kinds({1: peer(1, "Vera", cwd="/a")}, {1: peer(1, "Vera", cwd="/b")})
         self.assertEqual(got, ["cwd"])
+
+
+def waiting_peer(pid, name, needs=None, waiting_for="dialog open", status="waiting"):
+    got = {**peer(pid, name, status), "waitingFor": waiting_for}
+    if needs is not None:
+        got["needs"] = needs
+    return got
+
+
+class Needs(unittest.TestCase):
+    """Ticket 15: how many `dialog open` openings carry a `needs` text, per kind.
+    The log writes the kind, a short label, and never the words: they may be
+    a classifier's reading of a transcript."""
+    def events(self, before, after):
+        return [(k, f) for k, f in log.transitions(before, after) if k == "needs"]
+
+    def test_a_dialog_that_opens_with_a_needs_text_writes_its_kind_and_not_its_words(self):
+        words = dialog_words.ULTRAPLAN
+        before = {1: waiting_peer(1, "Vera")}
+        after = {1: waiting_peer(1, "Vera", words)}
+        (kind, fields), = self.events(before, after)
+        self.assertEqual((fields["from"], fields["to"], fields["name"], fields["pid"]),
+                         (None, "ultraplan", "Vera", 1))
+        self.assertNotIn("ultraplan in the cloud", json.dumps(log.transitions(before, after)))
+
+    def test_each_text_claude_code_writes_has_its_kind_and_any_other_is_other(self):
+        for words, kind in ((dialog_words.USAGE, "usage"), (dialog_words.RETRY, "fallback"),
+                            (dialog_words.BILLING, "billing"), (dialog_words.AUTO_MODE, "auto mode"),
+                            ("Invented: a sentence about the transcript of a session", "other")):
+            with self.subTest(kind=kind):
+                (_, fields), = self.events({1: waiting_peer(1, "Vera")}, {1: waiting_peer(1, "Vera", words)})
+                self.assertEqual(fields["to"], kind)
+
+    def test_the_words_never_reach_any_event(self):
+        words = "Invented: a sentence about the transcript of a session"
+        got = log.transitions({1: waiting_peer(1, "Vera")}, {1: waiting_peer(1, "Vera", words)})
+        self.assertNotIn("sentence about", json.dumps(got))
+        got = log.transitions({}, {1: waiting_peer(1, "Vera", words)})
+        self.assertNotIn("sentence about", json.dumps(got))
+
+    def test_a_dialog_already_open_when_the_session_is_first_seen_is_counted_once(self):
+        # A restart of the watcher sees every session as new. The dialog is
+        # open now whether or not anyone saw it open, and the count is of dialogs.
+        (kind, fields), = self.events({}, {1: waiting_peer(1, "Vera", dialog_words.BILLING)})
+        self.assertEqual((fields["from"], fields["to"], fields["pid"]), (None, "billing", 1))
+        self.assertEqual(self.events({}, {1: waiting_peer(1, "Vera")}), [])
+        self.assertEqual(self.events({}, {1: peer(1, "Vera", "busy")}), [])
+
+    def test_the_dialog_closing_writes_the_kind_going_away(self):
+        words = dialog_words.USAGE
+        (_, fields), = self.events({1: waiting_peer(1, "Vera", words)}, {1: waiting_peer(1, "Vera", status="busy", waiting_for=None)})
+        self.assertEqual((fields["from"], fields["to"]), ("usage", None))
+
+    def test_a_menu_the_person_opened_has_no_kind_and_writes_no_needs_event(self):
+        self.assertEqual(self.events({1: peer(1, "Vera", "busy")}, {1: waiting_peer(1, "Vera")}), [])
+
+    def test_it_reads_back_as_a_kind_coming_and_going(self):
+        at = "2026-10-19T10:00:00.000"
+        self.assertIn("None -> usage", log.render({"at": at, "kind": "needs", "name": "Vera", "from": None, "to": "usage"}))
+        self.assertIn("usage -> None", log.render({"at": at, "kind": "needs", "name": "Vera", "from": "usage", "to": None}))
+
+    def test_a_needs_text_beside_no_dialog_is_not_a_dialog(self):
+        # The classifier writes `needs` for a session that is not in a dialog.
+        words = dialog_words.ULTRAPLAN
+        for rec in ({**peer(1, "Vera", "idle"), "needs": words},
+                    waiting_peer(1, "Vera", words, waiting_for="permission prompt"),
+                    waiting_peer(1, "Vera", words, waiting_for="input needed"),
+                    waiting_peer(1, "Vera", words, status="busy")):
+            with self.subTest(waiting_for=rec.get("waitingFor")):
+                self.assertEqual(self.events({1: peer(1, "Vera")}, {1: rec}), [])
+
+    def test_the_same_kind_staying_open_says_nothing_more(self):
+        words = dialog_words.ULTRAPLAN
+        self.assertEqual(self.events({1: waiting_peer(1, "Vera", words)},
+                                     {1: {**waiting_peer(1, "Vera", words), "updatedAt": 9}}), [])
+
+    def test_a_needs_text_that_is_not_text_is_no_text(self):
+        for value in (7, True, ["x"], {"a": 1}, "", "   "):
+            with self.subTest(value=value):
+                self.assertEqual(self.events({1: waiting_peer(1, "Vera")}, {1: waiting_peer(1, "Vera", value)}), [])
 
 
 class Writing(unittest.TestCase):
