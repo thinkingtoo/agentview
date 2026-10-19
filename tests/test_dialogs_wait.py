@@ -22,7 +22,7 @@ import fleet
 import lines
 from dialog_words import BILLING, RETRY, ULTRAPLAN, USAGE
 from test_columns import Base, session
-from test_needs_you import INJECTION, Chime
+from test_needs_you import INJECTION
 from test_stuck_kinds import failure
 
 REVIEW = "invented: review the settings before they apply"
@@ -98,15 +98,11 @@ class Dialogs(Base):
 
     # What the chime reads is not touched: a named wait is `waiting`, whatever
     # the dialog is, with or without the words it carries.
-    def test_the_chime_reads_the_same_blocks_with_or_without_the_words(self):
-        def heard(*rows):
-            return [{"alarms": b["alarms"], "blocked": b["blocked"], "ready": b["ready"], "busy": b["busy"],
-                     "members": [{k: m[k] for k in Chime.READ} for m in b["members"]]}
-                    for b in self.roster(*rows)["blocks"]]
-        plain = heard(menu())
-        self.assertEqual((plain[0]["alarms"], plain[0]["members"][0]["flag"]), (1, "waiting"))
+    def test_the_chime_reads_the_same_flags_with_or_without_the_words(self):
+        plain = self.heard(menu())
+        self.assertEqual((plain[0]["rings"], plain[0]["flag"]), (True, "waiting"))
         for row in (dialog(BILLING), paused()):
-            self.assertEqual(heard(row), plain)
+            self.assertEqual(self.heard(row), plain)
 
     # R7: its words are a session's, and the page prints them as text only.
     def test_its_words_are_cut_to_a_label_and_are_text_only(self):

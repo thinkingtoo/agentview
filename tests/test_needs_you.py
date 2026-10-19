@@ -151,12 +151,9 @@ class Requests(Base):
 
     def test_the_chime_rings_exactly_as_it_did_without_the_request(self):
         # The flag and the counts are the old ones: a named waitingFor rings.
-        read = lambda *rows: [{k: b[k] for k in ("alarms", "blocked", "ready", "busy")}
-                              | {"members": [{k: m[k] for k in Chime.READ} for m in b["members"]]}
-                              for b in self.roster(*rows)["blocks"]]
         bare = session("a", status="waiting", waitingFor="sandbox request")
-        self.assertEqual(read(self.request()), read(bare))
-        self.assertEqual((read(bare)[0]["alarms"], read(bare)[0]["members"][0]["flag"]), (1, "waiting"))
+        self.assertEqual(self.heard(self.request()), self.heard(bare))
+        self.assertEqual((self.heard(bare)[0]["rings"], self.heard(bare)[0]["flag"]), (True, "waiting"))
 
 
 class SessionLine(Base):
@@ -213,24 +210,15 @@ class SessionLine(Base):
 
 
 class Chime(Base):
-    """The chime reads `blocks`: the flag of each session and the counts of
-    each block. Needs you is for the page, and adds nothing to what rings."""
-
-    READ = ("key", "status", "flag", "blocked", "waitingFor", "n", "ask")
-
-    def heard(self, *sessions):
-        got = self.roster(*sessions)["blocks"]
-        return [{"alarms": b["alarms"], "blocked": b["blocked"], "ready": b["ready"],
-                 "busy": b["busy"],
-                 "members": [{k: m[k] for k in self.READ} for m in b["members"]]}
-                for b in got]
+    """The chime reads `flags`: the raw flag of each session and whether it
+    is blocked. Needs you is for the page, and adds nothing to what rings."""
 
     def test_an_open_question_rings_exactly_as_it_did_without_the_content(self):
         with_content = self.heard(waiting(asking=asks()))
         without = self.heard(waiting())
         self.assertEqual(with_content, without)
-        self.assertEqual((with_content[0]["alarms"], with_content[0]["members"][0]["flag"]),
-                         (1, "waiting"))
+        self.assertEqual((with_content[0]["rings"], with_content[0]["flag"]),
+                         (True, "waiting"))
 
     def test_a_question_not_written_down_yet_rings_exactly_as_it_did(self):
         self.assertEqual(self.heard(waiting(asking={"kind": "question", "questions": []})),
@@ -245,15 +233,15 @@ class Chime(Base):
         lines.begin_turn("a", self.lines)
         lines.write("a", did="Built.", ask="Which branch?", n=1, root=self.lines)
         got = self.heard(session("a"))[0]
-        self.assertEqual((got["blocked"], got["alarms"], got["members"][0]["flag"]),
-                         (1, 1, "ready"))
+        self.assertEqual((got["blocked"], got["rings"], got["flag"]),
+                         (True, True, "ready"))
 
     def test_content_handed_over_by_a_session_that_is_not_waiting_rings_nothing(self):
         # Needs you is the page's word. A busy session that a provider says
         # is asking gets the mark on the page and no alarm from the chime.
         got = self.heard(session("a", status="busy", quietFor=0.1, asking=asks()))[0]
-        self.assertEqual((got["alarms"], got["blocked"], got["members"][0]["flag"]),
-                         (0, 0, None))
+        self.assertEqual((got["rings"], got["blocked"], got["flag"]),
+                         (False, False, None))
 
     def test_the_tile_keeps_the_flag_the_chime_has(self):
         tile = self.tile(waiting(asking=asks()))

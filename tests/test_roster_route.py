@@ -48,20 +48,20 @@ class Poll(unittest.TestCase):
         with urllib.request.urlopen(url, timeout=10) as r:
             return json.loads(r.read())
 
-    def test_columns_arrive_beside_the_blocks_and_everything_else_stays(self):
+    def test_the_roster_has_columns_and_flags_and_no_blocks(self):
         got = self.poll()
-        self.assertEqual([m["key"] for b in got["blocks"] for m in b["members"]], ["fake:a"])
+        self.assertEqual([f["key"] for f in got["flags"]], ["fake:a"])
         self.assertEqual([t["key"] for c in got["columns"] for t in c["sessions"]], ["fake:a"])
-        self.assertEqual(sorted(got), ["banners", "blocks", "chime", "closed", "columns", "counts",
-                                       "hold", "providers", "restore", "saved"])
+        self.assertEqual(sorted(got), ["banners", "chime", "closed", "columns", "counts",
+                                       "flags", "hold", "providers", "restore", "saved"])
+        self.assertNotIn("blocks", got)
         self.assertEqual(sorted(got["counts"]), ["moving", "needs", "otherStuck"])
         self.assertIsInstance(got["banners"], list)
 
     def test_the_page_is_served_with_a_query_on_it(self):
-        # `?view=blocks` is how the old block view stays reachable; the page
-        # reads it, the server only has to not call it a different path.
+        # The server only has to not call a query a different path.
         base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
-        for path in ("/", "/?view=blocks", "/index.html?view=blocks"):
+        for path in ("/", "/?x=1", "/index.html?x=1"):
             with urllib.request.urlopen(base + path, timeout=10) as r:
                 self.assertEqual(r.status, 200, path)
                 self.assertIn(b'<main id="main">', r.read(), path)

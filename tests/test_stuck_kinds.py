@@ -193,7 +193,7 @@ class Hung(Kind):
         # `silentFor` is how long a busy session has shown no sign of life. One
         # waiting on the person, or idle, has none, whatever its subagents did.
         def silent(row):
-            return self.roster(row)["blocks"][0]["members"][0]["silentFor"]
+            return self.members(row)[0]["silentFor"]
         for status in ("waiting", "idle"):
             with self.subTest(status=status):
                 self.assertIsNone(silent(session("a", status=status, quietFor=500.0, subQuiet=15.0)))
@@ -291,7 +291,7 @@ class TheClock(Kind):
         for since in (1.0, 60.0, self.CAP - 1):
             with self.subTest(since=since):
                 row = hung(quiet=500.0, bgTasks=[{"label": "watch", "since": since}])
-                self.assertEqual(self.roster(row)["blocks"][0]["members"][0]["silentFor"], 0.0)
+                self.assertEqual(self.members(row)[0]["silentFor"], 0.0)
 
     def test_a_job_past_the_bound_stopped_counting_when_it_passed_it(self):
         # Six hours and five minutes: it stopped counting five minutes ago.
@@ -334,7 +334,7 @@ class TheClock(Kind):
                 got = self.tile(row)
                 if got["stuck"] and got["stuck"]["kind"] == "hung":
                     self.assertFalse(got["moving"])
-                    self.assertGreaterEqual(self.roster(row)["blocks"][0]["members"][0]["silentFor"], 10.0)
+                    self.assertGreaterEqual(self.members(row)[0]["silentFor"], 10.0)
 
     def test_a_cpu_time_that_is_not_a_time_is_not_believed(self):
         for junk in ("5", True, -3.0, float("nan"), float("inf"), [1], None):
@@ -488,20 +488,10 @@ class Chime(Base):
     """Today's flags stay as they are, because the chime reads them. The kinds
     are for the page and add nothing to what rings."""
 
-    READ = ("key", "status", "flag", "blocked", "waitingFor", "n", "ask")
-
-    def heard(self, *sessions):
-        got = self.roster(*sessions)["blocks"]
-        return [{"alarms": b["alarms"], "blocked": b["blocked"], "ready": b["ready"],
-                 "busy": b["busy"],
-                 "members": [{k: m[k] for k in self.READ} for m in b["members"]]}
-                for b in got]
-
     def test_a_hung_session_is_still_stuck_to_the_chime_and_the_tile_does_not_say_it(self):
-        got = self.roster(hung(quiet=17.0))
-        member = got["blocks"][0]["members"][0]
-        self.assertEqual((member["flag"], got["blocks"][0]["alarms"]), ("stuck", 1))
-        tile = got["columns"][0]["sessions"][0]
+        (row,) = self.heard(hung(quiet=17.0))
+        self.assertEqual((row["flag"], row["rings"]), ("stuck", True))
+        tile = self.roster(hung(quiet=17.0))["columns"][0]["sessions"][0]
         self.assertEqual((tile["flag"], tile["stuck"]["kind"]), (None, "hung"))
 
     def test_a_hung_session_rings_exactly_as_it_did(self):
@@ -522,8 +512,7 @@ class Chime(Base):
                          self.heard(waiting(asking=asks())))
 
     def test_a_session_unreadable_by_proc_still_rings_as_stuck(self):
-        member = self.heard(hung(quiet=17.0, procsUnknown=True))[0]["members"][0]
-        self.assertEqual(member["flag"], "stuck")
+        self.assertEqual(self.heard(hung(quiet=17.0, procsUnknown=True))[0]["flag"], "stuck")
 
     def test_the_tile_of_a_busy_session_proc_cannot_read_has_no_stuck_flag_and_no_kind(self):
         tile = self.tile(hung(quiet=17.0, toolFor=17.0, procsUnknown=True))

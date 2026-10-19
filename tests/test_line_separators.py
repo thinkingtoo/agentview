@@ -273,7 +273,7 @@ class ThroughTheRoster(test_stuck_kinds_reader.Base):
         super().setUp()
         test_columns.Base.setUp(self)
 
-    def roster(self, sep):
+    def roster(self, sep, make=fleet.roster):
         claude._cache.clear()
         self.session([], status="idle")
         put(self.transcript, "".join(lines_of(claude_records(sep))))
@@ -282,14 +282,13 @@ class ThroughTheRoster(test_stuck_kinds_reader.Base):
         peer["updatedAt"] = peer["statusUpdatedAt"] = int(time.time() * 1000) - 600_000   # stopped, and not read yet
         path.write_text(json.dumps(peer))
         fleet.CONFIG.write_text("{}")
-        return fleet.roster(providers=[self.provider])
+        return make(providers=[self.provider])
 
     def test_a_record_with_a_separator_in_it_reaches_the_member_and_the_tile(self):
         for name, sep in SEPARATORS:
             with self.subTest(sep=name):
-                got = self.roster(sep)
-                member, = got["blocks"][0]["members"]
-                tile, = got["columns"][0]["sessions"]
+                member, = self.roster(sep, fleet.members)
+                tile, = self.roster(sep)["columns"][0]["sessions"]
                 # The title and the prompt arrive whole. What it said is shaped into the
                 # card's one sentence, the last line of the words, and the core reads
                 # prose by lines: a separator is a line break to it, as `\n` is. What

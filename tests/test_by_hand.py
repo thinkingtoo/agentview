@@ -657,35 +657,6 @@ class BlockViewPins(Corrected):
         self.assertEqual(self.stored()["pinned"], ["folder:orchard", "maple", "folder:pear"])
 
 
-class BlockViewUnpins(Corrected):
-    """A session moved by hand into a project is a block of its own, named by
-    the project's identity, in the old block view -- and that view must be able
-    to unpin it, or drag it, like any other."""
-
-    def setUp(self):
-        super().setUp()
-        self.seed(assign={"fake:c": "folder:maple"}, pinned=["folder:maple", "folder:pear"])
-
-    def pinned_blocks(self):
-        return [b["project"] for b in self.poll()["blocks"] if b["pinned"]]
-
-    def test_the_block_view_unpins_a_block_that_is_named_by_an_identity(self):
-        self.assertIn("folder:maple", self.pinned_blocks())
-        shown = [b["project"] for b in self.poll()["blocks"]]
-        self.assertEqual(self.post("/api/order", {"pinned": [], "shown": shown})[0], 200)
-        self.assertEqual(self.stored()["pinned"], ["folder:pear"])
-        self.assertNotIn("folder:maple", self.pinned_blocks())
-
-    def test_what_the_block_view_did_not_show_stays_pinned_after_its_own_drag(self):
-        self.assertEqual(self.post("/api/order", {"pinned": ["folder:maple"], "shown": ["folder:maple", "orchard"]})[0], 200)
-        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:pear"])
-
-    def test_a_list_of_what_it_shows_that_is_not_a_list_of_names_is_refused(self):
-        for shown in ("folder:maple", [3], {"a": 1}):
-            self.assertEqual(self.post("/api/order", {"pinned": [], "shown": shown})[0], 400, shown)
-        self.assertEqual(self.stored()["pinned"], ["folder:maple", "folder:pear"])
-
-
 class OneNameTwoCards(Corrected):
     """A pin written before projects had identities names a project by its
     plain name, which a track and a folder can share: two cards, one pin. What
@@ -719,14 +690,14 @@ class OneNameTwoCards(Corrected):
                                                   "shown": self.shown})[0], 200)
         self.assertEqual(self.stored()["pinned"], ["track:maple", "folder:orchard"])
 
-    def test_a_click_on_another_card_leaves_the_plain_pin_as_the_block_view_wrote_it(self):
+    def test_a_click_on_another_card_leaves_the_plain_pin_as_an_old_pin_wrote_it(self):
         # One card carries the plain pin: there is nothing to tell apart, and
-        # the block view (and a same-named project with no session yet) still
-        # needs the plain name.
+        # a same-named project with no session yet still needs the plain name.
         self.seed(pinned=["maple"])
         self.assertEqual(self.pin("folder:orchard", shown=["folder:maple"])[0], 200)
         self.assertEqual(self.stored()["pinned"], ["maple", "folder:orchard"])
-        self.assertEqual([b["project"] for b in self.poll()["blocks"] if b["pinned"]], ["maple"])
+        self.assertEqual([c["project"] for c in self.columns() if c["pinned"]],
+                         ["folder:maple", "folder:orchard"])
 
     def test_a_click_on_a_third_card_leaves_two_cards_that_share_a_pin_where_they_are(self):
         self.seed(pinned=["maple", "track:maple"], assign={"fake:c": "track:maple"})
@@ -786,52 +757,49 @@ class MovedByRoute(Corrected):
         self.assertEqual(self.stored()["assign"], {"fake:c": "folder:maple"})
 
 
-class BlockViewAfterAMerge(Corrected):
-    """Hunt 7: the block view names a session moved by hand after the project it
-    was moved into. When that project is merged away, an up-to-date tab must not
-    be told it is behind: every block the roster offers takes the block view's
-    own requests (drag it, rename it, drop a row on it)."""
+class AfterAMerge(Corrected):
+    """Hunt 7: a session moved by hand is named after the project it was moved
+    into. When that project is merged away, an up-to-date tab must not be told
+    it is behind: every column the roster offers takes the overview's own
+    requests (rename it, drop a session on it)."""
 
-    def blocks(self):
-        return [b["project"] for b in self.poll()["blocks"] if b["project"] and not b.get("routines")]
+    def projects(self):
+        return [c["project"] for c in self.columns()]
 
     def asked_of(self, name):
-        return [self.post("/api/order", {"pinned": [name], "shown": self.blocks()})[0],
-                self.post("/api/name", {"project": name, "label": "Renamed"})[0],
+        return [self.post("/api/name", {"project": name, "label": "Renamed"})[0],
                 self.post("/api/assign", {"key": "fake:a", "project": name})[0]]
 
-    def test_a_session_moved_into_a_project_that_is_merged_away_sits_in_a_block_that_is_still_there(self):
+    def test_a_session_moved_into_a_project_that_is_merged_away_sits_in_a_column_that_is_still_there(self):
         self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
         self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
-        names = self.blocks()
-        self.assertIn("folder:orchard", names)          # Saskia's block: where the moves end
+        names = self.projects()
+        self.assertIn("folder:orchard", names)          # Saskia's column: where the moves end
         self.assertNotIn("folder:maple", names)
         for name in names:
-            self.assertEqual(self.asked_of(name), [200, 200, 200], name)
+            self.assertEqual(self.asked_of(name), [200, 200], name)
 
     def test_the_same_through_a_longer_way(self):
         self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
         self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
         self.post("/api/merge", {"source": "folder:orchard", "target": "folder:pear"})
-        names = self.blocks()
+        names = self.projects()
         self.assertNotIn("folder:maple", names)
         self.assertNotIn("folder:orchard", names)
         for name in names:
-            self.assertEqual(self.asked_of(name), [200, 200, 200], name)
+            self.assertEqual(self.asked_of(name), [200, 200], name)
 
-    def test_the_overview_and_the_block_view_still_agree_on_where_the_session_is(self):
+    def test_the_session_is_in_the_column_the_merge_ended_in(self):
         self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
         self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
         self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:c", "fake:d"])
-        block = next(b for b in self.poll()["blocks"] if any(m["key"] == "fake:c" for m in b["members"]))
-        self.assertEqual(block["project"], "folder:orchard")
 
-    def test_taking_the_merge_back_gives_the_session_its_block_back(self):
+    def test_taking_the_merge_back_gives_the_session_its_column_back(self):
         self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
         self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
         self.post("/api/assign", {"key": "folder:maple", "project": "", "was": "folder:orchard"})
-        self.assertIn("folder:maple", self.blocks())
-        self.assertNotIn("folder:orchard", self.blocks())
+        self.assertIn("fake:c", self.keys("folder:maple"))
+        self.assertNotIn("fake:c", self.keys("folder:orchard"))
 
 
 class TwoTabs(Corrected):

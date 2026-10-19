@@ -39,10 +39,10 @@ class RoutineOf(unittest.TestCase):
 def session(name, routine="", project=None, **kw):
     # The fields the page reads off a row; `roster()` now makes tiles from them.
     base = {"name": name, "routine": routine, "project": project, "status": "idle",
-            "flag": None, "updatedAt": 0, "branch": "", "key": name,
+            "flag": None, "updatedAt": 0, "branch": "", "key": name, "id": name,
             "boss": False, "team": [], "blocked": False, "n": 0,
             "provider": "claude", "title": "", "did": "", "ask": "", "prompt": "",
-            "cwd": "", "canJump": False, "waitingFor": "", "quietFor": None,
+            "cwd": f"/home/alice/Projects/{project}" if project else "", "canJump": False, "waitingFor": "", "quietFor": None,
             "toolFor": None, "movement": None, "moving": False, "asking": None,
             "failure": None, "lastTool": None, "procsUnknown": False, "silentFor": None,
             "idleFor": None, "unread": False, "pinned": False, "said": ""}
@@ -50,140 +50,126 @@ def session(name, routine="", project=None, **kw):
     return base
 
 
-class Grouping(unittest.TestCase):
-    def roster(self, members):
+class Seen(unittest.TestCase):
+    """The sessions through `members()`, the order the overview is made from,
+    and through `roster()` for what the page and the chime are given."""
+
+    def run_with(self, members, fn):
         real = fleet.sessions
         fleet.sessions = lambda providers=None: members
         try:
-            return fleet.roster()["blocks"]
+            return fn()
         finally:
             fleet.sessions = real
 
-    def test_every_routine_lands_in_one_block_of_its_own(self):
+    def members(self, members):
+        return self.run_with(members, fleet.members)
+
+    def roster(self, members):
+        return self.run_with(members, fleet.roster)
+
+    def names(self, members):
+        return [m["name"] for m in self.members(members)]
+
+
+class Grouping(Seen):
+    def test_every_routine_comes_after_the_projects_and_none_is_in_a_column(self):
         # They run from ~, so before this they were scattered through
         # `No project` -- the pile that means "assign me", which is the one
         # thing a routine never needs.
-        blocks = self.roster([
+        rows = [
             session("Ansgar", routine="nightly-report"),
             session("Bruno", routine="disk-check"),
             session("Vera", project="maple"),
-        ])
-        by_name = {b["project"]: b for b in blocks}
-        self.assertEqual(sorted(by_name), ["Routines", "maple"])
-        self.assertEqual([m["name"] for m in by_name["Routines"]["members"]],
-                         ["Ansgar", "Bruno"])
-        self.assertTrue(by_name["Routines"]["routines"])
-        self.assertFalse(by_name["Routines"]["orphan"])
+        ]
+        self.assertEqual(self.names(rows), ["Vera", "Ansgar", "Bruno"])
+        got = self.roster(rows)
+        self.assertEqual([c["name"] for c in got["columns"]], ["Maple"])
+        self.assertEqual(sorted(f["name"] for f in got["flags"]), ["Ansgar", "Bruno", "Vera"])
 
     def test_a_project_of_the_same_name_is_not_swallowed(self):
-        blocks = self.roster([
+        got = self.roster([
             session("Ansgar", routine="nightly-report"),
             session("Vera", project="Routines"),
         ])
-        routines = [b for b in blocks if b["routines"]]
-        self.assertEqual(len(blocks), 2)
-        self.assertEqual([m["name"] for m in routines[0]["members"]], ["Ansgar"])
+        (column,) = got["columns"]
+        self.assertEqual((column["name"], [t["name"] for t in column["sessions"]]), ("Routines", ["Vera"]))
+        self.assertEqual(sorted(f["name"] for f in got["flags"]), ["Ansgar", "Vera"])
 
     def test_routines_sit_below_even_no_project(self):
         # `No project` is asking you for something. A routine is asking for
         # nothing and will be gone in a few minutes.
-        blocks = self.roster([
+        self.assertEqual(self.names([
             session("Ansgar", routine="nightly-report", status="busy"),
             session("Nemo"),
             session("Vera", project="maple"),
-        ])
-        self.assertEqual([b["project"] for b in blocks],
-                         ["maple", "No project", "Routines"])
+        ]), ["Vera", "Nemo", "Ansgar"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class Teams(unittest.TestCase):
-    """A boss leads its block, and the team it dispatches to follows."""
-
-    def roster(self, members):
-        real = fleet.sessions
-        fleet.sessions = lambda providers=None: members
-        try:
-            return fleet.roster()["blocks"]
-        finally:
-            fleet.sessions = real
+class Teams(Seen):
+    """A boss leads its project, and the team it dispatches to follows."""
 
     def test_the_boss_leads_whatever_the_activity(self):
         # Everyone else is busier and more recent; he still goes first.
-        blocks = self.roster([
+        self.assertEqual(self.names([
             session("Rosalie", project="pmd", status="busy", updatedAt=99),
             session("Lennart", project="pmd", boss=True,
                     team=["Rosalie", "Kasper"]),
             session("Kasper", project="pmd", status="busy", updatedAt=98),
-        ])
-        self.assertEqual([m["name"] for m in blocks[0]["members"]],
-                         ["Lennart", "Rosalie", "Kasper"])
+        ]), ["Lennart", "Rosalie", "Kasper"])
 
-    def test_a_worker_knows_who_it_reports_to(self):
-        blocks = self.roster([
+    def test_the_team_follows_the_boss_ahead_of_a_busier_stranger(self):
+        self.assertEqual(self.names([
             session("Lennart", project="pmd", boss=True, team=["Rosalie"]),
+            session("Kasper", project="pmd", status="busy", updatedAt=99),
             session("Rosalie", project="pmd"),
-            session("Vera", project="maple"),
-        ])
-        by_name = {m["name"]: m for b in blocks for m in b["members"]}
-        self.assertEqual(by_name["Rosalie"]["reportsTo"], "Lennart")
-        self.assertEqual(by_name["Vera"]["reportsTo"], "")
-
-    def test_a_worker_in_another_project_still_knows(self):
-        # Workers are meant to sit in their own projects. It cannot be nested
-        # under a block it is not in, but it can still say who sent it.
-        blocks = self.roster([
-            session("Lennart", project="pmd", boss=True, team=["Vera"]),
-            session("Vera", project="maple"),
-        ])
-        by_name = {m["name"]: m for b in blocks for m in b["members"]}
-        self.assertEqual(by_name["Vera"]["reportsTo"], "Lennart")
+        ]), ["Lennart", "Rosalie", "Kasper"])
 
     def test_someone_the_boss_never_messaged_is_not_on_the_team(self):
-        blocks = self.roster([
+        self.assertEqual(self.names([
+            session("Kasper", project="pmd", status="busy", updatedAt=99),
             session("Lennart", project="pmd", boss=True, team=["Rosalie"]),
-            session("Kasper", project="pmd", status="busy"),
-        ])
-        by_name = {m["name"]: m for b in blocks for m in b["members"]}
-        self.assertEqual(by_name["Kasper"]["reportsTo"], "")
+        ]), ["Lennart", "Kasper"])
+
+    def test_a_worker_in_another_project_stays_in_its_own(self):
+        # Workers are meant to sit in their own projects. It cannot be nested
+        # under a project it is not in.
+        rows = [
+            session("Lennart", project="pmd", boss=True, team=["Vera"]),
+            session("Vera", project="maple"),
+        ]
+        self.assertEqual(sorted(self.names(rows)), ["Lennart", "Vera"])
+        self.assertEqual(sorted(c["name"] for c in self.roster(rows)["columns"]), ["Maple", "Pmd"])
 
 
-class TwoBosses(unittest.TestCase):
+class TwoBosses(Seen):
     """Teams read from real message traffic, which is noisier than a chart."""
 
-    def roster(self, members):
-        real = fleet.sessions
-        fleet.sessions = lambda providers=None: members
-        try:
-            return fleet.roster()["blocks"]
-        finally:
-            fleet.sessions = real
+    def by_name(self, members):
+        return {m["name"]: m for m in self.members(members)}
 
-    def by_name(self, blocks):
-        return {m["name"]: m for b in blocks for m in b["members"]}
-
-    def test_a_boss_reports_to_nobody(self):
+    def test_a_boss_is_on_nobodys_team(self):
         # Two bosses message each other. One message is not a chain of
         # command, and marking one of them as the other's worker inverts
         # what the page is for.
-        got = self.by_name(self.roster([
+        got = self.by_name([
             session("Anton", project="lumen", boss=True, team=["Kian", "Lennart"]),
             session("Lennart", project="pmd", boss=True, team=["Rosalie"]),
             session("Kian", project="lumen"),
             session("Rosalie", project="pmd"),
-        ]))
-        self.assertEqual(got["Lennart"]["reportsTo"], "")
-        self.assertEqual(got["Kian"]["reportsTo"], "Anton")
+        ])
         self.assertEqual(got["Anton"]["team"], ["Kian"])
+        self.assertEqual(got["Lennart"]["team"], ["Rosalie"])
 
     def test_a_worker_that_has_been_retired_leaves_the_team(self):
         # A boss retires workers as the work finishes. The page is about who
         # is running now, so a name with no session behind it is dropped.
-        got = self.by_name(self.roster([
+        got = self.by_name([
             session("Anton", project="lumen", boss=True, team=["Kian", "Ines"]),
             session("Kian", project="lumen"),
-        ]))
+        ])
         self.assertEqual(got["Anton"]["team"], ["Kian"])
+
+
+if __name__ == "__main__":
+    unittest.main()

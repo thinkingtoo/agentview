@@ -643,7 +643,8 @@ class Guess(Placed):
     def test_the_paths_a_session_touched_do_not_travel_to_the_page(self):
         orchard = self.repo("orchard")
         got = self.roster(self.lost(paths=[str(orchard / "a.py")]))
-        self.assertNotIn("paths", got["blocks"][0]["members"][0])
+        self.assertNotIn("paths", json.dumps(got))
+        self.assertIn("paths", self.members(self.lost(paths=[str(orchard / "a.py")]))[0])
 
 
 class Edges(Placed):
