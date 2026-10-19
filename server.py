@@ -515,22 +515,22 @@ class Handler(BaseHTTPRequestHandler):
             with fleet.POLL:
                 with log.timed("roster", 1.5):
                     data = fleet.roster()
-                blocks = data["blocks"]
+                flags = data["flags"]
                 failed = {**providers.broken(), **fleet.ROUND["failed"]}
                 answered = set(fleet.ROUND["answered"])
-            log.note_roster(blocks)
-            live = {m["key"] for b in blocks for m in b["members"]}
+            log.note_roster(flags)
+            live = {f["key"] for f in flags}
             # Only the providers that answered get their dead sessions
             # forgotten: a missed round must not bring back as `ready`
             # everything you had already read.
             seen.forget(live, answered=answered)
             finished.forget(live, answered=answered)
             if not fleet.ROUND["failed"]:
-                lines.forget({m["id"] for b in blocks for m in b["members"]})
+                lines.forget({f["id"] for f in flags})
             status = {name: {"ok": True} for name in answered}
             status.update({name: {"ok": False, "error": why} for name, why in failed.items()})
-            live_ids = {m["key"].partition(":")[2] for b in blocks for m in b["members"]
-                        if m["key"].startswith("claude:")}
+            live_ids = {f["key"].partition(":")[2] for f in flags
+                        if f["key"].startswith("claude:")}
             self._send(json.dumps({**data,
                                    "restore": restorable(live_ids),
                                    "closed": closed_now(live_ids),
@@ -562,7 +562,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send(tickets.page(repo, number, tickets.fetch(repo, number), ticket_status(repo, number)),
                        "text/html; charset=utf-8")
         elif urllib.parse.urlsplit(self.path).path in ("/", "/index.html"):
-            # The query is the page's own (`?view=blocks`); the server has none.
             self._send(page(), "text/html; charset=utf-8")
         else:
             self.send_error(404)
