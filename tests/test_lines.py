@@ -123,7 +123,8 @@ class WhoWroteIt(unittest.TestCase):
     def test_two_writers_do_not_share_a_temporary_file(self):
         seen = set()
         real = lines._tmp_for
-        lines._tmp_for = lambda p: seen.add(str(real(p))) or real(p)
+        # The line's own file; the kept did has a temporary file of its own.
+        lines._tmp_for = lambda p: (seen.add(str(real(p))) if p.suffix == ".json" else 0) or real(p)
         try:
             lines.write("f", did="1", root=self.root)
             lines.write("f", did="2", root=self.root)
@@ -166,6 +167,65 @@ class Turns(unittest.TestCase):
         lines.write("s1", did="x", ask="y", n=1, root=self.root)
         lines.begin_turn("s1", self.root)
         self.assertEqual(lines.read("s1", self.root), {})
+
+    def test_the_last_did_outlives_the_next_prompt_though_the_line_does_not(self):
+        # The job a session is on does not change at every prompt; what it is
+        # blocked on does.
+        lines.begin_turn("s1", self.root)
+        lines.write("s1", did="Card form wired", ask="Which vault?", n=1, root=self.root)
+        lines.begin_turn("s1", self.root)
+        self.assertEqual(lines.read("s1", self.root), {})
+        self.assertEqual(lines.kept_did("s1", self.root), "Card form wired")
+
+    def test_a_newer_did_replaces_the_kept_one(self):
+        lines.write("s1", did="first", root=self.root)
+        lines.begin_turn("s1", self.root)
+        lines.write("s1", did="second", root=self.root)
+        lines.begin_turn("s1", self.root)
+        self.assertEqual(lines.kept_did("s1", self.root), "second")
+
+    def test_a_line_with_no_did_leaves_the_kept_one_alone(self):
+        # The Stop hook's stand-in writes a question and no did.
+        lines.write("s1", did="Card form wired", root=self.root)
+        lines.begin_turn("s1", self.root)
+        lines.write("s1", did="", ask="Which vault?", n=1, by="read", root=self.root)
+        self.assertEqual(lines.kept_did("s1", self.root), "Card form wired")
+
+    def test_a_session_that_never_wrote_a_did_has_none_kept(self):
+        self.assertEqual(lines.kept_did("s1", self.root), "")
+        lines.write("s1", did="", ask="Which vault?", n=1, root=self.root)
+        self.assertEqual(lines.kept_did("s1", self.root), "")
+
+    def test_a_kept_did_is_a_line_long_and_never_raises(self):
+        lines.write("s1", did="word " * 200, root=self.root)
+        self.assertLessEqual(len(lines.kept_did("s1", self.root)), lines.LIMIT)
+        (self.root / "s1.did").write_bytes(b"\xff\xfe not text")
+        self.assertIsInstance(lines.kept_did("s1", self.root), str)
+        self.assertEqual(lines.kept_did("../s1", self.root), "")
+
+    def test_the_kept_did_of_a_dead_session_is_forgotten(self):
+        lines.write("gone", did="x", root=self.root)
+        lines.write("alive", did="y", root=self.root)
+        lines.forget({"alive"}, self.root)
+        self.assertEqual(lines.kept_did("gone", self.root), "")
+        self.assertEqual(lines.kept_did("alive", self.root), "y")
+
+    def test_a_did_written_before_it_was_kept_survives_its_first_prompt(self):
+        # A line from before the kept did existed has its did in the line
+        # file alone, and the prompt is about to drop that file.
+        (self.root / "s1.json").write_text(
+            json.dumps({"did": "Card form wired", "ask": "", "n": 0, "at": 1, "by": "session",
+                        "turn": ""}), encoding="utf-8")
+        self.assertEqual(lines.kept_did("s1", self.root), "")
+        lines.begin_turn("s1", self.root)
+        self.assertEqual(lines.kept_did("s1", self.root), "Card form wired")
+
+    def test_a_prompt_does_not_replace_a_kept_did_with_an_older_one(self):
+        lines.write("s1", did="newer", root=self.root)
+        (self.root / "s1.json").write_text(
+            json.dumps({"did": "older", "at": 1, "by": "session", "turn": ""}), encoding="utf-8")
+        lines.begin_turn("s1", self.root)
+        self.assertEqual(lines.kept_did("s1", self.root), "newer")
 
     def test_a_line_is_stamped_with_the_turn_it_was_written_in(self):
         turn = lines.begin_turn("s1", self.root)

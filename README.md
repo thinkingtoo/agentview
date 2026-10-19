@@ -705,17 +705,28 @@ a working session printed **your own last prompt back at you**.
 
 So the session is asked. Two hooks, and neither of them interrupts anything.
 
-**`UserPromptSubmit` starts the turn** (`hooks/turn_line.py`). It forgets the
-previous line — the prompt you just typed is the answer to whatever the session
-was blocked on — and injects one short paragraph asking for the next one. The
-session then writes its line as an ordinary action inside the turn it was
-already having.
+**`UserPromptSubmit` starts the turn** (`hooks/turn_line.py`). It forgets what
+the previous line was blocked on — the prompt you just typed is the answer to
+it — and injects one short paragraph asking for the next line. The session then
+writes its line as an ordinary action inside the turn it was already having.
+What it forgets is `ask` and `n`. The `did` stays (`lines.kept_did`, a file of
+its own beside the line) until the session writes another, because the job does
+not change at a prompt; it is what a tile says it is working on.
 
 | Field | What it is |
 |---|---|
-| `did` | Where the work stands. One sentence, in the language of the conversation. It **replaces** the `ai-title` line, which becomes its fallback. |
+| `did` | Where the work stands. One sentence, in the language of the conversation. It **replaces** the `ai-title` line, which becomes its fallback. It is kept across prompts, until a newer one is written. |
 | `ask` | The one thing it is blocked on, in its own words. |
 | `n` | How many things are left for you when its turn ends: a decision, a command to run, a mail to send, a sign-in. Counted even when it has other work, since nothing moves on them once it stops. An offer is not one. |
+
+**The line a tile says it is working on** (`working.py`) is the first of these
+that says something new: your own line (the one you click to write), the `did`,
+Claude Code's title; and with none of those, greyed, the last prompt, then the
+branch, then the folder. A line that only repeats the project's name, the
+card's context line or the session's own name is skipped for the next source,
+and a tile with nothing left has no line. It is one line, clipped by the page,
+with all of it on hover. The roster says which source it was (`lineSource`:
+`own`, `did`, `title`, `prompt`, `place`).
 
 **Words when there is one, a count when there are more.** A single blocked
 question is short enough to answer from the page. Four of them are a trip to the

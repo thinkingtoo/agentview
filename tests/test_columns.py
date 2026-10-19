@@ -92,6 +92,12 @@ class Columns(Base):
 
 
 class Tiles(Base):
+    def setUp(self):
+        super().setUp()
+        # With a line of its own the card does not say the session titles, and
+        # a tile's title is not a repeat of it.
+        self.config = {"project_lines": {"folder:maple": "Sells maple syrup online"}}
+
     def test_a_tile_says_who_it_is_what_it_is_on_and_how_to_reach_it(self):
         tile = self.tile(session("a", name="Ilse", status="busy", canJump=True,
                                  title="Checkout form"))
@@ -118,7 +124,7 @@ class Tiles(Base):
 
     def test_your_own_line_beats_what_the_session_wrote(self):
         self.wrote("a", "Card form wired to the vault, tests green.")
-        self.config = {"lines": {"fake:a": "Saved cards"}}
+        self.config["lines"] = {"fake:a": "Saved cards"}
         self.assertEqual(self.tile(session("a", title="Checkout form"))["line"], "Saved cards")
 
     def test_a_line_that_only_repeats_the_name_is_left_out(self):
@@ -190,7 +196,7 @@ class Tiles(Base):
         # The page prints these as text (tests/ui_smoke.py checks that); the
         # roster must not strip or mangle them on the way.
         hostile = "<img src=x onerror=alert(1)>"
-        self.config = {"names": {"maple": hostile}}
+        self.config["names"] = {"maple": hostile}
         column = self.roster(session("a", name=hostile, title="Fix " + hostile))["columns"][0]
         self.assertEqual((column["name"], column["sessions"][0]["name"], column["sessions"][0]["line"]),
                          (hostile, hostile, "Fix " + hostile))
