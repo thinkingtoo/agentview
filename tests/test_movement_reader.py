@@ -416,19 +416,27 @@ class Teammates(Base):
         self.assertEqual(sum(self.scan()["writes"]), 2)
 
     def test_only_the_newest_directories_are_remembered(self):
+        # The teammates stopped at different times, so which of them was found
+        # shows in the session's subagent time: the one in -work-a would give
+        # 40 s, the one in -work-c 7 s.
         self.lead_in("/work/a", "/work/b", "/work/c")
-        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-a")
-        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], folder="-work-c")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-a", seconds_ago=40)
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], folder="-work-c", seconds_ago=7)
         with mock.patch.object(claude, "MAX_CWDS", 2):
             got = self.scan()
+        self.assertAlmostEqual(got["subQuiet"], 7 / 60, places=2)
         self.assertEqual(sum(got["writes"]), 4)      # the session's three records, and the one in -work-c
 
     def test_a_directory_is_remembered_by_when_the_session_was_last_in_it(self):
-        write(self.path, [record(600, cwd="/work/a"), record(590, cwd="/work/b"), record(580, cwd="/work/c"),
-                          record(570, cwd="/work/a")], "w")
-        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-a")
+        # a, b, a, c with room for two: the session came back to a after b, so
+        # it is b that goes. (The teammate in -work-a is 40 s back, the one in
+        # -work-b 7 s back: which of them was found shows in the subagent time.)
+        write(self.path, [record(600, cwd="/work/a"), record(590, cwd="/work/b"), record(580, cwd="/work/a"),
+                          record(570, cwd="/work/c")], "w")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-a", seconds_ago=40)
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], folder="-work-b", seconds_ago=7)
         with mock.patch.object(claude, "MAX_CWDS", 2):
-            self.assertAlmostEqual(self.scan()["subQuiet"], 5 / 60)
+            self.assertAlmostEqual(self.scan()["subQuiet"], 40 / 60, places=2)
 
     def test_a_subagents_directory_in_the_sessions_file_is_not_the_sessions_own(self):
         write(self.path, [record(600, cwd="/work/proj"), record(30, cwd="/work/other", isSidechain=True)], "w")
