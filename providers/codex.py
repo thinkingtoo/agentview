@@ -132,6 +132,102 @@ def _command(args):
     return cmd[:base.COMMAND_LIMIT + 1] if isinstance(cmd, str) else ""
 
 
+# A call is written two ways. Until August 2026 it is a `function_call` whose
+# `arguments` are JSON. Since then it is a `custom_tool_call` whose `input` is a
+# script that calls the tool, `await tools.exec_command({cmd: "...", ...})`. A
+# script is read the way JavaScript reads it, as far as that goes: a text is one
+# thing whatever it says, a comment is nothing, and only the object handed to
+# the tool speaks for the call.
+_NAME = re.compile(r"[A-Za-z_$][\w$]*|\d[\w.]*")
+_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)", re.DOTALL)
+_PLAIN = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
+_CALL = (("name", "tools"), (".", "."), ("name", "exec_command"), ("(", "("), ("{", "{"))
+
+
+def _unescape(text):
+    return _ESCAPE.sub(lambda m: chr(int(m.group(1)[1:], 16)) if len(m.group(1)) > 1
+                       else _PLAIN.get(m.group(1), m.group(1)), text)
+
+
+def _tokens(code):
+    """A script as (kind, text) pairs: "text" for a quoted text (unescaped), "name"
+    for a word or a number, the character itself for anything else. Comments and
+    blanks are dropped. A text that is never closed ends the list: nothing after
+    it can be told."""
+    out, at = [], 0
+    while at < len(code):
+        ch = code[at]
+        if ch.isspace():
+            at += 1
+        elif code.startswith("//", at):
+            at = code.find("\n", at)
+            if at < 0:
+                break
+        elif code.startswith("/*", at):
+            at = code.find("*/", at + 2)
+            if at < 0:
+                break
+            at += 2
+        elif ch in "\"'`":
+            close = at + 1
+            while close < len(code) and code[close] != ch:
+                close += 2 if code[close] == "\\" else 1
+            if close >= len(code):
+                break
+            out.append(("text", _unescape(code[at + 1:close])))
+            at = close + 1
+        else:
+            word = _NAME.match(code, at)
+            out.append(("name", word.group()) if word else (ch, ch))
+            at = word.end() if word else at + 1
+    return out
+
+
+def _script_arguments(code):
+    """The objects a script hands to `tools.exec_command`, each as the keys at its
+    top level whose value is a text: `{key: text}`. An object never closed is not one."""
+    tokens, found = _tokens(code), []
+    for start in range(len(tokens) - len(_CALL) + 1):
+        if tuple(tokens[start:start + len(_CALL)]) != _CALL:
+            continue
+        keys, depth = {}, 0
+        for i in range(start + len(_CALL) - 1, len(tokens)):
+            kind, text = tokens[i]
+            if kind in ("{", "[", "("):
+                depth += 1
+            elif kind in ("}", "]", ")"):
+                depth -= 1
+                if depth == 0:
+                    found.append(keys)
+                    break
+            elif (depth == 1 and kind in ("name", "text") and tokens[i - 1][0] in ("{", ",")
+                  and i + 2 < len(tokens) and tokens[i + 1][0] == ":" and tokens[i + 2][0] == "text"):
+                keys[text] = tokens[i + 2][1]
+    return found
+
+
+def _json_arguments(text):
+    try:
+        args = json.loads(text)
+    except ValueError:
+        return []
+    return [args] if isinstance(args, dict) else []
+
+
+def _escalation(payload):
+    """The arguments of a call that asks to leave the sandbox, or None."""
+    what, name = payload.get("type"), payload.get("name")
+    if what == "function_call" and name == "exec_command":
+        text, read = payload.get("arguments"), _json_arguments
+    elif what == "custom_tool_call" and name == "exec":
+        text, read = payload.get("input"), _script_arguments
+    else:
+        return None
+    if not isinstance(text, str) or "require_escalated" not in text or len(text) > MAX_ARGUMENTS:
+        return None
+    return next((args for args in read(text) if args.get("sandbox_permissions") == "require_escalated"), None)
+
+
 def _calls(state, rec, payload):
     """Calls that ask to leave the sandbox, and have no output yet.
 
@@ -146,16 +242,8 @@ def _calls(state, rec, payload):
     if what in ("function_call_output", "custom_tool_call_output"):
         calls.pop(cid, None)
         return
-    arguments = payload.get("arguments")
-    if (what != "function_call" or payload.get("name") != "exec_command"
-            or not isinstance(arguments, str) or "require_escalated" not in arguments
-            or len(arguments) > MAX_ARGUMENTS):
-        return
-    try:
-        args = json.loads(arguments)
-    except ValueError:
-        return
-    if isinstance(args, dict) and args.get("sandbox_permissions") == "require_escalated":
+    args = _escalation(payload)
+    if args is not None:
         calls[cid] = (_ms(rec.get("timestamp")), _command(args))
         for old in list(calls)[:-MAX_CALLS]:
             del calls[old]

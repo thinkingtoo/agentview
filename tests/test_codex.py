@@ -553,6 +553,104 @@ class Approvals(Fixture):
         self.assertEqual(s["asking"]["command"], hostile)
 
 
+def script(ts, cid, code, name="exec"):
+    """A call as Codex has written it since August 2026: a `custom_tool_call` whose
+    `input` is JavaScript that calls a tool, not a JSON text of arguments."""
+    return rec(ts, "response_item", type="custom_tool_call", name=name, input=code,
+               call_id=cid, status="completed")
+
+
+def code_of(cmd, escalate=True, before="", **more):
+    """The script Codex writes for one command; the shape is the real one, the words are made up."""
+    fields = [f"cmd:{json.dumps(cmd)}", '"workdir":"/work/maple"', '"yield_time_ms":30000']
+    if escalate:
+        fields += ['"sandbox_permissions":"require_escalated"', '"justification":"needs the network"']
+    fields += [f"{json.dumps(k)}:{v}" for k, v in more.items()]
+    fields.append('"prefix_rule":["git","push"]')
+    return before + "const r = await tools.exec_command({" + ",".join(fields) + "}); text(r.output)\n"
+
+
+class Scripts(Fixture):
+    """The same question asked of the shape Codex writes now. A command that merely
+    talks about escalating is not one, and nothing in the script can hide one."""
+
+    def turn(self, *records):
+        return self.one(meta(), rec(T0, "event_msg", type="task_started"), policy(T0), *records)
+
+    def asked(self, code, name="exec"):
+        s = self.turn(script(T1, "c1", code, name))
+        return s["status"], (s.get("asking") or {}).get("command")
+
+    def test_a_script_that_asks_to_leave_the_sandbox_and_has_no_output_is_waiting_on_you(self):
+        s = self.turn(script(T1, "c1", code_of("git push origin dev")))
+        self.assertEqual(s["status"], "waiting")
+        self.assertEqual(s["asking"], {"kind": "permission", "tool": "Shell",
+                                       "command": "git push origin dev", "target": ""})
+        self.assertEqual(s["updatedAt"], 1790074140000)
+
+    def test_its_output_answers_it(self):
+        s = self.turn(script(T1, "c1", code_of("make")), answer(T2, "c1", "custom_tool_call_output"))
+        self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+    def test_a_script_that_stays_in_the_sandbox_is_not_a_question(self):
+        self.assertEqual(self.asked(code_of("ls", escalate=False)), ("busy", None))
+
+    def test_a_command_that_only_says_the_words_is_not_a_question(self):
+        said = 'echo \'"sandbox_permissions":"require_escalated"\' && echo sandbox_permissions: "require_escalated"'
+        self.assertEqual(self.asked(code_of(said, escalate=False)), ("busy", None))
+
+    def test_the_words_in_a_comment_are_not_a_question(self):
+        code = ('// sandbox_permissions: "require_escalated" is what the next one would say\n'
+                + code_of("ls", escalate=False))
+        self.assertEqual(self.asked(code), ("busy", None))
+
+    def test_an_apostrophe_in_a_comment_does_not_hide_the_question(self):
+        for comment in ("// don't wait for me\n", "/* it's the one that won't fit */\n"):
+            with self.subTest(comment=comment):
+                self.assertEqual(self.asked(code_of("git push", before=comment)), ("waiting", "git push"))
+
+    def test_the_words_in_an_object_that_is_not_the_call_s_are_not_a_question(self):
+        other = 'const o = {"sandbox_permissions":"require_escalated"};\n' + code_of("ls", escalate=False)
+        inside = code_of("ls", escalate=False, env='{"sandbox_permissions":"require_escalated"}')
+        for code in (other, inside):
+            with self.subTest(code=code[:40]):
+                self.assertEqual(self.asked(code), ("busy", None))
+
+    def test_a_tool_that_is_not_exec_command_is_not_a_question(self):
+        code = code_of("ls").replace("tools.exec_command", "tools.write_stdin")
+        self.assertEqual(self.asked(code), ("busy", None))
+        self.assertEqual(self.asked(code_of("ls"), name="apply_patch"), ("busy", None))
+
+    def test_the_second_call_of_a_script_may_be_the_one_that_asks(self):
+        code = code_of("ls", escalate=False) + code_of("git push")
+        self.assertEqual(self.asked(code), ("waiting", "git push"))
+
+    def test_keys_and_texts_may_be_written_any_of_the_ways_javascript_allows(self):
+        code = ("const r = await tools.exec_command({'cmd': 'echo \\'hi\\'', sandbox_permissions: `require_escalated`});")
+        self.assertEqual(self.asked(code), ("waiting", "echo 'hi'"))
+        code = 'await tools.exec_command({"cmd":"echo \\"hi\\"\\n","sandbox_permissions":"require_escalated"})'
+        self.assertEqual(self.asked(code), ("waiting", 'echo "hi"\n'))
+
+    def test_a_script_that_is_broken_or_too_long_is_not_a_question_and_not_a_crash(self):
+        for code in ('await tools.exec_command({cmd:"unfinished, "sandbox_permissions":"require_escalated"',
+                     'await tools.exec_command({cmd:"x", "sandbox_permissions":"require_escalated"',
+                     'await tools.exec_command({{{{', "'", "`", "/*", "tools.exec_command({",
+                     code_of("x" * 200_000)):
+            with self.subTest(code=code[:30]):
+                self.assertEqual(self.asked(code), ("busy", None))
+
+    def test_a_script_with_no_text_for_a_command_still_asks(self):
+        code = 'await tools.exec_command({"sandbox_permissions":"require_escalated"})'
+        self.assertEqual(self.asked(code), ("waiting", ""))
+
+    def test_an_input_that_is_not_text_is_nothing(self):
+        for bad in (None, 7, ["x"], {"cmd": "ls"}):
+            with self.subTest(bad=bad):
+                s = self.turn(rec(T1, "response_item", type="custom_tool_call", name="exec",
+                                  input=bad, call_id="c1", status="completed"))
+                self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+
 class Runs(Fixture):
     """A `codex exec` run is started by something -- usually a Claude session --
     and the roster folds it into that session's tile. The provider says which
