@@ -2,7 +2,7 @@
 
 The hook that writes the line is unchanged, so `ask` is free text and the
 roster guesses which words in it are a command to run: text in quotes, or
-after a `$`, that reads as a command. The tile reports them as `commands`, and
+after a `$`, that reads as a command. The tile reports them as `guessedCommands`, and
 the page puts a copy button on each. A guess is sometimes wrong and that is
 accepted; a guess never answers the session and never runs anything.
 
@@ -26,7 +26,7 @@ class Guess(Base):
 
     def commands(self, ask, **kw):
         self.line("a", ask, **kw)
-        return self.tile(session("a"))["commands"]
+        return self.tile(session("a"))["guessedCommands"]
 
     def test_a_command_in_quotes_is_offered(self):
         self.assertEqual(self.commands('Run "git push origin feature/maple-notes" for me?'),
@@ -36,7 +36,7 @@ class Guess(Base):
         self.assertEqual(
             self.commands('Should the page be called "release notes" or "what changed"?'), [])
 
-    def test_a_single_quoted_word_is_a_name_not_a_command(self):
+    def test_one_quoted_word_is_a_name_not_a_command(self):
         self.assertEqual(self.commands('Keep the "git" prefix on the branch names?'), [])
 
     def test_a_command_after_a_dollar_is_offered_whatever_its_program(self):
@@ -95,14 +95,14 @@ class Guess(Base):
         asking = {"kind": "question", "questions": [{"question": "Publish the notes page?",
                                                      "header": "", "multi": False, "options": []}]}
         tile = self.tile(session("a", status="waiting", waitingFor="input needed", asking=asking))
-        self.assertEqual((tile["stuck"]["source"], tile["commands"]), ("question", []))
+        self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
 
     def test_several_things_left_quote_nothing_and_so_offer_nothing(self):
         self.assertEqual(self.commands('Run "make test", and may I push it?', n=2), [])
 
     def test_a_command_in_the_last_words_of_a_session_with_no_line_is_offered_too(self):
         tile = self.tile(session("a", said='Done. Should I run "make test" before I push?'))
-        self.assertEqual((tile["need"], tile["commands"]), (
+        self.assertEqual((tile["need"], tile["guessedCommands"]), (
             'Should I run "make test" before I push?', ["make test"]))
 
     def test_a_line_read_out_of_the_transcript_offers_the_same_commands(self):
@@ -115,14 +115,14 @@ class Guess(Base):
         self.line("a", ask)
         tile = self.tile(session("a"))
         self.assertTrue(tile["stuck"]["context"]["text"].endswith("\u2026"))
-        self.assertEqual(tile["commands"], [])
+        self.assertEqual(tile["guessedCommands"], [])
 
     def test_a_command_closed_before_the_cut_is_still_offered(self):
         ask = 'Run "make test" and then read what it says about ' + "the maple notes " * 12
         self.line("a", ask)
         tile = self.tile(session("a"))
         self.assertTrue(tile["stuck"]["context"]["text"].endswith("\u2026"))
-        self.assertEqual(tile["commands"], ["make test"])
+        self.assertEqual(tile["guessedCommands"], ["make test"])
 
     def test_a_script_run_by_its_path_is_a_command_when_it_has_arguments(self):
         self.assertEqual(self.commands('Run "./deploy-maple.sh --dry-run" first?'),
@@ -168,11 +168,29 @@ class Guess(Base):
             with self.subTest(command=command):
                 self.assertEqual(self.commands(f"Run `{command}` for me?"), [command])
 
-    def test_whatever_the_line_holds_the_tile_still_gets_its_commands(self):
+    def test_a_line_with_nothing_in_its_quotes_still_gets_a_tile_and_offers_nothing(self):
         for ask in ('Is " " enough?', "Is `` or ` ` enough?", 'Run "$ " now?', "Run $ now?", "$", "$ ",
                     "Is \u00ab \u00bb a quote?", "\u201c\u201d", "'", '"', "Run \"", "Run $ \u2026"):
             with self.subTest(ask=ask):
                 self.assertEqual(self.commands(ask), [])
+
+    def test_a_program_followed_by_a_plain_word_needs_to_be_a_known_subcommand(self):
+        # Titles and tags that happen to start with a tool's name.
+        for phrase in ("git history", "ssh keys", "docker setup", "python notes", "node status",
+                       "touch base", "echo chamber", "npm package", "systemctl units", "uv tips"):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.commands(f'Name the page "{phrase}" or "release notes"?'), [])
+
+    def test_commands_of_many_shapes_are_offered(self):
+        for command in ("git status", "git push origin main", "git switch -c feature/maple-notes",
+                        "docker compose up -d", "npm run build", "npm test", "uv run pytest",
+                        "pip install -r requirements.txt", "kubectl get pods", "gh pr merge 12",
+                        "systemctl restart maple-notes", "sudo systemctl restart maple-notes",
+                        "python3 scripts/rebuild.py", "cd maple", "ls notes", "ssh root@maple.example",
+                        "ssh-add -l", "brew install jq", "ollama run llama3", "/home/alice/bin/sync.py now",
+                        "MAPLE_ENV=test make test", "tar xzf notes.tar.gz", "grep -rn TODO notes"):
+            with self.subTest(command=command):
+                self.assertEqual(self.commands(f"Could you run `{command}` for me?"), [command])
 
 
 if __name__ == "__main__":

@@ -143,7 +143,7 @@ def tile(s):
             "flagNote": "" if flag is None else s["note"],
             "movement": sign and {"kind": "waiting", "text": sign}, "moving": s["moving"],
             "blocked": bool(s["need"]), "need": s["need"], "stuck": s["stuck"],
-            "commands": s["commands"], "jump": jump_field(s),
+            "guessedCommands": s["commands"], "jump": jump_field(s),
             "find": f"{s['name']}\n{s['line']}".lower()}
 
 
@@ -794,7 +794,7 @@ def guessed_pass(browser):
     body = roster([maple])
     # A line read out of the transcript is not stuck: the ask is the words under the name.
     next(x for x in body["columns"][0]["sessions"] if x["key"] == "g3").update(
-        need="Is `make test` enough?", commands=["make test"])
+        need="Is `make test` enough?", guessedCommands=["make test"])
     fake = Fake(body)
     page = new_page(browser, fake)
     open_at(page)

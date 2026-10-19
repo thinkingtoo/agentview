@@ -134,14 +134,24 @@ moving counts as stuck.
 A command a session leaves for you in its line gets a **copy** button. The
 session-line hook is unchanged, so `ask` is free text and `ask_commands.py`
 guesses: text in quotes (straight, curly, « » or backticks), or after a `$ `,
-that starts with a known program, a path to a script or, after the `$`, any
-name with a hyphen, dot or slash. Prose in quotes ("release notes", "go
-ahead") gets no button; a program the list does not know gets none either, and
-a guess is sometimes wrong. A command cut by the line's length is not offered.
-The tile carries the list as `commands`, only when the ask is on the tile (an
-open dialog is shown over it), and the page prints one row per command with its
-own button. Copying puts the text on the clipboard and sends nothing to the
-server; approving stays in the session's pane.
+that reads as a command. Three tiers keep prose out: names nobody says in a
+sentence (`cd`, `brew`, `psql`) take any argument; tools with fixed
+subcommands (`git`, `docker`, `npm`, `make`, `systemctl` ...) need one of
+theirs, so "git status" gets a button and "git history" does not; words that
+are also programs (`find`, `touch`, `echo`, `ssh`, `python`, `claude`) need a
+flag, path, dot, digit or `@` after them. A path to a script, or `VAR=1 cmd`,
+counts too. After a `$` one word is enough if it is a known program or has a
+hyphen, dot or slash in it.
+
+Known limits, accepted: a program the lists do not know (`tiroir-work next` in
+quotes) gets no button; a title that starts with a tool's name and a flag-like
+word gets one; a `$` command runs to the end of its sentence (`. , ? !` or a
+dash), so one with no sentence end after it swallows the words that follow.
+A command cut by the line's length is not offered. The tile carries the list
+as `guessedCommands`, only when the ask is on the tile (an open dialog is shown
+over it), and the page prints one row per command with its own button. Copying
+puts the text on the clipboard and sends nothing to the server; approving stays
+in the session's pane.
 
 ## After a reboot
 

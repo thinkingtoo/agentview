@@ -731,6 +731,7 @@ def tile_of(m, suggestion=None):
     # sign instead where the sign is the better word: a long call is a wait,
     # and a session that is moving is not stuck.
     flag = None if m["flag"] == "tool" or (m["flag"] == "stuck" and m["moving"]) else m["flag"]
+    stuck = stuck_of(m)
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
         "status": m["status"], "suggestion": suggestion,
@@ -741,8 +742,10 @@ def tile_of(m, suggestion=None):
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
         "movement": m["movement"], "moving": m["moving"],
-        "stuck": stuck_of(m),
-        "commands": commands_of(m),
+        "stuck": stuck,
+        # Named for what it is: a guess, unlike the exact command of a
+        # permission prompt in `stuck.context`.
+        "guessedCommands": guessed_commands_of(m, stuck),
         # The chime rings for a blocked session whatever its flag says, so the
         # tile carries what it is asking, the way the old row did.
         "blocked": m["blocked"], "need": need_of(m),
@@ -782,15 +785,14 @@ def stuck_of(m):
     return None
 
 
-def commands_of(m):
+def guessed_commands_of(m, stuck):
     """The commands guessed in the ask the tile shows, or none.
 
     The ask is on the tile when it is its one thing left or the words under
     its name; an open dialog is shown over it, and several things left are
     only counted.
     """
-    shown = stuck_of(m)
-    if m["n"] != 1 or (shown and shown["source"] != "line"):
+    if m["n"] != 1 or (stuck and stuck["source"] != "line"):
         return []
     return ask_commands.guess(m["ask"])
 
