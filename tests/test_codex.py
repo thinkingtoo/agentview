@@ -5,6 +5,7 @@ JSONL rollout per session, and a lock file that appears when a session
 starts -- and stays behind after a SIGKILL. So a session is live when its
 lock exists *and* a process holds its rollout open, which `/proc` can say.
 """
+import datetime
 import json
 import os
 import sqlite3
@@ -27,6 +28,12 @@ T0_MS = 1790074136218
 
 def rec(ts, kind, **payload):
     return {"timestamp": ts, "type": kind, "payload": payload}
+
+
+def stamp(seconds):
+    """An epoch in seconds as a rollout writes it: ISO, milliseconds, a Z."""
+    when = datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc)
+    return when.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def meta(ts=T0, cwd="/home/alice/Projects/maple", source="exec"):
@@ -134,7 +141,9 @@ class Liveness(unittest.TestCase):
         self.assertEqual(p.live(), [])
 
 
-class Rollout(unittest.TestCase):
+class Fixture(unittest.TestCase):
+    """One live exec thread, held by a process, whose rollout a test writes."""
+
     def setUp(self):
         self.home = Home()
         self.home.thread()
@@ -146,6 +155,9 @@ class Rollout(unittest.TestCase):
         got = self.home.provider().live()
         self.assertEqual(len(got), 1)
         return got[0]
+
+
+class Rollout(Fixture):
 
     def test_task_started_is_busy_since_that_moment(self):
         s = self.one(meta(), rec(T0, "event_msg", type="task_started"))
@@ -212,6 +224,71 @@ class Rollout(unittest.TestCase):
         s = self.one(meta(cwd="/home/alice/Projects/pmd"))
         self.assertEqual(s["cwd"], "/home/alice/Projects/pmd")
         self.assertEqual(s["branch"], "")
+
+
+class Reviews(Fixture):
+    """A `codex exec review` run writes a thread of its own, whose `source` is an
+    object, not a word (238 of 1,813 rollouts here). One such thread live must
+    not take the provider down with it."""
+
+    def test_a_review_subagent_thread_is_a_review_and_the_provider_survives_it(self):
+        self.home.thread(source='{"subagent":"review"}')
+        s = self.one(meta(source={"subagent": "review"}))
+        self.assertEqual(s["kind"], "review")
+
+    def test_an_object_source_the_provider_has_not_met_is_still_a_kind(self):
+        self.home.thread(source='{"something":["else"]}')
+        s = self.one(meta(source={"something": ["else"]}))
+        self.assertEqual(s["kind"], "?")
+
+
+class Writes(Fixture):
+    """The strip: 30 per-minute counts of the records the rollout wrote, oldest
+    first, this minute last. Every persisted record is stamped, and the file
+    is flushed on each append, so the stamps are when the session wrote."""
+
+    NOW = 1_790_000_020.0     # 40 s into a minute: this minute began at NOW - 40
+
+    def writes(self, *ago, now=None):
+        """The strip after records written `ago` seconds before NOW."""
+        records = [meta(ts=stamp(self.NOW - 3 * 3600))]
+        records += [rec(stamp(self.NOW - a), "event_msg", type="token_count") for a in ago]
+        self.home.rollout(records=records)
+        p = self.home.provider()
+        p.clock = lambda: self.NOW if now is None else now
+        got = p.live()
+        self.assertEqual(len(got), 1)
+        return got[0]["writes"]
+
+    def test_the_strip_has_thirty_slots_with_this_minute_last(self):
+        got = self.writes(10, 20, 75, 75, 75)
+        self.assertEqual(len(got), 30)
+        self.assertEqual((got[-1], got[-2], sum(got)), (2, 3, 5))
+
+    def test_a_record_older_than_thirty_minutes_is_not_in_it(self):
+        got = self.writes(29 * 60 + 10, 29 * 60 + 50)
+        self.assertEqual((got[0], sum(got)), (1, 1))
+
+    def test_a_session_quiet_for_an_hour_has_a_strip_of_zeros(self):
+        self.assertEqual(self.writes(), [0] * 30)
+
+    def test_a_record_with_no_stamp_is_not_a_write(self):
+        records = [meta(ts=stamp(self.NOW - 3 * 3600)),
+                   {"type": "event_msg", "payload": {"type": "token_count"}},
+                   rec("not a time", "event_msg", type="token_count")]
+        self.home.rollout(records=records)
+        p = self.home.provider()
+        p.clock = lambda: self.NOW
+        self.assertEqual(p.live()[0]["writes"], [0] * 30)
+
+    def test_only_the_new_records_are_counted_the_second_time(self):
+        self.writes(10)
+        p = self.home.provider()
+        p.clock = lambda: self.NOW
+        p.live()
+        self.home.rollout(records=[rec(stamp(self.NOW - 5), "event_msg", type="token_count")], mode="a")
+        self.assertEqual(p.live()[0]["writes"][-1], 2)
+        self.assertEqual(p.live()[0]["writes"][-1], 2)
 
 
 class Hung(test_columns.Base):

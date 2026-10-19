@@ -30,6 +30,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from providers import minutes
 from providers.base import Provider, Tailed
 
 # `source` in the thread table, said the page's way. `exec` is `codex exec`,
@@ -51,8 +52,23 @@ def _ms(stamp):
     return int(when.timestamp() * 1000)
 
 
+def _source(value):
+    """A thread's `source` as one word. Most are a word (`exec`, `cli`); a
+    subagent's thread carries an object, `{"subagent": "review"}` (the thread
+    table keeps it as that object's text), and is told by the subagent's
+    name. Anything else is no word at all."""
+    if isinstance(value, str) and value.startswith("{"):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return ""
+    if isinstance(value, dict):
+        value = value.get("subagent")
+    return value if isinstance(value, str) else ""
+
+
 def _blank():
-    return {"offset": 0, "ino": None, "head": b"", "status": "", "statusAt": 0,
+    return {**minutes.blank_counts(), "status": "", "statusAt": 0,
             "said": "", "prompt": "", "cwd": "", "startedAt": 0, "source": ""}
 
 
@@ -64,12 +80,13 @@ def _absorb(state, text):
             continue
         if not isinstance(rec, dict):
             continue
+        minutes.count(state, rec)
         kind, payload = rec.get("type"), rec.get("payload") or {}
         if not isinstance(payload, dict):
             continue
         if kind == "session_meta":
             state["cwd"] = payload.get("cwd") or state["cwd"]
-            state["source"] = payload.get("source") or state["source"]
+            state["source"] = _source(payload.get("source")) or state["source"]
             state["startedAt"] = _ms(rec.get("timestamp")) or state["startedAt"]
             continue
         if kind != "event_msg":
@@ -84,7 +101,13 @@ def _absorb(state, text):
         elif what == "user_message" and isinstance(payload.get("message"), str):
             # Your next prompt ends the turn that said something.
             state["prompt"], state["said"] = payload["message"], ""
+    minutes.prune(state)
     return state
+
+
+def _cold(state, path):
+    """A big rollout's first sight read only its tail: the minutes before it are not known."""
+    minutes.cold_counts(state)
 
 
 def _thread_id(name):
@@ -100,7 +123,8 @@ class CodexProvider(Provider):
     def __init__(self, home=None, proc="/proc"):
         self.home = Path(home) if home else Path.home() / ".codex"
         self.proc = Path(proc)
-        self.tail = Tailed(_blank, _absorb)
+        self.tail = Tailed(_blank, _absorb, _cold)
+        self.clock = time.time
         self.holders = {}      # thread id -> (pid, fd) seen holding its rollout
         self.orphans = {}      # thread id -> lock identity already found unheld
 
@@ -219,14 +243,15 @@ class CodexProvider(Provider):
     def _session(self, tid, held, row):
         path = Path(held[2]) if held else self._rollout_for(tid, row)
         state = self.tail.scan(path) if path else _blank()
+        now = self.clock()
         quiet = None
         if path:
             try:
-                quiet = (time.time() - path.stat().st_mtime) / 60
+                quiet = (now - path.stat().st_mtime) / 60
             except OSError:
                 quiet = None
         row = row or {}
-        source = state["source"] or row.get("source") or ""
+        source = state["source"] or _source(row.get("source")) or ""
         started = state["startedAt"] or (row.get("createdAt") or 0)
         title = " ".join((row.get("title") or "").split())
         if len(title) > TITLE_LEN:
@@ -250,6 +275,9 @@ class CodexProvider(Provider):
             "prompt": state["prompt"],
             "said": state["said"],
             "quietFor": quiet,
+            # Records per minute, 30 of them: what the project's graph is made of.
+            # A session with no rollout yet has none to count, which is not zero.
+            "writes": minutes.strip(state, now) if path else None,
             # Codex writes nothing to its rollout while a command runs, and
             # nothing here looks at what runs under the session: silence is
             # not known to be silence, so the core must not call it Hung.
