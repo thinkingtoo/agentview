@@ -478,10 +478,10 @@ class TurnEnd(Base):
         self.assertTrue(self.over(record(30), end, notice))
         self.assertFalse(self.over(record(30), notice))
 
-    # Hunt 08-3, finding 1. A turn can end on an API error: a weekly limit is
-    # written as the synthetic reply with no turn end after it, and the registry
-    # goes on saying busy (034f15b5, e9f2fc08 and 04f28c2b on a rate limit,
-    # 2026-10-17 and 18: busy for 12 to 74 minutes).
+    # Hunt 08-3, finding 1. A turn can end on an API error, and Claude Code does
+    # not always write a turn end after it: three interactive sessions on a rate
+    # limit have none, and the registry goes on saying busy (034f15b5, e9f2fc08
+    # and 04f28c2b, 2026-10-17 and 18: busy for 12 to 74 minutes).
 
     def api_error(self, seconds_ago, **extra):
         return {"type": "assistant", "timestamp": at(seconds_ago), "isApiErrorMessage": True,

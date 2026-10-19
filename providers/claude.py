@@ -331,8 +331,8 @@ def _compaction(rec):
     """Is this the summary Claude Code writes when it compacts a session, by
     itself while the session is idle or at the person's /compact? A user record
     in form only: the model was asked to summarise, not to go on. (At a
-    /compact the command is first written as an ordinary user record, which
-    does open the turn; the summary after it changes nothing.)"""
+    /compact the command is usually written first as an ordinary user record,
+    which does open the turn; the summary after it changes nothing.)"""
     return rec.get("type") == "user" and rec.get("isCompactSummary") is True
 
 
@@ -383,10 +383,10 @@ def _turn(state, rec):
     """Is the session's last word the end of a turn?
 
     `state["over"]` is set by a turn-end record the session itself wrote, or by
-    an API error that is its reply (the model could not answer; most of these
-    are followed by a turn end, but a weekly limit's is not), and cleared by
-    anything that asks the model something (a prompt, a message to it, a tool
-    result, its own reply).
+    an API error that is its reply (the model could not answer; Claude Code
+    writes a turn end after most of these, not after all, so the error itself
+    ends the turn), and cleared by anything that asks the model something (a
+    prompt, a message to it, a tool result, its own reply).
     Bookkeeping, a notice, a user record that asks the model nothing (a slash
     command run locally) and the summary of a compaction leave it as it is. A
     subagent's records are not the session's.
