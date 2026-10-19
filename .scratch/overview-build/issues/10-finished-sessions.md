@@ -4,7 +4,9 @@
 
 **Blocked by:** 09
 
-**Status:** ready-for-agent
+**Claimed by:** Bettina 2026-10-19 18:56
+
+**Status:** in-progress
 
 - [ ] An unread handover or `n` > 0 keeps a full tile however old
 - [ ] A project with only pills shows ALL IDLE
