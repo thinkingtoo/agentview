@@ -795,10 +795,17 @@ class Scripts(Fixture):
 
     def test_what_a_template_holds_inside_its_braces_is_read_as_the_code_it_is(self):
         for inner in ("`https://${x}`", "f('}')", 'f("}", {a: 1})', "name.replace(/'/g, '')", "a / b / c",
-                      "{a: `}`}.a", "g(1, /`/.source)"):
+                      "{a: `}`}.a", "g(1, /`/.source)",
+                      # code after an object of its own: the object's `}` is not where the `${` ends
+                      '{a: 1}.a + "`"', '{a: {b: 2}}.a.b + "`"', "[{a: 1}].length + '`'"):
             with self.subTest(inner=inner):
                 code = "const t = `${" + inner + "} isn't it`; " + code_of("git push origin main")
                 self.assertEqual(self.asked(code), ("waiting", "git push origin main"))
+
+    def test_a_closing_brace_that_closes_nothing_is_only_a_token(self):
+        for stray in ("}", "} }", "x = 1; } ", "`${a}` }", "{ } }", "`${ {a: 1} }` } }"):
+            with self.subTest(stray=stray):
+                self.assertEqual(self.asked(stray + "\n" + code_of("git push")), ("waiting", "git push"))
 
     def test_templates_nested_deep_are_read_without_a_stack_of_calls(self):
         started = time.monotonic()
