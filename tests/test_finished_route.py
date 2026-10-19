@@ -67,8 +67,15 @@ class JumpFromAPill(Pill):
         self.assertEqual(self.marks(), before)
         self.assertEqual(self.keys("pills"), [KEY])
 
+    def stop_again(self):
+        """By the time of the click the session has stopped again, a minute after
+        the stop the pill showed: the page's poll is behind the registry."""
+        rec = self.cfg / "sessions" / "10.json"
+        rec.write_text(json.dumps({**json.loads(rec.read_text()), "statusUpdatedAt": LONG_AGO + 60_000}))
+
     def test_a_click_that_only_waited_for_a_tab_marks_nothing_either(self):
         self.read_it()
+        self.stop_again()
         before = self.marks()
         jump._ATTACHING[JOB] = jump._now() + jump.ATTACH_GRACE
         status, done = self.post({"key": KEY})
@@ -79,13 +86,19 @@ class JumpFromAPill(Pill):
         # The pill was read at the stop it shows. By the click the session has
         # stopped again; a jump that reaches nothing has shown you nothing.
         self.read_it()
-        stale = self.marks()
-        rec = self.cfg / "sessions" / "10.json"
-        rec.write_text(json.dumps({**json.loads(rec.read_text()), "statusUpdatedAt": LONG_AGO + 60_000}))
+        self.stop_again()
+        before = self.marks()
         self.fails = True
         self.post({"key": KEY})
-        self.assertEqual(self.marks(), stale)
+        self.assertEqual(self.marks(), before)
         self.assertEqual((self.keys("sessions"), self.keys("pills")), ([KEY], []))
+
+    def test_a_session_that_stopped_again_since_the_poll_is_read_when_its_jump_reached_it(self):
+        # The same click, when the terminal did come to the front: now it was seen.
+        self.read_it()
+        self.stop_again()
+        self.assertEqual(self.post({"key": KEY})[1]["ok"], True)
+        self.assertEqual((self.keys("sessions"), self.keys("pills")), ([], [KEY]))
 
 
 class Keep(Pill):

@@ -57,6 +57,7 @@ failures = []
 errors = []        # page errors, console errors and dialogs, from every page
 posted = []        # every body the routed pages POSTed, from every pass
 BOMB = "<img src=x onerror=alert(1)>"
+ATTR = '"><img src=x onerror=alert(1)> x="'        # breaks out of a quoted attribute, if one is not escaped
 
 
 def check(label, ok, detail=""):
@@ -703,16 +704,17 @@ def finished_fixture():
             S("m2", "Mei", "idle", line="Release notes")]),
         ("orchard", "orchard", [S("o1", "Odile", "idle", moving=True, mv="waiting on: Run the tests, 5 min")]),
         ("delta", "delta", []),
-        ("harbor", "harbor", [])])
+        ("harbor", "harbor", [S("k1", "Kasper", "idle", line="Tide table review")])])
     got["columns"][0]["sessions"][1].update(
         unread=True, handover="Release notes drafted; the docs page links to it.")
+    got["columns"][3]["sessions"][0].update(unread=True, handover=BOMB)
     for c in got["columns"]:
         c.setdefault("pills", [])
     got["columns"][0]["pills"] = [
         P("p1", "Femi", 180, line="Saved-card form", tags=["boss"]),
         P("p2", "Gus", 130, via="none", why="attached, but in no window that can be raised")]
     got["columns"][2]["pills"] = [P("d1", "Hanne", 600, line="Nightly rebuild"), P("d2", "Ilse", 400)]
-    got["columns"][3]["pills"] = [P("h1", BOMB, 300, line=BOMB, tags=[BOMB])]
+    got["columns"][3]["pills"] = [P("h1", BOMB, 300, line=ATTR, tags=[BOMB])]
     return got
 
 
@@ -744,7 +746,7 @@ def finished_pass(browser):
           and col("delta").locator(".mix").inner_text().strip() == "0 moving · 0 stuck · 0 idle",
           col("delta").inner_text())
     check("the header counts the tiles and none of the pills",
-          head_line(page).split(" · ")[:2] == ["3 sessions", "4 projects"] and head_counts(page)
+          head_line(page).split(" · ")[:2] == ["4 sessions", "4 projects"] and head_counts(page)
           == ["0 need you", "0 other stuck", "2 moving"], head_line(page))
     check("a tile with an unread handover quotes it and says unread",
           tile_("m2").locator(".said").inner_text() == "“Release notes drafted; the docs page links to it.”"
@@ -787,7 +789,7 @@ def finished_pass(browser):
     poll_now(page)
     check("the pin survives a poll", tile_("p1").count() == 1 and pill("p1").count() == 0)
     check("the header still counts it as nothing: an idle tile is in no count",
-          head_counts(page) == ["0 need you", "0 other stuck", "2 moving"] and head_line(page).split(" · ")[0] == "4 sessions",
+          head_counts(page) == ["0 need you", "0 other stuck", "2 moving"] and head_line(page).split(" · ")[0] == "5 sessions",
           head_line(page))
     fake.posts.clear()
     tile_("p1").hover()
@@ -814,12 +816,15 @@ def finished_pass(browser):
     page.wait_for_timeout(300)
     check("and clearing it brings them all back", page.locator(".pill").count() == 5, page.locator(".pill").count())
 
-    # R7: a hostile name, line and tag are text, in a text position and an attribute.
+    # R7: a hostile name, line, tag and handover are text, in a text position and in an attribute.
     hostile = pill("h1")
     check("R7: markup in a pill's name, line and tag is text and builds no element",
           page.locator('.ov-col[data-project="harbor"] img').count() == 0
-          and hostile.locator(".nm").inner_text() == BOMB and hostile.get_attribute("title") == BOMB
-          and hostile.locator(".bg-tag").inner_text().lower() == BOMB.lower())
+          and hostile.locator(".nm").inner_text() == BOMB and hostile.get_attribute("title") == ATTR
+          and hostile.locator(".bg-tag").inner_text().lower() == BOMB.lower()
+          and hostile.evaluate("e => [...e.attributes].map(a => a.name).sort().join()") == "class,data-sid,title")
+    check("R7: markup in an unread handover is text and builds no element",
+          tile_("k1").locator(".said").inner_text() == f"“{BOMB}”" and tile_("k1").locator("img").count() == 0)
     check("finished: nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()
 
