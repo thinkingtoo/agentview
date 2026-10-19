@@ -284,6 +284,15 @@ class TheClock(Kind):
     def test_a_job_still_inside_the_bound_is_a_sign_now(self):
         self.assertIsNone(self.stuck_for(quiet=500.0, bgTasks=[{"label": "watch", "since": self.CAP - 1}]))
 
+    def test_a_job_inside_the_bound_is_a_sign_now_and_the_time_is_never_negative(self):
+        # An hour old, the bound is five hours away: it is a sign of life this
+        # minute, not one dated five hours ahead. The clock says 0, never less.
+        # (Mutation C5 survived on every head until this test.)
+        for since in (1.0, 60.0, self.CAP - 1):
+            with self.subTest(since=since):
+                row = hung(quiet=500.0, bgTasks=[{"label": "watch", "since": since}])
+                self.assertEqual(self.roster(row)["blocks"][0]["members"][0]["silentFor"], 0.0)
+
     def test_a_job_past_the_bound_stopped_counting_when_it_passed_it(self):
         # Six hours and five minutes: it stopped counting five minutes ago.
         job = lambda minutes: [{"label": "watch", "since": minutes}]
