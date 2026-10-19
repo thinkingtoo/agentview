@@ -64,7 +64,7 @@ class Poll(unittest.TestCase):
         for path in ("/", "/?x=1", "/index.html?x=1"):
             with urllib.request.urlopen(base + path, timeout=10) as r:
                 self.assertEqual(r.status, 200, path)
-                self.assertIn(b'<main id="main">', r.read(), path)
+                self.assertIn(b'<main id="main" class="ov">', r.read(), path)
 
 
 if __name__ == "__main__":

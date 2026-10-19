@@ -23,7 +23,7 @@ let CHIME = true, WAITING = null, READY = null, sounds = [];
 function ring(){ sounds.push("ring"); }
 function tick(){ sounds.push("tick"); }
 %s
-function poll(members){ sounds = []; announce([{members}]); return sounds.join(",") || "silence"; }
+function poll(rows){ sounds = []; announce(rows); return sounds.join(",") || "silence"; }
 const M = (sid, flag, blocked) => ({key: sid, flag, blocked});
 const cases = %s;
 const out = [];
