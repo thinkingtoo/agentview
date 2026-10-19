@@ -313,6 +313,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _keep(self, body):
         """Pin a finished session open as a full tile, or let it shrink again.
+        (`keep`, because `/api/pin` is the project's pin: this is the glossary's
+        "Pin (a session)".)
 
         Kept with the seen marks, not in config.json: it is a click, and it
         ends with the session (`finished.forget`, on every poll). Only a

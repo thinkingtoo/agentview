@@ -7,7 +7,6 @@ a click could reach. A session whose stop is long past, once read, is a pill.
 import json
 import sys
 import unittest
-import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -131,13 +130,8 @@ class Keep(Pill):
         self.keep()
         for rec in (self.cfg / "sessions").glob("*.json"):
             rec.unlink()
-        self.assertEqual(self.column_or_none(), None)
+        self.assertEqual(self.roster()["columns"], [])
         self.assertEqual(finished.load()["pinned"], [])
-
-    def column_or_none(self):
-        url = f"http://127.0.0.1:{self.httpd.server_address[1]}/api/roster"
-        with urllib.request.urlopen(url, timeout=10) as r:
-            return (json.loads(r.read())["columns"] or [None])[0]
 
     def test_a_session_that_is_not_alive_cannot_be_pinned(self):
         self.assertEqual(self.keep(key="claude:nobody")[0], 404)

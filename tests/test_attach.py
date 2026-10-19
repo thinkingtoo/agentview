@@ -500,17 +500,19 @@ class ClickServer(FakeRegistry):
             e.close()
             return e.code, None
 
-    def column(self):
+    def roster(self):
         url = f"http://127.0.0.1:{self.httpd.server_address[1]}/api/roster"
         with urllib.request.urlopen(url, timeout=10) as r:
-            return json.loads(r.read())["columns"][0]
+            return json.loads(r.read())
+
+    def column(self):
+        return self.roster()["columns"][0]
 
     def tile(self):
         return self.column()["sessions"][0]
 
     def unread(self):
         return self.seen.ready(f"claude:{SID}", 1790000000000, self.seen.load())
-
 
 
 class Click(ClickServer):

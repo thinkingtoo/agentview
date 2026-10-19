@@ -271,12 +271,15 @@ full tile however old it is:
 - not pinned.
 
 Pills are counted in nothing: not the card's state (a project of pills alone is
-ALL IDLE), not its mix, not the header's counts (the page's "N sessions" counts
-tiles). Any sign of life -- a prompt, a write, a stuck kind -- makes it a tile
+ALL IDLE), not its mix, not its strip (unless the project has nothing but pills,
+which then has the strip they have), not the header's counts (the page's
+"N sessions" counts tiles). Any sign of life -- a prompt, a write, a stuck kind -- makes it a tile
 again, and it shrinks again after the next two hours idle.
 
 **Reading a handover.** A tile that has stopped and has not been read shows what
-the session said, in quotes, and an "unread" tag. A jump that reached the
+the session said, in quotes, and an "unread" tag (a session that said nothing has
+the tag and no quote: "no words" may be a transcript that could not be read, so it
+too wants a look before it is forgotten). A jump that reached the
 terminal, or a click on a tile that has none, reads it. What is remembered is not
 "you saw this session" but *the stop you read*, so a session that works and stops
 again has a handover nobody has read. This is `finished.json` in the state folder,

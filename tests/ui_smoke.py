@@ -750,7 +750,7 @@ def finished_pass(browser):
           == ["0 need you", "0 other stuck", "2 moving"], head_line(page))
     check("a tile with an unread handover quotes it and says unread",
           tile_("m2").locator(".said").inner_text() == "“Release notes drafted; the docs page links to it.”"
-          and tile_("m2").locator(".flag.ready").inner_text().lower() == "unread")
+          and tile_("m2").locator(".flag.unread").inner_text().lower() == "unread")
 
     pill("p1").click()
     page.wait_for_timeout(300)
@@ -2477,7 +2477,6 @@ def finished_e2e_pass(browser):
     config_before = (root / "config.json").read_bytes()
     try:
         # What the block view left behind: Odile's stop was marked seen there.
-        (root / "state").mkdir()
         (root / "seen.json").write_text(json.dumps({"fake:b": sessions[1]["updatedAt"]}))
         write(sessions)
         proc, port = start_hand_server(root, procs)
@@ -2495,7 +2494,7 @@ def finished_e2e_pass(browser):
               tile("a").locator(".said").inner_text() == "“Ilse rebuilt the search index.”"
               and tile("b").locator(".said").inner_text() == "“Odile drafted the release notes.”")
         check("R19: Odile, marked seen by the block view, is unread here all the same",
-              tile("b").locator(".flag.ready").inner_text().lower() == "unread" and not state().get("read", {}).get("fake:b"), state())
+              tile("b").locator(".flag.unread").inner_text().lower() == "unread" and not state().get("read", {}).get("fake:b"), state())
 
         tile("a").click()
         wait("pill:a,tile:b,tile:c")

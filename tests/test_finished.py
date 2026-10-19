@@ -34,7 +34,8 @@ class Finished(Base):
     """What the overview shows: a session `minutes` idle, handover read or not."""
 
     def stopped(self, sid="a", minutes=3 * HOUR, project="maple", **over):
-        """A session that went idle `minutes` ago. Its handover is not read."""
+        """A session that went idle `minutes` ago, with something to say. Its handover is not read."""
+        over.setdefault("said", "The search index is rebuilt.")
         return session(sid, project, status="idle", updatedAt=ago(minutes), **over)
 
     def read(self, *sessions):
@@ -145,7 +146,7 @@ class CountedInNothing(Finished):
         self.assertEqual(got["state"], "moving")
 
     def test_pills_stay_out_of_the_summary_so_the_tiles_alone_make_it(self):
-        got = self.column(self.finished("a"), idle("b"), hung("h", quiet=14.0))
+        got = self.column(self.finished("a"), idle("b", updatedAt=ago(5)), hung("h", quiet=14.0))
         self.assertEqual(got["summary"], {"moving": 0, "stuck": 1, "idle": 1})
 
     def test_pills_are_in_none_of_the_headers_counts(self):
@@ -188,7 +189,7 @@ class KeepsATile(Finished):
         s = self.finished("a", 5 * HOUR, name="Broken", failure=failure("error"))
         self.assertEqual(self.tiles(s), ["Broken"])
 
-    def test_a_rate_limit_keeps_a_full_tile(self):
+    def test_a_limit_keeps_a_full_tile(self):
         s = self.finished("a", 5 * HOUR, name="Held", failure=failure("limit"))
         self.assertEqual(self.tiles(s), ["Held"])
 
@@ -254,7 +255,7 @@ class BackToATile(Finished):
 
     def test_it_shrinks_again_after_the_next_two_hours_idle(self):
         stamp = ago(121)
-        again = session("a", status="idle", updatedAt=stamp, name="Femi")
+        again = session("a", status="idle", updatedAt=stamp, name="Femi", said="Second round done.")
         fleet.mark_seen("fake:a", {"updatedAt": ago(300)})          # the first stop, long read
         self.assertEqual(self.names(self.column(again), "sessions"), ["Femi"])
         fleet.mark_seen("fake:a", again)                              # the second, read now
@@ -265,6 +266,27 @@ class BackToATile(Finished):
         self.assertEqual(self.column(pill)["state"], "idle")
         self.assertEqual(self.column({**pill, "status": "busy", "quietFor": 0.1})["state"], "moving")
         self.assertEqual(self.column(pill)["state"], "idle")
+
+
+class Strip(Finished):
+    """The card's strip is what its sessions wrote in the last half hour. A pill
+    is counted in nothing, so it is not in the strip either: a minute its
+    provider could not see must not blank the project's."""
+
+    def test_a_pill_that_could_not_see_a_minute_does_not_blank_the_projects(self):
+        blind = [None] * 5 + [0] * 25
+        wrote = [0] * 20 + [4] + [0] * 9
+        got = self.column(self.finished("p", 5 * HOUR, writes=blind),
+                          moving("m", writes=wrote))
+        self.assertEqual(got["strip"], wrote)
+
+    def test_a_pill_is_not_added_to_the_strip(self):
+        got = self.column(self.finished("p", 5 * HOUR, writes=[0] * 30), moving("m", writes=[1] * 30))
+        self.assertEqual(got["strip"], [1] * 30)
+
+    def test_a_project_of_pills_alone_has_the_strip_they_have(self):
+        got = self.column(self.finished("p", 5 * HOUR, writes=[0] * 30), self.finished("q", 5 * HOUR, writes=[0] * 30))
+        self.assertEqual(got["strip"], [0] * 30)
 
 
 class Handover(Finished):
@@ -290,8 +312,16 @@ class Handover(Finished):
         self.assertEqual((tile["unread"], tile["handover"]), (False, ""))
 
     def test_a_session_with_nothing_to_say_has_an_unread_handover_with_no_words(self):
-        tile = self.tile(self.stopped("a", 5 * HOUR))
+        tile = self.tile(self.stopped("a", 5 * HOUR, said=""))
         self.assertEqual((tile["unread"], tile["handover"]), (True, ""))
+
+    def test_a_session_that_said_nothing_still_wants_a_look_before_it_is_finished(self):
+        # "No words" may be a transcript that could not be read, or a session
+        # that stopped on a tool call: it is not forgotten unseen.
+        quiet = self.stopped("a", 5 * HOUR, said="", name="Quiet")
+        self.assertEqual(self.names(self.column(quiet), "sessions"), ["Quiet"])
+        self.read(quiet)
+        self.assertEqual(self.names(self.column(quiet), "pills"), ["Quiet"])
 
     def test_markup_in_a_handover_is_carried_as_text_for_the_page_to_print_as_text(self):
         # R7: the roster never makes markup; the page sets text as text.

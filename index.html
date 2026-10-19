@@ -85,6 +85,7 @@
   /* A long tool call is news, not an alarm: no tint, no beat. */
   .flag.tool { color:var(--faint); border:1px solid var(--line); }
   .flag.ready { color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 45%,transparent); }
+  .flag.unread { color:var(--dim); border:1px solid var(--line); }
   .alarm.ready { color:var(--accent); }
   .alarm.asking { color:var(--accent); }
   /* What it is blocked on, in Claude Code's own words. */
@@ -1244,10 +1245,10 @@ function tile(t) {
   const can = via === "pane" || via === "attach";
   const tags = (t.tags || []).map(g =>
     `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
-  const light = !LIGHT ? "" : t.counted === LIGHT ? " lit" : " dim";
+  const light = lightOf(t);
   return `<div class="tile ${can ? "can" : ""} ${alarm}${light}" data-sid="${esc(t.key)}">
     <div class="rhead">
-      ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${keepButton(t)}${moveButton(t)}${jumpLabel(t, via)}
+      ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${unpinButton(t)}${moveButton(t)}${jumpLabel(t, via)}
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
@@ -1270,18 +1271,27 @@ function pill(p) {
   const via = p.jump?.via;
   const can = via === "pane" || via === "attach";
   const tags = (p.tags || []).map(g => `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
-  return `<div class="pill ${can ? "can" : ""}${LIGHT ? " dim" : ""}" data-sid="${esc(p.key)}" title="${esc(p.line)}">
-    <span class="dot"></span><span class="nm">${esc(p.name)}</span>${tags}<span class="for">${esc(p.idle?.text)}</span>${keepButton(p, true)}${jumpLabel(p, via)}
+  return `<div class="pill ${can ? "can" : ""}${lightOf(p)}" data-sid="${esc(p.key)}" title="${esc(p.line)}">
+    <span class="dot"></span><span class="nm">${esc(p.name)}</span>${tags}<span class="for">${esc(p.idle?.text)}</span>${pinButton(p)}${jumpLabel(p, via)}
   </div>`;
+}
+
+// Lit or faded while a header count is lit up: by the count the roster says the
+// tile or pill is in (a pill is in none).
+function lightOf(t) {
+  return !LIGHT ? "" : t.counted === LIGHT ? " lit" : " dim";
 }
 
 // Pin a pill open as a tile, or let a pinned tile shrink again. The server
 // keeps the pin until it is undone or the session closes.
-function keepButton(t, isPill = false) {
-  if (t.pinned) return `<button class="keep on" data-sid="${esc(t.key)}" data-pinned="1" aria-pressed="true"
-    title="pinned open: click to let it shrink to a pill again when it is finished">unpin</button>`;
-  return isPill ? `<button class="keep" data-sid="${esc(t.key)}" aria-pressed="false"
-    title="keep it open as a full tile until you unpin it or it closes">pin</button>` : "";
+function pinButton(p) {
+  return `<button class="keep" data-sid="${esc(p.key)}" aria-pressed="false"
+    title="keep it open as a full tile until you unpin it or it closes">pin</button>`;
+}
+
+function unpinButton(t) {
+  return t.pinned ? `<button class="keep on" data-sid="${esc(t.key)}" data-pinned="1" aria-pressed="true"
+    title="pinned open: click to let it shrink to a pill again when it is finished">unpin</button>` : "";
 }
 
 // A span of minutes the way the server says it ("<1 min", "14 min", "3 h").
@@ -1430,7 +1440,7 @@ function tileFlag(t) {
       ? `<span class="flag stuck">stuck ${esc(t.flagNote)}</span>`
       : t.flag === "ready" ? `<span class="flag ready">ready</span>`
         // Seen by the chime's marks, not yet read here: it stays a tile.
-        : t.unread ? `<span class="flag ready">unread</span>` : "";
+        : t.unread ? `<span class="flag unread">unread</span>` : "";
 }
 
 // A tile is a session you can go to, the way a row is. The click is
@@ -1447,7 +1457,10 @@ document.getElementById("main").addEventListener("click", async ev => {
     // A tile with no terminal is looked at, and that is all a click means. A
     // pill was read already and has nothing new on its face: its click only
     // says why it cannot open, and marks nothing.
-    if (el.classList.contains("pill")) return say(el.dataset.sid, el.querySelector(".go")?.title || "no terminal", false);
+    if (el.classList.contains("pill")) {
+      const p = COLUMNS.flatMap(c => c.pills || []).find(x => x.key === el.dataset.sid);
+      return say(el.dataset.sid, p?.jump?.reason || "no terminal", false);
+    }
     post("/api/seen", { key: el.dataset.sid }).then(load).catch(() => {});
     return;
   }
