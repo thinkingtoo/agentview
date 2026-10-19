@@ -157,8 +157,11 @@ def _hits(result):
     structured = result.get("structuredContent")
     found = structured.get("result") if isinstance(structured, dict) else None
     if not isinstance(found, list):
+        content = result.get("content")
+        if not isinstance(content, list):           # neither: not "no hits", an answer not understood
+            raise Unavailable(UNKNOWN)
         found = []
-        for part in result.get("content") or []:
+        for part in content:
             try:
                 found.append(json.loads(part["text"]))
             except (KeyError, TypeError, ValueError):

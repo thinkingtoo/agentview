@@ -123,6 +123,14 @@ class ContextLine(Cards):
         self.assertEqual((track["name"], track["context"]["source"]), ("Orchard push", "guess"))
         self.assertEqual((repo["name"], repo["context"]["line"]), ("Orchard", "The shop front"))
 
+    def test_lines_that_are_not_a_table_of_text_are_ignored(self):
+        for bad in (None, [], "x", 5):
+            self.config = {"project_lines": bad}
+            self.assertEqual(self.context(sess("a", FOLDER))["source"], "guess", bad)
+        for bad in (5, None, ["x"], "   "):
+            self.config = {"project_lines": {"folder:orchard": bad}}
+            self.assertEqual(self.context(sess("a", FOLDER))["source"], "guess", bad)
+
     def test_a_line_kept_under_a_plain_name_is_nobody_s(self):
         self.config = {"project_lines": {"orchard": "Not an identity"}}
         self.assertEqual(self.context(sess("a", FOLDER))["source"], "guess")
@@ -152,6 +160,11 @@ class Tracks(Cards):
         self.assertEqual(got, {"source": "goal", "line": "Customers pay with a saved card.",
                                "full": "Customers pay with a saved card. Nothing else changes.",
                                "guess": False})
+
+    def test_a_status_word_is_the_tag_in_whatever_case_it_is_written(self):
+        self.assertEqual(self.track(status="open")["track"]["status"], "OPEN")
+        self.assertEqual(self.track(status="Met")["track"]["status"], "MET")
+        self.assertEqual(self.track(status="parked")["track"]["status"], "")
 
     def test_an_outcome_written_over_several_lines_is_one_paragraph(self):
         got = self.track(outcome="Customers pay with\na saved card, e.g. the one\nthey used last. Then done.")["context"]

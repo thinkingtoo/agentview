@@ -40,6 +40,7 @@ class Service:
         self.structured = True              # hits in structuredContent as well as in content
         self.status = None                  # answer every POST with this status
         self.hangup = self.garbage = self.rpc_error = self.is_error = False
+        self.odd = None                     # a result of this shape, instead of the hits
         self.garbage_start = False          # a page that is not the service, in answer to the first call
         self.delete_hangup = False          # ends no session: a service may refuse to
         self.redirect = None
@@ -99,6 +100,8 @@ class Service:
                     return self.say(200, b"<html>not json</html>", [("Content-Type", "text/html")])
                 if service.rpc_error:
                     return self.answer({"jsonrpc": "2.0", "id": ident, "error": {"code": -32000, "message": "boom"}})
+                if service.odd is not None:
+                    return self.answer({"jsonrpc": "2.0", "id": ident, "result": service.odd})
                 if service.is_error:
                     return self.answer({"jsonrpc": "2.0", "id": ident, "result": {
                         "content": [{"type": "text", "text": "embedding failed inside"}], "isError": True}})
@@ -240,6 +243,13 @@ class Trouble(unittest.TestCase):
     def test_an_answer_that_is_not_one(self):
         self.service.garbage = True
         self.assertEqual(self.refused(), "the notes service gave an answer this code does not know")
+
+    def test_a_result_of_a_shape_this_code_does_not_know_is_not_no_hits(self):
+        for odd in ({}, {"content": 5}, {"content": True}, {"content": {"a": 1}}, {"content": "abc"},
+                    {"structuredContent": 5}, {"structuredContent": {"result": 5}, "content": None}):
+            with self.subTest(odd=odd):
+                self.service.odd = odd
+                self.assertEqual(self.refused(), "the notes service gave an answer this code does not know")
 
     def test_a_first_answer_that_is_not_the_service_ends_it_there(self):
         self.service.garbage_start = True
