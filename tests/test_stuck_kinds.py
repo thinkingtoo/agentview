@@ -149,6 +149,32 @@ class Hung(Kind):
     def test_an_idle_session_is_never_hung_however_long(self):
         self.assertIsNone(self.stuck(session("a", status="idle", quietFor=500.0)))
 
+    def test_a_busy_session_whose_turn_is_over_is_not_hung(self):
+        # Hunt 08-2: a lead with teammates keeps the status busy after its turn
+        # ends, for hours. Its turn is over: it is idle, not hung.
+        tile = self.tile(hung(quiet=40.0, turnOver=True))
+        self.assertIsNone(tile["stuck"])
+        self.assertFalse(tile["moving"])
+
+    def test_such_a_session_makes_its_card_idle_and_counts_idle_in_the_mix(self):
+        column = self.roster(hung(quiet=190.0, turnOver=True))["columns"][0]
+        self.assertEqual((column["state"], column["summary"]), ("idle", {"moving": 0, "stuck": 0, "idle": 1}))
+
+    def test_such_a_session_is_moving_while_a_subagent_writes(self):
+        tile = self.tile(hung(quiet=40.0, subQuiet=2.0, turnOver=True))
+        self.assertIsNone(tile["stuck"])
+        self.assertTrue(tile["moving"])
+
+    def test_a_subagent_gone_quiet_does_not_start_a_hung_clock_for_a_session_whose_turn_is_over(self):
+        tile = self.tile(hung(quiet=40.0, subQuiet=15.0, turnOver=True))
+        self.assertIsNone(tile["stuck"])
+        self.assertFalse(tile["moving"])
+
+    def test_only_a_provider_saying_the_turn_is_over_is_believed(self):
+        for junk in ("yes", "true", 1, [True], {"a": 1}, None, False):
+            with self.subTest(junk=junk):
+                self.assertEqual(self.stuck(hung(quiet=40.0, turnOver=junk))["kind"], "hung")
+
     def test_a_session_with_a_menu_open_is_never_hung(self):
         self.assertIsNone(self.stuck(session("a", status="waiting", waitingFor="dialog open",
                                              quietFor=500.0)))

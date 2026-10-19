@@ -512,7 +512,8 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         status=status, quiet=quiet, sub_quiet=sub_quiet, in_flight=in_flight,
         doing=_text(raw.get("doing")), cpu=bool(raw.get("shellCpu")), tasks=tasks,
         status_for=(now * 1000 - updated) / 60000 if updated else None,
-        hung_after=thresholds.get("hung_after", 10), cpu_ago=_age(raw.get("shellCpuAgo")))
+        hung_after=thresholds.get("hung_after", 10), cpu_ago=_age(raw.get("shellCpuAgo")),
+        turn_over=raw.get("turnOver") is True)
     moves = {"writes": writes_of(raw.get("writes")), "subQuiet": sub_quiet,
              "bgTasks": tasks, "shellCpu": bool(raw.get("shellCpu")),
              "movement": sign, "moving": moving,
@@ -1069,7 +1070,7 @@ def span_text(minutes):
 
 
 def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after,
-                cpu_ago=None):
+                cpu_ago=None, turn_over=False):
     """What shows that a session is alive: (the sign for its tile, moving, and
     for a busy session the minutes since its last sign of life, else None).
 
@@ -1090,6 +1091,12 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     `WAIT_MAX_MINUTES`. A provider that cannot see its writes (no transcript
     to read) gives None, and the session is not called Hung. `cpu_ago` is how
     many minutes ago a provider last saw that CPU move, if it knows.
+
+    A busy session whose last word ended its turn (`turn_over`) has nothing
+    running of its own: its own writes are not signs of life, and it has no
+    clock to be Hung by. It is moving only while a subagent writes, the way a
+    lead waits on its team. The status may go on saying busy for hours, as it
+    does for a lead with teammates, and that is not a hang.
     """
     # An idle session's last records ended its turn, and a subagent that wrote
     # before that is history: both say the session stopped. A session waiting
@@ -1097,7 +1104,7 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     # are the session working.
     if status == "idle":
         sub_quiet = None
-    own = quiet if status == "busy" else None
+    own = quiet if status == "busy" and not turn_over else None
     latest = min((m for m in (own, sub_quiet) if m is not None), default=None)
     call = in_flight is not None
     jobs = sorted(tasks, key=lambda t: -t["since"])
@@ -1116,7 +1123,7 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     # job that stopped counting a minute ago, is a session that was moving a
     # minute ago, so the quiet is counted from the youngest of them.
     silent = None
-    if status == "busy" and latest is not None:
+    if status == "busy" and latest is not None and not turn_over:
         signs = [latest]
         cpu_age = 0.0 if cpu else cpu_ago
         if call and cpu_age is not None:

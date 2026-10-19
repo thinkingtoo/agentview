@@ -50,6 +50,13 @@ def prompt(seconds_ago, words="carry on", **over):
     return {"type": "user", "timestamp": stamp(seconds_ago), "message": {"role": "user", "content": words}, **over}
 
 
+def turn_end(seconds_ago, subtype="stop_hook_summary", **over):
+    """What Claude Code writes when a turn is over: the stop hooks' summary, then
+    the turn's duration (a session with no stop hooks has only the second)."""
+    return {"type": "system", "subtype": subtype, "timestamp": stamp(seconds_ago),
+            "isSidechain": False, **over}
+
+
 # Everything Claude Code writes after an error that is not a turn (the types
 # seen after real errors on this machine, by count).
 BOOKKEEPING = [
@@ -591,4 +598,71 @@ class OtherSubagents(Base):
     def test_another_sessions_teammate_beside_it_is_not_this_sessions(self):
         self.lead(900)
         self.teammate(team="session-99999999")
+        self.assertEqual(self.tile()["stuck"]["kind"], "hung")
+
+    # Hunt 08-2, finding 1. Once a session has a teammate, the registry keeps it
+    # `busy` through every end of turn until the session itself ends (d6f1a6ca:
+    # 12 hours; 9524b377 today: 50 minutes), so a lead whose turn is over, and
+    # whose team has nothing to say, read Hung for as long as that lasted.
+
+    def over(self, silent, *records, status="busy"):
+        """A session whose last words were `records`, the newest `silent` seconds ago."""
+        self.session([*records], status=status)
+        then = time.time() - silent
+        os.utime(self.transcript, (then, then))
+
+    def test_a_lead_whose_turn_is_over_is_not_hung_however_long_the_registry_says_busy(self):
+        for ending in ("stop_hook_summary", "turn_duration"):
+            with self.subTest(ending=ending):
+                claude._cache.clear()
+                self.over(3 * 3600, text(3 * 3600 + 2), turn_end(3 * 3600, ending))
+                self.teammate(seconds_ago=3 * 3600)
+                got = self.tile()
+                self.assertIsNone(got["stuck"])
+                self.assertFalse(got["moving"])
+
+    def test_the_card_of_a_lead_whose_turn_is_over_is_all_idle(self):
+        self.over(3 * 3600, text(3 * 3600 + 2), turn_end(3 * 3600))
+        fleet.CONFIG.write_text("{}")
+        column = fleet.roster(providers=[self.provider])["columns"][0]
+        self.assertEqual((column["state"], column["summary"]), ("idle", {"moving": 0, "stuck": 0, "idle": 1}))
+
+    def test_a_lead_whose_turn_is_over_is_moving_while_its_teammate_writes(self):
+        self.over(900, text(902), turn_end(900))
+        self.teammate(seconds_ago=5)
+        got = self.tile()
+        self.assertIsNone(got["stuck"])
+        self.assertTrue(got["moving"])
+
+    def test_a_teammate_that_wrote_and_went_quiet_starts_no_hung_clock_for_it(self):
+        self.over(3600, text(3602), turn_end(3600))
+        self.teammate(seconds_ago=900)
+        got = self.tile()
+        self.assertIsNone(got["stuck"])
+        self.assertFalse(got["moving"])
+
+    def test_records_claude_code_writes_after_the_end_of_a_turn_do_not_reopen_it(self):
+        for record in (*BOOKKEEPING, prompt(60, "<command-name>/status</command-name>")):
+            with self.subTest(type=record["type"], subtype=record.get("subtype")):
+                claude._cache.clear()
+                self.over(900, text(905), turn_end(900), record)
+                self.assertIsNone(self.tile()["stuck"])
+
+    def test_a_message_to_the_lead_opens_the_turn_again(self):
+        # A teammate's message, a typed prompt, a task notification: the model
+        # is asked something, and a lead that then goes quiet is hung.
+        for words in ("<teammate-message teammate_id=\"hunt\">done</teammate-message>", "carry on"):
+            with self.subTest(words=words):
+                claude._cache.clear()
+                self.over(900, text(905), turn_end(903), prompt(900, words))
+                self.assertEqual(self.tile()["stuck"]["kind"], "hung")
+
+    def test_a_stop_hook_that_sends_the_session_on_does_not_end_the_turn(self):
+        # 455 of the 8,648 stop-hook summaries on this machine are followed by
+        # the model speaking again, within 15 seconds.
+        self.over(900, text(905), turn_end(903), text(900))
+        self.assertEqual(self.tile()["stuck"]["kind"], "hung")
+
+    def test_a_subagents_turn_end_in_the_sessions_file_is_not_the_sessions(self):
+        self.over(900, text(905), turn_end(900, isSidechain=True))
         self.assertEqual(self.tile()["stuck"]["kind"], "hung")

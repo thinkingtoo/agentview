@@ -20,7 +20,7 @@ the last thing the agent said -- the core shapes it), `waitingFor`,
 `startedAt`, `kind`, `tmux`, `bg`, `routine`, `boss`, `track` (a boss's
 track: the name of its tracker), `team`, `paths`, `doing`, `quietFor`,
 `toolFor`, `canJump`, `attach`, `noJump`, `extras`, `asking`, `failure`,
-`lastTool`, `procsUnknown`, `shellCpuAgo`.
+`lastTool`, `procsUnknown`, `shellCpuAgo`, `turnOver`.
 
 `canJump` says a pane shows the session. `attach` is what to attach to when no
 pane does but a new tab can show it (a background session; the provider's own
@@ -64,6 +64,12 @@ the session is waiting on (the same look that makes `shellCpu`), or None when
 it never was while the provider watched. Not moving for `hung_after_minutes` is
 counted from the youngest sign of life, and a command whose CPU moved a minute
 ago is one.
+
+`turnOver` is True when the session's own last word ended its turn although it
+still says `busy`: some agents go on saying so for as long as their helpers
+live. Such a session has nothing running of its own, so the core never calls it
+hung; it moves only while a subagent writes. Leaving it out, or anything but
+True, says the status is believed.
 """
 import os
 

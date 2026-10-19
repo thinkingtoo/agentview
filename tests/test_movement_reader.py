@@ -318,11 +318,12 @@ class Teammates(Base):
         self.path = self.dir / "proj" / f"{LEAD}.jsonl"
         write(self.path, [record(600)], "w")
 
-    def mate(self, name, records, team=f"session-{LEAD[:8]}", seconds_ago=5, header=HEADER):
-        """A transcript beside the session's: header lines, then the messages,
-        each stamped with the team when it has one."""
+    def mate(self, name, records, team=f"session-{LEAD[:8]}", seconds_ago=5, header=HEADER, folder=None):
+        """A transcript beside the session's (or in another project folder, next
+        to the session's own): header lines, then the messages, each stamped
+        with the team when it has one."""
         extra = {"teamName": team, "agentName": name} if team else {}
-        path = self.path.parent / f"{name}.jsonl"
+        path = (self.dir / folder if folder else self.path.parent) / f"{name}.jsonl"
         write(path, header + [{**r, **extra} for r in records], "w")
         touch(path, seconds_ago)
         return path
@@ -379,6 +380,95 @@ class Teammates(Base):
         write(self.path, [{**record(5, "user"), "teamName": f"session-{LEAD[:8]}"}], "w")
         touch(self.path, 5)
         self.assertIsNone(self.scan()["subQuiet"])
+
+    # Hunt 08-2, finding 2. A session that moves to another directory keeps its
+    # transcript in the folder it started in, and a teammate it spawns after
+    # that writes in the folder of the directory it is in then (2 of 118
+    # teammates on this machine; both a `<project>-wt/<name>` worktree, both
+    # one of the session's own directories).
+
+    def lead_in(self, *directories):
+        write(self.path, [record(600 - n, cwd=cwd) for n, cwd in enumerate(directories)], "w")
+
+    def test_a_teammate_in_the_folder_of_a_directory_the_session_moved_to_is_its_teammate(self):
+        self.lead_in("/work/proj", "/work/proj-wt/ana")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-proj-wt-ana")
+        got = self.scan()
+        self.assertAlmostEqual(got["subQuiet"], 5 / 60)
+        self.assertEqual(sum(got["writes"]), 3)      # the session's two records, and the teammate's
+
+    def test_a_folder_of_a_directory_the_session_never_had_is_not_looked_into(self):
+        self.lead_in("/work/proj")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-elsewhere")
+        got = self.scan()
+        self.assertIsNone(got["subQuiet"])
+        self.assertEqual(sum(got["writes"]), 1)
+
+    def test_a_teammate_of_another_team_in_such_a_folder_is_still_not_its_teammate(self):
+        self.lead_in("/work/proj", "/work/proj-wt/ana")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], team="session-99999999",
+                  folder="-work-proj-wt-ana")
+        self.assertIsNone(self.scan()["subQuiet"])
+
+    def test_the_sessions_own_folder_named_by_a_directory_is_not_counted_twice(self):
+        self.lead_in("proj")        # a directory whose folder is the one the transcript is in
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")])
+        self.assertEqual(sum(self.scan()["writes"]), 2)
+
+    def test_only_the_newest_directories_are_remembered(self):
+        self.lead_in("/work/a", "/work/b", "/work/c")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-a")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], folder="-work-c")
+        with mock.patch.object(claude, "MAX_CWDS", 2):
+            got = self.scan()
+        self.assertEqual(sum(got["writes"]), 4)      # the session's three records, and the one in -work-c
+
+    def test_a_directory_is_remembered_by_when_the_session_was_last_in_it(self):
+        write(self.path, [record(600, cwd="/work/a"), record(590, cwd="/work/b"), record(580, cwd="/work/c"),
+                          record(570, cwd="/work/a")], "w")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-a")
+        with mock.patch.object(claude, "MAX_CWDS", 2):
+            self.assertAlmostEqual(self.scan()["subQuiet"], 5 / 60)
+
+    def test_a_subagents_directory_in_the_sessions_file_is_not_the_sessions_own(self):
+        write(self.path, [record(600, cwd="/work/proj"), record(30, cwd="/work/other", isSidechain=True)], "w")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-other")
+        self.assertIsNone(self.scan()["subQuiet"])
+
+
+class TurnEnd(Base):
+    """The reader says when the session's own newest word is the end of a turn:
+    Claude Code writes the stop hooks' summary and the turn's duration, and the
+    registry may go on saying busy (hunt 08-2, finding 1)."""
+
+    def over(self, *records):
+        write(self.path, records, "w")
+        return self.scan()["turnOver"]
+
+    def test_a_turn_duration_is_the_end_of_a_turn(self):
+        self.assertTrue(self.over(record(30), {"type": "system", "subtype": "turn_duration", "timestamp": at(29)}))
+
+    def test_a_stop_hook_summary_is_the_end_of_a_turn(self):
+        self.assertTrue(self.over(record(30), {"type": "system", "subtype": "stop_hook_summary", "timestamp": at(29)}))
+
+    def test_a_session_still_working_is_not_over(self):
+        self.assertFalse(self.over(record(30)))
+        self.assertFalse(self.over())
+
+    def test_what_is_said_after_the_end_of_a_turn_opens_it_again(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(29)}
+        self.assertFalse(self.over(record(30), end, record(20, "user")))
+        self.assertFalse(self.over(record(30), end, record(20)))
+
+    def test_a_subagents_end_of_turn_in_the_sessions_file_is_not_the_sessions(self):
+        self.assertFalse(self.over(record(30), {"type": "system", "subtype": "turn_duration",
+                                                "timestamp": at(29), "isSidechain": True}))
+
+    def test_other_system_records_are_neither(self):
+        notice = {"type": "system", "subtype": "informational", "timestamp": at(28)}
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(29)}
+        self.assertTrue(self.over(record(30), end, notice))
+        self.assertFalse(self.over(record(30), notice))
 
 
 def started(seconds_ago, tool_id, command="pytest -q", description="Run the unit tests"):

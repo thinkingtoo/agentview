@@ -171,6 +171,10 @@ def is_boss(sid, cfg=None):
 # message can carry several in parallel and each one deserves its place.
 MAX_USES = 64
 
+# How many of the directories a session has worked in to remember: where a
+# teammate it spawns may write (`_subagent_files`).
+MAX_CWDS = 8
+
 
 # Movement is counted per minute, 30 of them, as the records go by. A minute
 # is a whole number of minutes since the epoch; the strip is read off it.
@@ -354,9 +358,52 @@ def _failure(state, rec):
         "resetsAt": base.milliseconds(quota, seconds=True)}
 
 
+# The system records that end a turn: the summary of the stop hooks, and the
+# turn's duration. A stop hook may send the session on, and then the model
+# speaks again within seconds (455 of the 8,648 summaries on this machine, the
+# longest wait 15 s), which opens the turn again.
+TURN_ENDS = ("turn_duration", "stop_hook_summary")
+
+
+def _turn(state, rec):
+    """Is the session's last word the end of a turn?
+
+    `state["over"]` is set by a turn-end record the session itself wrote and
+    cleared by anything that asks the model something (a prompt, a message to
+    it, a tool result, its own reply). Bookkeeping, a notice, and a user record
+    that asks the model nothing (a slash command run locally) leave it as it
+    is. A subagent's records are not the session's.
+
+    The peer registry may go on saying `busy` once a turn is over -- it does for
+    a session that has teammates, until the session ends -- so this is what
+    tells a lead that finished from one that is working.
+    """
+    if rec.get("isSidechain"):
+        return
+    kind = rec.get("type")
+    if kind == "system":
+        if rec.get("subtype") in TURN_ENDS:
+            state["over"] = True
+    elif kind in ("user", "assistant") and not _local(rec):
+        state["over"] = False
+
+
+def _places(state, rec):
+    """The directories the session has worked in, the newest last. A session
+    that moves keeps its transcript in the folder it started in, and a teammate
+    it spawns later writes in the folder of the directory it was in then."""
+    cwd = rec.get("cwd")
+    if not isinstance(cwd, str) or not cwd or rec.get("isSidechain"):
+        return
+    state["cwds"].pop(cwd, None)
+    state["cwds"][cwd] = True
+    while len(state["cwds"]) > MAX_CWDS:
+        del state["cwds"][next(iter(state["cwds"]))]
+
+
 def _blank_state():
     return {**_blank_counts(),
-            "failure": None, "tool": None,
+            "failure": None, "tool": None, "over": False, "cwds": {},
             "title": "", "prompt": "", "branch": "", "tasks": {},
             "uses": {}, "done": set(), "said": "", "spoke": "", "msg": "",
             "sent": collections.Counter(),
@@ -374,6 +421,8 @@ def _absorb(state, text):
         _count(state, rec)
         _tasks(state, rec)
         _failure(state, rec)
+        _turn(state, rec)
+        _places(state, rec)
         kind = rec.get("type")
         if kind == "ai-title" and rec.get("aiTitle"):
             state["title"] = rec["aiTitle"]
@@ -638,6 +687,10 @@ def _view(state, now):
             "calls": asked,
             "failure": dict(state["failure"]) if state["failure"] else None,
             "lastTool": _last_tool(state["tool"]),
+            # Whether its last word was the end of a turn, and the directories
+            # it has worked in (oldest first): what the registry cannot say.
+            "turnOver": state["over"],
+            "cwds": list(state["cwds"]),
             "writes": _strip(state, now),
             # Open background shells, oldest first, with how long each has run.
             "tasks": sorted(({"id": tid, "label": t["label"],
@@ -715,11 +768,12 @@ def _team(entry, now):
     return team
 
 
-def _subagent_files(path, now):
+def _subagent_files(path, now, cwds=()):
     """The transcripts the session's subagents write. A background agent writes
     `<session>/subagents/agent-*.jsonl`, the agents of a workflow one folder
     deeper, `<session>/subagents/workflows/<run>/agent-*.jsonl`, and a named
-    teammate a transcript of its own in the session's project folder."""
+    teammate a transcript of its own in the session's project folder -- or in
+    the project folder of a directory the session has since moved to (`cwds`)."""
     found = []
     for entry in _entries(path.with_suffix("") / "subagents"):
         if entry.name == "workflows" and entry.is_dir():
@@ -729,12 +783,18 @@ def _subagent_files(path, now):
         elif entry.name.endswith(".jsonl"):
             found.append(entry)
     team = f"session-{path.stem[:8]}"
-    found.extend(e for e in _entries(path.parent)
-                 if e.name.endswith(".jsonl") and e.name != path.name and _team(e, now) == team)
+    folders = [path.parent]
+    for cwd in cwds:
+        folder = path.parent.parent / registry._encode(cwd)
+        if folder not in folders:
+            folders.append(folder)
+    for folder in folders:
+        found.extend(e for e in _entries(folder)
+                     if e.name.endswith(".jsonl") and e.name != path.name and _team(e, now) == team)
     return found
 
 
-def _subagents(path, now):
+def _subagents(path, now, cwds=()):
     """The session's subagents: their transcript states, and how many minutes
     ago the newest of them wrote (None when it has none).
 
@@ -744,7 +804,7 @@ def _subagents(path, now):
     shows cannot add to it, and is not even opened.
     """
     states, quiet = [], None
-    for entry in _subagent_files(path, now):
+    for entry in _subagent_files(path, now, cwds):
         try:
             mtime = entry.stat().st_mtime
         except OSError:
@@ -781,7 +841,7 @@ def scan_session(path, now=None):
     if view["writes"] is None:
         return view
     now = time.time() if now is None else now
-    subs, view["subQuiet"] = _subagents(path, now)
+    subs, view["subQuiet"] = _subagents(path, now, view["cwds"])
     for state in subs:
         view["writes"] = _add(view["writes"], _strip(state, now))
     return view
@@ -789,7 +849,7 @@ def scan_session(path, now=None):
 
 EMPTY = {"title": "", "prompt": "", "branch": "", "paths": [], "said": "",
          "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": [],
-         "calls": [], "failure": None, "lastTool": None}
+         "calls": [], "failure": None, "lastTool": None, "turnOver": False, "cwds": []}
 
 
 def _peers(cfg):
@@ -986,6 +1046,8 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # call it made: what Limit, Error and Hung are told from.
         "failure": summary["failure"],
         "lastTool": summary["lastTool"],
+        # Its last word ended a turn, whatever the registry says it is doing.
+        "turnOver": summary["turnOver"],
     }
 
 
