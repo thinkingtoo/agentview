@@ -615,9 +615,9 @@ def card_pass(browser):
           col("checkout").locator(".ov-ctx").inner_text() == "Customers pay with a saved card."
           and col("checkout").locator(".ov-ctx").get_attribute("title")
           == "Customers pay with a saved card. Nothing else changes.")
-    check("the card is the name, the line, the progress, then the strip",
+    check("the card is the name, its state, the line, the progress, then the strip",
           col("checkout").locator(".ov-head > *").evaluate_all("els => els.map(e => e.className.split(' ')[0])")
-          == ["ov-title", "ov-ctx", "ov-prog", "ov-mv"])
+          == ["ov-title", "ov-state", "ov-ctx", "ov-prog", "ov-mv"])
     check("a guess is greyed and offers to add a line; a source does not",
           "add a line" in col("folder:orchard").locator(".ov-ctx.maybe").inner_text()
           and col("checkout").locator(".ov-ctx.maybe").count() == 0
