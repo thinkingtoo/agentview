@@ -28,6 +28,7 @@ from test_projects import TrackFixtures, sess
 
 LOOM = "repo:example.com/alice/loom"
 ORCHARD = "repo:example.com/alice/orchard"
+MAPLE = "repo:example.com/alice/maple"
 
 
 class Moves(TrackFixtures):
@@ -134,6 +135,35 @@ class Moves(TrackFixtures):
         self.assertEqual(self.names(got), ["orchard"])
         self.assertEqual(sorted(self.keys(got["columns"][0])),
                          ["claude:a", "claude:b", "claude:c", "claude:d"])
+
+    def lost(self, orchard, **config):
+        """A session launched on a shelf (nobody's project) that works in `orchard`."""
+        shelf = self.folder("Projects")
+        self.config = {"shelves": [str(shelf)], **config}
+        return sess("a", shelf, paths=[str(orchard / f"{n}.py") for n in "abc"])
+
+    def test_the_guess_for_a_session_in_no_project_names_where_its_project_was_moved(self):
+        # A project merged away is no column any more: the chip must not offer
+        # it, and its click must put the session where the chip says.
+        orchard, maple = self.repo("orchard"), self.repo("maple")
+        for target in (MAPLE, "maple"):             # by identity, and by the plain name
+            with self.subTest(target=target):
+                got = self.claude(self.lost(orchard, assign={ORCHARD: target}), sess("b", maple))
+                self.assertEqual(self.names(got), ["maple", "No project"])
+                tile = self.column(got, "")["sessions"][0]
+                self.assertEqual(tile["suggestion"], {"project": MAPLE, "name": "maple"})
+
+    def test_the_guess_follows_a_chain_of_moves_and_stops_at_a_cycle(self):
+        orchard, maple, pear = self.repo("orchard"), self.repo("maple"), self.repo("pear")
+        pear_id = "repo:example.com/alice/pear"
+        chain = self.claude(self.lost(orchard, assign={ORCHARD: MAPLE, MAPLE: pear_id}),
+                            sess("b", maple), sess("c", pear))
+        self.assertEqual(self.column(chain, "")["sessions"][0]["suggestion"],
+                         {"project": pear_id, "name": "pear"})
+        swap = self.claude(self.lost(orchard, assign={ORCHARD: MAPLE, MAPLE: ORCHARD}),
+                           sess("b", maple), sess("c", orchard))
+        self.assertEqual(self.column(swap, "")["sessions"][0]["suggestion"],
+                         {"project": MAPLE, "name": "maple"})
 
     def test_a_project_moved_twice_lands_where_the_last_move_leads(self):
         loom, orchard, pear = self.repo("loom"), self.repo("orchard"), self.repo("pear")

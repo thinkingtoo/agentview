@@ -638,7 +638,7 @@ def columns_of(blocks):
     """What the overview page draws: one column per project, in display order.
 
     The sessions come from the blocks, but the grouping is the overview's own
-    (`projects.assign_all`): a project is what the person thinks of, not the
+    (`projects.place`): a project is what the person thinks of, not the
     folder a block was keyed by. The page reads these and decides nothing of
     its own. Routines are not on the page; their sessions stay in `blocks`,
     which the chime reads.
@@ -647,12 +647,12 @@ def columns_of(blocks):
     names = config_value("names", {})
     pinned = config_value("pinned", [])
     members = [m for b in blocks if not b["routines"] for m in b["members"]]
-    by_key = projects.assign_all(members, folder_rule, config_value("assign", {}))
+    by_key, follow = projects.place(members, folder_rule, config_value("assign", {}))
     grouped = {}
     for m in members:
         grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
     merged = projects.merged_into(config_value("assign", {}))
-    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names, pinned, merged),
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, follow, names, pinned, merged),
                 _column_order(rows, by_key[rows[0]["key"]], names, pinned))
                for rows in grouped.values()]
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
@@ -672,12 +672,12 @@ def _column_name(project, names):
             else names.get("No project") or "No project")
 
 
-def _column(rows, project, folder_rule, names, pinned, merged):
+def _column(rows, project, folder_rule, follow, names, pinned, merged):
     # A boss leads its column, whatever the activity: who leads before who
     # works. The rest are in the order the blocks have always used.
     rows = order_members(list(rows))
     rows.sort(key=lambda s: not s["boss"])
-    tiles = [tile_of(m, _suggestion(m, project, folder_rule, names)) for m in rows]
+    tiles = [tile_of(m, _suggestion(m, project, folder_rule, follow, names)) for m in rows]
     return {
         "project": project["id"], "raw": project["raw"], "kind": project["kind"],
         "name": _column_name(project, names),
@@ -707,12 +707,14 @@ def _column_order(rows, project, names, pinned):
             _column_name(project, names).casefold(), project["id"])
 
 
-def _suggestion(m, project, folder_rule, names):
+def _suggestion(m, project, folder_rule, follow, names):
     """Where a session with no project probably belongs, as the one click
-    that puts it there -- or None."""
+    that puts it there -- or None. A project you moved away is not offered:
+    the guess goes where the project went, as a session assigned to it would."""
     guessed = projects.guess(m.get("paths") or [], folder_rule) if project is NO_PROJECT else None
     if not guessed:
         return None
+    guessed = follow(guessed)
     return {"project": guessed["id"], "name": projects.display_name(guessed, names)}
 
 

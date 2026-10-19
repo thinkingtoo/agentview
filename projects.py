@@ -387,7 +387,14 @@ def _follow_moves(project, assigned, known_as):
 
 
 def assign_all(members, folder_rule, assigned):
-    """Every session's project: `{session key: project}`.
+    """Every session's project: `{session key: project}`. See `place`."""
+    return place(members, folder_rule, assigned)[0]
+
+
+def place(members, folder_rule, assigned):
+    """`(by_key, follow)`: every session's project, `{session key: project}`,
+    and `follow(project)`, which carries any project to where you moved it --
+    for what is not a session's project yet, such as a suggestion.
 
     First match wins, in the order the person thinks of it: their own setting
     for the session, then their move of its whole project, then the boss's
@@ -419,8 +426,11 @@ def assign_all(members, folder_rule, assigned):
             for name in (project["raw"], folder_rule(m["cwd"])):
                 if name and project not in known_as.setdefault(name, []):
                     known_as[name].append(project)
+    def follow(project):
+        return _follow_moves(project, assigned, known_as)
+
     for m in members:
         start = (_assigned_project(assigned[m["key"]].strip(), known_as)
                  if _is_assigned(assigned, m["key"]) else by_key[m["key"]])
-        by_key[m["key"]] = _follow_moves(start, assigned, known_as)
-    return by_key
+        by_key[m["key"]] = follow(start)
+    return by_key, follow
