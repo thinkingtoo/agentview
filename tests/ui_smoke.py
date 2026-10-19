@@ -69,6 +69,16 @@ def sha(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
 
 
+def head_line(page):
+    """The header's counts as a person reads them: one line, plain spaces."""
+    return re.sub(r"\s+", " ", page.locator("#count").inner_text().replace("\xa0", " ")).strip()
+
+
+def head_counts(page):
+    """The overview header's last three parts: the roster's counts, as said."""
+    return head_line(page).split(" · ")[-3:]
+
+
 # --- fixtures -----------------------------------------------------------------
 # One description of a session produces the row the block view reads (`blocks`,
 # which the chime and the counts also read) and the tile the overview prints
@@ -159,6 +169,14 @@ def jump_field(s):
     return {"via": via} if via != "none" else {"via": "none", "reason": s["why"] or "no terminal"}
 
 
+def counted(s):
+    """The header count the server puts a session in: stuck wins over moving, and
+    an idle session is in none."""
+    if s["stuck"]:
+        return "needs" if s["stuck"]["kind"] == "needs" else "otherStuck"
+    return "moving" if s["moving"] else None
+
+
 def tile(s):
     # The overview never gets the `tool` flag (the movement sign says it) nor
     # `stuck` (it is the kind Hung).
@@ -171,7 +189,7 @@ def tile(s):
             "flagNote": "" if flag is None else s["note"],
             "movement": sign and {"kind": "waiting", "text": sign}, "moving": s["moving"],
             "blocked": bool(s["need"]), "need": s["need"], "stuck": s["stuck"],
-            "jump": jump_field(s),
+            "counted": counted(s), "jump": jump_field(s),
             "find": f"{s['name']}\n{s['line']}".lower()}
 
 
@@ -202,7 +220,10 @@ def roster(projects, **top):
                         "kind": "none" if orphan else "folder",
                         "strip": STRIPS.get(key, [0] * 29 + [2]), "summary": mix(sessions),
                         "state": state_of(sessions), "sessions": [tile(s) for s in sessions]})
-    return {"blocks": blocks, "columns": columns, "hold": False, "chime": True, "providers": {},
+    counts = {k: sum(counted(s) == k for _, _, sessions in projects for s in sessions)
+              for k in ("needs", "otherStuck", "moving")}
+    return {"blocks": blocks, "columns": columns, "counts": counts, "banners": [],
+            "hold": False, "chime": True, "providers": {},
             "restore": None, "closed": [], "saved": None, **top}
 
 
@@ -449,6 +470,17 @@ def real_pass(browser, url, pid):
     check("unrouted: the page draws one column per column the server sent",
           got["columns"] == got["dom"] and got["tiles"] == got["domTiles"]
           and (got["columns"] > 0 or got["empty"]), got | {"keys": len(got["keys"])})
+    # Read in one evaluation: the counts the header shows, the counts the roster
+    # sent, and the tiles that name each, from the same poll.
+    head = page.evaluate("""() => { const named = {};
+      for (const c of COLUMNS) for (const t of c.sessions) named[t.counted] = (named[t.counted] || 0) + 1;
+      const shown = [...document.querySelectorAll('button.hc')].map(b => b.textContent.trim());
+      return { sent: COUNTS, named, shown }; }""")
+    sent = head["sent"]
+    want = [f"{sent['needs']} {'needs you' if sent['needs'] == 1 else 'need you'}",
+            f"{sent['otherStuck']} other stuck", f"{sent['moving']} moving"]
+    check("unrouted: the header shows the roster's counts, and they are the tiles that name them",
+          head["shown"] == want and all(head["named"].get(k, 0) == sent[k] for k in ("needs", "otherStuck", "moving")), head)
     page.wait_for_timeout(3500)       # one more poll, still no clicks
     check("unrouted: read-only (only GET page and roster)", not aborted and set(seen) <= {"/", "/api/roster", "/favicon.ico"},
           aborted or sorted(set(seen)))
@@ -618,15 +650,211 @@ def overview_pass(browser):
     check("a running one is jumped to", fake.of("/api/reopen")[-1] == {"id": "run-1"})
     find.press("Escape")
 
-    # Both views carry the same chime, tick and counts: the overview's header
-    # reads `blocks` exactly as the block view's did.
-    check("the header counts alarms from blocks", "waiting" in page.locator("#count").inner_text()
-          and "stuck" in page.locator("#count").inner_text(), page.locator("#count").inner_text())
+    # The chime and the tab title read `blocks` in both views; the overview's
+    # header is the roster's counts (`header_pass`), not the chime's alarms.
+    check("the overview's header counts what the roster counted, not the chime's alarms",
+          head_counts(page) == ["2 need you", "1 other stuck", "3 moving"], head_line(page))
     check("the tab title counts what wants you: waiting, stuck and blocked",
           page.title().startswith("(3)"), page.title())
     check("the overview has no hold button and a way to the block view",
           page.locator("#hold").is_hidden() and page.locator("#view").get_attribute("href") == "?view=blocks")
     check("overview: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
+def header_fixture():
+    """Eight sessions in four projects: one needs you, two are otherwise stuck
+    (Hung, Limit), three are moving, two are idle. `delta` has nothing to light."""
+    return roster([
+        ("alpha", "alpha", [
+            S("v1", "Vera", "waiting", "waiting", note="input needed",
+              stuck=asks("Publish the notes page?", [("Yes", ""), ("No", "")])),
+            S("m1", "Mei", "busy", "stuck", note="17m"),
+            S("n1", "Nour", "busy", mv="writing · 8s ago")]),
+        ("beta", "beta", [
+            S("o1", "Odile", "idle", stuck=limit_kind(None, 5.0)),
+            S("k1", "Kasper", "idle")]),
+        ("gamma", "gamma", [
+            S("f1", "Femi", "busy", mv="writing · 3s ago"),
+            S("g1", "Gus", "idle", moving=True, mv="waiting on: Run the tests, 5 min")]),
+        ("delta", "delta", [S("h1", "Hanne", "idle")])])
+
+
+def header_pass(browser):
+    """Ticket 09: the header's counts, the light a click puts on them, and the
+    banner. The page counts and decides nothing: it prints the roster's `counts`,
+    lights the tiles whose `counted` names the count, and prints `banners`."""
+    fake = Fake(header_fixture())
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    btn = lambda k: page.locator(f'button.hc[data-count="{k}"]')
+    lit = lambda: sorted(page.locator(".tile.lit .nm").all_inner_texts())
+    dim = lambda: page.locator(".tile.dim").count()
+    shrunk = lambda: sorted(page.locator(".ov-col.shrunk").evaluate_all("els => els.map(e => e.dataset.project)"))
+    widths = lambda: page.locator(".ov-col").evaluate_all("els => els.map(e => e.offsetWidth)")
+
+    check("the header counts what needs you, what else is stuck and what is moving",
+          head_counts(page) == ["1 needs you", "2 other stuck", "3 moving"], head_line(page))
+    check("and what is on the page: sessions and projects",
+          head_line(page).split(" · ")[:2] == ["8 sessions", "4 projects"], head_line(page))
+    check("each count is a button, and none is pressed", page.locator("button.hc").count() == 3
+          and all(btn(k).get_attribute("aria-pressed") == "false" for k in ("needs", "otherStuck", "moving")))
+    check("nothing is lit, faded or shrunk to begin with", not lit() and not dim() and not shrunk())
+
+    before = widths()
+    btn("otherStuck").click()
+    check("a click lights up the sessions in that count", lit() == ["Mei", "Odile"], lit())
+    check("fades the rest", dim() == 6, dim())
+    check("and shrinks the columns with none to their card", shrunk() == ["delta", "gamma"], shrunk())
+    check("a shrunk column keeps its card and shows none of its tiles",
+          page.locator('.ov-col[data-project="gamma"] .ov-head').is_visible()
+          and not page.locator('.ov-col[data-project="gamma"] .tile').first.is_visible()
+          and page.locator('.ov-col[data-project="alpha"] .tile.lit').first.is_visible())
+    check("columns keep their width", widths() == before, (before, widths()))
+    check("the count that is lit says so", btn("otherStuck").get_attribute("aria-pressed") == "true"
+          and btn("needs").get_attribute("aria-pressed") == "false")
+    check("lighting up posts nothing and jumps nowhere", fake.posts == [], fake.posts)
+
+    poll_now(page)
+    check("a poll keeps the light", lit() == ["Mei", "Odile"] and shrunk() == ["delta", "gamma"], (lit(), shrunk()))
+
+    btn("otherStuck").click()
+    check("a second click clears it", not lit() and not dim() and not shrunk()
+          and btn("otherStuck").get_attribute("aria-pressed") == "false", (lit(), dim(), shrunk()))
+
+    # By keyboard: the header is rebuilt when a count lights, and the focus must
+    # survive it, or the second Enter goes nowhere.
+    focused = lambda: page.evaluate("document.activeElement?.closest('button.hc')?.dataset.count || ''")
+    btn("needs").focus()
+    page.keyboard.press("Enter")
+    check("Enter on a focused count lights it, and the focus stays on it",
+          lit() == ["Vera"] and focused() == "needs", (lit(), focused()))
+    page.keyboard.press("Enter")
+    check("a second Enter clears it, and the focus is still on it",
+          not lit() and not shrunk() and focused() == "needs", (lit(), shrunk(), focused()))
+    page.locator("body").click(position={"x": 2, "y": 400})
+
+    btn("moving").click()
+    check("moving lights the moving ones, including a session waiting on a job",
+          lit() == ["Femi", "Gus", "Nour"] and shrunk() == ["beta", "delta"], (lit(), shrunk()))
+    btn("needs").click()
+    check("a click on another count moves the light",
+          lit() == ["Vera"] and shrunk() == ["beta", "delta", "gamma"]
+          and btn("moving").get_attribute("aria-pressed") == "false", (lit(), shrunk()))
+    btn("needs").click()
+
+    # The page lights what the roster counted, whatever the tile's other fields say.
+    cols = fake.body["columns"]
+    next(t for c in cols for t in c["sessions"] if t["name"] == "Kasper")["counted"] = "needs"
+    poll_now(page)
+    btn("needs").click()
+    check("it lights the tiles the roster counted, not ones it works out itself",
+          lit() == ["Kasper", "Vera"], lit())
+    btn("needs").click()
+    # ... and prints the roster's numbers, not a count of its own.
+    fake.body["counts"] = {"needs": 7, "otherStuck": 0, "moving": 12}
+    poll_now(page)
+    check("the numbers are the roster's, however many tiles there are",
+          head_counts(page) == ["7 need you", "0 other stuck", "12 moving"], head_line(page))
+    check("a count of nothing is not a button", btn("otherStuck").is_disabled() and not btn("needs").is_disabled())
+    btn("otherStuck").click(force=True)
+    check("and a click on it lights nothing", not lit() and not shrunk(), (lit(), shrunk()))
+    fake.body["counts"] = {"needs": 1, "otherStuck": 2, "moving": 3}
+    poll_now(page)
+
+    # A lit count that has emptied clears itself instead of hiding every session.
+    btn("needs").click()
+    fake.body["counts"] = {"needs": 0, "otherStuck": 2, "moving": 3}
+    poll_now(page)
+    check("a lit count that falls to nothing clears itself",
+          not lit() and not dim() and not shrunk() and btn("needs").is_disabled(), (lit(), dim(), shrunk()))
+    fake.body["counts"] = {"needs": 1, "otherStuck": 2, "moving": 3}
+    poll_now(page)
+    check("and does not light again when it comes back", not lit() and not shrunk()
+          and btn("needs").get_attribute("aria-pressed") == "false", (lit(), shrunk()))
+
+    # A count the page cannot read as a number shows as 0 and is off, so it
+    # clears the light the same way, instead of hiding every session.
+    btn("needs").click()
+    fake.body["counts"] = {"needs": "3", "otherStuck": 2, "moving": 3}
+    poll_now(page)
+    check("a count that is not a number clears the light like a count of nothing",
+          not lit() and not dim() and not shrunk() and btn("needs").is_disabled(), (lit(), dim(), shrunk()))
+    fake.body["counts"] = {"needs": 1, "otherStuck": 2, "moving": 3}
+    poll_now(page)
+
+    # A repaint that changes nothing leaves the header alone, so a click that
+    # is pressed before a poll lands is still a click when it is released.
+    page.evaluate("window.__head = document.querySelector('button.hc.otherStuck')")
+    poll_now(page)
+    check("a poll that changes nothing does not rebuild the header's buttons",
+          page.evaluate("window.__head === document.querySelector('button.hc.otherStuck')"))
+
+    # The filter box narrows the page; the counts stay the roster's.
+    page.locator("#q").fill("mei")
+    page.wait_for_timeout(500)
+    check("filtering does not change the counts",
+          head_counts(page) == ["1 needs you", "2 other stuck", "3 moving"], head_line(page))
+    page.locator("#q").press("Escape")
+    page.wait_for_timeout(500)
+
+    # Banners: the roster's, and nobody else's.
+    box = page.locator("#banners")
+    check("no banner, no band", box.evaluate("e => e.offsetHeight") == 0 and page.locator(".banner").count() == 0)
+    fake.body["banners"] = [{"kind": "disk", "text": "Disk full: 212 MB left where sessions write"}]
+    poll_now(page)
+    check("a full disk is one banner that says how much is left",
+          page.locator(".banner").count() == 1 and page.locator(".banner").inner_text()
+          == "Disk full: 212 MB left where sessions write", page.locator("#banners").inner_text())
+    spans = page.evaluate("""() => { const b = document.querySelector('.banner').getBoundingClientRect(),
+      h = document.querySelector('header').getBoundingClientRect();
+      return { across: b.width >= innerWidth - 1, inside: b.top >= h.top && b.bottom <= h.bottom + 1,
+               sticky: getComputedStyle(document.querySelector('header')).position }; }""")
+    check("it runs across the page, in the header that stays in view", spans["across"] and spans["inside"]
+          and spans["sticky"] == "sticky", spans)
+    check("it is on no tile: the tiles and their counts are as they were",
+          not any("Disk full" in t for t in page.locator(".tile").all_inner_texts()) and page.locator(".tile").count() == 8
+          and head_counts(page) == ["1 needs you", "2 other stuck", "3 moving"])
+    fake.body["banners"] = []
+    poll_now(page)
+    check("when the roster has no banner any more, the band goes", page.locator(".banner").count() == 0
+          and box.evaluate("e => e.offsetHeight") == 0)
+
+    # From the roster's banners only: words that merely say so are not a banner.
+    fake.body = roster([("alpha", "alpha", [
+        S("x1", "Disk full", "idle", line="No space left on device"),
+        S("x2", "Ilse", "idle", stuck=error_kind("API error", "Disk full: 0 MB left where sessions write", 1.0, ""))])])
+    poll_now(page)
+    check("a session or an error that talks about a full disk is not a banner",
+          page.locator(".banner").count() == 0 and box.evaluate("e => e.offsetHeight") == 0)
+
+    # R7: a banner's words are text, whatever they are.
+    fake.body["banners"] = [{"kind": "disk", "text": BOMB},
+                            {"kind": "constructor", "text": "Another condition"},
+                            {"kind": "disk"}, {"kind": "disk", "text": ""}, None]
+    seen = len(errors)
+    poll_now(page)
+    check("R7: markup in a banner is shown as text and builds no element",
+          page.locator(".banner").first.inner_text() == BOMB and page.locator("#banners img").count() == 0
+          and page.locator("#banners [onerror]").count() == 0 and len(errors) == seen, errors[seen:])
+    check("whatever its kind is called, a banner is a banner and gets no class from it",
+          page.locator(".banner").count() == 2 and page.locator(".banner").nth(1).get_attribute("class") == "banner"
+          and page.locator(".banner").nth(1).inner_text() == "Another condition")
+    check("a banner with no words is not one", page.locator(".banner").count() == 2)
+    check("header: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+    # The block view keeps its own header, and shows the same banner.
+    fake = Fake(header_fixture() | {"banners": [{"kind": "disk", "text": "Disk full: 212 MB left where sessions write"}]})
+    page = new_page(browser, fake)
+    open_at(page, "/?view=blocks")
+    page.wait_for_selector(".block")
+    check("the block view's header is as it was: busy and the chime's alarms, no counts",
+          "busy" in head_line(page) and page.locator("button.hc").count() == 0
+          and "need you" not in head_line(page), head_line(page))
+    check("the block view shows the banner too",
+          page.locator(".banner").inner_text() == "Disk full: 212 MB left where sessions write")
     page.close()
 
 
@@ -2113,6 +2341,7 @@ def main():
         real_keys = real_pass(browser, url, pid)
         overview_pass(browser)
         working_pass(browser)
+        header_pass(browser)
         card_pass(browser)
         needs_pass(browser)
         kinds_pass(browser)
