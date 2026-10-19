@@ -57,6 +57,9 @@ A session that cannot move on without something changing, of a kind the overview
 A kind of stuck: the session cannot go on until the person answers, approves, or does something themselves, such as running a command, sending a mail or buying something.
 _Avoid_: waiting, ready, your turn
 
+**Guessed command**:
+A command the roster finds in the free text a session left for the person (its `ask`): quoted, or after a `$`. The tile offers a copy button for it. It is a guess and is sometimes wrong, and a copy never answers the session.
+
 **Jump**:
 One click that puts the terminal showing a session in front of the person. A session at a terminal has its own pane; a background session has none, so the click opens a new tab attached to it.
 

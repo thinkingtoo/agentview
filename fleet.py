@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+import ask_commands
 import jump
 import lines
 import projects
@@ -741,6 +742,7 @@ def tile_of(m, suggestion=None):
         "flag": flag, "flagNote": flag_note(m) if flag else "",
         "movement": m["movement"], "moving": m["moving"],
         "stuck": stuck_of(m),
+        "commands": commands_of(m),
         # The chime rings for a blocked session whatever its flag says, so the
         # tile carries what it is asking, the way the old row did.
         "blocked": m["blocked"], "need": need_of(m),
@@ -778,6 +780,19 @@ def stuck_of(m):
                 "reason": f"{n} {'thing' if n == 1 else 'things'} left for you",
                 "context": {"text": m["ask"] if n == 1 else ""}}
     return None
+
+
+def commands_of(m):
+    """The commands guessed in the ask the tile shows, or none.
+
+    The ask is on the tile when it is its one thing left or the words under
+    its name; an open dialog is shown over it, and several things left are
+    only counted.
+    """
+    shown = stuck_of(m)
+    if m["n"] != 1 or (shown and shown["source"] != "line"):
+        return []
+    return ask_commands.guess(m["ask"])
 
 
 def jump_of(m):

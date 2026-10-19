@@ -131,6 +131,18 @@ project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session that
 needs you is stuck even while a job runs, and a busy session nothing proves is
 moving counts as stuck.
 
+A command a session leaves for you in its line gets a **copy** button. The
+session-line hook is unchanged, so `ask` is free text and `ask_commands.py`
+guesses: text in quotes (straight, curly, « » or backticks), or after a `$ `,
+that starts with a known program, a path to a script or, after the `$`, any
+name with a hyphen, dot or slash. Prose in quotes ("release notes", "go
+ahead") gets no button; a program the list does not know gets none either, and
+a guess is sometimes wrong. A command cut by the line's length is not offered.
+The tile carries the list as `commands`, only when the ask is on the tile (an
+open dialog is shown over it), and the page prints one row per command with its
+own button. Copying puts the text on the clipboard and sends nothing to the
+server; approving stays in the session's pane.
+
 ## After a reboot
 
 tmux-resurrect brings tmux back, but every pane that ran Claude comes back as
