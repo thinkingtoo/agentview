@@ -107,6 +107,24 @@ class Sources(Working):
         self.assertEqual(self.line(session("c")), (HOSTILE, "did"))
 
 
+class Finding(Working):
+    def test_the_filter_box_finds_every_line_a_tile_can_show(self):
+        # Your own line is laid over the title, and the title comes back when
+        # your line only repeats the project: it is on the tile, so it is found.
+        self.config["lines"] = {"fake:a": "Maple"}
+        tile = self.tile(session("a", title="Checkout form"))
+        self.assertEqual(tile["line"], "Checkout form")
+        self.assertIn("checkout form", tile["find"])
+        self.config["lines"] = {"fake:b": "Saved cards"}
+        tile = self.tile(session("b", title="Checkout form"))
+        self.assertIn("saved cards", tile["find"])
+        self.assertIn("checkout form", tile["find"])
+
+    def test_a_title_that_is_the_line_is_in_the_text_once(self):
+        tile = self.tile(session("a", title="Checkout form", prompt="Add a retry"))
+        self.assertEqual(tile["find"].count("checkout form"), 1)
+
+
 class Cost(Working):
     def test_a_huge_prompt_or_title_costs_a_roster_next_to_nothing(self):
         # A pasted file as the last prompt is 100 KB of one line of words, and
@@ -124,7 +142,6 @@ class Cost(Working):
         self.assertEqual(tile["lineSource"], "title")
         self.assertTrue(tile["line"].endswith("\u2026"))
         self.assertLessEqual(len(tile["line"]), 1500)
-
 
     def test_only_the_start_of_a_huge_text_is_looked_at(self):
         import context

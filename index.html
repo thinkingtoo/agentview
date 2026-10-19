@@ -169,7 +169,8 @@
      tall as its own sessions and no taller (`main` aligns to flex-start), and
      when there are more projects than fit the row scrolls, not the page. */
   main.ov { overflow-x:auto; gap:12px; }
-  .ov-col { flex:1 0 230px; max-width:330px; display:flex; flex-direction:column; gap:8px; }
+  /* min-width:0: what a tile says never widens its column (a line that does not wrap would). */
+  .ov-col { flex:1 0 230px; min-width:0; max-width:330px; display:flex; flex-direction:column; gap:8px; }
   .ov-head { background:var(--card); border:1px solid var(--line); border-top:3px solid var(--line);
              border-radius:10px; padding:10px 12px; font-weight:650; font-size:15px; overflow-wrap:anywhere; }
   /* The card's own text: the name and its status word, what the project is about, how far a

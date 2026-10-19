@@ -1538,6 +1538,23 @@ def working_pass(browser):
     check("no dialog, no page error", len(errors) == seen, errors[seen:])
     page.close()
 
+    # A line that does not wrap must not make its column wider than the others:
+    # the columns hold their width whatever the tiles say (ticket 09 keeps them
+    # still when a count is lit and a column shrinks to its card).
+    def widths(line, width):
+        columns = [(f"p{i}", f"p{i}", [S(f"c{i}", f"Ilse{i}", line=line if i == 0 else "short line")])
+                   for i in range(6)]
+        page = new_page(browser, Fake(roster(columns)), width=width)
+        open_at(page)
+        page.wait_for_selector(".ov-col")
+        page.wait_for_timeout(200)
+        got = page.locator(".ov-col").evaluate_all("els => els.map(e => e.offsetWidth)")
+        page.close()
+        return got
+    for width in (1000, 1700):
+        check(f"a long line does not widen its column ({width} px window)",
+              widths(long, width) == widths("short line", width), (widths(long, width), widths("short line", width)))
+
 
 def hostile_pass(browser, view):
     """R7 at the page: markup in a project, a name and a line is text."""

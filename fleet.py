@@ -880,9 +880,12 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         # tile carries what it is asking, the way the old row did.
         "blocked": m["blocked"], "need": need_of(m),
         # What the filter box looks through, so the page does not have to know
-        # which of a session's words are searchable.
-        "find": "\n".join(m[k] for k in ("name", "title", "did", "ask", "prompt",
-                                         "cwd", "branch")).lower(),
+        # which of a session's words are searchable. Claude Code's own title
+        # too when your line is laid over it: the tile shows it when yours
+        # only repeats the project.
+        "find": "\n".join([m[k] for k in ("name", "title", "did", "ask", "prompt",
+                                          "cwd", "branch")]
+                          + ([m["generated"]] if m["overridden"] else [])).lower(),
     }
 
 
