@@ -192,6 +192,52 @@ class Guess(Base):
             with self.subTest(command=command):
                 self.assertEqual(self.commands(f"Could you run `{command}` for me?"), [command])
 
+    def test_quotes_inside_a_command_cut_by_the_length_limit_are_not_offered_on_their_own(self):
+        # The line is cut at 160 characters. What is left of the `$` command
+        # is not offered, and neither is the quoted half of it.
+        for ask in ('Clear the cache in the container: $ docker exec -it maple-notes sh -c '
+                    '"rm -rf /srv/maple/cache/*" && docker restart maple-notes && docker logs -f '
+                    '--tail 50 maple-notes',
+                    'On the VPS, run $ ssh root@maple.example "sudo systemctl restart maple-notes" && '
+                    'ssh root@maple.example "journalctl -u maple-notes -n 50 --no-pager" | tail -n 20'):
+            with self.subTest(ask=ask):
+                self.line("a", ask)
+                tile = self.tile(session("a"))
+                self.assertTrue(tile["stuck"]["context"]["text"].endswith("\u2026"))
+                self.assertEqual(tile["guessedCommands"], [])
+
+    def test_a_quoted_argument_may_hold_a_comma_a_bracket_or_a_question_mark(self):
+        for ask, command in (
+                ('Commit with $ git commit -m "Ticket 14: copy buttons, tests".',
+                 'git commit -m "Ticket 14: copy buttons, tests"'),
+                ('Open the PR with $ gh pr create --title "Copy buttons (ticket 14)" --base dev?',
+                 'gh pr create --title "Copy buttons (ticket 14)" --base dev'),
+                ('Run $ git log --format="%h, %s" -5?', 'git log --format="%h, %s" -5'),
+                ("Run $ grep -rn 'one. two' notes, then tell me", "grep -rn 'one. two' notes")):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [command])
+
+    def test_a_command_with_a_quote_left_open_is_not_offered(self):
+        # Pasted into a terminal it would leave the shell waiting for more.
+        self.assertEqual(self.commands('Run $ git commit -m "fix typo, then push it'), [])
+        self.assertEqual(self.commands("Run $ echo `date, then tell me"), [])
+
+    def test_a_contraction_a_hyphen_or_a_comma_is_prose_not_a_flag(self):
+        for phrase in ("find who's using it", "find what\u2019s stuck", "find long-running jobs",
+                       "source of truth, v2", "find out, then tell me", "claude code's name"):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.commands(f'Is "{phrase}" the title you want?'), [])
+
+    def test_a_flag_a_path_a_dot_a_number_or_a_string_still_marks_the_command(self):
+        for command in ("find . -name '*.md'", "kill 1234", "touch notes.md", "claude --resume maple",
+                        'echo "done" > out.txt', "curl https://maple.example/health", "source ~/.profile"):
+            with self.subTest(command=command):
+                self.assertEqual(self.commands(f"Could you run `{command}` for me?"), [command])
+
+    def test_a_command_written_twice_is_offered_once(self):
+        self.assertEqual(self.commands('Run "make test" now, and "make test" again after the push?'),
+                         ["make test"])
+
 
 if __name__ == "__main__":
     unittest.main()

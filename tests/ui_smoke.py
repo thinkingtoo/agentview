@@ -829,6 +829,7 @@ def guessed_pass(browser):
 
     # The clipboard holds the command, character for character.
     page = new_page(browser, fake, clipboard=True)
+    seen = len(errors)
     page.goto("http://localhost/", wait_until="load")
     page.wait_for_selector(".tile")
     t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
@@ -841,7 +842,6 @@ def guessed_pass(browser):
         page.wait_for_timeout(200)
         got = page.evaluate("navigator.clipboard.readText()")
         check(f"the clipboard holds the {label} command", got == want, got)
-    seen = len(errors)
     text = page.locator("#main").inner_text()
     check("R7: markup in a guessed command is shown as text, in the ask and in its row",
           text.lower().count(BOMB.lower()) == 2, text.lower().count(BOMB.lower()))

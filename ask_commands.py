@@ -15,16 +15,22 @@ QUOTES = [re.compile(p) for p in (
     r"(?<!\w)'([^'\n]+)'(?!\w)", r"(?<!\w)‘([^’\n]+)’(?!\w)")]
 
 # `$ ` as a shell prompt: after a space or a colon, then a command word. `$5`
-# and `$HOME` have no space after the sign and `$ 5` no command word.
+# and `$HOME` have no space after the sign and `$ 5` no command word. A quoted
+# argument is one unit, so the comma in `-m "one, two"` does not end the
+# command; the end of the line does, so the match can never fail and the
+# engine never has to try the quoted and the plain way of reading each quote.
 DOLLAR_COMMAND = re.compile(
-    r"(?:^|[\s:])\$ +([A-Za-z./~][^\n]*?)"
+    r"(?:^|[\s:])\$ +([A-Za-z./~](?:\"[^\"\n]*\"|`[^`\n]*`|(?<!\w)'[^'\n]*'(?!\w)|[^\n])*?)"
     # Where the command ends and the sentence goes on.
-    r"(?=\s\$ |,\s|\.(?:\s|$)|[?!](?:\s|$)|\s[—–]\s|\s\(|$)")
+    r"(?=\s\$ |,\s|\.(?:\s|$)|[?!](?:\s|$)|\s[—–]\s|\s\(|\n|$)")
 
 PATHS = ("./", "../", "~/")
 SCRIPT = re.compile(r"\.(sh|bash|py|js|mjs|rb|pl)$")
 ENV_ASSIGNMENT = re.compile(r"[A-Z_][A-Z0-9_]*=\S*$")
-ODD_WORD = re.compile(r"[^A-Za-z]")
+# What no plain sentence has in a word: a flag, a path, a dot between letters,
+# a bare number, a string, an @, an =, a shell sign. An apostrophe, a comma, a
+# hyphen inside a word, an accent or a digit inside a name ("v2") are prose.
+ARGUMENT_SIGN = re.compile(r"""^-+\w|^\.|^~|^\d+$|[/@=*\\|&;<>$"`]|\w\.\w""")
 
 # What a quoted phrase has to start with to be taken for a command, in three
 # tiers by how likely the same words are plain prose. A program the lists do
@@ -60,7 +66,7 @@ SUBCOMMANDS = {name: frozenset(words.split()) for name, words in {
 }.items()}
 # Words of a sentence that are also programs ("find out", "touch base", "echo
 # chamber", "claude code", "ssh keys"): they count only when a word after them
-# is no plain word -- a flag, a path, a dot, a digit, an @.
+# carries one of the signs above.
 PROSE_PROGRAMS = frozenset("""
 find head tail cat source export kill pkill claude codex python python3 node npx ssh scp rsync
 curl wget touch echo tmux journalctl ps df du
@@ -94,7 +100,7 @@ def reads_as_command(text):
         return True
     if first in ANY_ARGUMENT:
         return True
-    if first in KNOWN and any(ODD_WORD.search(w) for w in rest):
+    if first in KNOWN and any(ARGUMENT_SIGN.search(w) for w in rest):
         return True
     return first in SUBCOMMANDS and rest[0] in SUBCOMMANDS[first]
 
@@ -110,20 +116,35 @@ def reads_as_prompted(text):
                             or any(c in words[0] for c in "-_./"))
 
 
+def cut_or_broken(command):
+    """Half a command pasted into a terminal is worse than none: the line was
+    cut with an ellipsis, or a quote opened in it was never closed."""
+    return command.endswith("\u2026") or command.count('"') % 2 or command.count("`") % 2
+
+
 def guess(text):
     """The commands in `text`, in the order they were written, each once."""
     # A command after `$` runs to the end of its sentence and claims any quote
-    # inside it. A quoted phrase that is a command claims what is inside it.
-    found = [Hit(m.start(1), m.end(), m.group(1).strip()) for m in DOLLAR_COMMAND.finditer(text)
-             # The line is cut with an ellipsis, and half a command pasted
-             # into a terminal is worse than none.
-             if not m.group(1).endswith("…") and reads_as_prompted(m.group(1))]
+    # inside it, whether or not it can be offered. A quoted phrase that is a
+    # command claims what is inside it.
+    found, taken = [], []
+    for m in DOLLAR_COMMAND.finditer(text):
+        command = m.group(1).strip()
+        if reads_as_prompted(command):
+            taken.append((m.start(1), m.end()))
+            if not cut_or_broken(command):
+                found.append(Hit(m.start(1), m.end(), command))
     quoted = sorted((m for q in QUOTES for m in q.finditer(text)),
                     key=lambda m: (m.start(), -m.end()))
     for m in quoted:
-        if any(hit.start < m.end() and m.start() < hit.end for hit in found):
+        if any(start < m.end() and m.start() < end for start, end in taken):
             continue
         said = re.sub(r"^\$ +", "", m.group(1).strip())
         if reads_as_command(said):
+            taken.append((m.start(), m.end()))
             found.append(Hit(m.start(), m.end(), said))
-    return [hit.command for hit in sorted(found)]
+    ordered = []
+    for hit in sorted(found):
+        if hit.command not in ordered:
+            ordered.append(hit.command)
+    return ordered

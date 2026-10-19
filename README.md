@@ -139,15 +139,18 @@ sentence (`cd`, `brew`, `psql`) take any argument; tools with fixed
 subcommands (`git`, `docker`, `npm`, `make`, `systemctl` ...) need one of
 theirs, so "git status" gets a button and "git history" does not; words that
 are also programs (`find`, `touch`, `echo`, `ssh`, `python`, `claude`) need a
-flag, path, dot, digit or `@` after them. A path to a script, or `VAR=1 cmd`,
+sign no plain sentence has after them: a flag, a path, a dot between letters,
+a bare number, a string, an `@` or `=`. A path to a script, or `VAR=1 cmd`,
 counts too. After a `$` one word is enough if it is a known program or has a
 hyphen, dot or slash in it.
 
 Known limits, accepted: a program the lists do not know (`tiroir-work next` in
-quotes) gets no button; a title that starts with a tool's name and a flag-like
-word gets one; a `$` command runs to the end of its sentence (`. , ? !` or a
-dash), so one with no sentence end after it swallows the words that follow.
-A command cut by the line's length is not offered. The tile carries the list
+quotes) gets no button; a title that starts with a tool's name and a sign gets
+one; a `$` command runs to the end of its sentence (`. , ? !` or a dash, not
+inside a quoted argument), so one with no sentence end after it swallows the
+words that follow.
+A command cut by the line's length, or with a quote left open, is not offered,
+and neither are the quotes inside it. The tile carries the list
 as `guessedCommands`, only when the ask is on the tile (an open dialog is shown
 over it), and the page prints one row per command with its own button. Copying
 puts the text on the clipboard and sends nothing to the server; approving stays
