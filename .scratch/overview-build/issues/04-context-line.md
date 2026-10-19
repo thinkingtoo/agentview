@@ -4,7 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Claimed by:** Hugo 2026-10-19 08:31
+
+**Status:** in-progress
 
 - [ ] Each source is chosen in order and the person's own line always wins
 - [ ] A MET track shows done whatever its boxes say

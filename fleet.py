@@ -21,6 +21,7 @@ import lines
 import projects
 import providers
 import seen
+from providers import base
 from providers.base import CAPABILITIES, STATUSES, on_a_terminal
 
 
@@ -511,6 +512,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         "flag": flag,
         **moves,
         "canJump": can_jump,
+        "asking": asking_of(raw.get("asking")),
         # A provider that cannot jump has no terminal to attach to: the field is emptied.
         "attach": row["attach"] if "jump" in caps else "",
         "extras": extras_of(raw.get("extras")),
@@ -634,6 +636,15 @@ def columns_of(blocks):
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
 
 
+def state_of(tiles):
+    """The card's one word, from its sessions: the most urgent decides. Needs
+    you, then moving, then all idle; the other kinds of stuck take their place
+    between them when the roster learns them."""
+    if any(t["stuck"] and t["stuck"]["kind"] == "needs" for t in tiles):
+        return "needs"
+    return "moving" if any(t["moving"] for t in tiles) else "idle"
+
+
 def _column_name(project, names):
     return (projects.display_name(project, names) if project["raw"]
             else names.get("No project") or "No project")
@@ -654,7 +665,7 @@ def _column(rows, project, folder_rule, names, own_lines):
         # What the card's notes link asks the brain, once someone clicks it.
         "notes": None if about is None else {"query": context.notes_query(name, about)},
         "strip": strip_of(rows), "summary": mix_of(tiles),
-        "sessions": tiles,
+        "state": state_of(tiles), "sessions": tiles,
     }
 
 
@@ -699,6 +710,7 @@ def tile_of(m, suggestion=None):
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
         "movement": m["movement"], "moving": m["moving"],
+        "stuck": stuck_of(m),
         # The chime rings for a blocked session whatever its flag says, so the
         # tile carries what it is asking, the way the old row did.
         "blocked": m["blocked"], "need": need_of(m),
@@ -707,6 +719,35 @@ def tile_of(m, suggestion=None):
         "find": "\n".join(m[k] for k in ("name", "title", "did", "ask", "prompt",
                                          "cwd", "branch")).lower(),
     }
+
+
+def stuck_of(m):
+    """Why a session is stopped, as a kind with a reason and its context, or
+    None. The flags the chime reads are not touched: this is for the page.
+
+    Needs you has three sources at one level -- an open question, an open
+    permission prompt, a session line with things left -- and the dialog that
+    is open now is the one shown over a line written a turn ago.
+    """
+    asking = m["asking"]
+    if asking and asking["kind"] == "question":
+        return {"kind": "needs", "source": "question", "reason": "Question",
+                "context": {"questions": asking["questions"]}}
+    if asking and asking["kind"] == "permission":
+        return {"kind": "needs", "source": "permission", "reason": "Permission prompt",
+                "context": {"tool": asking["tool"], "command": asking["command"],
+                            "target": asking["target"],
+                            # Half a command pasted into a terminal is worse
+                            # than none.
+                            "copy": bool(asking["command"].strip()) and not asking["cut"]}}
+    if m["blocked"]:
+        # The session's own line only: one read out of its last words is a
+        # guess, and the chime does not believe it either.
+        n = m["n"]
+        return {"kind": "needs", "source": "line",
+                "reason": f"{n} {'thing' if n == 1 else 'things'} left for you",
+                "context": {"text": m["ask"] if n == 1 else ""}}
+    return None
 
 
 def jump_of(m):
@@ -825,6 +866,53 @@ def tasks_of(value):
             out.append({"label": " ".join(_text(t.get("label")).split())[:80]
                         or "a background job", "since": round(since, 1)})
     return out[:MAX_JOBS]
+
+
+MAX_QUESTIONS, MAX_OPTIONS = base.MAX_QUESTIONS, base.MAX_OPTIONS
+QUESTION_LEN, LABEL_LEN, HINT_LEN = base.QUESTION_LEN, base.LABEL_LEN, base.HINT_LEN
+COMMAND_LIMIT = base.COMMAND_LIMIT
+
+
+def _clip(value, limit):
+    """Words a session wrote, trimmed to a bound and otherwise left alone: the
+    page prints them as text, so there is nothing to escape or strip here."""
+    return _text(value).strip()[:limit]
+
+
+def asking_of(value):
+    """What a provider says a session is stopped on, as the page may print it:
+    an open question with its options, or None. Anything not believable is
+    None -- a dialog that cannot be read is no reason to mark a session. The
+    one exception is a provider saying so itself: `questions: []` is a dialog
+    that is open whose text is not written yet (Claude Code writes it late)."""
+    if not isinstance(value, dict):
+        return None
+    if value.get("kind") == "question":
+        questions = []
+        listed = value.get("questions")
+        for q in (listed if isinstance(listed, list) else ())[:MAX_QUESTIONS]:
+            if not isinstance(q, dict) or not _clip(q.get("question"), QUESTION_LEN):
+                continue
+            options = [{"label": " ".join(_text(o.get("label")).split())[:LABEL_LEN],
+                        "description": " ".join(_text(o.get("description")).split())[:HINT_LEN]}
+                       for o in (q.get("options") if isinstance(q.get("options"), list) else ())
+                       if isinstance(o, dict) and _text(o.get("label")).strip()][:MAX_OPTIONS]
+            questions.append({"question": _clip(q.get("question"), QUESTION_LEN),
+                              "header": " ".join(_text(q.get("header")).split())[:LABEL_LEN],
+                              "multi": bool(q.get("multi")),
+                              "options": options})
+        return {"kind": "question", "questions": questions} if questions or listed == [] else None
+    if value.get("kind") == "permission":
+        # A provider hands over a command only when it is one, and one longer
+        # than the limit arrives with a character to spare: that is how a cut
+        # one is told from one that just fits.
+        command = _text(value.get("command"))
+        return {"kind": "permission",
+                "tool": " ".join(_text(value.get("tool")).split())[:LABEL_LEN],
+                "command": command[:COMMAND_LIMIT],
+                "cut": len(command) > COMMAND_LIMIT,
+                "target": " ".join(_text(value.get("target")).split())[:HINT_LEN]}
+    return None
 
 
 def ago_text(minutes):

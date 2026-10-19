@@ -2,7 +2,7 @@
 
 **What to build:** Contract: the overview is the only main view. The roster stops returning `blocks`; the chime, search and closed read from the new contract; the old block rendering and second-line code leave the page. Nothing the person sees changes except that the old view can no longer come back.
 
-**Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12
+**Blocked by:** 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 14
 
 **Status:** ready-for-agent
 

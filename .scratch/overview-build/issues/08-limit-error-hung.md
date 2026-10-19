@@ -10,3 +10,4 @@
 - [ ] A session waiting on a subagent or background job is never Hung
 - [ ] The card colour follows the full precedence
 - [ ] `hung_after_minutes` is read from config
+- [ ] The card's mix line counts stuck by kind, the same way the card state does: a session counted stuck always has a stuck kind on its tile, and a menu or dialog the person opened is not stuck (raised in 07, 2026-10-19)
