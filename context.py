@@ -415,32 +415,55 @@ def first_prose(text):
     return next((got for got in map(prose, looked_at) if got), "")
 
 
+WANTED = frozenset(name for kind in DESCRIBED_BY for name in kind)
+LINKS_LOOKED_AT = 12     # per folder: a repository holds the names above, and no more than a few of them as links
+
+
 def stays_inside(path, base):
     """Whether a link ends up in the folder `base` (already resolved), and not
-    in its `.git`: `AGENTS.md -> CLAUDE.md` does, `README.md -> ~/.ssh/id_ed25519`
-    does not. A cloned repository chooses what its links point at."""
+    in a `.git` folder of any case: `AGENTS.md -> CLAUDE.md` does, `README.md ->
+    ~/.ssh/id_ed25519` does not. A cloned repository chooses what its links
+    point at. The kernel follows the link (a path-only descriptor: nothing is
+    read, a named pipe is no trouble) and says where it ends; walking a chain
+    of long links in Python costs fifty milliseconds a link."""
     try:
-        target = Path(path).resolve().relative_to(base)
-    except (OSError, RuntimeError, ValueError):
+        fd = os.open(path, os.O_PATH | os.O_CLOEXEC)
+    except OSError:                                 # a loop, too many levels, gone
         return False
-    return ".git" not in target.parts
+    try:
+        end = os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+    try:
+        target = Path(end).relative_to(base)
+    except ValueError:
+        return False
+    return ".git" not in {part.casefold() for part in target.parts}
 
 
 def files_in(folder):
-    """The files directly in a folder, `{lowercase name: path}`. A link counts
-    when it stays inside the folder; one entry that cannot be looked at (a link
-    that loops) is left out and no more."""
-    found = {}
+    """The files a repository may describe itself by, directly in a folder,
+    `{lowercase name: path}`. A link counts when it stays inside the folder, and
+    only the names looked for are looked at: the other links in a cloned folder
+    cost nothing. A link that loops is no link that stays inside, and the other
+    files are still found."""
+    found, links = {}, 0
     try:
         base = Path(folder).resolve()
         with os.scandir(folder) as entries:
             for entry in entries:
-                try:
-                    if entry.is_file() and (not entry.is_symlink() or stays_inside(entry.path, base)):
-                        found[entry.name.casefold()] = entry.path
-                except OSError:
+                key = entry.name.casefold()
+                if key not in WANTED or key in found:
                     continue
-    except (OSError, RuntimeError):
+                if entry.is_symlink():
+                    links += 1
+                    if links > LINKS_LOOKED_AT or not stays_inside(entry.path, base):
+                        continue
+                if entry.is_file():
+                    found[key] = entry.path
+    except OSError:
         return {}
     return found
 

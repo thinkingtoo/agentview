@@ -583,6 +583,54 @@ class Repositories(Cards):
         (self.loom / "README.md").symlink_to(".git/description")
         self.assertEqual(self.line()["source"], "guess")
 
+    def chain(self, root, end):
+        """Thirty-eight links one after the other, each with a target of about 4,000 bytes, the
+        first pointing at `end`: the kernel follows them in microseconds, a walk in Python
+        takes fifty milliseconds over the first one."""
+        (root / "d").mkdir()
+        (root / "d" / "c0").symlink_to(end)
+        for k in range(1, 38):
+            (root / "d" / f"c{k}").symlink_to("../d/" * 796 + f"c{k - 1}")
+        return root / "d" / "c37"
+
+    def test_links_at_the_root_that_are_no_description_are_not_looked_at(self):
+        (self.loom / "f.txt").write_text("Nothing.\n")
+        head = self.chain(self.loom, "../f.txt")
+        for i in range(50):
+            (self.loom / f"link{i}.md").symlink_to(head)
+        self.put("README.md", "Prints reports.\n")
+        with mock.patch.object(context, "stays_inside", wraps=context.stays_inside) as spy:
+            started = time.monotonic()
+            self.assertEqual(self.line()["line"], "Prints reports.")
+            took = time.monotonic() - started
+        self.assertEqual(spy.call_count, 0)
+        self.assertLess(took, 1.0)
+
+    def test_a_link_with_a_long_chain_of_targets_is_followed_in_the_kernel(self):
+        (self.loom / "f.txt").write_text("Prints reports.\n")
+        (self.loom / "README.md").symlink_to(self.chain(self.loom, "../f.txt"))
+        started = time.monotonic()
+        for _ in range(40):
+            self.assertEqual(self.line()["line"], "Prints reports.")
+        self.assertLess(time.monotonic() - started, 1.0)           # a walk in Python: 40 x 50 ms and more
+
+    def test_a_folder_of_case_variants_of_a_wanted_name_that_are_links_out_costs_a_bounded_number_of_looks(self):
+        (self.disk / "outside.txt").write_text(self.KEY)
+        head = self.chain(self.loom, self.disk / "outside.txt")
+        for mask in range(60):
+            name = "".join(c.upper() if mask >> i & 1 else c for i, c in enumerate("readme.md"))
+            (self.loom / name).symlink_to(head)
+        self.put("AGENTS.md", "Instructions for agents.\n")
+        with mock.patch.object(context, "stays_inside", wraps=context.stays_inside) as spy:
+            self.assertEqual(self.line()["line"], "Instructions for agents.")
+        self.assertEqual(spy.call_count, 12)
+
+    def test_a_readme_that_is_a_link_into_a_git_folder_in_any_case_is_not_read(self):
+        (self.loom / ".GIT").mkdir()
+        (self.loom / ".GIT" / "description").write_text(self.KEY)
+        (self.loom / "README.md").symlink_to(".GIT/description")
+        self.assertEqual(self.line()["source"], "guess")
+
     def test_a_link_to_a_file_in_the_checkout_is_read(self):
         (self.loom / "docs").mkdir()
         self.put("docs/about.md", "Prints reports.\n")
