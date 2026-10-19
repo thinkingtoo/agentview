@@ -72,6 +72,8 @@ def fold(pairs, now):
     """The `(provider, raw)` pairs the roster shows: runs folded into their starters."""
     # The roster shows one row for a `provider:id` -- the first, or a later one that leads
     # a track when the first does not -- so that is where a run under any of its pids goes.
+    # If that row cannot own a run (a routine, or no process), the run goes nowhere: it is
+    # a tile of its own, not movement in a row the roster drops.
     kept = {}
     for index, (provider, raw) in enumerate(pairs):
         if isinstance(raw, dict) and isinstance(raw.get("id"), str) and raw["id"]:
@@ -80,9 +82,9 @@ def fold(pairs, now):
                 kept[(provider.name, raw["id"])] = index
     owners = {}
     for index, (provider, raw) in enumerate(pairs):
-        if owns(raw):
-            stays = kept[(provider.name, raw["id"])]
-            owners.setdefault(pid_of(raw), stays if owns(pairs[stays][1]) else index)
+        stays = kept.get((provider.name, raw.get("id"))) if isinstance(raw, dict) else None
+        if owns(raw) and owns(pairs[stays][1]):
+            owners.setdefault(pid_of(raw), stays)
     groups = {}
     for index, (_, raw) in enumerate(pairs):
         if is_run(raw):

@@ -387,6 +387,20 @@ class Failures(Fixture):
         time.tzset()
         self.assertEqual(self.limit("2:35 PM")["resetsAt"], 1792420500000 - 2 * 3600000)
 
+    def test_a_time_in_the_hour_the_clock_repeats_is_the_next_such_time(self):
+        # Brussels, the night of 2026-10-25: 02:00-02:59 happens twice (CEST, then CET).
+        os.environ["TZ"] = "CET-1CEST,M3.5.0,M10.5.0/3"
+        time.tzset()
+        at = lambda hour, minute, day=25: int(datetime.datetime(2026, 10, day, hour, minute,
+                                                                tzinfo=datetime.timezone.utc).timestamp() * 1000)
+        for stamp, said, then in (("2026-10-25T00:10:00.000Z", "2:05 AM", at(1, 5)),    # second pass, 55 minutes on
+                                  ("2026-10-25T00:10:00.000Z", "2:40 AM", at(0, 40)),    # first pass, 30 minutes on
+                                  ("2026-10-25T01:10:00.000Z", "2:05 AM", at(1, 5, 26)),  # already the second pass
+                                  ("2026-10-25T00:10:00.000Z", "1:30 AM", at(0, 30, 26))):
+            with self.subTest(stamp=stamp, said=said):
+                got = self.failure(done(ts=stamp, message=LIMIT % said, codex_error_info="usage_limit_exceeded"))
+                self.assertEqual(got["resetsAt"], then)
+
     def test_a_limit_that_names_no_time_has_none(self):
         got = self.failure(done(message="You've hit your usage limit.", codex_error_info="usage_limit_exceeded"))
         self.assertEqual((got["kind"], got["resetsAt"]), ("limit", None))
@@ -739,6 +753,72 @@ class Scripts(Fixture):
             with self.subTest(how=how):
                 code = f'await tools.exec_command({{cmd: "ls", sandbox_permissions: {how}}})'
                 self.assertEqual(self.asked(code), ("busy", None))
+
+    # Where a `/` divides although the token before it looks like one that opens a regular expression.
+
+    def test_a_word_after_a_dot_is_a_property_and_a_slash_after_it_divides(self):
+        for access in ("counts.new", "counts.in", "o.return", "o?.typeof", "o.of", "o.delete", "o. await"):
+            with self.subTest(access=access):
+                code = f'const share = {access} / counts.all; const dir = "/srv/out";\n' + code_of("git push origin main")
+                self.assertEqual(self.asked(code), ("waiting", "git push origin main"))
+                talk = ('text("after review: tools.exec_command({cmd: \'git push\', '
+                        'sandbox_permissions: \'require_escalated\'})");')
+                self.assertEqual(self.asked(f'const kb = {access} / 1024, dir = "/srv/out";\n' + talk), ("busy", None))
+
+    def test_a_slash_after_a_postfix_step_divides(self):
+        for step in ("n++", "n--", "o.n++", "xs[0]--"):
+            with self.subTest(step=step):
+                code = f'let half = {step} / 2, dir = "/srv/out";\n' + code_of("git push origin main")
+                self.assertEqual(self.asked(code), ("waiting", "git push origin main"))
+                talk = ('text("after review: tools.exec_command({cmd: \'git push\', '
+                        'sandbox_permissions: \'require_escalated\'})");')
+                self.assertEqual(self.asked(f'let half = {step} / 2, dir = "/srv/out";\n' + talk), ("busy", None))
+
+    def test_a_slash_after_a_step_that_is_two_signs_apart_still_opens_a_regular_expression(self):
+        for before in ("a + +", "a - -", "a +", "a ++ ; b = ", "a = ++x, "):
+            with self.subTest(before=before):
+                code = f'const r = {before}/"/.test(s);\n' + code_of("git push")
+                self.assertEqual(self.asked(code), ("waiting", "git push"))
+
+    # A template may hold templates, texts, regular expressions and braces of its own inside its `${ }`.
+
+    def test_a_template_inside_a_template_hides_no_question_and_makes_none(self):
+        hidden = ('text(`${files.map(f => `${f} isn\'t clean`).join(", ")}`);\n' + code_of("git push origin main"))
+        self.assertEqual(self.asked(hidden), ("waiting", "git push origin main"))
+        made = ("text(`${rows.map(r => `${r.name}'s`).join(', ')}`);\n"
+                "text('next: tools.exec_command({cmd: \"git push\", sandbox_permissions: \"require_escalated\"}) once green');")
+        self.assertEqual(self.asked(made), ("busy", None))
+        wrong = ("text(`${xs.map(x => `${x}'s`).join()}`);\n"
+                 "log('plan: tools.exec_command({cmd: \"rm -rf build\", sandbox_permissions: \"require_escalated\"})');\n"
+                 + code_of("git push origin main"))
+        self.assertEqual(self.asked(wrong), ("waiting", "git push origin main"))
+
+    def test_what_a_template_holds_inside_its_braces_is_read_as_the_code_it_is(self):
+        for inner in ("`https://${x}`", "f('}')", 'f("}", {a: 1})', "name.replace(/'/g, '')", "a / b / c",
+                      "{a: `}`}.a", "g(1, /`/.source)"):
+            with self.subTest(inner=inner):
+                code = "const t = `${" + inner + "} isn't it`; " + code_of("git push origin main")
+                self.assertEqual(self.asked(code), ("waiting", "git push origin main"))
+
+    def test_templates_nested_deep_are_read_without_a_stack_of_calls(self):
+        started = time.monotonic()
+        deep = "`${" * 4_000 + "x" + "}`" * 4_000
+        self.assertEqual(self.asked(f"const t = {deep}; " + code_of("git push")), ("waiting", "git push"))
+        self.assertEqual(self.asked("require_escalated " + "`${" * 20_000), ("busy", None))
+        self.assertLess(time.monotonic() - started, 4)
+
+    # A key written twice is what its last value says.
+
+    def test_a_key_written_again_with_a_value_that_is_no_text_is_no_text(self):
+        for cmd in ('"git status", cmd: "git push origin " + branch', '"git status", cmd: branch',
+                    '"git status", "cmd": `git push ${branch}`'):
+            with self.subTest(cmd=cmd):
+                code = f'await tools.exec_command({{cmd: {cmd}, sandbox_permissions: "require_escalated"}})'
+                self.assertEqual(self.asked(code), ("waiting", ""))
+        code = 'await tools.exec_command({cmd: "rm -rf build", sandbox_permissions: "require_escalated", sandbox_permissions: mode})'
+        self.assertEqual(self.asked(code), ("busy", None))
+        code = 'await tools.exec_command({cmd: branch, cmd: "git status", sandbox_permissions: "require_escalated"})'
+        self.assertEqual(self.asked(code), ("waiting", "git status"))
 
     # Every call is read once, whatever is nested in it or left open.
 

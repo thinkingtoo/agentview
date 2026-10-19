@@ -163,6 +163,21 @@ class Folded(Base):
                 self.assertIn("boss", tiles["claude:s"]["tags"])
                 self.assertEqual(tiles["claude:s"]["movement"]["text"], "waiting on: codex review, 2 min")
 
+    def test_a_run_whose_starter_session_is_shown_by_a_row_that_cannot_own_it_is_a_tile_of_its_own(self):
+        # The roster shows the first row of a session; if that row is a routine, or has no process, the
+        # other row (the one the run walked up to) is dropped, and a run folded into it would be gone.
+        # (A routine is shown in the Routines block, which is no column.)
+        for first, shown in ((starter(pid=100, routine="nightly-report"), ["codex:r"]),
+                             (starter(pid=None), ["claude:s", "codex:r"])):
+            with self.subTest(first=first.get("routine") or "no pid"):
+                got = self.both([first, starter(pid=150)], [run(above=(200, 150))])
+                tiles = {t["key"]: t for c in got["columns"] for t in c["sessions"]}
+                self.assertEqual(sorted(tiles), shown)
+                self.assertEqual(tiles["codex:r"]["tags"].count("exec"), 1)
+                if "claude:s" in tiles:
+                    self.assertNotIn("codex review", tiles["claude:s"]["movement"]["text"])
+                self.assertEqual(got["counts"]["moving"], 1)
+
     def test_two_sessions_with_different_ids_are_not_one(self):
         got = self.tiles([starter("a", pid=100), starter("b", pid=150)], [run(above=(200, 150))])
         self.assertEqual(sorted(got), ["claude:a", "claude:b"])

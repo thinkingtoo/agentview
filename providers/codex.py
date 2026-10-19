@@ -88,12 +88,15 @@ def _resets_at(message, at):
         if month:
             when = datetime.datetime(int(year), MONTHS.index(month.lower()) + 1, int(day), hour, minute)
         else:
-            then = datetime.datetime.fromtimestamp(at / 1000)
-            when = then.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            then = datetime.datetime.fromtimestamp(at / 1000).replace(second=0, microsecond=0)
             # Codex writes the minute, not the second ("try again at 12:00 PM"
-            # for 12:00:40): the refusal's own minute is still today.
-            if when < then.replace(second=0, microsecond=0):
-                when += datetime.timedelta(days=1)
+            # for 12:00:40): the refusal's own minute is still today. The night the
+            # clock goes back, a time of the repeated hour happens twice (`fold`), so
+            # the instants are compared, not the clock faces: the first one not before the error.
+            days = [then.date() + datetime.timedelta(days=plus) for plus in (0, 1)]
+            instants = sorted(datetime.datetime(d.year, d.month, d.day, hour, minute, fold=fold).timestamp()
+                              for d in days for fold in (0, 1))
+            return int(next((t for t in instants if t >= then.timestamp()), instants[-1]) * 1000)
         return int(when.timestamp() * 1000)
     except (ValueError, OverflowError, OSError):
         return None
@@ -157,7 +160,6 @@ _BEFORE_REGEX = frozenset("(,=:[!&|?{};+-*%<>~^")
 _KEYWORDS = frozenset("return typeof case in of do else new delete void throw yield await instanceof".split())
 _LINE_ENDS = "\n\r\u2028\u2029"
 _FLAG = re.compile(r"[A-Za-z]*")
-_ESCAPE_PAIR = re.compile(r"\\.", re.DOTALL)
 
 
 def _regex_end(code, at, budget):
@@ -185,25 +187,44 @@ def _regex_end(code, at, budget):
     return 0, i - at
 
 
-def _interpolates(body):
-    """Does the body of a template hold a `${`, one not escaped by a backslash? An
-    escape and what it escapes become one mark first, so `$\\n{` is not one."""
-    return "${" in _ESCAPE_PAIR.sub("\0", body)
-
-
 def _tokens(code):
     """A script as (kind, text) pairs: "text" for a quoted text (unescaped), "template"
     for a backtick text that holds a `${` (it says nothing, its value is not its
     letters), "regex" for a regular expression, "name" for a word or a number, the
-    character itself for anything else. Comments and blanks are dropped. A text that
-    is never closed ends the list: nothing after it can be told."""
-    out, at = [], 0
+    character itself for anything else (`++` and `--` are one token each). Comments and
+    blanks are dropped. A text that is never closed ends the list: nothing after it can
+    be told.
+
+    A template is read the way the script is: what stands in its `${ }` is code, with
+    texts, regular expressions, templates and braces of its own, so a quote or a backtick
+    there closes nothing of the outer one. That code is read only to find where the
+    template ends; it is no part of the list. One template is one token."""
+    top = []
+    # What is open, innermost last. Code (the script, or what stands in a `${ }`):
+    # [its tokens so far, braces open in it, 0]. The text of a template:
+    # [None, whether it holds a `${`, where it began]. A list, not a call per level.
+    frames, at = [[top, 0, 0]], 0
     # What the regular expressions may cost in all: a `/` that opens nothing is a
     # division after the look, and a line of them must not be looked at once each.
     spent, allowed = 0, 4 * len(code) + 64
     while at < len(code):
-        ch = code[at]
-        if ch.isspace():
+        frame = frames[-1]
+        out, ch = frame[0], code[at]
+        if out is None:
+            if ch == "\\":
+                at += 2
+            elif ch == "`":
+                frames.pop()
+                body = code[frame[2] + 1:at]
+                frames[-1][0].append(("template", "") if frame[1] else ("text", _unescape(body)))
+                at += 1
+            elif code.startswith("${", at):
+                frame[1] = 1
+                frames.append([[], 0, 0])
+                at += 2
+            else:
+                at += 1
+        elif ch.isspace():
             at += 1
         elif code.startswith("//", at):
             at = code.find("\n", at)
@@ -214,20 +235,27 @@ def _tokens(code):
             if at < 0:
                 break
             at += 2
-        elif ch in "\"'`":
+        elif ch == "`":
+            frames.append([None, 0, at])
+            at += 1
+        elif ch in "\"'":
             close = at + 1
             while close < len(code) and code[close] != ch:
                 close += 2 if code[close] == "\\" else 1
             if close >= len(code):
                 break
-            body = code[at + 1:close]
-            out.append(("template", "") if ch == "`" and _interpolates(body) else ("text", _unescape(body)))
+            out.append(("text", _unescape(code[at + 1:close])))
             at = close + 1
+        elif ch == "}" and frame[1] == 0 and len(frames) > 1:
+            frames.pop()
+            at += 1
         else:
             prev = out[-1] if out else None
             end = 0
+            # A keyword leaves a value only as a word of its own: after a `.` it is a property.
             if ch == "/" and (prev is None or prev[0] in _BEFORE_REGEX
-                              or prev[0] == "name" and prev[1] in _KEYWORDS):
+                              or prev[0] == "name" and prev[1] in _KEYWORDS
+                              and not (len(out) > 1 and out[-2][0] == ".")):
                 end, steps = _regex_end(code, at, allowed - spent)
                 spent += steps
             if end:
@@ -235,9 +263,18 @@ def _tokens(code):
                 at = end
                 continue
             word = _NAME.match(code, at)
-            out.append(("name", word.group()) if word else (ch, ch))
-            at = word.end() if word else at + 1
-    return out
+            if word:
+                out.append(("name", word.group()))
+                at = word.end()
+            else:
+                sign = code[at:at + 2] if code.startswith(("++", "--"), at) else ch
+                out.append((sign, sign))
+                at += len(sign)
+                if ch == "{":
+                    frame[1] += 1
+                elif ch == "}" and frame[1]:
+                    frame[1] -= 1
+    return top
 
 
 def _script_arguments(code):
@@ -257,9 +294,13 @@ def _script_arguments(code):
             while frames and depth < frames[-1][0]:
                 found.append(frames.pop())
         elif (frames and depth == frames[-1][0] and kind in ("name", "text") and tokens[i - 1][0] in ("{", ",")
-              and i + 3 < len(tokens) and tokens[i + 1][0] == ":" and tokens[i + 2][0] == "text"
-              and tokens[i + 3][0] in (",", "}")):
-            frames[-1][1][text] = tokens[i + 2][1]
+              and i + 1 < len(tokens) and tokens[i + 1][0] == ":"):
+            # A key written twice is what its last value says: one text, or nothing.
+            one = (i + 3 < len(tokens) and tokens[i + 2][0] == "text" and tokens[i + 3][0] in (",", "}"))
+            if one:
+                frames[-1][1][text] = tokens[i + 2][1]
+            else:
+                frames[-1][1].pop(text, None)
     return [keys for _, keys, _ in sorted(found, key=lambda frame: frame[2])]
 
 
