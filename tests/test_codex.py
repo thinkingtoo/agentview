@@ -10,12 +10,15 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import fleet
 from providers import base
 from providers.codex import CodexProvider
+import test_columns
 
 TID = "01a0c8bb-a5c9-77c1-a3d6-975d3121bd61"
 T0 = "2026-09-22T10:48:56.218Z"
@@ -209,6 +212,33 @@ class Rollout(unittest.TestCase):
         s = self.one(meta(cwd="/home/alice/Projects/pmd"))
         self.assertEqual(s["cwd"], "/home/alice/Projects/pmd")
         self.assertEqual(s["branch"], "")
+
+
+class Hung(test_columns.Base):
+    """Hung is a claim that waits for a look that can tell (ticket 08). Codex
+    writes nothing to its rollout while a command runs, and this provider never
+    looks at the processes under a session, so an hour of silence in a busy
+    session is not proof of anything: a rollout of 2026-05-28 has a busy
+    stretch of 60 minutes that ends in the command's output."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = Home()
+        self.home.thread()
+        self.home.lock()
+        self.home.holder(4242)
+
+    def tile(self, silent):
+        path = self.home.rollout(records=[meta(), rec(T0, "event_msg", type="task_started")])
+        then = time.time() - silent
+        os.utime(path, (then, then))
+        fleet.CONFIG.write_text("{}")
+        return fleet.roster(providers=[self.home.provider()])["columns"][0]["sessions"][0]
+
+    def test_a_busy_session_whose_rollout_has_been_quiet_for_an_hour_is_not_called_hung(self):
+        got = self.tile(silent=3600)
+        self.assertEqual(got["status"], "busy")
+        self.assertIsNone(got["stuck"])
 
 
 if __name__ == "__main__":

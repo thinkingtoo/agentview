@@ -56,7 +56,8 @@ of its own -- so a provider must clear it itself.
 session and could not tell (the process folder would not answer, or this was
 the first look at a command, with nothing to compare its CPU with). Then an
 absence of `bgTasks` and `shellCpu` is not evidence of absence, and the core
-does not call the session hung. A provider that never looks leaves it out.
+does not call the session hung. A provider that cannot look at all says True
+every time; leaving it out says the look was made and found nothing.
 
 `shellCpuAgo` is how many minutes ago CPU was last seen moving under a command
 the session is waiting on (the same look that makes `shellCpu`), or None when
