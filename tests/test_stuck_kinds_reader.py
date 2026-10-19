@@ -57,6 +57,33 @@ def turn_end(seconds_ago, subtype="stop_hook_summary", **over):
             "isSidechain": False, **over}
 
 
+def typed(seconds_ago, words="carry on", **over):
+    """The person typing at the prompt, as a Claude Code that writes `origin` does."""
+    return {**prompt(seconds_ago, words), "isSidechain": False, "origin": {"kind": "human"}, **over}
+
+
+def notification(seconds_ago, task="b1c2d3e4f", **over):
+    """A background job or agent ending, as Claude Code writes it: a user record
+    that nobody typed, with its origin (41760d93, a50c317b, 410d018a)."""
+    words = (f"<task-notification>\n<task-id>{task}</task-id>\n<status>completed</status>\n"
+             "<summary>an invented job finished</summary>\n</task-notification>")
+    return {**prompt(seconds_ago, words), "isSidechain": False,
+            "origin": {"kind": "task-notification", "producer": "session-task", "runId": "invented-run"}, **over}
+
+
+def peer(seconds_ago, **over):
+    """A message from another session: a meta user record, origin `peer`."""
+    words = '<cross-session-message from="uds:/invented.sock">an invented message</cross-session-message>'
+    return {**prompt(seconds_ago, words), "isSidechain": False, "isMeta": True,
+            "origin": {"kind": "peer", "from": "uds:/invented.sock", "name": "invented",
+                       "fromMode": "prompting", "body": "an invented message"}, **over}
+
+
+def tool_result(seconds_ago, **over):
+    return {"type": "user", "timestamp": stamp(seconds_ago), "isSidechain": False,
+            "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}, **over}
+
+
 # Everything Claude Code writes after an error that is not a turn (the types
 # seen after real errors on this machine, by count).
 BOOKKEEPING = [
@@ -180,7 +207,7 @@ def local(seconds_ago, words, **over):
 
 class LocalCommands(Base):
     """R18: a slash command run locally leaves the error where it is; what the
-    person sends to the model, or what the model is sent, clears it."""
+    person types for the model, or the model's own reply, clears it."""
 
     def test_the_caveat_alone_leaves_the_error_there(self):
         got = self.failure([api_error(120), {"type": "user", "timestamp": stamp(60), **CAVEAT}])
@@ -221,22 +248,24 @@ class LocalCommands(Base):
         got = self.failure([api_error(120), local(60, "\n  " + NAME)])
         self.assertEqual(got and got["kind"], "limit")
 
-    def test_a_skills_command_message_then_its_expanded_prompt_clears_it(self):
-        # The skill is the person asking the model: the expanded prompt is the turn.
+    def test_a_skills_command_message_then_its_expanded_prompt_leaves_it_until_the_model_answers(self):
+        # The expanded prompt is a meta record the skill wrote, not the person
+        # typing: the model has been asked, and its reply is what clears the error.
         tail = [local(60, NAME), local(59, "Base directory for this skill: /invented\n\nDo the invented thing.", isMeta=True)]
-        self.assertIsNone(self.failure([api_error(120)] + tail))
+        got = self.failure([api_error(120)] + tail)
+        self.assertEqual(got and got["kind"], "limit")
+        self.assertIsNone(self.failure([api_error(120)] + tail + [text(30)]))
 
     def test_a_command_then_a_prompt_typed_clears_it(self):
         self.assertIsNone(self.failure([api_error(120), local(60, NAME), local(59, STDOUT), prompt(30)]))
 
-    def test_each_thing_sent_to_the_model_clears_it(self):
+    def test_each_thing_the_person_types_clears_it(self):
         for words in ("carry on",
-                      "<task-notification>an invented job finished</task-notification>",
-                      '<teammate-message teammate_id="peer">an invented message</teammate-message>',
                       "Your usage limit has reset. Invented, carry on.",
                       "a prompt that only mentions <command-name> half way through"):
             with self.subTest(words=words[:30]):
                 self.assertIsNone(self.failure([api_error(120), local(60, words)]))
+                self.assertIsNone(self.failure([api_error(120), typed(60, words)]))
 
     def test_the_models_own_reply_is_never_a_local_command_whatever_it_begins_with(self):
         # Only the person's records are local. A reply from the model that
@@ -246,9 +275,16 @@ class LocalCommands(Base):
         self.assertIsNone(self.failure([api_error(120), reply]))
 
     def test_a_tool_result_in_list_form_is_not_a_local_command(self):
-        result = {"type": "user", "timestamp": stamp(60),
-                  "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": STDOUT}]}}
-        self.assertIsNone(self.failure([api_error(120), result]))
+        # What a tool printed is not the person's slash command, whatever it
+        # begins with: after a turn that ended, it opens the turn again.
+        result = tool_result(60)
+        result["message"]["content"][0]["content"] = STDOUT
+        claude._cache.clear()
+        self.session([text(300), turn_end(200), result])
+        self.assertFalse(self.live()[0]["turnOver"])
+        claude._cache.clear()
+        self.session([text(300), turn_end(200), local(60, STDOUT)])
+        self.assertTrue(self.live()[0]["turnOver"])
 
     def test_a_local_command_written_before_the_error_changes_nothing(self):
         got = self.failure([local(300, NAME), api_error(120)])
@@ -268,18 +304,32 @@ class MovingOn(Base):
     def test_a_prompt_typed_after_the_error_clears_it(self):
         self.assertIsNone(self.failure([api_error(120), prompt(60)]))
 
-    def test_the_session_resuming_by_itself_clears_it(self):
-        # Claude Code writes a meta prompt when the limit is over and goes on.
+    def test_the_session_resuming_by_itself_clears_it_when_the_model_answers(self):
+        # Claude Code writes a meta prompt when the limit is over and goes on;
+        # the prompt asks the model, the model's reply is the session moving on.
         resume = prompt(60, "an invented resume notice", isMeta=True)
-        self.assertIsNone(self.failure([api_error(120), resume]))
+        got = self.failure([api_error(120), resume])
+        self.assertEqual(got and got["kind"], "limit")
+        self.assertIsNone(self.failure([api_error(120), resume, text(30)]))
 
     def test_an_answer_after_the_error_clears_it(self):
         self.assertIsNone(self.failure([api_error(120), text(60)]))
 
-    def test_a_tool_result_after_the_error_clears_it(self):
-        result = {"type": "user", "timestamp": stamp(60),
-                  "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}}
-        self.assertIsNone(self.failure([api_error(120), result]))
+    def test_a_typed_prompt_in_each_shape_claude_code_writes_clears_it(self):
+        with_image = {"type": "user", "timestamp": stamp(60), "isSidechain": False, "origin": {"kind": "human"},
+                      "message": {"content": [{"type": "text", "text": "look at this"}, {"type": "image", "source": {}}]}}
+        older = {"type": "user", "timestamp": stamp(60), "isSidechain": False,
+                 "message": {"content": [{"type": "text", "text": "look at this"}, {"type": "image", "source": {}}]}}
+        image_only = {"type": "user", "timestamp": stamp(60), "isSidechain": False,
+                      "message": {"content": [{"type": "image", "source": {}}]}}
+        for rec in (typed(60), prompt(60), with_image, older, image_only):
+            with self.subTest(rec=str(rec["message"]["content"])[:40], origin=rec.get("origin")):
+                self.assertIsNone(self.failure([api_error(120), rec]))
+
+    def test_a_compaction_after_the_error_clears_it(self):
+        # The summary is written by a model call that worked.
+        summary = prompt(60, "an invented summary", isCompactSummary=True)
+        self.assertIsNone(self.failure([api_error(120), summary]))
 
     def test_a_second_error_replaces_the_first(self):
         got = self.failure([api_error(300), prompt(200), api_error(60, "server_error", 529, "An invented failure", None)])
@@ -297,6 +347,113 @@ class MovingOn(Base):
         with self.transcript.open("a") as fh:
             fh.write(json.dumps(prompt(1)) + "\n")
         self.assertIsNone(self.live()[0]["failure"])
+
+
+class Automated(Base):
+    """Hunt 08-4, note 3, ruled 2026-10-19: only what the person types, or the
+    model's own reply, ends an Error or a Limit. A task notification and a
+    message from another session are written by machines and do not call the
+    model: 41760d93 got "Not logged in" and a notification in the same second
+    and no model call for 18 minutes, a50c317b and 410d018a a notification
+    hours after a rate limit (registry idle). The Error ended at once, with the
+    account still logged out."""
+
+    def test_a_task_notification_after_a_failed_login_leaves_the_error(self):
+        # 41760d93: the error, the turn's duration, the notification.
+        error = api_error(120, "authentication_failed", 401, "An invented failure", None)
+        got = self.failure([text(300), error, turn_end(119, "turn_duration"), notification(60)])
+        self.assertEqual((got["kind"], got["type"]), ("error", "authentication_failed"))
+
+    def test_a_task_notification_after_a_rate_limit_leaves_the_limit(self):
+        # a50c317b: the error, the duration, queue lines, hours later the notification.
+        queue = [{"type": "queue-operation", "operation": op, "timestamp": stamp(50 - i)}
+                 for i, op in enumerate(("enqueue", "dequeue"))]
+        got = self.failure([text(300), api_error(120), turn_end(119, "turn_duration"), *queue, notification(40)])
+        self.assertEqual((got["kind"], got["resetsAt"]), ("limit", RESET * 1000))
+
+    def test_a_notification_then_a_peer_message_leave_it_and_the_models_reply_clears_it(self):
+        # 410d018a: the error, a notification, a message from the boss, then the model.
+        tail = [turn_end(119, "turn_duration"), notification(100), peer(90)]
+        got = self.failure([text(300), api_error(120), *tail])
+        self.assertEqual(got and got["kind"], "limit")
+        self.assertIsNone(self.failure([text(300), api_error(120), *tail, text(60)]))
+
+    def test_a_message_from_another_session_alone_leaves_it(self):
+        got = self.failure([text(300), api_error(120, "server_error", None, "An invented failure", None), peer(60)])
+        self.assertEqual((got["kind"], got["type"]), ("error", "server_error"))
+
+    def test_the_same_two_written_by_an_older_claude_code_with_no_origin_leave_it(self):
+        old_notice = prompt(60, notification(0)["message"]["content"])
+        old_peer = prompt(50, '<teammate-message teammate_id="peer">an invented message</teammate-message>')
+        for rec in (old_notice, old_peer):
+            for blank in ("", "\n  "):
+                with self.subTest(rec=rec["message"]["content"][:20], blank=blank):
+                    rec = {**rec, "message": {"content": blank + rec["message"]["content"].lstrip()}}
+                    got = self.failure([text(300), api_error(120), rec])
+                    self.assertEqual(got and got["kind"], "limit")
+
+    def test_the_notice_of_an_interrupt_is_not_a_prompt_typed(self):
+        # 40 records of 14 days, all in list form and none with an origin: the
+        # person pressed Escape, nothing was typed for the model.
+        for words in ("[Request interrupted by user]", "[Request interrupted by user for tool use]"):
+            for content in ([{"type": "text", "text": words}], words):
+                with self.subTest(words=words, form=type(content).__name__):
+                    rec = {"type": "user", "timestamp": stamp(60), "isSidechain": False, "message": {"content": content}}
+                    got = self.failure([api_error(120), rec])
+                    self.assertEqual(got and got["kind"], "limit")
+
+    def test_a_tool_result_after_the_error_leaves_it(self):
+        # It answers a call the model made before: the model has not spoken since.
+        got = self.failure([api_error(120), tool_result(60)])
+        self.assertEqual(got and got["kind"], "limit")
+
+    def test_a_notification_that_says_it_is_not_typed_is_not_typed_whatever_its_words(self):
+        # `origin` says who wrote a record; its words say nothing.
+        for origin in ({"kind": "task-notification"}, {"kind": "peer"}, {"kind": "a-kind-not-yet-invented"}, {}, "human"):
+            with self.subTest(origin=origin):
+                got = self.failure([api_error(120), prompt(60, "carry on", origin=origin)])
+                self.assertEqual(got and got["kind"], "limit")
+
+    def test_a_subagents_typed_looking_record_is_not_the_person(self):
+        got = self.failure([api_error(120), typed(60, isSidechain=True)])
+        self.assertEqual(got and got["kind"], "limit")
+
+    def test_what_is_written_to_the_file_later_clears_it_only_when_it_is_typed_or_a_reply(self):
+        self.session([text(300), api_error(120)])
+        for rec, held in ((notification(90), True), (peer(80), True), (tool_result(70), True),
+                          ({"type": "system", "subtype": "turn_duration", "timestamp": stamp(60)}, True),
+                          (typed(30), False)):
+            with self.transcript.open("a") as fh:
+                fh.write(json.dumps(rec) + "\n")
+            got = self.live()[0]["failure"]
+            self.assertEqual(got is not None, held, rec["type"])
+
+    def test_a_reply_written_to_the_file_later_clears_it(self):
+        self.session([text(300), api_error(120)])
+        with self.transcript.open("a") as fh:
+            fh.write(json.dumps(notification(60)) + "\n")
+        self.assertEqual(self.live()[0]["failure"]["kind"], "limit")
+        with self.transcript.open("a") as fh:
+            fh.write(json.dumps(text(1)) + "\n")
+        self.assertIsNone(self.live()[0]["failure"])
+
+    def test_the_turn_stays_over_while_the_error_holds_and_opens_when_it_ends(self):
+        # The same rule for `turnOver` (the reader's two fields agree): an error
+        # nobody has answered is still the session's last word.
+        claude._cache.clear()
+        self.session([text(300), api_error(120), notification(60), peer(50), tool_result(40)])
+        self.assertTrue(self.live()[0]["turnOver"])
+        for rec in (typed(10), text(10)):
+            claude._cache.clear()
+            self.session([text(300), api_error(120), notification(60), rec])
+            self.assertFalse(self.live()[0]["turnOver"])
+
+    def test_after_an_ordinary_turn_end_a_notification_still_opens_the_turn(self):
+        # Nothing here changes for a turn that did not end on an error.
+        for rec in (notification(60), peer(60), tool_result(60)):
+            claude._cache.clear()
+            self.session([text(300), turn_end(200), rec])
+            self.assertFalse(self.live()[0]["turnOver"], rec["type"])
 
 
 class Bounds(Base):
@@ -689,6 +846,32 @@ class OtherSubagents(Base):
                 self.assertEqual((got["kind"], got["reason"]), ("limit", "Rate limit"))
                 self.assertEqual(got["context"]["resetsAt"], RESET * 1000)
                 self.assertAlmostEqual(got["context"]["held"], silent / 60, delta=0.2)
+
+    # Hunt 08-4, note 3. Records nobody typed that arrive after the error ask
+    # the model nothing (the limit still holds): Hung beats Limit in the order,
+    # so a turn they opened would read Hung ten minutes on.
+
+    def test_a_notification_or_a_peer_message_or_a_tool_result_after_the_limit_leaves_the_limit(self):
+        for make in (notification, peer, tool_result):
+            with self.subTest(record=make.__name__):
+                claude._cache.clear()
+                self.over(3000, text(3700), api_error(3600), make(3000))
+                got = self.tile()["stuck"]
+                self.assertEqual((got["kind"], got["reason"]), ("limit", "Rate limit"))
+                self.assertAlmostEqual(got["context"]["held"], 60, delta=0.2)
+
+    def test_the_same_after_another_api_error_leaves_the_error(self):
+        claude._cache.clear()
+        self.over(3000, text(3700), api_error(3600, "authentication_failed", 401, "An invented failure", None),
+                  turn_end(3599, "turn_duration"), notification(3000))
+        self.assertEqual(self.tile()["stuck"]["kind"], "error")
+
+    def test_the_model_replying_after_them_and_then_going_quiet_is_hung(self):
+        for last in (text(3000), typed(3000)):
+            with self.subTest(last=last["type"]):
+                claude._cache.clear()
+                self.over(3000, text(3700), api_error(3600), notification(3300), peer(3200), last)
+                self.assertEqual(self.tile()["stuck"]["kind"], "hung")
 
     def test_a_busy_session_that_ended_on_another_api_error_is_an_error_all_the_same(self):
         self.over(3600, text(3700), api_error(3600, "server_error", 529, "An invented failure", None))

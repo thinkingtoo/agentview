@@ -450,6 +450,9 @@ class TurnEnd(Base):
     registry may go on saying busy (hunt 08-2, finding 1)."""
 
     def over(self, *records):
+        # One file written over and over: the reader's cache would take a longer
+        # one that begins alike for the same file grown.
+        claude._cache.clear()
         write(self.path, records, "w")
         return self.scan()["turnOver"]
 
@@ -495,6 +498,17 @@ class TurnEnd(Base):
     def test_what_is_said_after_an_api_error_opens_the_turn_again(self):
         self.assertFalse(self.over(record(30), self.api_error(29), record(20, "user")))
         self.assertFalse(self.over(record(30), self.api_error(29), record(20)))
+
+    def test_a_record_nobody_typed_does_not_open_it_again_but_a_typed_one_does(self):
+        # Hunt 08-4, note 3: the model is not called by a notification or a
+        # message from another session, so the error is still the last word.
+        notice = record(20, "user", origin={"kind": "task-notification"})
+        peer = record(20, "user", origin={"kind": "peer"}, isMeta=True)
+        typed = record(20, "user", origin={"kind": "human"})
+        self.assertTrue(self.over(record(30), self.api_error(29), notice))
+        self.assertTrue(self.over(record(30), self.api_error(29), peer))
+        self.assertFalse(self.over(record(30), self.api_error(29), notice, typed))
+        self.assertFalse(self.over(record(30), self.api_error(29), notice, record(10)))
 
     def test_an_api_error_that_is_not_marked_as_one_is_an_ordinary_reply(self):
         self.assertFalse(self.over(record(30), self.api_error(29, isApiErrorMessage=False)))

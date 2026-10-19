@@ -46,8 +46,10 @@ provider decides which it is (a rate limit is `limit`, any other API or auth
 error `error`); `type` is the error's own name, `status` its HTTP status or
 None, `text` the words it carries, `at` and `resetsAt` milliseconds since 1970
 (`resetsAt` None when the error names no reset time). It is gone once the
-session says or is told anything else -- not when it merely writes bookkeeping
-of its own -- so a provider must clear it itself.
+model answers or the person types something -- not when the session merely
+writes bookkeeping of its own, and not for a notification or a message from
+another session, which call no model while the error holds -- so a provider
+must clear it itself.
 
 `lastTool` is the newest call the session made, answered or not:
 `{"text", "at"}`, said the way `doing` is, with `at` in milliseconds.
@@ -68,7 +70,9 @@ ago is one.
 `turnOver` is True when the session's own last word ended its turn although it
 still says `busy`: some agents go on saying so for as long as their helpers
 live. A turn ends with a turn-end record, or with an API error as the reply,
-and a compaction of the session does not open it again. Such a session has
+and a compaction of the session does not open it again; nor does anything that
+calls no model while the error holds (a notification, a message from another
+session). Such a session has
 nothing running of its own, so the core never calls it hung; it moves only
 while a subagent writes. Leaving it out, or anything but True, says the status
 is believed.

@@ -163,12 +163,14 @@ stuck. A word this page has not met reads Needs you too, since Claude Code only
 says `waiting` when it waits on someone. The chime rings for every one of them,
 as before.
 
-A failure (a Limit or an Error) is **the last word** until the session says or is told anything else:
-a prompt, a message from another session, the session going on by itself after
-a limit. Records Claude Code writes on its own after an error (a turn duration,
-a title, a queued line, a snapshot) do not end it, nor does anything that asks
-the model nothing: a slash command run locally, or a `!` shell line. A
-subagent's records are not the session's.
+A failure (a Limit or an Error) is **the last word** until the model answers or
+you type: a reply of the model's own, a prompt you typed, a compaction. What
+nobody typed does not end it, because it does not call the model: a task
+notification, a message from another session, a tool's result, the prompt a
+skill expands. Neither do the records Claude Code writes on its own after an
+error (a turn duration, a title, a queued line, a snapshot), nor a slash
+command run locally or a `!` shell line. A subagent's records are not the
+session's. Until then the tile stays Error or Limit and is not turned into Hung.
 
 Hung is `moving` turned round (see Movement), so a session waiting on a
 subagent, a background job or a command using CPU is never Hung, for the six

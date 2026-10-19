@@ -336,23 +336,66 @@ def _compaction(rec):
     return rec.get("type") == "user" and rec.get("isCompactSummary") is True
 
 
+# What a user record that nobody typed begins with, in a Claude Code that does
+# not say so in `origin`: a job's notice, a teammate's message, and the notice
+# of the person's interrupt (40 records of 14 days, all in list form).
+NOT_TYPED = ("<task-notification>", "<teammate-message", "[Request interrupted by user")
+
+
+def _typed(rec):
+    """Is this user record the person typing at the prompt?
+
+    A Claude Code that writes `origin` says who wrote the record: `human`, or
+    `task-notification`, or `peer` (a message from another session); anything
+    but `human` is a machine's, and so is a kind not yet invented. Older ones
+    wrote none, and then a user record is the person's unless it is a tool's
+    result, a meta record (a skill's expanded prompt, a hook's text) or one of
+    the notices above.
+    """
+    origin = rec.get("origin")
+    if origin is not None:
+        return _dict(origin).get("kind") == "human"
+    if rec.get("isMeta"):
+        return False
+    content = _dict(rec.get("message")).get("content")
+    if isinstance(content, list) and any(
+            isinstance(part, dict) and part.get("type") == "tool_result" for part in content):
+        return False
+    return not _first_words(rec).lstrip().startswith(NOT_TYPED)
+
+
+def _resumes(rec):
+    """Does this record end an API error that was the session's last word?
+
+    The model answering, the summary of a compaction (a model call that worked)
+    or the person typing. Nothing else calls the model: a task notification or a
+    message from another session waits in the queue while a rate limit holds or
+    the account is logged out, and a tool's result answers a call made before
+    the error.
+    """
+    return rec.get("type") == "assistant" or _compaction(rec) or _typed(rec)
+
+
 def _failure(state, rec):
     """Is the session's last turn an API error?
 
     `state["failure"]` is set by an API error that is the newest conversational
-    record and cleared by any other: a prompt typed, a message sent to it, the
-    session resuming by itself, an answer. Records Claude Code writes on its own
-    after an error (a turn duration, a title, a queued line, a snapshot) are not
-    the session moving on, and neither is a user record that asks the model
-    nothing (a slash command run locally, a `!` line): the model has not been
-    called again. A subagent's records are not the session's.
+    record and cleared by `_resumes`: the model's reply, a compaction, a prompt
+    the person typed. Records Claude Code writes on its own after an error (a
+    turn duration, a title, a queued line, a snapshot) are not the session
+    moving on, and neither is a user record that asks the model nothing (a slash
+    command run locally, a `!` line) or one that nobody typed (a notification, a
+    message from another session, a tool's result, a meta prompt): the model
+    has not been called again, or has not answered yet. A subagent's records
+    are not the session's.
     Claude Code marks the error itself (`isApiErrorMessage`) and names it
     (`error`); a rate limit also carries the quota, with the reset time.
     """
     if rec.get("type") not in ("user", "assistant") or rec.get("isSidechain") or _local(rec):
         return
     if not _api_error(rec):
-        state["failure"] = None
+        if _resumes(rec):
+            state["failure"] = None
         return
     name, status = rec.get("error"), rec.get("apiErrorStatus")
     content = _dict(rec.get("message")).get("content")
@@ -386,7 +429,11 @@ def _turn(state, rec):
     an API error that is its reply (the model could not answer; Claude Code
     writes a turn end after most of these, not after all, so the error itself
     ends the turn), and cleared by anything that asks the model something (a
-    prompt, a message to it, a tool result, its own reply).
+    prompt, a message to it, a tool result, its own reply) -- except while an
+    API error is still the session's last word. `_failure` runs first and has
+    then left `state["failure"]` set, and only what clears the error opens the
+    turn again: a notification or a message from another session does not call
+    the model.
     Bookkeeping, a notice, a user record that asks the model nothing (a slash
     command run locally) and the summary of a compaction leave it as it is. A
     subagent's records are not the session's.
@@ -402,7 +449,7 @@ def _turn(state, rec):
         if rec.get("subtype") in TURN_ENDS:
             state["over"] = True
     elif kind in ("user", "assistant") and not _local(rec) and not _compaction(rec):
-        state["over"] = _api_error(rec)
+        state["over"] = state["failure"] is not None
 
 
 def _places(state, rec):
