@@ -90,8 +90,18 @@ One click that puts the terminal showing a session in front of the person. A ses
 A background session that a `claude attach` already shows in some window. The jump then goes to that window, never to a second copy, because two windows would write one conversation.
 
 **Finished**:
-A session that has been idle for hours with nothing left for the person and its handover read. It stays one click away, because finished sessions are often picked up again.
+A session that has been idle for hours (`finished_after_minutes`, 120) with nothing left for the person and its handover read in the overview. It stays one click away, because finished sessions are often picked up again.
 _Avoid_: dead, forgotten, closed
+
+**Pill**:
+A finished session as one line at the foot of its project's column: name and idle time, its working-on line on hover, a click jumps. Counted in nothing. Any sign of life makes it a tile again.
+_Avoid_: badge, chip
+
+**Pin (a session)**:
+Holding a finished session open as a full tile until it is unpinned or the session closes. Kept in agentview's own state, not in config. Not the pin on a project card, which puts the project first.
+
+**Handover read**:
+The person has seen what the session said when it stopped, as of that stop, in the overview: a jump that reached the terminal, or a click on a tile with none, which reads the stop that tile showed and no later one. Separate from the chime's seen mark, which the block view also wrote and which a failed jump once wrote too; those old marks do not finish a session.
 
 **Movement**:
 Visible evidence that a session is still making progress, including while it waits on CI or tests.

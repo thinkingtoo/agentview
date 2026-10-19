@@ -9,6 +9,7 @@ log -- and nothing else is touched. It listens on a port the system picks
 killed. The sessions are invented and nothing here can reach a real terminal;
 the route that retitles a tab is never sent a pid.
 """
+import json
 import sys
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -29,6 +30,22 @@ SESSIONS = [minimal(id=sid, name=name, cwd=f"/home/alice/Projects/{where}", upda
                                                       ("c", "Saskia", "pear"), ("d", "Femi", "maple")))]
 
 
+class Reloaded(Fake):
+    """The sessions the smoke last wrote to `sessions.json` beside the config, or
+    the invented ones above while it has written none: a way to say that a
+    session wrote again, stopped again or closed, to a server that is running."""
+
+    def __init__(self, path):
+        super().__init__(SESSIONS)
+        self.path = path
+
+    def live(self):
+        try:
+            return [dict(s) for s in json.loads(self.path.read_text())]
+        except (OSError, ValueError):
+            return super().live()
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
@@ -37,7 +54,7 @@ def main():
     cfg = root / "config.json"
     if not cfg.exists():
         cfg.write_text("{}")
-    fake = Fake(SESSIONS)
+    fake = Reloaded(root / "sessions.json")
     for target, new in (("fleet.CONFIG", cfg), ("fleet._providers", lambda: [fake]),
                         ("seen.store", lambda: root / "seen.json"), ("lines.store", lambda: root / "lines"),
                         ("log.LOG", root / "events.jsonl"), ("server.restorable", lambda live: None),
