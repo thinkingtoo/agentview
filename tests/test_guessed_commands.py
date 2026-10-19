@@ -14,6 +14,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import ask_commands
 import lines
 from test_columns import Base, session
 
@@ -72,7 +73,9 @@ class Guess(Base):
         # A `$` command with words after it is not offered, the quoted one is.
         self.assertEqual(self.commands('Run $ make build, then "git push origin main" for me.'),
                          ["git push origin main"])
-        self.assertEqual(self.commands("Run $ make build $ make test"), ["make build", "make test"])
+        # Only the last `$` command can be told from the words around it: what
+        # stands between two prompts could be an argument of the first.
+        self.assertEqual(self.commands("Run $ make build $ make test"), ["make test"])
 
     def test_a_dollar_inside_quotes_is_one_command_without_the_sign(self):
         self.assertEqual(self.commands('Could you run "$ make test" now?'), ["make test"])
@@ -142,10 +145,18 @@ class Guess(Base):
     def test_a_script_run_by_its_path_is_a_command_when_it_has_arguments(self):
         self.assertEqual(self.commands('Run "./deploy-maple.sh --dry-run" first?'),
                          ["./deploy-maple.sh --dry-run"])
-        self.assertEqual(self.commands('Run "~/bin/maple-sync now" first?'),
-                         ["~/bin/maple-sync now"])
-        # A folder or a file in quotes is a name.
-        self.assertEqual(self.commands('Should the notes live in "./notes" or "~/notes"?'), [])
+        self.assertEqual(self.commands('Run "~/bin/maple-sync --now" first?'),
+                         ["~/bin/maple-sync --now"])
+        # A folder or a file in quotes is a name, and so is a path with spaces
+        # in it; a program of the project's own, with no flag and no script
+        # name, is told from them by nothing.
+        for ask in ('Should the notes live in "./notes" or "~/notes"?',
+                    'Is "~/Google Drive/My Drive/notes.md" the file you mean?',
+                    'Is "~/Library/Application Support/Code/User/settings.json" the file?',
+                    'Back up "/srv/maple/data and /var/lib/maple" first?',
+                    'Run "~/bin/maple-sync now" first?'):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
 
     def test_markup_in_a_guessed_command_arrives_unchanged(self):
         # The page puts it in as text. Here it is whatever the session wrote,
@@ -205,7 +216,7 @@ class Guess(Base):
                         "docker compose up -d", "npm run build", "npm test", "uv run pytest",
                         "pip install -r requirements.txt", "kubectl get pods", "gh pr merge 12",
                         "systemctl restart maple-notes", "sudo systemctl restart maple-notes",
-                        "python3 scripts/rebuild.py", "cd ~/maple", "ls notes", "ssh root@maple.example",
+                        "python3 scripts/rebuild.py", "cd ~/maple", "ls -l notes", "ssh root@maple.example",
                         "ssh-add -l", "brew install jq", "ollama run llama3", "/home/alice/bin/sync.py now",
                         "MAPLE_ENV=test make test", "tar xzf notes.tar.gz", "grep -rn TODO notes"):
             with self.subTest(command=command):
@@ -383,6 +394,176 @@ class Guess(Base):
                     "Run $ rm -rf ~/.cache/maple/*. Then restart the service."):
             with self.subTest(ask=ask):
                 self.assertEqual(self.commands(ask), [])
+
+
+    def test_a_comma_after_the_last_flag_ends_the_command(self):
+        # `-F,` belongs to the command only when a quote or another flag comes
+        # after it; "-d, then tell me" is a clause.
+        for ask in ("Run $ docker compose up -d, then tell me how it went.",
+                    "Puoi lanciare $ ./scripts/deploy.sh --dry-run, then tell me how it went.",
+                    "Run $ git log --oneline -5, then tell me.", "Run $ crontab -l, then tell me.",
+                    "Run $ gh pr merge 12 --squash, then tell me.", "Run $ uv run pytest -q, then tell me."):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+
+    def test_a_full_stop_after_dots_before_a_new_sentence_leaves_the_end_unknown(self):
+        for ask in ("Then run $ pip install -e . Then restart the server.",
+                    "Then run $ pip install -e .. Then restart the server.",
+                    "Tests are written. Could you run $ go test ./.... Then tell me what fails.",
+                    "Then run $ pip install -e ..", "Could you run $ go test ./....",
+                    "Run $ ls ... Then restart."):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+        for ask, command in (("Could you run $ go test ./...", "go test ./..."),
+                             ("Then run $ pip install -e .", "pip install -e ."),
+                             ("Run $ go test ./pkg/...?", "go test ./pkg/...")):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [command])
+
+    def test_a_full_stop_that_may_be_part_of_the_last_word_leaves_the_end_unknown(self):
+        for ask in ("Clear the cache: $ rm -rf ~/.cache/maple/*.", "Clear the cache: $ rm -rf ~/.cache/maple/.",
+                    "Draai $ cd ~.", "Go back: $ cd -."):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+        self.assertEqual(self.commands("Run $ echo ${HOME}."), ["echo ${HOME}"])
+        self.assertEqual(self.commands("Run $ git push origin <branch>."), ["git push origin <branch>"])
+
+    def test_a_word_between_two_dollar_commands_is_not_glued_to_the_first(self):
+        for ask in ("Run $ make build and $ make test.", "Run $ rm -rf ~/.cache/maple and $ make test.",
+                    "Lance $ make build puis $ make test.", "Lancia $ make build e poi $ make test.",
+                    "Draai $ make build en dan $ make test.", "Run $ make build, then $ make test."):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), ["make test"])
+
+    def test_a_quote_nested_in_a_quote_of_the_same_kind_offers_nothing_in_half(self):
+        for ask in ('Run "git clean -fd --exclude="notes/"" and tell me?',
+                    'Run "gh pr create --title="Copy buttons" --base dev" now?',
+                    'Run "docker run -e MAPLE_ENV="prod" maple-notes" for me?',
+                    "Run \"jq '.items[] | select(.name==\"maple\")' notes.json\" and tell me?",
+                    "Run 'git log --format='%h %s' -5'",
+                    'Run "ssh maple "df -h" now" for me?',
+                    "Run 'ssh maple 'df -h' now' for me?"):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+
+    def test_single_quotes_inside_single_quotes_do_not_offer_the_inner_command(self):
+        for ask in ("Please run 'ssh maple 'sudo systemctl restart maple-notes'' and tell me?",
+                    "Run 'sudo -u www-data bash -c 'rm -rf /var/cache/maple/*'' now?",
+                    "Please run 'ssh maple 'df -h'' and tell me?"):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+
+    def test_a_quote_that_stands_alone_makes_the_others_of_its_kind_untrustworthy(self):
+        # A single unmatched `"` may be the closing quote of a phrase the
+        # session opened with another mark; which pairs are real is unknown.
+        self.assertEqual(self.commands('Run "make test" and then say "done'), [])
+        # The other kinds, and quotes inside a claimed region, are not strays.
+        self.assertEqual(self.commands("Run \"make test\" and `make build`, it's the owner's call?"),
+                         ["make test", "make build"])
+        self.assertEqual(self.commands('Run `echo "hi"` and "git status" now?'), ['echo "hi"', "git status"])
+
+    def test_a_backtick_inside_a_quote_is_not_offered(self):
+        self.assertEqual(self.commands('The runbook says "ssh maple, then `sudo reboot`" - ok to do it?'), [])
+        self.assertEqual(self.commands("The runbook says 'ssh maple, then `sudo reboot`' - ok to do it?"), [])
+
+    def test_a_quoted_command_that_ends_in_a_comma_is_the_typography_of_the_quote(self):
+        self.assertEqual(self.commands('Please run "git push origin main," then tell me.'), [])
+
+    def test_a_nested_curly_quote_or_guillemet_is_not_a_command(self):
+        for ask in ("Run “git clean -fd --exclude=“notes/”” and tell me?",
+                    "Run «git clean -fd --exclude=«notes/»» et dis-moi?"):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [])
+
+    def test_a_tool_that_nobody_says_in_a_sentence_still_needs_a_sign_in_quotes(self):
+        for phrase in ("rm stale notes", "pytest fixtures", "certbot renewal", "grep results", "ls maple",
+                       "mkdir build", "jq notes"):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.commands(f'Commit with the message "{phrase}" and push?'), [])
+        for command in ("rm -rf build", "pytest -q tests", "grep -rn TODO notes", "mkdir -p build/maple",
+                        "ls ~/maple", "chmod +x deploy.sh"):
+            with self.subTest(command=command):
+                self.assertEqual(self.commands(f"Could you run `{command}` for me?"), [command])
+
+
+
+class GuessGrid(unittest.TestCase):
+    """The property the buttons rest on, over a grid of realistic lines.
+
+    Whatever `guess()` offers is a command the session wrote as one whole
+    command: never a shortened one, one with words of the sentence glued on, or
+    the inside of another. Offering nothing is always allowed; the lines where
+    the end of a command is plain must offer it.
+    """
+
+    COMMANDS = (
+        "make test", "git push origin main", "docker compose up -d", "go test ./...", "pip install -e .",
+        "rm -rf ~/.cache/maple/*", "ls -la", 'git add . && git commit -m "wip"',
+        "awk -F, '{print $2}' leads.csv", "find . -name '*.md'", 'psql -A -F, -c "select id, name from notes" notes',
+        "./scripts/deploy.sh --dry-run", "systemctl --user restart maple-notes", "cd ..", "uv run pytest -q",
+        "gh pr merge 12 --squash", "crontab -l", "git log --oneline -5", "sudo systemctl restart maple-notes",
+        'ssh root@maple.example "journalctl -u maple-notes -n 50"', "git clean -fd --exclude=notes/",
+        "echo ${HOME}", "cd ~", "cd -", """jq '.items[] | select(.name=="maple")' notes.json""",
+        "git commit -m 'Ticket 14: copy buttons, tests'", "tar xzf notes.tar.gz", "kubectl get pods -n maple",
+        "MAPLE_ENV=test make test", "python3 scripts/rebuild.py", "docker run -e MAPLE_ENV=prod maple-notes",
+        "git push origin <branch>", "rm -f build/*.o", 'docker build -t maple . && docker run --rm maple',
+        'git commit -m "say hi, there"', "npm run build", "ssh-add -l")
+    # Commands whose end is plain: written whole, they are offered whole.
+    PLAIN = ("make test", "git push origin main", "docker compose up -d", "ls -la", "uv run pytest -q",
+             "gh pr merge 12 --squash", "crontab -l", "git log --oneline -5", "sudo systemctl restart maple-notes",
+             "systemctl --user restart maple-notes", "kubectl get pods -n maple", "tar xzf notes.tar.gz",
+             "python3 scripts/rebuild.py", "./scripts/deploy.sh --dry-run", "MAPLE_ENV=test make test",
+             "npm run build", "ssh-add -l")
+    LEADS = ("Run ", "Could you run ", "Puoi lanciare ", "Peux-tu lancer ", "Kun je ", "Then run ",
+             "Clear the cache: ", "Tests are written. Could you run ")
+    QUOTES = (('"', '"'), ("'", "'"), ("`", "`"), ("“", "”"), ("«", "»"),
+              ("‘", "’"))
+    # After a quoted command: more of the sentence, a second command, another
+    # sentence. Nothing here is part of the command.
+    QUOTED_ENDS = ("", ".", "?", " ?", "!", " for me?", ", then tell me how it went.", " and tell me what fails?",
+                   ". Then restart the server.", ' and then "git status" to check?')
+    # After a `$` command: where a sentence ends, or another sentence or
+    # command starts after a break. A word that closes the sentence ("now") is
+    # the accepted run-on and is not here.
+    DOLLAR_ENDS = ("", ".", "?", " ?", "!", ", then tell me how it went.", ". Then restart the server.",
+                   "? Thanks.", " and $ make build.", " puis $ make build.", ", then $ make build.")
+
+    def lines(self, command):
+        for lead in self.LEADS:
+            for end in self.DOLLAR_ENDS:
+                yield "dollar", f"{lead}$ {command}{end}", end
+            for opening, closing in self.QUOTES:
+                for end in self.QUOTED_ENDS:
+                    yield "quoted", f"{lead}{opening}{command}{closing}{end}", end
+
+    def test_nothing_but_the_intended_command_is_ever_offered(self):
+        wrong, seen = [], 0
+        for command in self.COMMANDS:
+            allowed = {command, "make build", "git status"}
+            for kind, line, _ in self.lines(command):
+                seen += 1
+                offered = ask_commands.guess(line)
+                if not set(offered) <= allowed:
+                    wrong.append((line, offered))
+        self.assertGreater(seen, 10000)
+        self.assertEqual(wrong[:12], [], f"{len(wrong)} of {seen} lines offer a wrong text")
+
+    def test_a_command_with_a_plain_end_is_offered_whole(self):
+        missing, seen = [], 0
+        for command in self.PLAIN:
+            for lead in self.LEADS:
+                for end in ("", ".", "?", " ?", "!"):
+                    line = f"{lead}$ {command}{end}"
+                    seen += 1
+                    if ask_commands.guess(line) != [command]:
+                        missing.append((line, ask_commands.guess(line)))
+                for opening, closing in self.QUOTES:
+                    for end in ("", ".", "?", " for me?"):
+                        line = f"{lead}{opening}{command}{closing}{end}"
+                        seen += 1
+                        if ask_commands.guess(line) != [command]:
+                            missing.append((line, ask_commands.guess(line)))
+        self.assertEqual(missing[:12], [], f"{len(missing)} of {seen} lines miss their command")
 
 
 if __name__ == "__main__":
