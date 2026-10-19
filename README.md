@@ -189,10 +189,10 @@ MOVING (green) and ALL IDLE (grey).
 
 | kind | when | reason | context |
 |---|---|---|---|
-| Needs you | an open question, an open permission prompt, another request that waits on the person (below), or a session line with things left | Question, Permission prompt, Sandbox request, Worker request, Goal proposal, "3 things left for you" | the question and its options; the tool and its command; the request's name and nothing more; the line's ask |
+| Needs you | an open question, an open permission prompt, another request that waits on the person (below), a dialog that says what it waits on (below), or a session line with things left | Question, Permission prompt, Sandbox request, Worker request, Goal proposal, the dialog's own words, "3 things left for you" | the question and its options; the tool and its command; the request's name and nothing more; the line's ask |
 | Error | an API or auth error is the session's last word | Overloaded, Auth error, Server error, or the error's own name | the error's words and how long ago |
 | Hung | busy, and nothing shows it moving for `hung_after_minutes` (default 10) | "Not moving for 14 min" | the last tool it called and how long ago |
-| Limit | the usage limit is the session's last word | Rate limit | when it resets (the error carries it) and how long it has been held |
+| Limit | the usage limit is the session's last word, or a "Session paused" dialog is open on usage credits | Rate limit, Session paused | when it resets (the error carries it) and how long it has been held; for the dialog, its own words |
 
 A `waiting` session says what it waits on (`waitingFor`, Claude Code's own
 word). `input needed` is a question and `permission prompt` a permission
@@ -203,6 +203,29 @@ name. `dialog open` is a menu or panel the person opened themselves: not
 stuck. A word this page has not met reads Needs you too, since Claude Code only
 says `waiting` when it waits on someone. The chime rings for every one of them,
 as before.
+
+A dialog Claude Code raises itself, and that waits on a choice, also says
+`dialog open`, but beside it the registry may carry a `needs` text (the
+classifier billing notice, the ultraplan choice, the auto-mode default, a
+refused turn's "retry on a fallback model or edit the prompt"). Such a dialog
+reads Needs you, and its own words are the reason. The one that is open on
+usage credits ("continue on usage credits or switch models") reads Limit,
+"Session paused", or "Rate limit" with the reset time when the transcript already
+holds the limit's error; things left for you (a session line) read Needs you
+before either. A menu
+with no `needs` text stays not stuck. Only a `waiting` session's `needs` is
+read, and only beside `dialog open`: the same field is written for other
+sessions by Claude Code's classifier, and means something else there. The event
+log notes when a `needs` text arrives or goes, as a kind (`usage`, `fallback`,
+`billing`, `ultraplan`, `auto mode`, `other`) and never as the words.
+
+Known limits (Claude Code 2.1.295, checked 2026-10-19): an interactive session's
+status writer leaves `needs` out, so none of the 24 live registry rows had one
+and these dialogs still read as a menu until a Claude Code writes it; the managed
+settings review has no `needs` text in Claude Code's own table, so it cannot be
+told from a menu the person opened; and a refused turn has no marker in the
+transcript that has been seen next to the dialog, so it is not detected from
+the transcript either.
 
 A failure (a Limit or an Error) is **the last word** until the model answers or
 you type: a reply of the model's own, a prompt you typed, a compaction. What
@@ -1248,7 +1271,7 @@ go looking for:
 
 | Kind | Why it is kept |
 |---|---|
-| `session.seen` / `session.gone` / `status` / `waitingFor` | Sampled from the peer files every two seconds by a thread of its own, so the history exists whether or not a browser was open. A routine that ran for four minutes at 03:00 left no trace at all before this. |
+| `session.seen` / `session.gone` / `status` / `waitingFor` / `needs` | Sampled from the peer files every two seconds by a thread of its own, so the history exists whether or not a browser was open. A routine that ran for four minutes at 03:00 left no trace at all before this. `needs` is the kind of the `needs` text a dialog carries beside `dialog open` (`usage`, `fallback`, `billing`, `ultraplan`, `auto mode`, `other`), when it arrives or goes: a label, never the words, so that openings can be counted per kind. |
 | `action` / `retitle` / `jumped` | Every POST, with what it asked for and what actually ran on the terminal. A tab that ends up called something surprising can be traced to the click that did it — which is how two tabs came to be called `RIGA`. |
 | `error` / `page.error` | Exceptions, including JavaScript ones, which used to be invisible: the poll stops, the page goes quietly stale, and nothing anywhere says why. Repeats are collapsed — the first one is the news, the next four hundred are noise. |
 | `slow` | An operation over its budget, and **no line at all** when it was fast. The 9-second poll that made clicking feel broken would have written a line a round. |

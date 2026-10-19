@@ -951,11 +951,43 @@ def _processes(rec, summary, status, shells):
 # goal proposal) waits on an answer or an approval.
 MENUS = ("dialog open",)
 
+# A dialog Claude Code raises itself, and that waits on the person, says
+# `dialog open` too, but writes a `needs` text beside it (read out of 2.1.295's
+# own dialog table, 2026-10-19). These are the texts it has, by the kind each
+# is counted under; a text not here is `other`. `usage` is "Session paused" for
+# usage credits, the one that is a limit and not a thing to decide.
+DIALOG_KINDS = {
+    "choose: continue on usage credits or switch models": "usage",
+    "choose: retry on fallback model or edit prompt": "fallback",
+    "acknowledge the classifier billing notice (enter continues in auto mode)": "billing",
+    "choose: run ultraplan in the cloud": "ultraplan",
+    "choose: make auto mode the default permission mode": "auto mode",
+}
+USAGE = "usage"
 
-def asking_of(status, waiting_for, calls):
+
+def dialog_needs(status, waiting_for, needs):
+    """What a dialog that says it is open waits on, as the words it wrote in
+    `needs`, or None: a menu the person opened has none, and a `needs` beside
+    anything else is not read (another process writes it too, for a session
+    that is not in a dialog at all)."""
+    if status != "waiting" or not isinstance(waiting_for, str) or waiting_for.strip().lower() not in MENUS:
+        return None
+    if not isinstance(needs, str):
+        return None
+    return " ".join(needs.split()) or None
+
+
+def dialog_kind(words):
+    """The kind of dialog its `needs` words belong to, as a short label to count
+    under: one of `DIALOG_KINDS`' kinds, or `other`. Never the words themselves."""
+    return DIALOG_KINDS.get(words.lower(), "other")
+
+
+def asking_of(status, waiting_for, calls, needs):
     """The dialog a session has open, or None: what Claude Code says is open
-    (the peer record's status and `waitingFor`) and what the transcript says
-    it is about (the calls that have not come back).
+    (the peer record's status, `waitingFor` and `needs`) and what the
+    transcript says it is about (the calls that have not come back).
 
     A question is Claude Code's `input needed`, with the unanswered
     AskUserQuestion as its content. Claude Code writes that call into the
@@ -967,7 +999,9 @@ def asking_of(status, waiting_for, calls):
     neither. Any other word it names is a request waiting on the person (a
     sandbox asking for the network, a teammate's worker, a goal it proposes),
     and is told by that word; a word this reader has not met is one too, since
-    Claude Code only says `waiting` when it waits on someone.
+    Claude Code only says `waiting` when it waits on someone. A menu
+    (`dialog open`) is told by its `needs` text when it has one, and a dialog
+    that is open on usage credits is a `pause` and not a request: it is a limit.
     """
     if status != "waiting":
         return None
@@ -978,7 +1012,12 @@ def asking_of(status, waiting_for, calls):
         return {"kind": "question", "questions": []}
     if waiting_for != "permission prompt":
         word = waiting_for.strip() if isinstance(waiting_for, str) else ""
-        return {"kind": "request", "what": word} if word and word.lower() not in MENUS else None
+        if word.lower() in MENUS:
+            words = dialog_needs(status, word, needs)
+            if words is None:
+                return None
+            return {"kind": "pause" if dialog_kind(words) == USAGE else "request", "what": words}
+        return {"kind": "request", "what": word} if word else None
     name, inp = calls[0] if calls else ("", {})
     target = inp.get(TARGET.get(name, ""))
     return {"kind": "permission", "tool": name,
@@ -1031,7 +1070,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # Claude Code's own words for what it is blocked on, and the last
         # thing it said to you. Neither is generated here.
         "waitingFor": rec.get("waitingFor") or "",
-        "asking": asking_of(status, rec.get("waitingFor") or "", summary["calls"]),
+        "asking": asking_of(status, rec.get("waitingFor") or "", summary["calls"], rec.get("needs")),
         "said": summary["said"],
         "boss": boss,
         # The name of the boss's tracker, which is the project its workers

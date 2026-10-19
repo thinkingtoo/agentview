@@ -23,6 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 from providers import base, claude, procs
+import dialog_words
 import test_columns
 import test_movement_provider as mp
 from test_movement_provider import stamp, text, call, accepted
@@ -990,3 +991,55 @@ class OtherSubagents(Base):
     def test_a_session_that_is_asked_something_after_a_compaction_and_goes_quiet_is_hung(self):
         self.over(900, text(3700), turn_end(3600), *self.compaction(1800), prompt(900, "carry on"))
         self.assertEqual(self.tile()["stuck"]["kind"], "hung")
+
+
+class DialogsFromTheFiles(Base):
+    """Ticket 15, from the files up to the tile: what the registry says of a
+    `dialog open` and what the transcript says of the session beside it. A
+    `needs` text is a dialog Claude Code raised itself; the usage limit that
+    stopped the session is already in the transcript, and read as a Limit."""
+
+    NEEDS = dialog_words.ULTRAPLAN
+    USAGE = dialog_words.USAGE
+
+    def setUp(self):
+        super().setUp()
+        test_columns.Base.setUp(self)
+
+    def tile(self, records, **extra):
+        claude._cache.clear()
+        self.session(records, status="waiting")
+        path = self.cfg / "sessions" / "100.json"
+        rec = json.loads(path.read_text())
+        rec.update({"waitingFor": "dialog open", **extra})
+        path.write_text(json.dumps(rec))
+        fleet.CONFIG.write_text("{}")
+        return fleet.roster(providers=[self.provider])["columns"][0]["sessions"][0]
+
+    def test_a_menu_with_nothing_wrong_behind_it_is_not_stuck(self):
+        self.assertIsNone(self.tile([text(300)])["stuck"])
+
+    def test_a_menu_opened_after_the_usage_limit_is_a_limit_with_its_reset_time(self):
+        # The transcript already says why: no `needs` text is needed for that.
+        got = self.tile([text(300), api_error(8)])["stuck"]
+        self.assertEqual((got["kind"], got["source"], got["reason"]), ("limit", "api", "Rate limit"))
+        self.assertEqual(got["context"]["resetsAt"], RESET * 1000)
+
+    def test_a_dialog_with_a_needs_text_is_needs_you_with_that_text(self):
+        got = self.tile([text(300)], needs=self.NEEDS)["stuck"]
+        self.assertEqual(got, {"kind": "needs", "source": "request", "reason": "Choose: run ultraplan in the cloud",
+                               "context": {"what": self.NEEDS}})
+
+    def test_the_usage_dialog_is_a_limit_even_when_the_transcript_has_no_error_yet(self):
+        got = self.tile([text(300)], needs=self.USAGE)["stuck"]
+        self.assertEqual((got["kind"], got["source"], got["reason"]), ("limit", "dialog", "Session paused"))
+
+    def test_the_usage_dialog_beside_the_limit_error_says_when_it_resets(self):
+        got = self.tile([text(300), api_error(8)], needs=self.USAGE)["stuck"]
+        self.assertEqual((got["kind"], got["source"], got["reason"]), ("limit", "api", "Rate limit"))
+        self.assertEqual(got["context"]["resetsAt"], RESET * 1000)
+
+    def test_the_chime_flag_is_waiting_in_every_one_of_them(self):
+        for extra in ({}, {"needs": self.NEEDS}, {"needs": self.USAGE}):
+            with self.subTest(extra=extra):
+                self.assertEqual(self.tile([text(300)], **extra)["flag"], "waiting")
