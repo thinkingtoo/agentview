@@ -21,6 +21,10 @@ A session that a boss leads.
 **Track**:
 The line of work a boss leads, with its workers. When a session belongs to a track, the track is its project, whichever repositories the work touches.
 
+**Project identity**:
+The key a project is known by, namespaced by what it is (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track, a repository, a client folder and a folder that share a name are never one project.
+_Avoid_: project name (the name is what the person calls it, and changes)
+
 **Context line**:
 A short line under a project's name that reminds the person what the project is about.
 _Avoid_: description, summary
