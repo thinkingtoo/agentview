@@ -1629,6 +1629,36 @@ def suggestion_pass(browser):
     page.close()
 
 
+def wrap_pass(browser):
+    """A word with no place to break -- a 40-character file name -- wraps inside its
+    column in the movement sign, the No-project chip and the unread handover's quote."""
+    word = "quarterly_summary_of_every_finding_xy.md"
+    assert len(word) == 40
+    body = roster([("pmd", "pmd", [S("w1", "Vera", "busy", line="Write the summary", mv=f"writing {word}"),
+                                   S("w2", "Hugo", "idle", line="Hand the summary over")]),
+                   ("", "No project", [S("o1", "Rosalie", "idle", line="a loose end")])])
+    column = {c["project"]: c for c in body["columns"]}
+    column["pmd"]["sessions"][1]["handover"] = f"Saved it as {word}"
+    column[""]["sessions"][0]["suggestion"] = {"project": "repo:example.com/alice/pmd", "name": word}
+    fake = Fake(body)
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    # The narrowest a column gets (its flex-basis, which it never shrinks under); a
+    # wide window would hold the word without any help.
+    page.add_style_tag(content=".ov-col { flex:0 0 230px; max-width:230px; }")
+    inside = """el => { const col = el.closest('.ov-col').getBoundingClientRect(), r = el.getBoundingClientRect();
+                         return {wrap: getComputedStyle(el).overflowWrap,
+                                 fits: el.scrollWidth <= el.clientWidth + 1 && r.right <= col.right + 1}; }"""
+    for label, selector in (("the movement sign", ".tile .mv"), ("the No-project chip", ".guess"),
+                            ("the unread handover's quote", ".tile .said")):
+        got = page.locator(selector).first.evaluate(inside)
+        check(f"an unbreakable 40-character word in {label} wraps inside its column",
+              got == {"wrap": "anywhere", "fits": True}, got)
+    check("wrap: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
 def jump_pass(browser):
     """The three jumps and their failures. Every POST is the route's: nothing
     is attached, raised or opened, and a request the routes do not know fails."""
@@ -2720,6 +2750,7 @@ def main():
         stale_pass(browser)
         block_view_pass(browser)
         suggestion_pass(browser)
+        wrap_pass(browser)
         jump_pass(browser)
         for view in ("overview", "blocks"):
             hostile_pass(browser, view)
