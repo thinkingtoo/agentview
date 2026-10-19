@@ -25,12 +25,13 @@ neither `waiting` nor `status`; the chime never rings for it.
 import datetime
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import time
 from pathlib import Path
 
-from providers import minutes
+from providers import base, minutes
 from providers.base import Provider, Tailed
 
 # `source` in the thread table, said the page's way. `exec` is `codex exec`,
@@ -52,6 +53,120 @@ def _ms(stamp):
     return int(when.timestamp() * 1000)
 
 
+# When a usage limit lifts, in the words Codex ends its message with: the time
+# alone ("try again at 2:35 PM."), or with its day ("... at Oct 21st, 2026 3:14 AM.").
+# Local time, with no zone: the machine that ran Codex wrote it.
+MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+RESETS = re.compile(r"try again at (?:([A-Za-z]{3}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) )?"
+                    r"(\d{1,2}):(\d{2}) ([AP]M)", re.I)
+
+
+def _resets_at(message, at):
+    """When the limit in this message lifts, milliseconds since 1970, or None.
+
+    A time without a day is the next such time after the error (`at`, the
+    moment it happened); a time with its day is that day's. None for words
+    that are not one: a time that cannot be (25:99, a 31st of February) is no time.
+    """
+    hit = RESETS.search(message) if isinstance(message, str) else None
+    if not hit or not at:
+        return None
+    month, day, year, hour, minute, half = hit.groups()
+    hour, minute = int(hour), int(minute)
+    if not (1 <= hour <= 12 and minute < 60):
+        return None
+    hour = hour % 12 + (12 if half.upper() == "PM" else 0)
+    try:
+        if month:
+            if month.lower() not in MONTHS:
+                return None
+            when = datetime.datetime(int(year), MONTHS.index(month.lower()) + 1, int(day), hour, minute)
+        else:
+            then = datetime.datetime.fromtimestamp(at / 1000)
+            when = then.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if when <= then:
+                when += datetime.timedelta(days=1)
+        return int(when.timestamp() * 1000)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _failure(error, stamp):
+    """The error a turn ended in, as a provider hands it over (`base.py`), or
+    None when it ended well. `codex_error_info` is a word, or an object holding
+    the word and what goes with it (`{"http_connection_failed": {"http_status_code": 502}}`)."""
+    if not isinstance(error, dict):
+        return None
+    info, status = error.get("codex_error_info"), None
+    if isinstance(info, dict) and len(info) == 1:
+        info, extra = next(iter(info.items()))
+        status = base.whole_number(extra.get("http_status_code")) if isinstance(extra, dict) else None
+    name = info if isinstance(info, str) else ""
+    words = " ".join(error["message"].split()) if isinstance(error.get("message"), str) else ""
+    at = _ms(stamp)
+    return {"kind": "limit" if name == "usage_limit_exceeded" else "error",
+            "type": name, "status": status,
+            "text": words if len(words) <= base.FAILURE_LEN else words[:base.FAILURE_LEN - 1].rstrip() + "…",
+            "at": at or None,
+            "resetsAt": _resets_at(words, at) if name == "usage_limit_exceeded" else None}
+
+
+# Calls kept while they wait for an output: more than this is a runaway, not a queue.
+MAX_CALLS = 64
+# The longest `arguments` text worth reading for a command.
+MAX_ARGUMENTS = 200_000
+
+
+def _command(args):
+    """The command a call runs, as one text of at most `COMMAND_LIMIT` characters plus
+    one when it had to be cut -- `cmd` is a text, an older `command` a list of words."""
+    cmd = args.get("cmd", args.get("command"))
+    if isinstance(cmd, list) and all(isinstance(word, str) for word in cmd):
+        cmd = " ".join(cmd)
+    return cmd[:base.COMMAND_LIMIT + 1] if isinstance(cmd, str) else ""
+
+
+def _calls(state, rec, payload):
+    """Calls that ask to leave the sandbox, and have no output yet.
+
+    A request for approval is not written to the rollout (`policy.rs`: it is a
+    transient event), but the call it is about is, and its output comes only
+    after the person has decided. Only those calls are kept, by their id.
+    """
+    what, cid = payload.get("type"), payload.get("call_id")
+    if not isinstance(cid, str):
+        return
+    calls = state["calls"]
+    if what in ("function_call_output", "custom_tool_call_output"):
+        calls.pop(cid, None)
+        return
+    arguments = payload.get("arguments")
+    if (what != "function_call" or payload.get("name") != "exec_command"
+            or not isinstance(arguments, str) or "require_escalated" not in arguments
+            or len(arguments) > MAX_ARGUMENTS):
+        return
+    try:
+        args = json.loads(arguments)
+    except ValueError:
+        return
+    if isinstance(args, dict) and args.get("sandbox_permissions") == "require_escalated":
+        calls[cid] = (_ms(rec.get("timestamp")), _command(args))
+        for old in list(calls)[:-MAX_CALLS]:
+            del calls[old]
+
+
+def _asked(state):
+    """The call the person is probably being asked about, as (when, command), or None.
+
+    Believed only of a session that can ask (a policy of `never` answers such a
+    call at once, with a refusal) and only inside a turn: whatever the turn left
+    unanswered is gone with it. The oldest wins, as it would be asked first.
+    """
+    if state["status"] != "busy" or state["policy"] in ("", "never") or not state["calls"]:
+        return None
+    return next(iter(state["calls"].values()))
+
+
 def _source(value):
     """A thread's `source` as one word. Most are a word (`exec`, `cli`); a
     subagent's thread carries an object, `{"subagent": "review"}` (the thread
@@ -69,7 +184,8 @@ def _source(value):
 
 def _blank():
     return {**minutes.blank_counts(), "status": "", "statusAt": 0,
-            "said": "", "prompt": "", "cwd": "", "startedAt": 0, "source": ""}
+            "said": "", "prompt": "", "cwd": "", "startedAt": 0, "source": "",
+            "failure": None, "policy": "", "calls": {}}
 
 
 def _absorb(state, text):
@@ -89,13 +205,25 @@ def _absorb(state, text):
             state["source"] = _source(payload.get("source")) or state["source"]
             state["startedAt"] = _ms(rec.get("timestamp")) or state["startedAt"]
             continue
+        if kind == "turn_context":
+            how = payload.get("approval_policy")
+            state["policy"] = how if isinstance(how, str) else ""
+            continue
+        if kind == "response_item":
+            _calls(state, rec, payload)
+            continue
         if kind != "event_msg":
             continue
         what = payload.get("type")
         if what == "task_started":
             state["status"], state["statusAt"] = "busy", _ms(rec.get("timestamp"))
+            state["failure"] = None
+            state["calls"].clear()
         elif what in ("task_complete", "turn_aborted"):
             state["status"], state["statusAt"] = "idle", _ms(rec.get("timestamp"))
+            state["calls"].clear()
+            if what == "task_complete":
+                state["failure"] = _failure(payload.get("error"), rec.get("timestamp"))
         elif what == "agent_message" and isinstance(payload.get("message"), str):
             state["said"] = payload["message"]
         elif what == "user_message" and isinstance(payload.get("message"), str):
@@ -261,13 +389,14 @@ class CodexProvider(Provider):
             extras["model"] = str(row["model"])
         if isinstance(row.get("tokens"), int) and row["tokens"] > 0:
             extras["tokens"] = f"{row['tokens'] / 1000:.0f}k"
+        asked = _asked(state)
         out = {
             "id": tid,
             "cwd": state["cwd"] or row.get("cwd") or "",
             # No status event yet -- a fresh session before its first turn --
-            # is idle since it started.
-            "status": state["status"] or "idle",
-            "updatedAt": state["statusAt"] or started,
+            # is idle since it started. One waiting on an approval says so.
+            "status": "waiting" if asked else state["status"] or "idle",
+            "updatedAt": (asked[0] if asked else state["statusAt"]) or state["statusAt"] or started,
             "startedAt": started,
             "kind": KINDS.get(source, "review" if "review" in source else source or "?"),
             "branch": row.get("branch") or "",
@@ -275,6 +404,8 @@ class CodexProvider(Provider):
             "prompt": state["prompt"],
             "said": state["said"],
             "quietFor": quiet,
+            # What the last turn ended in, if it was an error: Limit or Error.
+            "failure": state["failure"],
             # Records per minute, 30 of them: what the project's graph is made of.
             # A session with no rollout yet has none to count, which is not zero.
             "writes": minutes.strip(state, now) if path else None,
@@ -284,6 +415,8 @@ class CodexProvider(Provider):
             "procsUnknown": True,
             "extras": extras,
         }
+        if asked:
+            out["asking"] = {"kind": "permission", "tool": "exec_command", "command": asked[1], "target": ""}
         if held:
             out["pid"] = held[0]
         return out

@@ -291,6 +291,212 @@ class Writes(Fixture):
         self.assertEqual(p.live()[0]["writes"][-1], 2)
 
 
+LIMIT = "You've hit your usage limit. Upgrade or try again at %s."
+ERR_AT = "2026-10-19T12:00:00.000Z"          # 1792411200000, a Monday
+
+
+def done(ts=ERR_AT, **error):
+    """A turn that ended, with the error that ended it if there is one."""
+    return rec(ts, "event_msg", type="task_complete", **({"error": error} if error else {}))
+
+
+class Failures(Fixture):
+    """Limit and Error are what the last turn ended in: `task_complete` with an
+    `error` object holding `message` and `codex_error_info`. It is the last
+    record of the file when it happens, and gone with the next turn."""
+
+    def setUp(self):
+        super().setUp()
+        was = os.environ.get("TZ")
+        os.environ["TZ"] = "UTC"
+        time.tzset()
+        self.addCleanup(lambda: (os.environ.pop("TZ") if was is None else os.environ.__setitem__("TZ", was),
+                                 time.tzset()))
+
+    def failure(self, *records):
+        return self.one(meta(), rec(T0, "event_msg", type="task_started"), *records)["failure"]
+
+    def limit(self, when):
+        return self.failure(done(message=LIMIT % when, codex_error_info="usage_limit_exceeded"))
+
+    def test_a_usage_limit_is_a_limit_with_the_words_it_came_with(self):
+        got = self.limit("2:35 PM")
+        self.assertEqual(got, {"kind": "limit", "type": "usage_limit_exceeded", "status": None,
+                               "text": LIMIT % "2:35 PM", "at": 1792411200000,
+                               "resetsAt": 1792420500000})
+
+    def test_a_reset_time_that_is_already_past_today_is_tomorrow_s(self):
+        self.assertEqual(self.limit("2:35 AM")["resetsAt"], 1792463700000)
+
+    def test_a_reset_time_may_name_its_day(self):
+        self.assertEqual(self.limit("Oct 21st, 2026 3:14 AM")["resetsAt"], 1792552440000)
+
+    def test_twelve_in_the_morning_is_midnight_and_twelve_in_the_afternoon_is_noon(self):
+        self.assertEqual(self.limit("12:05 AM")["resetsAt"], 1792368300000 + 86400000)   # tomorrow, 00:05
+        self.assertEqual(self.limit("12:30 PM")["resetsAt"], 1792413000000)
+
+    def test_the_reset_time_is_read_in_the_time_of_the_machine(self):
+        os.environ["TZ"] = "CET-1CEST,M3.5.0,M10.5.0/3"         # Brussels: UTC+2 until Oct 25
+        time.tzset()
+        self.assertEqual(self.limit("2:35 PM")["resetsAt"], 1792420500000 - 2 * 3600000)
+
+    def test_a_limit_that_names_no_time_has_none(self):
+        got = self.failure(done(message="You've hit your usage limit.", codex_error_info="usage_limit_exceeded"))
+        self.assertEqual((got["kind"], got["resetsAt"]), ("limit", None))
+
+    def test_a_time_that_cannot_be_is_none(self):
+        for when in ("25:99 PM", "13:00 PM", "Foo 3rd, 2026 3:14 AM", "Feb 31st, 2026 3:14 AM"):
+            with self.subTest(when=when):
+                self.assertIsNone(self.limit(when)["resetsAt"])
+
+    def test_any_other_error_is_an_error_with_its_type(self):
+        got = self.failure(done(message="The servers are busy.", codex_error_info="server_overloaded"))
+        self.assertEqual({k: got[k] for k in ("kind", "type", "status", "text", "resetsAt")},
+                         {"kind": "error", "type": "server_overloaded", "status": None,
+                          "text": "The servers are busy.", "resetsAt": None})
+
+    def test_an_error_that_carries_a_status_says_it(self):
+        got = self.failure(done(message="Bad gateway.",
+                                codex_error_info={"http_connection_failed": {"http_status_code": 502}}))
+        self.assertEqual((got["kind"], got["type"], got["status"]), ("error", "http_connection_failed", 502))
+
+    def test_an_error_with_no_info_is_an_error_with_no_type(self):
+        got = self.failure(done(message="Something broke."))
+        self.assertEqual((got["kind"], got["type"], got["status"]), ("error", "", None))
+
+    def test_an_error_that_is_not_an_object_is_no_error(self):
+        for odd in ("boom", 7, ["x"], True):
+            with self.subTest(odd=odd):
+                self.assertIsNone(self.failure(rec(ERR_AT, "event_msg", type="task_complete", error=odd)))
+
+    def test_a_turn_that_ended_well_has_none(self):
+        self.assertIsNone(self.failure(done()))
+
+    def test_the_next_turn_clears_it(self):
+        got = self.failure(done(message=LIMIT % "2:35 PM", codex_error_info="usage_limit_exceeded"),
+                           rec("2026-10-19T12:05:00.000Z", "event_msg", type="task_started"))
+        self.assertIsNone(got)
+
+    def test_the_words_are_one_line_cut_to_what_a_tile_holds(self):
+        got = self.failure(done(message="Too\n  many\tspaces " + "x" * 400, codex_error_info="other"))
+        self.assertTrue(got["text"].startswith("Too many spaces xxx") and len(got["text"]) == 200
+                        and got["text"].endswith("…"), got["text"])
+
+    def test_a_stamp_that_is_not_a_time_gives_no_moment(self):
+        got = self.failure(done(ts="soon", message="x", codex_error_info="other"))
+        self.assertIsNone(got["at"])
+
+
+def policy(ts, how="on-request"):
+    """The record a turn opens with: what it may do without asking."""
+    return rec(ts, "turn_context", approval_policy=how)
+
+
+def call(ts, cid, name="exec_command", escalate=False, **args):
+    """A call the model made. `arguments` is a JSON text, as Codex writes it."""
+    if escalate:
+        args["sandbox_permissions"] = "require_escalated"
+    return rec(ts, "response_item", type="function_call", name=name,
+               arguments=json.dumps(args), call_id=cid)
+
+
+def answer(ts, cid, kind="function_call_output"):
+    return rec(ts, "response_item", type=kind, call_id=cid, output="ok")
+
+
+T1, T2, T3 = ("2026-09-22T10:49:00.000Z", "2026-09-22T10:49:30.000Z", "2026-09-22T10:50:00.000Z")
+
+
+class Approvals(Fixture):
+    """A request for approval is never written to a rollout, but the call it is
+    about is: an `exec_command` that asks to leave the sandbox, with no output
+    until the person decides. Inferred, so it is only ever believed of a session
+    that can ask, in the middle of a turn."""
+
+    def turn(self, *records, how="on-request"):
+        return self.one(meta(), rec(T0, "event_msg", type="task_started"), policy(T0, how), *records)
+
+    def test_a_call_that_asks_to_leave_the_sandbox_and_has_no_output_is_waiting_on_you(self):
+        s = self.turn(call(T1, "c1", cmd="git push origin dev", escalate=True, justification="needs the network"))
+        self.assertEqual(s["status"], "waiting")
+        self.assertEqual(s["asking"], {"kind": "permission", "tool": "exec_command",
+                                       "command": "git push origin dev", "target": ""})
+        self.assertEqual(s["updatedAt"], 1790074140000)           # since the call
+
+    def test_the_moment_it_answers_it_is_busy_again(self):
+        s = self.turn(call(T1, "c1", cmd="make", escalate=True), answer(T2, "c1"))
+        self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+        self.assertEqual(s["updatedAt"], 1790074136218)
+
+    def test_a_custom_tool_s_output_answers_the_call_too(self):
+        s = self.turn(call(T1, "c1", cmd="make", escalate=True), answer(T2, "c1", "custom_tool_call_output"))
+        self.assertEqual(s["status"], "busy")
+
+    def test_a_call_that_stays_in_the_sandbox_is_not_a_question(self):
+        s = self.turn(call(T1, "c1", cmd="ls"))
+        self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+    def test_a_session_that_cannot_ask_is_not_waiting_on_you(self):
+        for how in ("never", "", None, 7):
+            with self.subTest(how=how):
+                s = self.turn(call(T1, "c1", cmd="make", escalate=True), how=how)
+                self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+    def test_a_session_that_has_not_said_what_it_may_do_is_not_waiting_on_you(self):
+        s = self.one(meta(), rec(T0, "event_msg", type="task_started"),
+                     call(T1, "c1", cmd="make", escalate=True))
+        self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+    def test_a_turn_that_ended_leaves_nothing_to_approve(self):
+        for end in (rec(T3, "event_msg", type="task_complete"), rec(T3, "event_msg", type="turn_aborted")):
+            with self.subTest(end=end["payload"]["type"]):
+                s = self.turn(call(T1, "c1", cmd="make", escalate=True), end)
+                self.assertEqual((s["status"], s.get("asking")), ("idle", None))
+
+    def test_the_next_turn_does_not_inherit_the_last_one_s_call(self):
+        s = self.turn(call(T1, "c1", cmd="make", escalate=True), rec(T2, "event_msg", type="turn_aborted"),
+                      rec(T3, "event_msg", type="task_started"), policy(T3))
+        self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+    def test_the_oldest_call_still_waiting_is_the_one_shown(self):
+        s = self.turn(call(T1, "c1", cmd="first one", escalate=True),
+                      call(T2, "c2", cmd="second one", escalate=True))
+        self.assertEqual(s["asking"]["command"], "first one")
+        self.assertEqual(s["updatedAt"], 1790074140000)
+
+    def test_one_that_was_answered_is_not_the_one_shown(self):
+        s = self.turn(call(T1, "c1", cmd="first one", escalate=True),
+                      call(T2, "c2", cmd="second one", escalate=True), answer(T3, "c1"))
+        self.assertEqual(s["asking"]["command"], "second one")
+
+    def test_a_command_may_be_a_list_of_words(self):
+        s = self.turn(call(T1, "c1", command=["git", "push", "origin", "dev"], escalate=True))
+        self.assertEqual(s["asking"]["command"], "git push origin dev")
+
+    def test_a_call_with_no_command_still_asks_and_has_nothing_to_copy(self):
+        s = self.turn(call(T1, "c1", escalate=True))
+        self.assertEqual(s["asking"], {"kind": "permission", "tool": "exec_command", "command": "", "target": ""})
+
+    def test_a_command_longer_than_a_prompt_can_hold_comes_with_one_character_more(self):
+        s = self.turn(call(T1, "c1", cmd="x" * (base.COMMAND_LIMIT + 500), escalate=True))
+        self.assertEqual(len(s["asking"]["command"]), base.COMMAND_LIMIT + 1)
+
+    def test_arguments_that_are_not_json_make_a_plain_call(self):
+        s = self.turn(rec(T1, "response_item", type="function_call", name="exec_command",
+                          arguments="{not json require_escalated", call_id="c1"))
+        self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+    def test_a_flood_of_calls_nobody_answers_does_not_hide_the_one_that_asks(self):
+        flood = [call(T1, f"f{i}", cmd="ls") for i in range(500)]
+        s = self.turn(*flood, call(T2, "ask", cmd="make", escalate=True))
+        self.assertEqual(s["asking"]["command"], "make")
+
+    def test_the_command_is_text_and_is_not_touched(self):
+        hostile = '<img src=x onerror=alert(1)> "; rm -rf / #'
+        s = self.turn(call(T1, "c1", cmd=hostile, escalate=True))
+        self.assertEqual(s["asking"]["command"], hostile)
+
+
 class Hung(test_columns.Base):
     """Hung is a claim that waits for a look that can tell (ticket 08). Codex
     writes nothing to its rollout while a command runs, and this provider never
@@ -315,6 +521,62 @@ class Hung(test_columns.Base):
     def test_a_busy_session_whose_rollout_has_been_quiet_for_an_hour_is_not_called_hung(self):
         got = self.tile(silent=3600)
         self.assertEqual(got["status"], "busy")
+        self.assertIsNone(got["stuck"])
+
+
+class Tiles(test_columns.Base):
+    """What the overview says about a Codex session: through `roster()`, the way
+    a Claude session's stuck kinds are checked, over rollouts written to a fake
+    `~/.codex`."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = Home()
+        self.home.thread(source="cli")
+        self.home.lock()
+        self.home.holder(4242)
+
+    def tile(self, *records, silent=0):
+        path = self.home.rollout(records=[meta(source="cli"), rec(T0, "event_msg", type="task_started"),
+                                          policy(T0), *records])
+        then = time.time() - silent
+        os.utime(path, (then, then))
+        fleet.CONFIG.write_text("{}")
+        return fleet.roster(providers=[self.home.provider()])["columns"][0]["sessions"][0]
+
+    def test_a_pending_escalated_command_reads_as_needs_you_however_long_it_has_waited(self):
+        for silent in (30, 3600, 6 * 3600):
+            with self.subTest(silent=silent):
+                got = self.tile(call(T1, "c1", cmd="git push origin dev", escalate=True), silent=silent)
+                self.assertEqual(got["status"], "waiting")
+                self.assertEqual(got["stuck"], {
+                    "kind": "needs", "source": "permission", "reason": "Permission prompt",
+                    "context": {"tool": "exec_command", "command": "git push origin dev",
+                                "target": "", "copy": True}})
+                self.assertEqual((got["counted"], got["moving"]), ("needs", False))
+
+    def test_once_the_person_has_decided_it_is_not_needs_you(self):
+        got = self.tile(call(T1, "c1", cmd="make", escalate=True), answer(T2, "c1"))
+        self.assertIsNone(got["stuck"])
+
+    def test_a_pending_escalated_command_is_not_hung_whatever_the_provider_can_see(self):
+        self.tile(call(T1, "c1", cmd="make", escalate=True), silent=3600)
+        row = fleet.sessions(providers=[self.home.provider()])[0]
+        self.assertFalse(fleet.is_hung(row))
+
+    def test_a_usage_limit_is_limit_with_its_reset_time(self):
+        got = self.tile(done(message=LIMIT % "2:35 PM", codex_error_info="usage_limit_exceeded"))
+        self.assertEqual(got["stuck"]["kind"], "limit")
+        self.assertIsNotNone(got["stuck"]["context"]["resetsAt"])
+        self.assertEqual(got["counted"], "otherStuck")
+
+    def test_any_other_terminal_error_is_error_with_its_type(self):
+        got = self.tile(done(message="Busy.", codex_error_info="server_overloaded"))
+        self.assertEqual((got["stuck"]["kind"], got["stuck"]["reason"]), ("error", "Overloaded"))
+
+    def test_the_next_turn_clears_the_limit(self):
+        got = self.tile(done(message=LIMIT % "2:35 PM", codex_error_info="usage_limit_exceeded"),
+                        rec(T3, "event_msg", type="task_started"))
         self.assertIsNone(got["stuck"])
 
 
