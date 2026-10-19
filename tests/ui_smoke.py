@@ -538,9 +538,12 @@ def card_pass(browser):
     column(body, "folder:orchard", kind="folder", raw="orchard", name="Orchard",
            context=ctx("guess", "Card form \u00b7 Receipt export", guess=True), track=None,
            notes={"query": "Orchard Card form \u00b7 Receipt export"})
-    column(body, BOMB, kind="track", raw=BOMB, track={"status": "PAUSED", "progress": {
-               "done": 1, "total": 2, "text": "1 of 2", "met": False}},
-           context=ctx("goal", "line: " + BOMB, "full: " + BOMB), notes={"query": "q " + BOMB})
+    # Texts that land in attributes (the hover, the raw name, the query) get a quote that would
+    # end the attribute and start one of its own.
+    BREAK = '" onfocus="alert(1)" autofocus="'
+    column(body, BOMB, kind="track", raw=BOMB + BREAK, track={"status": BOMB, "progress": {
+               "done": 1, "total": 2, "text": "1 of 2 " + BOMB, "met": False}},
+           context=ctx("goal", "line: " + BOMB, "full: " + BOMB + BREAK), notes={"query": "q " + BOMB + BREAK})
     column(body, "", context=None, track=None, notes=None)
     fake = Fake(body)
     fake.answer["/api/notes"] = {"ok": True, "hits": [
@@ -580,9 +583,15 @@ def card_pass(browser):
           and "add a line" not in col("checkout").locator(".ov-ctx").inner_text())
     check("the No project card has no context line and no notes link",
           col("").locator(".ov-ctx").count() == 0 and col("").locator(".ov-notes").count() == 0)
-    check("markup in a name, a status, a line and a bar is text, and builds nothing",
-          BOMB in col(BOMB).inner_text() and page.locator("#main img, #main [onerror]").count() == 0
-          and col(BOMB).locator(".ov-name").get_attribute("title") == BOMB)
+    check("markup in a name, a status, a line and a count is text, and builds nothing",
+          BOMB in col(BOMB).locator(".ov-name").inner_text() and BOMB in col(BOMB).locator(".ov-tag").inner_text()
+          and BOMB in col(BOMB).locator(".ov-ctx").inner_text() and BOMB in col(BOMB).locator(".ov-prog").inner_text()
+          and page.locator("#main img, #main [onerror]").count() == 0)
+    check("a quote in a hover, a raw name or a query cannot start an attribute of its own",
+          page.locator("#main [onfocus], #main [autofocus]").count() == 0
+          and col(BOMB).locator(".ov-name").get_attribute("title") == BOMB + BREAK
+          and col(BOMB).locator(".ov-ctx").get_attribute("title") == "full: " + BOMB + BREAK
+          and col(BOMB).locator(".ov-notes").get_attribute("data-query") == "q " + BOMB + BREAK)
 
     # The line, edited where it stands.
     check("no search has been made before any click", fake.of("/api/notes") == [])
