@@ -1849,6 +1849,29 @@ def hostile_pass(browser, view):
     page.close()
 
 
+def separator_pass(browser, view):
+    """R7 at the page, for ticket 16: the reader now keeps a record whose text
+    holds U+2028, U+2029 or U+0085, so such words reach the page. They are
+    text, in a project, a name, a line and a sign, and markup beside them is
+    still only text."""
+    words = "one\u2028two\u2029three\u0085four"
+    s = S("sp1", words + BOMB, "idle", line="line: " + words + BOMB, mv="waiting on: " + words + BOMB + ", 3 min")
+    fake = Fake(roster([(words + BOMB, words + BOMB, [s])]))
+    seen = len(errors)
+    page = new_page(browser, fake)
+    open_at(page, "/?view=blocks" if view == "blocks" else "/")
+    page.wait_for_selector(".block" if view == "blocks" else ".tile")
+    page.wait_for_timeout(500)
+    # `textContent`, not `innerText`: the second one is what is laid out, and may fold a separator into a break.
+    text = page.locator("#main").text_content()
+    check(f"{view}: words that hold a line separator are shown, whole, as text",
+          text.count(words + BOMB) >= (3 if view == "blocks" else 4), text[:200])
+    check(f"{view}: and still build no element from the markup beside them",
+          page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0)
+    check(f"{view}: no dialog, no page error with them", len(errors) == seen, errors[seen:])
+    page.close()
+
+
 def chime_pass(browser, view):
     fake = Fake(roster([("alpha", "alpha", [S("c1", "ALPHA", "busy")])]))
     page = new_page(browser, fake)
@@ -2758,6 +2781,7 @@ def main():
         jump_pass(browser)
         for view in ("overview", "blocks"):
             hostile_pass(browser, view)
+            separator_pass(browser, view)
             chime_pass(browser, view)
         blocks_pass(browser)
         browser.close()

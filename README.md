@@ -766,6 +766,14 @@ appended since. A partial final line is left for next time; a file that shrank
 or whose opening bytes changed is read again from scratch. Cold **14.4s →
 0.84s**, warm **0.28s → 0.03s**.
 
+A record ends at `\n` and nowhere else, as JSON Lines says. Python's
+`str.splitlines()` also cuts at U+2028, U+2029 and U+0085, which a session
+writes raw inside a JSON string, and the two halves of the cut record parse as
+nothing: its title, its tool call, its words and its write in the strip were
+thrown away. Every reader of a transcript or a rollout now cuts at `\n` only:
+the readers of bytes on `b"\n"`, the readers of text with
+`providers.base.jsonl_lines`.
+
 A jump asks WezTerm and tmux first and only enumerates Konsole over D-Bus if
 neither claimed the session, and validates the pid from the peer files alone
 rather than building the whole page. The click is also acknowledged before the

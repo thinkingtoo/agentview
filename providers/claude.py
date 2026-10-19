@@ -21,7 +21,7 @@ from pathlib import Path
 
 import lines
 from providers import base, procs, registry
-from providers.base import (Provider, Tailed, on_a_terminal,
+from providers.base import (Provider, Tailed, on_a_terminal, jsonl_lines,
                             read_from as _read_from)
 from providers.minutes import (KEEP_MINUTES, blank_counts as _blank_counts,
                                cold_counts as _cold_counts, count as _count,
@@ -163,7 +163,7 @@ def boss_marker(sid, cfg=None):
         return None
     finally:
         os.close(fd)
-    return (text.splitlines() or [""])[0].strip()
+    return text.partition("\n")[0].strip()
 
 
 def is_boss(sid, cfg=None):
@@ -430,7 +430,7 @@ def _blank_state():
 def _absorb(state, text):
     """Fold newly written lines into what we already know."""
     home = str(Path.home())
-    for line in text.splitlines():
+    for line in jsonl_lines(text):
         try:
             rec = json.loads(line)
         except ValueError:
@@ -525,7 +525,7 @@ def _cold(state, path):
     if not state["title"]:
         # A title set early and never again needs the whole file.
         head_text, _ = _read_from(path, 0)
-        for line in head_text.splitlines():
+        for line in jsonl_lines(head_text):
             try:
                 rec = json.loads(line)
             except ValueError:
@@ -536,7 +536,7 @@ def _cold(state, path):
 
 def _absorb_counts(state, text):
     """A subagent's file: nothing is read out of it but when it wrote."""
-    for line in text.splitlines():
+    for line in jsonl_lines(text):
         try:
             rec = json.loads(line)
         except ValueError:

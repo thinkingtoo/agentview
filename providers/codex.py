@@ -38,7 +38,7 @@ import time
 from pathlib import Path
 
 from providers import base, minutes, procs
-from providers.base import Provider, Tailed
+from providers.base import Provider, Tailed, jsonl_lines
 
 # `source` in the thread table, said the page's way. `exec` is `codex exec`,
 # a one-shot like `claude -p`; a review subagent is the JSON-ish third one.
@@ -331,7 +331,7 @@ def _blank_done():
 
 def _absorb_done(state, text):
     """Of a rollout, only the last turn that finished: when, and in what error."""
-    for line in text.splitlines():
+    for line in jsonl_lines(text):
         if '"task_complete"' not in line:
             continue
         try:
@@ -388,7 +388,7 @@ def _blank():
 
 
 def _absorb(state, text):
-    for line in text.splitlines():
+    for line in jsonl_lines(text):
         try:
             rec = json.loads(line)
         except ValueError:
