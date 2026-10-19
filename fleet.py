@@ -1004,6 +1004,13 @@ def stuck_of(m):
         return {"kind": "limit", "source": "api", "reason": "Rate limit",
                 "context": {"resetsAt": failure["resetsAt"], "held": failure["held"],
                             "text": failure["text"]}}
+    asking = m["asking"]
+    if asking and asking["kind"] == "pause":
+        # "Session paused" for usage credits, with no error in the transcript
+        # to say so: the dialog's own words are all there is. The error, when
+        # it is there, is read above and tells the reset time as well.
+        return {"kind": "limit", "source": "dialog", "reason": "Session paused",
+                "context": {"resetsAt": None, "held": None, "text": asking["what"]}}
     return None
 
 
@@ -1220,10 +1227,11 @@ def asking_of(value):
                               "multi": bool(q.get("multi")),
                               "options": options})
         return {"kind": "question", "questions": questions} if questions or listed == [] else None
-    if value.get("kind") == "request":
+    if value.get("kind") in ("request", "pause"):
         # A dialog that waits on the person and is neither: told by its name.
+        # A `pause` is one that is open on usage credits, which is a limit.
         what = " ".join(_text(value.get("what")).split())[:LABEL_LEN]
-        return {"kind": "request", "what": what} if what else None
+        return {"kind": value["kind"], "what": what} if what else None
     if value.get("kind") == "permission":
         # A provider hands over a command only when it is one, and one longer
         # than the limit arrives with a character to spare: that is how a cut

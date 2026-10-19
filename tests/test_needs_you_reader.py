@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from providers import base, claude
+import dialog_words
 import test_movement_provider as mp
 from test_movement_provider import stamp, text
 
@@ -42,12 +43,14 @@ def answered(seconds_ago, tool_id="toolu_1"):
 
 
 class Asking(mp.Provider):
-    def open(self, records, status="waiting", waiting_for="input needed"):
-        """A session whose registry record says what Claude Code says."""
+    def open(self, records, status="waiting", waiting_for="input needed", **extra):
+        """A session whose registry record says what Claude Code says. `extra`
+        are more fields of the record, such as the `needs` text."""
         self.session(records, status=status)
         path = self.cfg / "sessions" / "100.json"
         rec = json.loads(path.read_text())
         rec["waitingFor"] = waiting_for
+        rec.update(extra)
         path.write_text(json.dumps(rec))
         return self.live()[0]["asking"]
 
@@ -148,7 +151,7 @@ class Asking(mp.Provider):
             with self.subTest(junk=junk):
                 self.assertEqual(claude._kept(junk, "Bash"), {})
                 self.assertEqual(claude._kept(junk, "AskUserQuestion"), {})
-        self.assertEqual(claude.asking_of("waiting", "permission prompt", [("Bash", {})]),
+        self.assertEqual(claude.asking_of("waiting", "permission prompt", [("Bash", {})], None),
                          {"kind": "permission", "tool": "Bash", "command": "", "target": ""})
 
     def test_the_calls_a_prompt_is_built_from_are_always_a_name_and_an_object(self):
@@ -244,6 +247,53 @@ class Asking(mp.Provider):
         # word says it does not.
         self.assertEqual(self.open([text(30)], waiting_for="a new kind of dialog"),
                          {"kind": "request", "what": "a new kind of dialog"})
+
+    # A dialog Claude Code raises itself and that waits on the person still says
+    # `dialog open`, but carries a `needs` text beside it (read out of 2.1.295's
+    # own dialog table, 2026-10-19: the classifier billing notice, the ultraplan
+    # choice, the auto-mode default, "Session paused" for a refused turn and for
+    # usage). A menu the person opened has none.
+    NEEDS = {"billing": dialog_words.BILLING, "ultraplan": dialog_words.ULTRAPLAN,
+             "auto mode": dialog_words.AUTO_MODE, "fallback": dialog_words.RETRY}
+    USAGE = dialog_words.USAGE
+
+    def test_a_dialog_with_a_needs_text_is_a_request_told_by_that_text(self):
+        for kind, needs in self.NEEDS.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(self.open([text(30)], waiting_for="dialog open", needs=needs),
+                                 {"kind": "request", "what": needs})
+
+    def test_the_usage_dialog_is_a_pause_for_usage_told_by_its_text(self):
+        self.assertEqual(self.open([text(30)], waiting_for="dialog open", needs=self.USAGE),
+                         {"kind": "pause", "what": self.USAGE})
+
+    def test_the_usage_dialog_is_known_in_any_case_and_with_blanks_around_it(self):
+        for needs in (self.USAGE.upper(), "  " + self.USAGE + "\n", "choose:  continue on usage credits   or switch models"):
+            with self.subTest(needs=needs):
+                self.assertEqual(self.open([text(30)], waiting_for="dialog open", needs=needs)["kind"], "pause")
+
+    def test_a_menu_the_person_opened_has_no_needs_text_and_asks_nothing(self):
+        for needs in (None, "", "   ", 7, True, ["choose: x"], {"a": 1}):
+            with self.subTest(needs=needs):
+                self.assertIsNone(self.open([text(30)], waiting_for="dialog open", needs=needs))
+        self.assertIsNone(self.open([text(30)], waiting_for="dialog open"))
+
+    def test_a_needs_text_means_something_only_beside_the_menu_word(self):
+        # Another process writes `needs` too (a classifier's reading of a session
+        # that waits on someone); only a dialog that says it is open is read.
+        words = dialog_words.ULTRAPLAN
+        self.assertIsNone(self.open([text(30)], status="idle", waiting_for="", needs=words))
+        self.assertIsNone(self.open([text(30)], status="busy", waiting_for="dialog open", needs=words))
+        self.assertEqual(self.open([text(30)], waiting_for="input needed", needs=words),
+                         {"kind": "question", "questions": []})
+        self.assertEqual(self.open([text(30)], waiting_for="permission prompt", needs=words)["kind"],
+                         "permission")
+        self.assertEqual(self.open([text(30)], waiting_for="sandbox request", needs=words),
+                         {"kind": "request", "what": "sandbox request"})
+
+    def test_the_menu_word_in_any_case_with_a_needs_text_is_still_that_dialog(self):
+        self.assertEqual(self.open([text(30)], waiting_for="  Dialog Open ", needs=dialog_words.ULTRAPLAN)["kind"],
+                         "request")
 
     def test_a_waiting_session_that_names_nothing_asks_nothing(self):
         for value in ("", "   ", None, 7, ["sandbox request"], {"a": 1}):
