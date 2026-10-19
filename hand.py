@@ -120,7 +120,10 @@ def _current(config, *named):
     request would do to it lands on a project with no card, or on nothing, or
     -- an arrow, a pin -- against what the click said. All of it is refused,
     here, once, for every route. A name that is not a project's identity (a
-    session's key, a block view's plain name) is not looked at."""
+    session's key, a block view's plain name) is not looked at. What the page
+    says it shows (`shown`) is a list of names like any other: one that has gone
+    means the view is old, and the click that came with it -- an unpin names its
+    block only there, by leaving it out of `pinned` -- cannot be trusted."""
     for ident in named:
         if isinstance(ident, str) and projects.from_identity(ident) and _moved_to(config, ident):
             raise Stale("changed in another tab")
@@ -158,7 +161,7 @@ def set_order(config, pinned, shown=None):
     if not isinstance(pinned, list) or not all(isinstance(p, str) for p in pinned):
         raise Refused("expected {pinned: [project, ...]}")
     shown = _shown(shown)
-    _current(config, *pinned)
+    _current(config, *pinned, *shown)
     kept = [p for p in _pins(config)
             if isinstance(p, str) and projects.from_identity(p) and p not in pinned and p not in shown]
     config["pinned"] = pinned + kept
@@ -210,7 +213,7 @@ def pin(config, project, action, other=None, shown=None, side=None):
             raise Refused("a project cannot swap places with itself")
         if side not in (None, "before", "after"):
             raise Refused("side must be before or after")
-    _current(config, project, other if action == "swap" else None)
+    _current(config, project, other if action == "swap" else None, *shown)
     pinned = _spread(_pins(config), shown, [project, other])
     at = projects.pin_rank(mine, pinned)
     if action == "pin":
@@ -244,7 +247,7 @@ def merge(config, source, target, shown=None):
     if source == target:
         raise Refused("a project cannot be merged into itself")
     shown = _shown(shown)
-    _current(config, source, target)
+    _current(config, source, target, *shown)
     assign = _table(config, "assign")
     for key, value in assign.items():
         if isinstance(value, str) and value.strip() == source and projects.from_identity(key):

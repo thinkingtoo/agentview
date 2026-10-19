@@ -68,7 +68,9 @@ the cards as the page drew them, and another tab may have changed them since.
 A request that names a project which has been moved away since (merged into
 another: its card is gone) is refused with 409 and
 nothing is written, whichever it is: a pin, an unpin, an arrow, a rename, a
-move or the guess chip, a merge, the block view's order. The page reads the
+move or the guess chip, a merge, the block view's order, and whether the name
+is in the request's project or in the list of what the page shows (`shown`;
+the block view's unpin names its block only there). The page reads the
 roster again and says "changed in another tab, refreshed". An arrow also says
 which way it goes (`side`, before or after the neighbour it names) and is
 refused unless the two are still in that order with no card the page showed

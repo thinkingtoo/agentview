@@ -1505,39 +1505,65 @@ def stale_pass(browser):
 
 
 def block_view_pass(browser):
-    """Hunt 7: the old block view of a tab that is up to date, after a session was moved by
-    hand into a project and that project was merged away. The session's block must be one the
-    view may rename, drag and drop on: the server must not call this tab behind."""
+    """Hunts 7 and 8: the old block view after a session was moved by hand into a project and
+    that project was merged away. A tab that is up to date must be able to rename, drag and drop
+    on the session's block (the server must not call it behind); a tab that is behind, which
+    clicks the star of the block that was merged away, must be told rather than answered 200
+    with nothing unpinned."""
     root = pathlib.Path(tempfile.mkdtemp(prefix="blocks-"))
     cfg = root / "config.json"
     procs = []
     stored = lambda: json.loads(cfg.read_text())
+    line = "changed in another tab, refreshed"
     try:
         proc, port = start_hand_server(root, procs)
-        refused = []
-        page = open_hand_page(browser, port, refused)
-        post = lambda path, body: page.evaluate(
+        refused_a, refused_b = [], []
+        a, b = open_hand_page(browser, port, refused_a), open_hand_page(browser, port, refused_b)
+        post = lambda page, path, body: page.evaluate(
             "([p, b]) => fetch(p, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Fleet': '1'},"
             " body: JSON.stringify(b)}).then(r => r.status)", [path, body])
-        check("blocks e2e: a session moved by hand, then its project merged away",
-              (post("/api/assign", {"key": "fake:c", "project": "folder:maple"}),
-               post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})) == (200, 200), stored())
-        page.goto(f"http://127.0.0.1:{port}/?view=blocks", wait_until="load")
-        page.wait_for_selector(".block")
-        names = page.locator(".block").evaluate_all("els => els.map(e => e.dataset.project)")
+        check("blocks e2e: a session moved by hand into maple, and maple pinned",
+              (post(a, "/api/assign", {"key": "fake:c", "project": "folder:maple"}),
+               post(a, "/api/pin", {"project": "folder:maple", "action": "pin", "shown": []})) == (200, 200), stored())
+
+        # Tab b is on the block view and behind when maple is merged away; it clicks the star of that block.
+        b.goto(f"http://127.0.0.1:{port}/?view=blocks", wait_until="load")
+        b.wait_for_selector(".block")
+        check("blocks e2e: tab b shows the block named for maple, pinned",
+              b.locator('.block.pinned[data-project="folder:maple"]').count() == 1,
+              b.locator(".block").evaluate_all("els => els.map(e => e.dataset.project + (e.classList.contains('pinned') ? '*' : ''))"))
+        hold_back(b)
+        check("blocks e2e: maple merged into orchard in the other tab",
+              post(a, "/api/merge", {"source": "folder:maple", "target": "folder:orchard", "shown": ["folder:maple"]}) == 200
+              and stored()["pinned"] == ["folder:orchard"], stored())
+        done = stored()
+        forget_note(b)
+        b.locator('.block[data-project="folder:maple"] .pin').click()
+        b.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
+        check("blocks e2e: the star of a block that was merged away is refused, and nothing is written",
+              stored() == done and len(refused_b) == 1, (stored(), refused_b))
+        check("blocks e2e: and the tab reads again: the block is named for orchard, still pinned",
+              b.locator('.block.pinned[data-project="folder:orchard"]').count() == 1
+              and b.locator('.block[data-project="folder:maple"]').count() == 0, b.locator(".block").count())
+        b.close()
+
+        # Tab a is up to date: its blocks are all ones it may rename.
+        a.goto(f"http://127.0.0.1:{port}/?view=blocks", wait_until="load")
+        a.wait_for_selector(".block")
+        names = a.locator(".block").evaluate_all("els => els.map(e => e.dataset.project)")
         check("blocks e2e: its block is named by where the project went, not by the one merged away",
               "folder:orchard" in names and "folder:maple" not in names, names)
-        block = page.locator('.block[data-project="folder:orchard"]')
-        open_editor(page, block.locator(".pname"))
-        page.locator("input.inline").fill("Orchard 2")
-        page.keyboard.press("Enter")
-        page.wait_for_function("() => !document.querySelector('input.inline')")
-        page.wait_for_timeout(500)
+        block = a.locator('.block[data-project="folder:orchard"]')
+        open_editor(a, block.locator(".pname"))
+        a.locator("input.inline").fill("Orchard 2")
+        a.keyboard.press("Enter")
+        a.wait_for_function("() => !document.querySelector('input.inline')")
+        a.wait_for_timeout(500)
         check("blocks e2e: renaming that block is accepted, and the page does not say it is behind",
-              stored().get("names") == {"folder:orchard": "Orchard 2"} and not refused
-              and "changed in another tab" not in page.locator("#stamp").inner_text(),
-              (stored(), refused))
-        page.close()
+              stored().get("names") == {"folder:orchard": "Orchard 2"} and not refused_a
+              and "changed in another tab" not in a.locator("#stamp").inner_text(),
+              (stored(), refused_a))
+        a.close()
     finally:
         for proc in procs:
             if proc.poll() is None:

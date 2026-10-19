@@ -956,6 +956,40 @@ class StaleTabs(Corrected):
     def test_the_block_views_order_names_a_project_that_was_merged_away(self):
         self.refused("/api/order", {"pinned": ["folder:pear", "folder:orchard"], "shown": []})
 
+    def test_the_block_views_unpin_from_a_tab_that_is_behind_is_refused_not_ignored(self):
+        # Hunt 8: the unpin names the block it releases only in `shown` (it is left out of `pinned`).
+        # Tab A moves a session into maple, pins maple and merges maple into orchard; tab B, still
+        # drawing the block named for maple, clicks its star: it must be told, not answered 200 with
+        # the pin the merge carried written back.
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:maple"})
+        self.pin("folder:maple")
+        self.post("/api/merge", {"source": "folder:maple", "target": "folder:orchard"})
+        after = self.stored()
+        self.assertEqual(after["pinned"], ["folder:orchard"])
+        self.assertEqual(self.post("/api/order", {"pinned": [], "shown": ["folder:maple", "maple", "orchard"]})[0], 409)
+        self.assertEqual(self.stored(), after)
+        # the same click from a tab that is up to date: the block is named for where the project went
+        self.assertEqual(self.post("/api/order", {"pinned": [], "shown": ["folder:orchard", "maple", "orchard"]})[0], 200)
+        self.assertEqual(self.stored()["pinned"], [])
+
+    def test_a_shown_that_names_a_project_merged_away_is_refused_on_every_route_that_takes_one(self):
+        # What the page says it shows is a list of names too; one that is gone means the view is old.
+        gone = ["folder:orchard"]
+        self.refused("/api/order", {"pinned": ["folder:pear"], "shown": gone})
+        self.refused("/api/pin", {"project": "folder:maple", "action": "pin", "shown": gone})
+        self.refused("/api/pin", {"project": "folder:maple", "action": "unpin", "shown": gone}, pinned=["folder:maple"])
+        self.refused("/api/merge", {"source": "folder:pear", "target": "folder:maple", "shown": gone})
+
+    def test_a_shown_of_cards_that_are_there_is_not_refused(self):
+        self.seed(**self.MERGED, pinned=["folder:maple", "folder:pear"])
+        shown = ["folder:maple", "folder:pear"]
+        for path, body in (("/api/pin", {"project": "folder:maple", "action": "swap", "with": "folder:pear",
+                                         "side": "after", "shown": shown}),
+                           ("/api/pin", {"project": "folder:pear", "action": "unpin", "shown": shown}),
+                           ("/api/order", {"pinned": ["folder:maple"], "shown": shown}),
+                           ("/api/merge", {"source": "folder:pear", "target": "folder:maple", "shown": shown})):
+            self.assertEqual(self.post(path, body)[0], 200, body)
+
     def test_a_line_names_a_session_not_a_project_and_is_not_held_back(self):
         self.seed(**self.MERGED)
         # fake:b was in the merged-away card; its line is its own.
