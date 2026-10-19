@@ -748,5 +748,56 @@ class MovedByRoute(Corrected):
         self.assertEqual(self.stored()["assign"], {"fake:c": "folder:maple"})
 
 
+class TwoTabs(Corrected):
+    """A tab that has not caught up asks for a move the other way round from one
+    already made. The page can never write a ring of moves, so the second move
+    turns the first around, the way a merge does, instead of closing a ring that
+    would put every click aimed at one card into the other."""
+
+    def test_moving_a_project_into_one_that_was_moved_into_it_turns_the_move_around(self):
+        self.seed(assign={"folder:orchard": "folder:maple"})        # the other tab's move
+        self.assertEqual(self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})[0], 200)
+        self.assertEqual(self.stored()["assign"], {"folder:maple": "folder:orchard"})
+        self.assertEqual(self.names(), ["orchard", "pear"])
+        self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:d"])
+        self.assertEqual(self.column("folder:orchard")["merged"],
+                         [{"project": "folder:maple", "name": "maple"}])
+
+    def test_the_chip_and_the_picker_of_the_card_it_landed_in_still_land_there(self):
+        # What the ring broke: a click aimed at a card put the session in the other one.
+        self.seed(assign={"folder:orchard": "folder:maple"})
+        self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:orchard"})
+        self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+
+    def test_the_move_turns_around_a_ring_of_three_as_well(self):
+        # pear into maple (one tab), orchard into pear (another), maple into orchard (a third that is behind).
+        self.seed(assign={"folder:pear": "folder:maple", "folder:orchard": "folder:pear"})
+        self.assertEqual(self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})[0], 200)
+        self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:pear", "folder:maple": "folder:orchard"})
+        self.assertEqual(self.names(), ["pear"])
+        self.assertEqual(self.keys("folder:pear"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+
+    def test_a_merge_from_a_tab_that_is_behind_does_not_close_a_ring_of_three_either(self):
+        # orchard into maple (one tab), pear into orchard (another); then maple merged into pear.
+        self.seed(assign={"folder:orchard": "folder:maple", "folder:pear": "folder:orchard"})
+        self.assertEqual(self.post("/api/merge", {"source": "folder:maple", "target": "folder:pear"})[0], 200)
+        self.assertEqual(self.stored()["assign"], {"folder:pear": "folder:orchard", "folder:maple": "folder:pear"})
+        self.assertEqual(self.names(), ["orchard"])
+        self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+
+    def test_a_move_that_closes_no_ring_leaves_the_other_moves_as_they_are(self):
+        self.seed(assign={"folder:orchard": "folder:pear", "fake:c": "folder:maple"})
+        self.post("/api/assign", {"key": "folder:maple", "project": "folder:orchard"})
+        self.assertEqual(self.stored()["assign"],
+                         {"folder:orchard": "folder:pear", "fake:c": "folder:maple", "folder:maple": "folder:orchard"})
+
+    def test_taking_a_move_back_and_moving_a_session_never_touch_the_other_moves(self):
+        self.seed(assign={"folder:orchard": "folder:maple"})
+        self.post("/api/assign", {"key": "fake:c", "project": "folder:orchard"})
+        self.post("/api/assign", {"key": "folder:pear", "project": ""})
+        self.assertEqual(self.stored()["assign"], {"folder:orchard": "folder:maple", "fake:c": "folder:orchard"})
+
+
 if __name__ == "__main__":
     unittest.main()

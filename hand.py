@@ -98,6 +98,28 @@ def rename(config, project, label):
         config["names"][project] = named["raw"]
 
 
+def _unring(config, key, target):
+    """A tab that is behind can ask to move `key` into a project that was
+    already moved into `key` -- directly, or through others: the page has never
+    written a ring of moves, and a ring puts every click aimed at one card in
+    another. The move made first is turned around: the entry that leads into
+    `key` goes, so both end where `target` ends. A merge does the same before it
+    rewrites what was moved into the project it absorbs."""
+    assign = _table(config, "assign")
+    here, seen = target, set()
+    while here not in seen:
+        seen.add(here)
+        value = assign.get(here)
+        value = value.strip() if isinstance(value, str) else ""
+        if value == key:
+            del assign[here]
+            config["assign"] = assign
+            return
+        if not value:
+            return
+        here = value
+
+
 def move(config, key, target):
     """Move a session (its key) or a whole track or repository (its identity)
     into a project. An empty target puts it back where it belongs. A move of a
@@ -108,6 +130,8 @@ def move(config, key, target):
     target = target.strip()
     if target == key:
         raise Refused("a project cannot be moved into itself")
+    if target:
+        _unring(config, key, target)
     put(config, "assign", key, target)
 
 
@@ -166,6 +190,7 @@ def merge(config, source, target, shown=None):
     if source == target:
         raise Refused("a project cannot be merged into itself")
     shown = _shown(shown)
+    _unring(config, source, target)
     assign = _table(config, "assign")
     for key, value in assign.items():
         if isinstance(value, str) and value.strip() == source and projects.from_identity(key):

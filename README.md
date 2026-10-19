@@ -63,7 +63,12 @@ undo`); a session you had moved into the absorbed project goes back there, its
 pin, name and line do not. The page tells `/api/pin`, `/api/merge` and
 `/api/order` which cards or blocks it shows (`shown`), because a pin written by
 plain name can hold two cards and a session moved by hand is a block of its own
-in the block view, and only the page knows which is which.
+in the block view, and only the page knows which is which. The page never
+writes a ring of moves (two projects moved into each other): a move or a merge
+that a tab which is behind asks for the other way round from one already made,
+or round a longer way through others, turns that one around. A ring written into `config.json` by hand is not
+supported: it neither crashes nor loops, and every session still has a card,
+but the cards swap places and a click aimed at one card can land in another.
 
 The page this README describes below is still there as the **block view**, at
 `/?view=blocks` (a link in the header goes each way). Fold,
