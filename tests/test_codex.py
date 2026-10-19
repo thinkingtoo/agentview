@@ -817,6 +817,15 @@ class Scripts(Fixture):
         self.assertEqual(self.asked("require_escalated " + "`${" * 20_000), ("busy", None))
         self.assertLess(time.monotonic() - started, 4)
 
+    def test_templates_nested_in_templates_cost_no_more_than_their_length(self):
+        # Every template's text used to be copied when it closed, whether it was used or not: the copies of a
+        # nest add up to the square of its depth, four times as much for a script with a character past Latin-1.
+        deep = "\U0001F600text(" + "`${" * 100_000 + "0" + "}`" * 100_000 + ");"
+        started = time.monotonic()
+        tokens = codex._tokens(deep)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual([kind for kind, _ in tokens][-5:], ["name", "(", "template", ")", ";"])
+
     # A key written twice is what its last value says.
 
     def test_a_key_written_again_with_a_value_that_is_no_text_is_no_text(self):

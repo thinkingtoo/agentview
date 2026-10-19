@@ -178,6 +178,13 @@ class Folded(Base):
                     self.assertNotIn("codex review", tiles["claude:s"]["movement"]["text"])
                 self.assertEqual(got["counts"]["moving"], 1)
 
+    def test_a_row_whose_id_is_not_a_text_is_dropped_and_is_no_crash(self):
+        for bad in (["x"], {"a": 1}, ("t",), 7, 1.5, None, b"x", float("nan"), {"a"}):
+            with self.subTest(id=bad):
+                got = self.tiles([starter(), {**starter(pid=150), "id": bad}], [run()])
+                self.assertEqual(list(got), ["claude:s"])
+                self.assertEqual(got["claude:s"]["movement"]["text"], "waiting on: codex review, 2 min")
+
     def test_two_sessions_with_different_ids_are_not_one(self):
         got = self.tiles([starter("a", pid=100), starter("b", pid=150)], [run(above=(200, 150))])
         self.assertEqual(sorted(got), ["claude:a", "claude:b"])

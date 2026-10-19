@@ -215,8 +215,8 @@ def _tokens(code):
                 at += 2
             elif ch == "`":
                 frames.pop()
-                body = code[frame[2] + 1:at]
-                frames[-1][0].append(("template", "") if frame[1] else ("text", _unescape(body)))
+                # (The text is cut out only when it is used: a nest of templates is a text per level.)
+                frames[-1][0].append(("template", "") if frame[1] else ("text", _unescape(code[frame[2] + 1:at])))
                 at += 1
             elif code.startswith("${", at):
                 frame[1] = 1

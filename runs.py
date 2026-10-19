@@ -82,9 +82,10 @@ def fold(pairs, now):
                 kept[(provider.name, raw["id"])] = index
     owners = {}
     for index, (provider, raw) in enumerate(pairs):
-        stays = kept.get((provider.name, raw.get("id"))) if isinstance(raw, dict) else None
-        if owns(raw) and owns(pairs[stays][1]):
-            owners.setdefault(pid_of(raw), stays)
+        if owns(raw):
+            stays = kept[(provider.name, raw["id"])]
+            if owns(pairs[stays][1]):
+                owners.setdefault(pid_of(raw), stays)
     groups = {}
     for index, (_, raw) in enumerate(pairs):
         if is_run(raw):
