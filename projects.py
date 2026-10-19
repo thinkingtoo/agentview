@@ -49,11 +49,28 @@ def from_identity(ident):
     return _project(prefix, key, _last(key) if prefix in ("repo", "client") else key)
 
 
+# Words that keep their own case, even first in a name.
+BRANDS = ("tiroir",)
+SLUG_BREAK = re.compile(r"[-_\s]+")
+
+
+def pretty(raw):
+    """A slug as words: hyphens and underscores become spaces and the first
+    letter is a capital. The brand stays lowercase."""
+    words = [w for w in SLUG_BREAK.split(raw) if w]
+    if not words:
+        return raw
+    words = [w.casefold() if w.casefold() in BRANDS else w for w in words]
+    if words[0] not in BRANDS:
+        words[0] = words[0][:1].upper() + words[0][1:]
+    return " ".join(words)
+
+
 def display_name(project, names):
-    """What the card says: your name for the project, else the raw one. Your
-    names are keyed by the project's identity, or -- as they were before
-    projects had one -- by its raw name."""
-    return names.get(project["id"]) or names.get(project["raw"]) or project["raw"]
+    """What the card says: your name for the project, exactly as you wrote
+    it, else the raw one made readable. Your names are keyed by the project's
+    identity, or -- as they were before projects had one -- by its raw name."""
+    return names.get(project["id"]) or names.get(project["raw"]) or pretty(project["raw"])
 
 
 def pin_rank(project, pinned):
