@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from providers import claude, procs
+from providers import base, claude, procs
 import test_movement_provider as mp
 from test_movement_provider import stamp, text, call, accepted
 
@@ -155,6 +155,89 @@ class Bookkeeping(Base):
         self.assertEqual(self.failure([api_error(120), sub])["kind"], "limit")
 
 
+# What Claude Code writes when the person runs a slash command or a `!` line
+# at the prompt: user records, but nothing is asked of the model (R18).
+CAVEAT = {"isMeta": True, "message": {"role": "user", "content":
+          "<local-command-caveat>Caveat: invented, the messages below were generated locally.</local-command-caveat>"}}
+NAME = "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args></command-args>"
+STDOUT = "<local-command-stdout>An invented output line</local-command-stdout>"
+
+
+def local(seconds_ago, words, **over):
+    return {"type": "user", "timestamp": stamp(seconds_ago),
+            "message": {"role": "user", "content": words}, **over}
+
+
+class LocalCommands(Base):
+    """R18: a slash command run locally leaves the error where it is; what the
+    person sends to the model, or what the model is sent, clears it."""
+
+    def test_the_caveat_alone_leaves_the_error_there(self):
+        got = self.failure([api_error(120), {"type": "user", "timestamp": stamp(60), **CAVEAT}])
+        self.assertEqual(got and got["kind"], "limit")
+
+    def test_the_caveat_the_command_and_its_output_together_leave_it_there(self):
+        tail = [{"type": "user", "timestamp": stamp(60), **CAVEAT},
+                local(59, NAME), local(58, STDOUT)]
+        got = self.failure([text(300), api_error(120)] + tail)
+        self.assertEqual(got and got["kind"], "limit")
+
+    def test_the_same_records_in_list_form_leave_it_there(self):
+        def part(words):
+            return {"type": "user", "timestamp": stamp(50), "message": {"role": "user", "content": [{"type": "text", "text": words}]}}
+        got = self.failure([api_error(120), part(NAME), part(STDOUT)])
+        self.assertEqual(got and got["kind"], "limit")
+
+    def test_the_command_message_alone_leaves_it_there(self):
+        got = self.failure([api_error(120, "server_error", None, "An invented failure", None),
+                            local(60, "<command-message>model</command-message>")])
+        self.assertEqual(got and got["kind"], "error")
+
+    def test_a_shell_line_typed_at_the_prompt_leaves_it_there(self):
+        tail = [local(60, "<bash-input>ls</bash-input>"), local(59, "<bash-stdout>an invented line</bash-stdout><bash-stderr></bash-stderr>")]
+        got = self.failure([api_error(120)] + tail)
+        self.assertEqual(got and got["kind"], "limit")
+
+    def test_leading_blank_space_does_not_change_what_the_record_is(self):
+        got = self.failure([api_error(120), local(60, "\n  " + NAME)])
+        self.assertEqual(got and got["kind"], "limit")
+
+    def test_a_skills_command_message_then_its_expanded_prompt_clears_it(self):
+        # The skill is the person asking the model: the expanded prompt is the turn.
+        tail = [local(60, NAME), local(59, "Base directory for this skill: /invented\n\nDo the invented thing.", isMeta=True)]
+        self.assertIsNone(self.failure([api_error(120)] + tail))
+
+    def test_a_command_then_a_prompt_typed_clears_it(self):
+        self.assertIsNone(self.failure([api_error(120), local(60, NAME), local(59, STDOUT), prompt(30)]))
+
+    def test_each_thing_sent_to_the_model_clears_it(self):
+        for words in ("carry on",
+                      "<task-notification>an invented job finished</task-notification>",
+                      '<teammate-message teammate_id="peer">an invented message</teammate-message>',
+                      "Your usage limit has reset. Invented, carry on.",
+                      "a prompt that only mentions <command-name> half way through"):
+            with self.subTest(words=words[:30]):
+                self.assertIsNone(self.failure([api_error(120), local(60, words)]))
+
+    def test_a_tool_result_in_list_form_is_not_a_local_command(self):
+        result = {"type": "user", "timestamp": stamp(60),
+                  "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": STDOUT}]}}
+        self.assertIsNone(self.failure([api_error(120), result]))
+
+    def test_a_local_command_written_before_the_error_changes_nothing(self):
+        got = self.failure([local(300, NAME), api_error(120)])
+        self.assertEqual(got and got["kind"], "limit")
+
+    def test_a_local_command_does_not_clear_an_error_written_later_to_the_file(self):
+        self.session([text(300), api_error(120)])
+        with self.transcript.open("a") as fh:
+            fh.write(json.dumps(local(30, NAME)) + "\n")
+        self.assertEqual(self.live()[0]["failure"]["kind"], "limit")
+        with self.transcript.open("a") as fh:
+            fh.write(json.dumps(prompt(1)) + "\n")
+        self.assertIsNone(self.live()[0]["failure"])
+
+
 class MovingOn(Base):
     def test_a_prompt_typed_after_the_error_clears_it(self):
         self.assertIsNone(self.failure([api_error(120), prompt(60)]))
@@ -193,7 +276,7 @@ class MovingOn(Base):
 class Bounds(Base):
     def test_what_an_error_says_is_cut_to_what_a_tile_holds(self):
         got = self.failure([api_error(60, words="w" * 5000)])
-        self.assertLessEqual(len(got["text"]), claude.FAILURE_LEN)
+        self.assertLessEqual(len(got["text"]), base.FAILURE_LEN)
         self.assertGreater(len(got["text"]), 0)
 
     def test_an_error_with_no_words_has_empty_text(self):
@@ -307,6 +390,49 @@ class ProcsUnknown(Base):
         self.shell()
         self.live()
         self.assertFalse(self.live()[0]["procsUnknown"])
+
+
+class CpuAgo(Base):
+    """The provider says when CPU was last seen moving, not only whether it moves
+    now: Hung counts silence from the last sign of life, and CPU a minute ago is one."""
+
+    def burning(self):
+        self.session([call(1800)], status="busy")
+        worker = self.shell()
+        self.live()                       # the baseline
+        return worker
+
+    def test_a_session_nothing_was_looked_at_for_has_no_time(self):
+        self.session([text(60)], status="idle")
+        self.assertIsNone(self.live()[0]["shellCpuAgo"])
+
+    def test_cpu_that_was_never_seen_moving_has_no_time(self):
+        self.burning()
+        got = self.live()[0]
+        self.assertEqual((got["shellCpu"], got["shellCpuAgo"]), (False, None))
+
+    def test_cpu_moving_now_is_nought_minutes_ago(self):
+        worker = self.burning()
+        self.fake.burn(worker, 900)
+        got = self.live()[0]
+        self.assertTrue(got["shellCpu"])
+        self.assertAlmostEqual(got["shellCpuAgo"], 0.0, delta=0.1)
+
+    def test_cpu_that_moved_five_minutes_ago_says_so_while_it_is_not_moving_now(self):
+        worker = self.burning()
+        self.fake.burn(worker, 900)
+        self.live()
+        shells = self.provider.shells
+        shells.cpu_seen[100] -= 300          # five minutes pass: the flicker guard is long over
+        shells.cpu_at.pop(100)
+        got = self.live()[0]
+        self.assertFalse(got["shellCpu"])
+        self.assertAlmostEqual(got["shellCpuAgo"], 5.0, delta=0.1)
+
+    def test_a_session_whose_processes_could_not_be_read_has_no_time(self):
+        self.session([call(900)], status="busy")
+        (self.fake.root / "100" / "task" / "100" / "children").unlink()
+        self.assertIsNone(self.live()[0]["shellCpuAgo"])
 
 
 class Unreadable(Base):

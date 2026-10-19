@@ -141,5 +141,41 @@ class Capabilities(unittest.TestCase):
         self.assertEqual(row["flag"], "waiting")
 
 
+class Shared(unittest.TestCase):
+    """The two small checks every provider field goes through: a time, and a
+    whole number. One copy each, used by the reader and by the core."""
+
+    def test_a_whole_number_is_one_and_a_bool_is_not(self):
+        from providers import base
+        for good in (0, 5, -3, 10 ** 30):
+            self.assertEqual(base.whole_number(good), good)
+        for junk in (True, False, 1.5, 2.0, "5", None, [5], float("nan")):
+            with self.subTest(junk=junk):
+                self.assertIsNone(base.whole_number(junk))
+
+    def test_a_time_in_milliseconds_is_a_positive_number_below_the_year_5000(self):
+        from providers import base
+        self.assertEqual(base.milliseconds(1792263600000), 1792263600000)
+        self.assertEqual(base.milliseconds(1792263600000.9), 1792263600000)
+        for junk in (True, "tomorrow", None, [1], {"a": 1}, 0, -5, float("nan"), float("inf"),
+                     base.MAX_MS, 10 ** 30, 10 ** 400):
+            with self.subTest(junk=junk):
+                self.assertIsNone(base.milliseconds(junk))
+
+    def test_a_time_in_seconds_comes_back_in_milliseconds(self):
+        from providers import base
+        self.assertEqual(base.milliseconds(1792263600, seconds=True), 1792263600000)
+        self.assertEqual(base.milliseconds(1792263600.5, seconds=True), 1792263600500)
+        for junk in (True, "x", 0, -1, float("inf"), 10 ** 12, 10 ** 400):
+            with self.subTest(junk=junk):
+                self.assertIsNone(base.milliseconds(junk, seconds=True))
+
+    def test_the_cut_of_what_an_error_says_has_one_number(self):
+        import fleet
+        from providers import base, claude
+        self.assertEqual(fleet.FAILURE_LEN, base.FAILURE_LEN)
+        self.assertFalse(hasattr(claude, "FAILURE_LEN"))
+
+
 if __name__ == "__main__":
     unittest.main()

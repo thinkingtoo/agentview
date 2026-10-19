@@ -33,6 +33,11 @@ FORGET = STALE * 6
 # sign on the tile should not blink with it.
 GRACE = 15.0
 
+# How long it is remembered that CPU moved at all, for `cpu_ago`. The core
+# counts a command as a sign of life for six hours at most (`WAIT_MAX_MINUTES`),
+# so what happened before that is never asked about.
+CPU_MEMORY = 6 * 3600.0
+
 
 def _read(path):
     try:
@@ -103,6 +108,7 @@ class Shells:
         self.proc = proc
         self.last = {}          # (pid, start time) -> (ticks, when looked)
         self.cpu_at = {}        # session pid -> when CPU was last seen moving
+        self.cpu_seen = {}      # the same, kept for CPU_MEMORY: `cpu_at` is the flicker guard
 
     def look(self, pid, now=None):
         """{"shells": how many commands it is running, "cpu": whether any of
@@ -143,7 +149,20 @@ class Shells:
                      if now - value[1] <= FORGET}
         if moved:
             self.cpu_at[pid] = now
+            self.cpu_seen[pid] = now
         self.cpu_at = {p: t for p, t in self.cpu_at.items() if now - t <= GRACE}
+        self.cpu_seen = {p: t for p, t in self.cpu_seen.items() if now - t <= CPU_MEMORY}
         tasks = [t for t in (_task_of(self.proc, shell) for shell in shells) if t]
         cpu = True if pid in self.cpu_at else (False if based else None)
         return {"shells": len(shells), "cpu": cpu, "tasks": tasks}
+
+    def cpu_ago(self, pid, now=None):
+        """Minutes since a look saw CPU moving under this session, or None when
+        none did (or not for `CPU_MEMORY`). `look` says whether it moves now;
+        this says how long ago it last did, for a session that has gone quiet.
+        Kept apart from `look`, whose answer is exactly three keys."""
+        seen = self.cpu_seen.get(pid)
+        if seen is None:
+            return None
+        now = time.time() if now is None else now
+        return max(0.0, (now - seen) / 60)

@@ -13,7 +13,6 @@ the session runs inside its own turn; the core reads them by session id.
 import collections
 import datetime
 import json
-import math
 import os
 import re
 import stat
@@ -291,25 +290,32 @@ def _tasks(state, rec):
                 tasks.pop(task.group(1), None)
 
 
-# What an API error says, as much as a tile holds.
-FAILURE_LEN = 200
-
-# Seconds since 1970 that can be a time: a positive, finite number below the
-# year 5000. Anything else in a reset-time field is not one.
-MAX_EPOCH = 95_000_000_000
-
-
-def _reset_ms(value):
-    """A reset time (seconds since 1970) as milliseconds, or None if it is not one."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if not math.isfinite(value) or not 0 < value < MAX_EPOCH:
-        return None
-    return int(value * 1000)
-
-
 def _dict(value):
     return value if isinstance(value, dict) else {}
+
+
+# What Claude Code writes when the person runs a slash command, or a `!` shell
+# line, at the prompt: user records, but nothing is asked of the model.
+LOCAL_RECORDS = ("<local-command-caveat>", "<local-command-stdout>", "<local-command-stderr>",
+                 "<command-name>", "<command-message>",
+                 "<bash-input>", "<bash-stdout>", "<bash-stderr>")
+
+
+def _first_words(rec):
+    """The text of a user record: its string, or the first text part of a list."""
+    content = _dict(rec.get("message")).get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                return part["text"]
+    return ""
+
+
+def _local(rec):
+    """Is this user record only the person using Claude Code's own commands?"""
+    return rec.get("type") == "user" and _first_words(rec).lstrip().startswith(LOCAL_RECORDS)
 
 
 def _failure(state, rec):
@@ -319,11 +325,13 @@ def _failure(state, rec):
     record and cleared by any other: a prompt typed, a message sent to it, the
     session resuming by itself, an answer. Records Claude Code writes on its own
     after an error (a turn duration, a title, a queued line, a snapshot) are not
-    the session moving on, and a subagent's records are not the session's.
+    the session moving on, and neither is a user record that asks the model
+    nothing (a slash command run locally, a `!` line): the model has not been
+    called again. A subagent's records are not the session's.
     Claude Code marks the error itself (`isApiErrorMessage`) and names it
     (`error`); a rate limit also carries the quota, with the reset time.
     """
-    if rec.get("type") not in ("user", "assistant") or rec.get("isSidechain"):
+    if rec.get("type") not in ("user", "assistant") or rec.get("isSidechain") or _local(rec):
         return
     if rec.get("type") != "assistant" or rec.get("isApiErrorMessage") is not True:
         state["failure"] = None
@@ -335,15 +343,15 @@ def _failure(state, rec):
                  "") if isinstance(content, list) else ""
     seconds = _seconds_of(rec.get("timestamp"))
     quota = _dict(rec.get("quotaLimits")).get("resetsAt")
-    if _reset_ms(quota) is None:
+    if base.milliseconds(quota, seconds=True) is None:
         quota = _dict(_dict(rec.get("apiErrorParams")).get("rate_limit_info")).get("resetsAt")
     state["failure"] = {
         "kind": "limit" if name == "rate_limit" else "error",
         "type": name if isinstance(name, str) else "",
-        "status": status if isinstance(status, int) and not isinstance(status, bool) else None,
-        "text": words if len(words) <= FAILURE_LEN else words[:FAILURE_LEN - 1].rstrip() + "…",
+        "status": base.whole_number(status),
+        "text": words if len(words) <= base.FAILURE_LEN else words[:base.FAILURE_LEN - 1].rstrip() + "…",
         "at": None if seconds is None else int(seconds * 1000),
-        "resetsAt": _reset_ms(quota)}
+        "resetsAt": base.milliseconds(quota, seconds=True)}
 
 
 def _blank_state():
@@ -406,15 +414,13 @@ def _absorb(state, text):
             if not isinstance(part, dict):
                 continue
             if part.get("type") == "tool_use":
+                called, kept = part.get("name") or "", _kept(part.get("input"), part.get("name") or "")
                 if part.get("id"):
-                    state["uses"][part["id"]] = (
-                        rec.get("timestamp"), part.get("name") or "",
-                        _kept(part.get("input"), part.get("name") or ""), mid)
+                    state["uses"][part["id"]] = (rec.get("timestamp"), called, kept, mid)
                 # The newest call the session itself made, answered or not.
                 if (kind == "assistant" and not rec.get("isSidechain")
                         and _seconds_of(rec.get("timestamp")) is not None):
-                    state["tool"] = (rec["timestamp"], part.get("name") or "",
-                                     _kept(part.get("input"), part.get("name") or ""))
+                    state["tool"] = (rec["timestamp"], called, kept)
                 # Who it works with: every peer it has messaged. `to` is
                 # the address -- a name, sometimes with a disambiguating ref.
                 if part.get("name") == "SendMessage":
@@ -772,19 +778,29 @@ def _processes(rec, summary, status, shells):
     no notice (the session was resumed, say) is not running, and another
     command's shell does not make it so.
 
-    The third answer is whether `/proc` could not say: it would not answer, or
-    this is the first look at a command and there is nothing to compare its CPU
-    with. Then "no CPU" is not "uses none", and a caller that wants to call the
-    session hung must wait for a look that can tell.
+    `unread` is whether `/proc` could not say: it would not answer, or this is
+    the first look at a command and there is nothing to compare its CPU with.
+    Then "no CPU" is not "uses none", and a caller that wants to call the
+    session hung must wait for a look that can tell. `cpu_ago` is how many
+    minutes ago CPU was last seen moving, whether or not it moves now.
     """
+    none = {"tasks": [], "cpu": False, "cpu_ago": None, "unread": False}
     tasks = summary["tasks"]
     if shells is None or not rec.get("pid") or not (
             tasks or (status == "busy" and summary["pending"] is not None)):
-        return [], False, False
+        return none
     seen = shells.look(rec["pid"])
     if seen is None:
-        return [], False, True
-    return [t for t in tasks if t["id"] in seen["tasks"]], seen["cpu"] is True, seen["cpu"] is None
+        return {**none, "unread": True}
+    return {"tasks": [t for t in tasks if t["id"] in seen["tasks"]], "cpu": seen["cpu"] is True,
+            "cpu_ago": shells.cpu_ago(rec["pid"]), "unread": seen["cpu"] is None}
+
+
+# The one word Claude Code uses for a `waiting` session that is not asking the
+# person anything: a menu or panel they opened themselves. Every other word it
+# writes (input needed, permission prompt, sandbox request, worker request,
+# goal proposal) waits on an answer or an approval.
+MENUS = ("dialog open",)
 
 
 def asking_of(status, waiting_for, calls):
@@ -799,7 +815,10 @@ def asking_of(status, waiting_for, calls):
     (`questions` empty), and fills in on the read that does. A permission
     prompt is Claude Code's own `permission prompt`, about the oldest call
     still waiting -- a running call is not one, and a menu (`dialog open`) is
-    neither.
+    neither. Any other word it names is a request waiting on the person (a
+    sandbox asking for the network, a teammate's worker, a goal it proposes),
+    and is told by that word; a word this reader has not met is one too, since
+    Claude Code only says `waiting` when it waits on someone.
     """
     if status != "waiting":
         return None
@@ -809,7 +828,8 @@ def asking_of(status, waiting_for, calls):
     if waiting_for == "input needed":
         return {"kind": "question", "questions": []}
     if waiting_for != "permission prompt":
-        return None
+        word = waiting_for.strip() if isinstance(waiting_for, str) else ""
+        return {"kind": "request", "what": word} if word and word not in MENUS else None
     name, inp = calls[0] if calls else ("", {})
     target = inp.get(TARGET.get(name, ""))
     return {"kind": "permission", "tool": name,
@@ -842,7 +862,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
     routine = routine_of(rec, cfg)
     track = boss_marker(sid, cfg)
     boss = track is not None
-    background, cpu, unread = _processes(rec, summary, status, shells)
+    under = _processes(rec, summary, status, shells)
     return {
         "id": sid,
         "name": rec.get("name") or "(unnamed)",
@@ -886,9 +906,10 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # tasks with a live shell behind them, and CPU under a shell.
         "writes": summary["writes"],
         "subQuiet": summary["subQuiet"],
-        "bgTasks": background,
-        "shellCpu": cpu,
-        "procsUnknown": unread,
+        "bgTasks": under["tasks"],
+        "shellCpu": under["cpu"],
+        "shellCpuAgo": under["cpu_ago"],
+        "procsUnknown": under["unread"],
         # An API error as the newest thing the session said, and the last
         # call it made: what Limit, Error and Hung are told from.
         "failure": summary["failure"],
