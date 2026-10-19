@@ -62,9 +62,9 @@ class LookingIsNotReading(Pill):
         (tile,) = self.column()["sessions"]
         self.assertEqual((tile["stop"], tile["unread"]), (LONG_AGO, True))
 
-    def test_a_click_in_the_block_view_does_not_read_the_handover(self):
-        # The block view posts the key alone, and shows the last prompt of a row
-        # that is not ready, not the handover: the chime is told, nothing is read.
+    def test_a_click_that_names_no_stop_does_not_read_the_handover(self):
+        # A look that names no stop (a tab from before the overview) posts the key
+        # alone: the chime is told, nothing is read.
         self.assertEqual(self.post({"key": KEY}, path="/api/seen"), (200, {"ok": True}))
         self.assertEqual((seen.load().get(KEY), finished.load()["read"]), (LONG_AGO, {}))
         (tile,) = self.column()["sessions"]

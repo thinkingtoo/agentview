@@ -498,7 +498,7 @@ def overview_pass(browser):
     check("one column per project", cols() == 3, cols())
     check("columns in the order the server sent, not a sort",
           names() == ["pmd", "maple", "No project"], names())
-    check("the routine block is not a column", "Routines" not in names())
+    check("a routine is not a column", "Routines" not in names())
     check("sessions in the order the server sent",
           page.locator('.ov-col[data-project="maple"] .tile').evaluate_all("els => els.map(e => e.dataset.sid)")
           == ["m1", "m2", "m3", "m4", "m5"])

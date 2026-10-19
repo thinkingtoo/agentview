@@ -922,9 +922,10 @@ project and lives forever.
 A session registered as a boss by the claude-boss plugin coordinates other
 sessions and does no implementation work itself. On the overview it **leads its
 column** whatever the activity and carries a `boss` tag. The team it dispatches
-to is known to the server (`team` on the session, never shown as nesting: a
-tile belongs to the column of its own project) and decides one thing, that a
-worker listed under a boss sorts right after it when they share a column.
+to is worked out too (below) but not drawn: a tile belongs to the column of its
+own project, the boss first and the rest by what wants you, then what is ready,
+then what is working, newest first. The team only settles the order of two
+sessions that tie.
 
 Neither fact is a guess:
 

@@ -42,7 +42,7 @@ def _pins(config):
 
 
 def _shown(shown):
-    """What the page says it shows -- project identities or block names -- or
+    """What the page says it shows -- project identities or plain names -- or
     nothing, for a caller that does not say."""
     if shown is None:
         return []

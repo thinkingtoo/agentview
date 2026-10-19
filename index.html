@@ -365,7 +365,7 @@ header button { white-space: nowrap; }
 <div id="found" hidden></div>
 <main id="main" class="ov"><div class="empty">loading…</div></main>
 <script>
-let COLUMNS = [];           // and its `columns`, which the overview prints as they come
+let COLUMNS = [];           // the roster's `columns`, which the overview prints as they come
 let SHOWN = [];             // the columns painted now: the filter may hide some of them
 let CHIME = true;           // does a session that starts waiting ring?
 let WAITING = null;         // who was waiting last poll -- null before the first
@@ -612,8 +612,7 @@ function nothing() {
 // going into text positions through esc() -- a name or a line is whatever a
 // session called itself, and never markup.
 function filteredColumns(cols) {
-  // The same rule as the block filter: from three characters, and a project
-  // that matches keeps all its sessions.
+  // From three characters, and a project that matches keeps all its sessions.
   const q = query.trim().toLowerCase();
   if (q.length < 3) return cols;
   const hit = s => String(s || "").toLowerCase().includes(q);
@@ -1099,7 +1098,6 @@ document.getElementById("main").addEventListener("click", ev => {
   // Read everything off the cell now: the field replaces it, and by the time
   // the edit is committed neither is still in the document.
   const project = cell.closest("section")?.dataset.project;
-  const sid = cell.dataset.sid;
   const before = cell.dataset.value !== undefined ? cell.dataset.value
     : cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
   const input = document.createElement("input");
@@ -1117,12 +1115,10 @@ document.getElementById("main").addEventListener("click", ev => {
     // and this one is the reason it was asked to redraw.
     input.remove();
     if (commit && input.value.trim() !== before) {
-      const endpoint = { name: "/api/name", assign: "/api/assign", context: "/api/context" }[kind];
+      const endpoint = { name: "/api/name", context: "/api/context" }[kind];
       const body = kind === "name"
         ? { project, label: input.value }
-        : kind === "context"
-          ? { project, text: input.value }
-          : { key: sid, project: input.value };
+        : { project, text: input.value };
       const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Fleet": "1" },

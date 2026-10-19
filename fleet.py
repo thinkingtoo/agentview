@@ -870,7 +870,7 @@ def _column_name(project, names):
 
 def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines, finished_after):
     # A boss leads its column, whatever the activity: who leads before who
-    # works. The rest are in the order `members` gives.
+    # works. The rest go by `order_members`; a tie keeps the order `members` gave.
     rows = order_members(list(rows))
     rows.sort(key=lambda s: not s["boss"])
     name = _column_name(project, names)

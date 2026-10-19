@@ -244,7 +244,7 @@ class OldConfig(TrackFixtures):
 
 class Landed(unittest.TestCase):
     """`projects.landed`: the project a session you moved is in once the moves of
-    whole projects are followed (what the block view names its block after)."""
+    whole projects are followed (what the page names a session's column after)."""
 
     def test_it_follows_the_moves_of_whole_projects_to_the_end(self):
         assigned = {"fake:c": "folder:maple", "folder:maple": "folder:orchard", "folder:orchard": "folder:pear"}
@@ -592,7 +592,7 @@ class Merges(Corrected):
 
     def test_a_config_edited_by_hand_into_the_wrong_shapes_does_not_break_a_merge(self):
         # `assign`, `names`, `project_lines` that are not tables, and pins that are not strings
-        # (not unhashable ones: the block view's own ordering does not take those).
+        # (not unhashable ones: `members()` keys the pin order by name, as the block order did).
         for damage in ({"assign": [], "names": 5, "project_lines": None, "pinned": [None, 3, "folder:orchard"]},
                        {"assign": None, "pinned": "folder:orchard"},
                        {"assign": {"fake:z": 7, "folder:pear": ["folder:orchard"]}, "pinned": [7]}):
@@ -699,8 +699,8 @@ class OneNameTwoCards(Corrected):
         self.assertEqual(self.order(), ["track:maple", "folder:maple", "folder:orchard"])
 
     def test_the_arrow_swaps_two_cards_that_share_a_pin_when_one_is_also_pinned_by_identity(self):
-        # The block view can leave `["maple", "track:maple"]`: the page shows both cards
-        # at the place of the first pin.
+        # A pin written by plain name can leave `["maple", "track:maple"]`: the page shows both
+        # cards at the place of the first pin.
         self.seed(pinned=["maple", "folder:orchard", "track:maple"], assign={"fake:c": "track:maple"})
         self.assertEqual(self.order(), ["track:maple", "folder:maple", "folder:orchard"])
         self.pin("track:maple", "swap", **{"with": "folder:maple", "shown": self.shown})

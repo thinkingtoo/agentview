@@ -1,6 +1,6 @@
-"""Who leads a project block.
+"""Who leads a project's column.
 
-A block of five where the third row is the one asking makes you read all
+A column of five where the third tile is the one asking makes you read all
 five. What wants you goes first.
 """
 import sys
