@@ -280,7 +280,10 @@ again, and it shrinks again after the next two hours idle.
 the session said, in quotes, and an "unread" tag (a session that said nothing has
 the tag and no quote: "no words" may be a transcript that could not be read, so it
 too wants a look before it is forgotten). A jump that reached the
-terminal, or a click on a tile that has none, reads it. What is remembered is not
+terminal, or a click on a tile that has none, reads it -- the click names the stop
+the tile showed (`POST /api/seen {key, stop}`), and only that stop is read: a
+session that stopped again since the page's last poll has a handover the page never
+showed. What is remembered is not
 "you saw this session" but *the stop you read*, so a session that works and stops
 again has a handover nobody has read. This is `finished.json` in the state folder,
 beside `seen.json`, and it is a separate fact from the chime's seen mark. **The
@@ -289,7 +292,9 @@ they say a row was clicked (a jump that failed used to write one too), and the o
 row did not put what the session said in front of you. They keep driving the chime
 and the `ready` flag exactly as before; a session whose only mark is one of those
 stays a full tile, with its handover shown, until it is looked at once in the
-overview. `fleet.mark_seen` writes both, so a click is enough.
+overview. The block view's own click on a row with no terminal (`/api/seen {key}`,
+no stop) tells the chime and reads nothing: that row shows the last prompt, not the
+handover. `fleet.mark_seen` writes both for a jump that reached the terminal.
 
 **Pin.** The pin button on a pill keeps it open as a full tile until you unpin it
 or the session closes (`POST /api/keep {key, pinned}`; only a live session can be

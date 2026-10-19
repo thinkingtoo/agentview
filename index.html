@@ -1272,7 +1272,7 @@ function pill(p) {
   const can = via === "pane" || via === "attach";
   const tags = (p.tags || []).map(g => `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
   return `<div class="pill ${can ? "can" : ""}${lightOf(p)}" data-sid="${esc(p.key)}" title="${esc(p.line)}">
-    <span class="dot"></span><span class="nm">${esc(p.name)}</span>${tags}<span class="for">${esc(p.idle?.text)}</span>${pinButton(p)}${jumpLabel(p, via)}
+    <span class="dot"></span><span class="nm">${esc(p.name || named(p))}</span>${tags}<span class="for">${esc(p.idle?.text)}</span>${pinButton(p)}${jumpLabel(p, via)}
   </div>`;
 }
 
@@ -1461,7 +1461,9 @@ document.getElementById("main").addEventListener("click", async ev => {
       const p = COLUMNS.flatMap(c => c.pills || []).find(x => x.key === el.dataset.sid);
       return say(el.dataset.sid, p?.jump?.reason || "no terminal", false);
     }
-    post("/api/seen", { key: el.dataset.sid }).then(load).catch(() => {});
+    // With the stop whose handover the tile showed: only that one is read.
+    const tile = COLUMNS.flatMap(c => c.sessions || []).find(x => x.key === el.dataset.sid);
+    post("/api/seen", { key: el.dataset.sid, stop: tile?.stop }).then(load).catch(() => {});
     return;
   }
   el.classList.remove("jumped", "failed");

@@ -25,8 +25,15 @@ class Pill(ClickServer):
         self.background(statusUpdatedAt=LONG_AGO)
 
     def read_it(self):
-        """You looked at it, as the page's click on a tile without a terminal does."""
-        self.assertEqual(self.post({"key": KEY}, path="/api/seen"), (200, {"ok": True}))
+        """You looked at it, as the page's click on a tile without a terminal does:
+        with the stop its tile showed."""
+        self.assertEqual(self.post({"key": KEY, "stop": LONG_AGO}, path="/api/seen"), (200, {"ok": True}))
+
+    def stop_again(self):
+        """The session has stopped again, a minute after the stop the page
+        showed: the page's poll is behind the registry."""
+        rec = self.cfg / "sessions" / "10.json"
+        rec.write_text(json.dumps({**json.loads(rec.read_text()), "statusUpdatedAt": LONG_AGO + 60_000}))
 
     def keys(self, part):
         return [t["key"] for t in self.column()[part]]
@@ -47,6 +54,42 @@ class Reading(Pill):
         self.assertEqual(pill["jump"], {"via": "attach"})
 
 
+class LookingIsNotReading(Pill):
+    """R19, found by the Opus hunt: a handover is read only where it was shown,
+    and only the stop the page showed."""
+
+    def test_the_tile_says_which_stop_it_shows(self):
+        (tile,) = self.column()["sessions"]
+        self.assertEqual((tile["stop"], tile["unread"]), (LONG_AGO, True))
+
+    def test_a_click_in_the_block_view_does_not_read_the_handover(self):
+        # The block view posts the key alone, and shows the last prompt of a row
+        # that is not ready, not the handover: the chime is told, nothing is read.
+        self.assertEqual(self.post({"key": KEY}, path="/api/seen"), (200, {"ok": True}))
+        self.assertEqual((seen.load().get(KEY), finished.load()["read"]), (LONG_AGO, {}))
+        (tile,) = self.column()["sessions"]
+        self.assertEqual((tile["key"], tile["unread"], self.keys("pills")), (KEY, True, []))
+
+    def test_a_click_on_a_tile_reads_the_stop_it_showed_and_tells_the_chime_too(self):
+        self.read_it()
+        self.assertEqual((seen.load().get(KEY), finished.load()["read"]), (LONG_AGO, {KEY: LONG_AGO}))
+
+    def test_a_stop_the_page_never_showed_is_not_read(self):
+        # The page showed the stop at LONG_AGO; the session worked and stopped
+        # again before the click, with a handover nobody has seen.
+        self.stop_again()
+        self.assertEqual(self.post({"key": KEY, "stop": LONG_AGO}, path="/api/seen"), (200, {"ok": True}))
+        self.assertEqual(finished.load()["read"], {})
+        (tile,) = self.column()["sessions"]
+        self.assertEqual((tile["unread"], tile["stop"], self.keys("pills")), (True, LONG_AGO + 60_000, []))
+
+    def test_a_stop_that_is_not_a_whole_number_is_refused_and_marks_nothing(self):
+        for stop in ("soon", True, 1.5, [LONG_AGO], {"a": 1}):
+            with self.subTest(stop=stop):
+                self.assertEqual(self.post({"key": KEY, "stop": stop}, path="/api/seen")[0], 400)
+        self.assertEqual((seen.load(), finished.load()["read"]), ({}, {}))
+
+
 class JumpFromAPill(Pill):
     """R4: a failed jump from a pill must not mark anything seen."""
 
@@ -65,12 +108,6 @@ class JumpFromAPill(Pill):
         self.assertEqual((status, done["ok"], done["reason"]), (200, False, "wezterm cli spawn failed"))
         self.assertEqual(self.marks(), before)
         self.assertEqual(self.keys("pills"), [KEY])
-
-    def stop_again(self):
-        """By the time of the click the session has stopped again, a minute after
-        the stop the pill showed: the page's poll is behind the registry."""
-        rec = self.cfg / "sessions" / "10.json"
-        rec.write_text(json.dumps({**json.loads(rec.read_text()), "statusUpdatedAt": LONG_AGO + 60_000}))
 
     def test_a_click_that_only_waited_for_a_tab_marks_nothing_either(self):
         self.read_it()

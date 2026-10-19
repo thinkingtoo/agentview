@@ -304,10 +304,12 @@ class Handler(BaseHTTPRequestHandler):
     def _seen(self, body):
         """You looked. That is all a click on a row without a terminal means,
         and it is enough: the tick goes, the count comes down."""
-        key = body.get("key")
-        if not isinstance(key, str):
-            return self.send_error(400, "expected {key}")
-        if not fleet.look(key):
+        key, stop = body.get("key"), body.get("stop")
+        # `stop` is the overview's tile saying which stop's handover it showed;
+        # the block view sends none, and reads nothing.
+        if not isinstance(key, str) or (stop is not None and (isinstance(stop, bool) or not isinstance(stop, int))):
+            return self.send_error(400, "expected {key, stop?}")
+        if not fleet.look(key, stop):
             return self.send_error(404, "no such live session")
         self._send(json.dumps({"ok": True}), "application/json")
 

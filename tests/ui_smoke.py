@@ -682,11 +682,12 @@ def overview_pass(browser):
     page.close()
 
 
-def P(key, name, minutes, line="", via="pane", why="", tags=()):
+def P(key, name, minutes, line="", via="pane", why="", tags=(), provider=""):
     """A finished session as the server sends it: one line at the foot of a column."""
     jump = {"via": via} if via != "none" else {"via": "none", "reason": why or "no terminal"}
     text = f"{minutes // 60} h" if minutes >= 60 else f"{minutes} min"
-    return {"key": key, "name": name, "tags": list(tags), "idle": {"since": float(minutes), "text": text},
+    return {"key": key, "name": name, "provider": provider, "tags": list(tags),
+            "idle": {"since": float(minutes), "text": text},
             "line": line, "jump": jump, "find": f"{name}\n{line}".lower()}
 
 
@@ -697,6 +698,9 @@ def with_pills(got, project, pills):
     return got
 
 
+STOP = 1790000000000          # the stop a tile's handover belongs to, as the server stamps it
+
+
 def finished_fixture():
     got = roster([
         ("maple", "maple", [
@@ -704,15 +708,16 @@ def finished_fixture():
             S("m2", "Mei", "idle", line="Release notes")]),
         ("orchard", "orchard", [S("o1", "Odile", "idle", moving=True, mv="waiting on: Run the tests, 5 min")]),
         ("delta", "delta", []),
-        ("harbor", "harbor", [S("k1", "Kasper", "idle", line="Tide table review")])])
+        ("harbor", "harbor", [S("k1", "Kasper", "idle", line="Tide table review", can=False)])])
     got["columns"][0]["sessions"][1].update(
         unread=True, handover="Release notes drafted; the docs page links to it.")
-    got["columns"][3]["sessions"][0].update(unread=True, handover=BOMB)
+    got["columns"][3]["sessions"][0].update(unread=True, handover=BOMB, stop=STOP)
     for c in got["columns"]:
         c.setdefault("pills", [])
     got["columns"][0]["pills"] = [
         P("p1", "Femi", 180, line="Saved-card form", tags=["boss"]),
-        P("p2", "Gus", 130, via="none", why="attached, but in no window that can be raised")]
+        P("p2", "Gus", 130, via="none", why="attached, but in no window that can be raised"),
+        P("c1", "", 200, line="Index cleanup", provider="codex")]
     got["columns"][2]["pills"] = [P("d1", "Hanne", 600, line="Nightly rebuild"), P("d2", "Ilse", 400)]
     got["columns"][3]["pills"] = [P("h1", BOMB, 300, line=ATTR, tags=[BOMB])]
     return got
@@ -814,7 +819,7 @@ def finished_pass(browser):
           and col("delta").locator(".pill .nm").inner_text() == "Hanne", page.locator(".ov-col").count())
     page.fill("#q", "")
     page.wait_for_timeout(300)
-    check("and clearing it brings them all back", page.locator(".pill").count() == 5, page.locator(".pill").count())
+    check("and clearing it brings them all back", page.locator(".pill").count() == 6, page.locator(".pill").count())
 
     # R7: a hostile name, line, tag and handover are text, in a text position and in an attribute.
     hostile = pill("h1")
@@ -825,6 +830,18 @@ def finished_pass(browser):
           and hostile.evaluate("e => [...e.attributes].map(a => a.name).sort().join()") == "class,data-sid,title")
     check("R7: markup in an unread handover is text and builds no element",
           tile_("k1").locator(".said").inner_text() == f"“{BOMB}”" and tile_("k1").locator("img").count() == 0)
+
+    # A session with no name of its own (Codex has none) is named by its provider, as a tile is.
+    check("a pill of a session with no name says its provider, as a tile does",
+          pill("c1").locator(".nm").inner_text() == "Codex", pill("c1").locator(".nm").inner_text())
+
+    # Reading is reading what was shown: the click on a tile with no terminal says
+    # which stop its handover belongs to, and the server reads only that one.
+    fake.posts.clear()
+    tile_("k1").click()
+    page.wait_for_timeout(300)
+    check("a click on a tile with no terminal posts the key and the stop its handover belongs to, and jumps nowhere",
+          fake.posts == [("/api/seen", {"key": "k1", "stop": STOP})], fake.posts)
     check("finished: nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()
 

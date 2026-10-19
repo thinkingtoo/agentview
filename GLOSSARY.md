@@ -101,7 +101,7 @@ _Avoid_: badge, chip
 Holding a finished session open as a full tile until it is unpinned or the session closes. Kept in agentview's own state, not in config. Not the pin on a project card, which puts the project first.
 
 **Handover read**:
-The person has seen what the session said when it stopped, as of that stop, in the overview: a jump that reached the terminal, or a click on a tile with none. Separate from the chime's seen mark, which the block view also wrote and which a failed jump once wrote too; those old marks do not finish a session.
+The person has seen what the session said when it stopped, as of that stop, in the overview: a jump that reached the terminal, or a click on a tile with none, which reads the stop that tile showed and no later one. Separate from the chime's seen mark, which the block view also wrote and which a failed jump once wrote too; those old marks do not finish a session.
 
 **Movement**:
 Visible evidence that a session is still making progress, including while it waits on CI or tests.

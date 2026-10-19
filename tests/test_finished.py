@@ -81,6 +81,11 @@ class Pills(Finished):
         self.assertEqual(pill["idle"]["text"], "3 h")
         self.assertAlmostEqual(pill["idle"]["since"], 180, delta=1)
 
+    def test_a_pill_carries_its_provider_for_a_session_that_has_no_name(self):
+        # Codex has no names: the page puts the provider where the name goes, as a tile does.
+        (pill,) = self.column(self.finished("a", name=""))["pills"]
+        self.assertEqual((pill["name"], pill["provider"]), ("", "fake"))
+
     def test_a_pill_that_has_nowhere_to_go_says_why_before_anyone_clicks(self):
         (pill,) = self.column(self.finished("a"))["pills"]
         self.assertEqual(pill["jump"], {"via": "none", "reason": "no terminal"})
@@ -297,6 +302,11 @@ class Handover(Finished):
         tile = self.tile(self.stopped("a", 5 * HOUR, said="Search index rebuilt; the docs page links to it."))
         self.assertEqual((tile["unread"], tile["handover"]),
                          (True, "Search index rebuilt; the docs page links to it."))
+
+    def test_a_tile_carries_the_stop_its_handover_belongs_to(self):
+        # What the page sends back when you read it, so that a stop it never showed is not marked.
+        s = self.stopped("a", 5 * HOUR)
+        self.assertEqual(self.tile(s)["stop"], s["updatedAt"])
 
     def test_once_read_it_is_gone_from_the_tile(self):
         s = self.stopped("a", 5 * HOUR, said="Search index rebuilt.")

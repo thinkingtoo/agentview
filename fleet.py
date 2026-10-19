@@ -382,22 +382,32 @@ def find(key):
     return None
 
 
-def look(key):
+def look(key, shown=None):
     """You looked at this session. Looking is looking, whether or not its
-    terminal comes to the front -- or exists."""
+    terminal comes to the front -- or exists: the chime hears of it.
+
+    The handover is read only when the overview's tile put it in front of you,
+    and then only the stop that tile showed (`shown`): the block view says no
+    stop, and a session that stopped again since the page's last poll has a
+    handover nobody has shown you.
+    """
     hit = find(key)
     if not hit:
         return None
-    mark_seen(key, hit[1])
+    stamp = _int(hit[1].get("updatedAt"))
+    mark_seen(key, hit[1], read=bool(stamp) and shown == stamp)
     return hit
 
 
-def mark_seen(key, s):
-    """Note that you have seen this session as it is now: for the chime, and as
-    a handover read in the overview (`finished.py` says why those are two)."""
+def mark_seen(key, s, read=True):
+    """Note that you have seen this session as it is now: for the chime, and --
+    unless `read` is off -- as a handover read in the overview (`finished.py`
+    says why those are two). A terminal that came to the front shows the
+    session as it is now, so a jump reads it."""
     stamp = _int(s.get("updatedAt"))
     seen.mark(key, stamp)
-    finished.mark_read(key, stamp)
+    if read:
+        finished.mark_read(key, stamp)
 
 
 def jump_to(p, s):
@@ -903,7 +913,7 @@ def is_finished(m, tile, after):
 def pill_of(m, tile):
     """A finished session as the one line at the foot of its column."""
     since = round(m["idleFor"], 1)
-    return {"key": m["key"], "name": m["name"], "tags": tile["tags"],
+    return {"key": m["key"], "name": m["name"], "provider": m["provider"], "tags": tile["tags"],
             # In none of the header's counts, so the page lights it up as it does any tile.
             "counted": None,
             "idle": {"since": since, "text": span_text(since)},
@@ -930,6 +940,8 @@ def tile_of(m, suggestion=None):
         "key": m["key"], "name": m["name"], "provider": m["provider"],
         "status": m["status"], "suggestion": suggestion,
         "unread": m["unread"], "handover": m["said"] if m["unread"] else "",
+        # The stop that handover belongs to: what a click on the tile reads.
+        "stop": m["updatedAt"],
         # Held open as a full tile by you, until you unpin it or it closes.
         "pinned": m["pinned"],
         # Put where it is by hand: the page offers the way back.
