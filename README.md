@@ -64,8 +64,10 @@ Under a project's name the card says what it is about, in one line cut at about
 3. **A repository's own words**: the first prose paragraph of its README, else of
    `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, which
    includes a language switcher with its current language in plain text,
-   tables, lists, code, HTML blocks and `@` includes skipped; a table or a list
-   directly under a line ends it). Read from the main checkout, so every
+   tables, lists, code, a paragraph of only code or only `&nbsp;`, HTML blocks,
+   link definitions and `@` includes skipped; a table or a list directly under
+   a line ends it). A quote under the title counts as the description, its
+   marks and GitHub's `[!NOTE]` marker taken off. Read from the main checkout, so every
    worktree says the same. The line is a reminder, not a rendering of the page:
    links give their label, images say nothing, formatting tags go, and code
    stays as written.
