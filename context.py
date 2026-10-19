@@ -21,6 +21,7 @@ import projects
 LINE_LIMIT = 140     # about: the line is cut between words, full text on hover
 PARAGRAPH_MAX = 1500  # no text is carried longer: the hover is a hover, and every poll carries it
 PARAGRAPHS_LOOKED_AT = 300   # the first prose of 8,926 real files was at most the 102nd paragraph, the 99.9th percentile the 17th
+CHECKOUTS_LOOKED_AT = 4      # the main one and three more: a card parses at most this many checkouts' files
 GUESS_TITLES = 2
 GUESS_JOIN = " · "
 ELLIPSIS = "…"
@@ -297,7 +298,9 @@ ALERT = re.compile(r"^\s*\[![A-Za-z]+\]\s*$")
 # What starts a block in the middle of a paragraph, so the paragraph ends
 # before it: a list (a numbered one only from 1) or a quote.
 INTERRUPTS = re.compile(r"^\s{0,3}([-*+]\s|1[.)]\s|>)")
-TAGS = re.compile(r"<[^>]*>")
+# A tag stops at the next `<`: with `[^>]*` every `<` of a run of them reads to the
+# end of the paragraph for a `>` that is not there, the square of the run.
+TAGS = re.compile(r"<[^<>]*>")
 # A line that opens an HTML block, which runs to the next blank line and is
 # skipped whole: a block-level tag, or a line that is one tag and nothing else
 # (an image on its own line is one). An image in a line of text is not.
@@ -435,14 +438,19 @@ def repository_text(rows, project_id):
     for cwd in sorted({m["cwd"] for m in rows if placed_in(m["cwd"], project_id)}):
         for rank, root in enumerate(projects.checkouts(cwd)):
             roots[root] = min(rank, roots.get(root, rank))
-    here = {root: files_in(root) for root in sorted(roots, key=lambda r: (roots[r], str(r)))}
+    here = {root: files_in(root)
+            for root in sorted(roots, key=lambda r: (roots[r], str(r)))[:CHECKOUTS_LOOKED_AT]}
     # The kind of file decides first, the checkout only between files of one kind.
+    # Worktrees mostly hold the same files: a text is parsed once per card.
+    parsed = {}
     for wanted in DESCRIBED_BY:
         for found in here.values():
             path = next((found[name] for name in wanted if name in found), None)
-            text = first_prose(read(path)) if path else ""
-            if text:
-                return text
+            body = read(path) if path else ""
+            if body not in parsed:
+                parsed[body] = first_prose(body) if body else ""
+            if parsed[body]:
+                return parsed[body]
     return ""
 
 

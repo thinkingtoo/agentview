@@ -13,8 +13,10 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import context
 import fleet
 from test_projects import Claude, Placed, TrackFixtures, sess
 
@@ -510,6 +512,52 @@ class Repositories(Cards):
         started = time.monotonic()
         self.assertEqual(self.line()["source"], "guess")
         self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_a_run_of_opening_angle_brackets_is_no_words_and_costs_nothing(self):
+        # A tag pattern that reads past every `<` to the end for the `>` it never finds
+        # costs the square of the run; a paragraph is cut at 1500 before it, a hundred
+        # thousand here is the whole text to make the difference plain.
+        started = time.monotonic()
+        self.assertTrue(context.wordless("<" * 100_000))
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_files_a_worktree_repeats_are_read_into_a_line_once_per_card(self):
+        # A repository with worktrees holds the same README, AGENTS.md and CLAUDE.md in each
+        # checkout; each distinct text is worth one parse, not one per checkout.
+        files = {"README.md": "<<<\n", "AGENTS.md": "<<<<\n", "CLAUDE.md": "<<<<<\n"}
+        sides = [self.worktree(self.loom, f"loom-{i}") for i in range(3)]
+        for root in [self.loom, *sides]:
+            for name, text in files.items():
+                self.put(name, text, root=root)
+        with mock.patch.object(context, "first_prose", wraps=context.first_prose) as spy:
+            got = self.roster(sess("a", self.loom), *[sess(f"w{i}", s) for i, s in enumerate(sides)])
+        self.assertEqual(got["columns"][0]["context"]["source"], "guess")
+        self.assertEqual(spy.call_count, 3)
+
+    def test_a_card_looks_at_four_checkouts_at_most_whatever_the_worktrees(self):
+        # The owner's repositories hold up to fourteen worktrees; a hundred kilobytes of
+        # junk in each, three kinds of file, is a card of many seconds without a bound.
+        sides = [self.worktree(self.loom, f"loom-{i}") for i in range(6)]
+        for n, root in enumerate([self.loom, *sides]):
+            for kind, name in enumerate(("README.md", "AGENTS.md", "CLAUDE.md")):
+                self.put(name, "<<<\n" * (n + 2) + "<" * kind, root=root)      # no two texts alike
+        with mock.patch.object(context, "first_prose", wraps=context.first_prose) as spy:
+            got = self.roster(sess("a", self.loom), *[sess(f"w{i}", s) for i, s in enumerate(sides)])
+        self.assertEqual(got["columns"][0]["context"]["source"], "guess")
+        self.assertEqual(spy.call_count, 4 * 3)
+
+    def test_the_main_checkout_is_always_among_the_four_looked_at(self):
+        sides = [self.worktree(self.loom, f"aaa-{i}") for i in range(6)]    # they sort before the main one
+        self.put("README.md", "Prints reports.\n")
+        got = self.roster(sess("a", self.loom), *[sess(f"w{i}", s) for i, s in enumerate(sides)])
+        self.assertEqual(got["columns"][0]["context"]["line"], "Prints reports.")
+
+    def test_a_worktree_whose_readme_differs_is_still_read(self):
+        side = self.worktree(self.loom, "loom-side")
+        self.put("README.md", "<<<\n")
+        self.put("README.md", "Prints reports.\n", root=side)
+        got = self.roster(sess("a", self.loom), sess("b", side))
+        self.assertEqual(got["columns"][0]["context"]["line"], "Prints reports.")
 
     def test_the_first_prose_may_come_after_a_hundred_paragraphs_of_badges_and_not_after_a_thousand(self):
         self.put("README.md", "# loom\n\n" + "![b](b.svg)\n\n" * 150 + "Loom prints reports.\n")

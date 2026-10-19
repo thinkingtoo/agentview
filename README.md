@@ -68,7 +68,8 @@ Under a project's name the card says what it is about, in one line cut at about
    link definitions and `@` includes skipped; a table or a list directly under
    a line ends it). A quote under the title counts as the description, its
    marks and GitHub's `[!NOTE]` marker taken off. Read from the main checkout, so every
-   worktree says the same. The line is a reminder, not a rendering of the page:
+   worktree says the same (a card looks at the main checkout and three more at
+   most, and reads each distinct text once). The line is a reminder, not a rendering of the page:
    links give their label, images say nothing, formatting tags go, and code
    stays as written.
 4. **A guess**: the two latest session titles, greyed, with "add a line".
