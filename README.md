@@ -691,6 +691,14 @@ what is in there.
   when this version arrives stay in the service's cgroup, sessions included,
   until they are shut down and started again: the login restore does that after
   a reboot.
+- **Reload the page once** in every tab that was open before the restart that
+  brings the overview as the only view. Such a tab keeps the page it was
+  served, and that page reads `blocks`, which the roster no longer has: every
+  poll throws, the stamp says "server unreachable" while the server answers,
+  the cards freeze and the chime is silent. A tab reloaded before the restart
+  draws an older server's roster without trouble but has no chime until the
+  restart, because that roster has no `flags`. A tab opened after the restart
+  needs nothing.
 - Without a user manager (no `systemd-run`, no bus) it starts them as before and
   writes `scope.unavailable` to the event log. `AGENTVIEW_SCOPE=off` turns it off.
   The check for a user manager and the launch are two calls; if the manager goes
