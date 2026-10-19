@@ -73,9 +73,10 @@ in `names` is shown exactly as you wrote it. The No project column has no line.
 The **notes** link on a card searches your own notes for the project's name and
 line, on a click and never before, and shows the top three hits. It needs a local
 file, like meaning search does: `~/.config/tiroir/agentview-brain.env` (or the
-path in `$AGENTVIEW_BRAIN_ENV`), mode 0600, with `BRAIN_URL` and
-`BRAIN_API_KEY`. Without it the link says "notes search is not set up here".
-The notes are never where a context line comes from.
+path in `$AGENTVIEW_BRAIN_ENV`), mode 0600, with `BRAIN_URL` (the notes
+service's MCP address) and `BRAIN_AUTH` (the whole Authorization header value).
+A file others can read is refused. Without it the link says "notes search is
+not set up here". The notes are never where a context line comes from.
 
 The page this README describes below is still there as the **block view**, at
 `/?view=blocks` (a link in the header goes each way). Rename, pin, assign, fold,

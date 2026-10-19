@@ -219,7 +219,7 @@ class Config(unittest.TestCase):
         self.assertEqual(self.reason(), "notes search is not set up here")
 
     def test_a_file_others_can_read_is_refused_and_its_contents_never_said(self):
-        self.write("BRAIN_URL=http://example.test:1\nBRAIN_API_KEY=sekrit\n", 0o644)
+        self.write("BRAIN_URL=http://example.test:1\nBRAIN_AUTH=Bearer sekrit\n", 0o644)
         why = self.reason()
         self.assertIn("chmod 600", why)
         self.assertNotIn("sekrit", why)
@@ -227,14 +227,20 @@ class Config(unittest.TestCase):
 
     def test_a_file_without_both_settings_is_refused(self):
         self.write("BRAIN_URL=http://example.test:1\n")
-        self.assertIn("BRAIN_URL or BRAIN_API_KEY", self.reason())
-
-    def test_a_complete_file_is_read_and_its_values_are_not_repeated(self):
-        self.write("# comment\nBRAIN_URL=http://example.test:1\nBRAIN_API_KEY='sekrit'\n")
-        self.assertEqual(notes.settings(), ("http://example.test:1", "sekrit"))
-        why = self.reason()                      # there is no client for it yet
+        self.assertIn("BRAIN_URL or BRAIN_AUTH", self.reason())
+        self.write("BRAIN_AUTH=Bearer sekrit\n")
+        why = self.reason()
+        self.assertIn("BRAIN_URL or BRAIN_AUTH", why)
         self.assertNotIn("sekrit", why)
-        self.assertNotIn("example.test", why)
+
+    def test_the_old_name_for_the_key_is_not_the_key(self):
+        self.write("BRAIN_URL=http://example.test:1\nBRAIN_API_KEY=sekrit\n")
+        self.assertIn("BRAIN_URL or BRAIN_AUTH", self.reason())
+
+    def test_a_complete_file_is_read_and_gives_a_search(self):
+        self.write("# comment\nBRAIN_URL=http://example.test:1\nBRAIN_AUTH='Bearer sekrit'\n")
+        self.assertEqual(notes.settings(), ("http://example.test:1", "Bearer sekrit"))
+        self.assertTrue(callable(notes.searcher()))
 
 
 if __name__ == "__main__":
