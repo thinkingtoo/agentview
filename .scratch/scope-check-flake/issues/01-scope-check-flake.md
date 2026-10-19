@@ -8,7 +8,7 @@
 
 **Claimed by:** Joaquin 2026-10-19 01:45
 
-**Status:** in-progress
+**Status:** done
 
 - [x] The cause is named with evidence (what `carries()` read, and when), not guessed
   - Evidence (Joaquin, 2026-10-19, on a pristine copy of origin/dev 06b525e, `Popen(["sleep", "30"], env={"PATH": "/usr/bin:/bin", "AVSC_RUN": "unit-test-run"})`): right after `Popen` returns, `/proc/<pid>/environ` read as **zero bytes** in 466 of 1000 spawns. No `OSError` (0 of 1000) and not the parent's environment (0 of 1000). At every miss `exe` was already `sleep` and `comm` already `sleep`. The marker was readable 58 to 231 µs later (up to 1.2 ms with 8 probes at once) and was never absent. The failing test run: `test_scope_check.py` line 583, `assertTrue(sc.carries(proc.pid, "unit-test-run"))`, `AssertionError: False is not true`.
