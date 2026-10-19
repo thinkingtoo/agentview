@@ -58,14 +58,16 @@ class Starting(unittest.TestCase):
         # injection was 731. That size was approved on 2026-09-25 (n counts
         # what is left for the user), and the owner approved one more
         # sentence on 2026-10-19 (where a command goes, so the page can offer
-        # it to copy); the ceiling leaves room for one more sentence and no
-        # more.
+        # it to copy) and, the same day, one clause for it (how a single quote
+        # is written inside the ask, because the ask sits inside the hook's
+        # own single quotes); the ceiling leaves room for one more sentence
+        # and no more.
         sid = "00000000-0000-4000-8000-000000000000"
         with mock.patch.object(turn_line, "WRITER", Path("/home/alice/Projects/agentview/hooks/team-line")):
             said = turn_line.begin({"session_id": sid, "prompt": "go"},
                                    root=self.root)["hookSpecificOutput"]["additionalContext"]
-        self.assertLess(len(said), 875, len(said))
-        self.assertGreater(len(said), 820, "the budget was 750 before 2026-10-19; if the text got "
+        self.assertLess(len(said), 915, len(said))
+        self.assertGreater(len(said), 860, "the budget was 750 before 2026-10-19; if the text got "
                                           "shorter, tighten the ceiling above to match")
 
     def test_the_size_does_not_depend_on_where_the_checkout_lives(self):
@@ -89,7 +91,8 @@ class Starting(unittest.TestCase):
         said = turn_line.begin({"session_id": "s1", "prompt": "go"},
                                root=self.root)["hookSpecificOutput"]["additionalContext"]
         sentence = ('A command the user must run goes inside double quotes, or after "$ " at '
-                    "the end of the ask, within the single-quoted text.")
+                    "the end of the ask, within the single-quoted text, where a single quote is "
+                    "written as '\\''.")
         self.assertIn(sentence, said)
         # Straight after the sentence on plain text, which is where a session reads how to quote.
         self.assertIn("in plain text (single quotes, no backticks). " + sentence, said)
@@ -121,9 +124,14 @@ class WhatTheSessionThenWrites(unittest.TestCase):
         self.root = self.state / "agentview" / "lines"
 
     def command_line(self, ask):
-        """The line the hook tells the session to run, its three placeholders filled."""
+        """The line the hook tells the session to run, its three placeholders filled, the
+        ask written the way the hook's sentence says (a single quote inside it as the
+        sentence spells it), which is what a session that follows the sentence runs."""
         said = turn_line.begin({"session_id": self.SID, "prompt": "go"},
                                root=self.root)["hookSpecificOutput"]["additionalContext"]
+        spelled = re.search(r"a single quote is written as (\S+?)\. ", said)
+        self.assertIsNotNone(spelled, said)
+        escaped = ask.replace("'", spelled.group(1))
         found = [l for l in said.splitlines() if l.startswith(str(turn_line.WRITER))]
         self.assertEqual(len(found), 1, said)
         line = found[0]
@@ -132,8 +140,7 @@ class WhatTheSessionThenWrites(unittest.TestCase):
         self.assertEqual(filled.count("--did '<"), 1, line)
         filled = re.sub(r"--did '[^']*'", "--did 'where it stands'", filled)
         self.assertEqual(filled.count("--ask '<"), 1, line)
-        self.assertNotIn("'", ask)       # the ask sits inside the hook's single quotes
-        return re.sub(r"--ask '[^']*'", lambda _: "--ask '" + ask + "'", filled)
+        return re.sub(r"--ask '[^']*'", lambda _: "--ask '" + escaped + "'", filled)
 
     def run_in_bash(self, ask):
         """Run the hook's call in bash, the way a session's Bash tool does; what is stored."""
@@ -187,3 +194,61 @@ class WhatTheSessionThenWrites(unittest.TestCase):
 
     def test_the_two_forms_together_with_a_mid_mention_offer_only_what_the_sentence_names(self):
         self.check('Run "git status" first and $ make test after that, then tell me.', ["git status"])
+
+    # A single quote inside the ask. The ask sits inside the hook's own single quotes, so the
+    # sentence tells the session to write one as `'\\''`; `command_line` does exactly that.
+    # What these pin is what bash then does with it: it hands `team-line` the ask whole.
+
+    def plant(self):
+        """Things that would show if bash did anything with the text but store it: a file a
+        glob would expand to, a token a command substitution would read (HOME is the
+        state folder here, so `~` is too)."""
+        Path(self.dir.name, "x.md").write_text("")
+        token = Path(self.dir.name, ".config", "maple", "token")
+        token.parent.mkdir(parents=True)
+        token.write_text("INVENTED-TOKEN-0001")
+
+    def nothing_ran(self, stored):
+        self.assertNotIn("INVENTED-TOKEN", stored)
+        self.assertNotIn("x.md", stored)
+        for stamp in ("STAMP", "STAMP2"):
+            self.assertFalse(Path(self.dir.name, stamp).exists(), stamp)
+        for found in (self.state / "agentview").rglob("*"):
+            if found.is_file():
+                self.assertNotIn(b"INVENTED-TOKEN", found.read_bytes(), str(found))
+
+    def test_a_quoted_glob_in_a_command_is_stored_whole_and_offered(self):
+        self.plant()
+        ask = """Run "find . -name '*.md'" and tell me what it lists."""
+        self.check(ask, ["find . -name '*.md'"])
+        self.nothing_ran(self.run_in_bash(ask))
+
+    def test_a_quoted_message_in_a_command_is_stored_whole_and_offered(self):
+        self.plant()
+        ask = """Run "git commit -m 'fix the build'" and tell me what it says."""
+        self.check(ask, ["git commit -m 'fix the build'"])
+        self.nothing_ran(self.run_in_bash(ask))
+
+    def test_a_command_substitution_inside_single_quotes_is_stored_not_run(self):
+        # An invented header that reads a token file. Run by bash it would store the token.
+        self.plant()
+        ask = """Run "curl -H 'X-Token:$(cat ~/.config/maple/token)' https://maple.example/api" and tell me."""
+        self.check(ask, ["curl -H 'X-Token:$(cat ~/.config/maple/token)' https://maple.example/api"])
+        self.nothing_ran(self.run_in_bash(ask))
+        # Neither does a `;` inside the quotes start another command, or a substitution that writes.
+        for ask in ("""Run "curl -H 'X-Note:a; touch STAMP' https://maple.example/api" and tell me.""",
+                    """Run "curl -H 'X-Note:$(touch STAMP2)' https://maple.example/api" and tell me."""):
+            self.nothing_ran(self.run_in_bash(ask))
+            self.assertEqual(self.run_in_bash(ask), ask)
+
+    def test_a_command_with_single_quotes_after_a_dollar_is_stored_whole_and_offered(self):
+        self.plant()
+        ask = "The last step is yours: $ git commit -m 'fix the build'"
+        self.check(ask, ["git commit -m 'fix the build'"])
+        self.nothing_ran(self.run_in_bash(ask))
+
+    def test_an_apostrophe_is_stored_whole_and_offers_nothing(self):
+        # What the README says: a command with a lone apostrophe gets no button (to a shell it
+        # opens a quote), and a sentence with one is stored whole like any other.
+        self.check("""Run "echo don't panic" and tell me what it prints.""", [])
+        self.check("Don't merge before I look at it, it's the owner's call.", [])

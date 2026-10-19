@@ -328,7 +328,9 @@ anything).
 
 A command a session leaves for you in its line gets a **copy** button. The
 session-line hook asks for plain text (single quotes, no backticks) and says
-where a command goes: inside double quotes, or after `$ ` at the end of the ask.
+where a command goes: inside double quotes, or after `$ ` at the end of the ask,
+and how a single quote in the ask is written (`'\''`, since the ask sits inside
+the hook's own single quotes).
 That is a request, not a rule, so `ask` is still free text and `ask_commands.py`
 still guesses: text in quotes (straight, curly, « » or backticks), or after a
 `$ `, that reads as a command. Two tiers keep prose out: tools with fixed
@@ -390,6 +392,16 @@ Known limits, accepted:
   that does not, and the hook asks for the quotes or the `$ ` to say which it is.
   On one day of real asks, before the hook asked for them, 76 of 1,747 distinct
   asks named a command that way.
+- A single quote in the ask reaches the store whole only if the session writes
+  it as the hook says (`'\''`); that is the session's doing, and nothing in the
+  page can see it done wrong. Written correctly, a command with paired single
+  quotes (`find . -name '*.md'`, `git commit -m 'fix the build'`, a `curl -H '...'`
+  with `$(...)` inside) is stored byte for byte, nothing in it expanded or run,
+  and is offered; a command with a lone apostrophe (`echo don't panic`) gets no
+  button, as before (to a shell, `it's` opens a quote). Written bare, a single
+  quote ends the hook's own quoting, and bash takes the quote marks out
+  (`find . -name *.md`), runs what a `$(...)` inside holds or what follows a `;`
+  in the session's own shell, or makes `team-line` refuse the line.
 - A program the lists do not know (`tiroir-work next` in quotes) gets no
   button, and neither does a known tool with a subcommand its list lacks
   (`"npm login"`, `"git lfs pull"`) or Claude Code's `!` prefix
