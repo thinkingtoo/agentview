@@ -213,6 +213,71 @@ class Tracks(Cards):
         got = self.roster(sess("a", self.repo("orchard")))["columns"][0]
         self.assertEqual((got["project"], got["context"]["source"]), ("track:../secret", "guess"))
 
+    def test_an_outcome_written_with_a_bold_label_is_read_like_one_under_a_heading(self):
+        for label in ("**Outcome:** Customers pay with a saved card. Nothing else changes.",
+                      "**Outcome**: Customers pay with a saved card. Nothing else changes.",
+                      "**Outcome:**\nCustomers pay with a saved card. Nothing else changes.",
+                      "  **outcome** :  Customers pay with a saved card. Nothing else changes."):
+            with self.subTest(label=label):
+                (self.pm / "checkout.goal.md").write_text(
+                    f"# Objective\n_Status: OPEN_\n\n{label}\n\n**Deliverables:** a thing\n")
+                got = self.track(nogoal=True)["context"]
+                self.assertEqual((got["source"], got["line"]), ("goal", "Customers pay with a saved card."))
+                self.assertEqual(got["full"], "Customers pay with a saved card. Nothing else changes.")
+
+    def test_boxes_under_a_bold_done_when_count_and_the_next_label_or_heading_ends_them(self):
+        for opening in ("**Done when:**", "**Done when**:"):
+            for after in ("**Deliverables:**\n- [x] a thing that is not a criterion\n",
+                          "## Deliverables\n- [x] a thing that is not a criterion\n"):
+                with self.subTest(opening=opening, after=after[:12]):
+                    (self.pm / "checkout.goal.md").write_text(
+                        f"# Objective\n_Status: OPEN_\n\n**Outcome:** Customers pay.\n\n{opening}\n"
+                        f"- [x] one\n- [ ] two\n- [x] three\n\n{after}")
+                    got = self.track(nogoal=True)["track"]
+                    self.assertEqual(got["progress"],
+                                     {"done": 2, "total": 3, "text": "2 of 3", "met": False})
+
+    def test_a_bold_done_when_with_a_met_status_shows_done(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: MET 2026-10-01_\n\n**Outcome:** Customers pay.\n\n**Done when:**\n- [ ] one\n")
+        got = self.track(nogoal=True)["track"]
+        self.assertEqual((got["status"], got["progress"]["text"]), ("MET", "done"))
+
+    def test_a_bold_label_inside_a_heading_section_does_not_end_it(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n## Outcome\nCustomers pay.\n**Note:** by card.\n\n"
+            "## Done when\n- [x] one\n**Note:** the second is next\n- [ ] two\n")
+        got = self.track(nogoal=True)
+        self.assertEqual(got["context"]["full"], "Customers pay. Note: by card.")
+        self.assertEqual(got["track"]["progress"]["text"], "1 of 2")
+
+    def test_a_bold_word_that_is_no_label_does_not_open_a_section(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n**Outcome** is what we want here.\n\n## Done when\n- [ ] one\n")
+        got = self.track(nogoal=True)
+        self.assertEqual(got["context"]["source"], "guess")
+        self.assertEqual(got["track"]["progress"]["total"], 1)
+
+    def test_a_heading_with_closing_marks_still_opens_its_section(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n## Outcome ##\nCustomers pay.\n\n## Done when ##\n- [x] one\n")
+        got = self.track(nogoal=True)
+        self.assertEqual((got["context"]["line"], got["track"]["progress"]["text"]), ("Customers pay.", "1 of 1"))
+
+    def test_an_outcome_with_tags_in_it_is_not_a_placeholder(self):
+        for outcome, line in (("<b>Customers</b> pay with a saved <i>card</i>. Then done.",
+                               "Customers pay with a saved card."),
+                              ("<REPLACE: who> pay with a saved <REPLACE: what>", "<REPLACE: who> pay with a saved <REPLACE: what>")):
+            with self.subTest(outcome=outcome):
+                got = self.track(outcome=outcome)["context"]
+                self.assertEqual((got["source"], got["line"]), ("goal", line))
+
+    def test_a_heading_line_of_a_great_many_spaces_costs_nothing(self):
+        started = time.monotonic()
+        got = self.track(outcome="Customers pay.\n\n### Detail" + " " * 1500 + "reports\n\nMore.")
+        self.assertEqual((got["context"]["line"], got["track"]["progress"]["total"]), ("Customers pay.", 3))
+        self.assertLess(time.monotonic() - started, 2.0)
+
     # -- status and progress ---------------------------------------------------
 
     def test_a_track_shows_its_status_word_and_how_many_boxes_are_ticked(self):
@@ -372,6 +437,72 @@ class Repositories(Cards):
         started = time.monotonic()
         self.assertEqual(self.line()["line"], "Prints reports.")
         self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_a_heading_line_of_a_great_many_spaces_costs_nothing(self):
+        self.put("README.md", "# Loom" + " " * 1500 + "reports\n\nPrints reports for the shop.\n")
+        started = time.monotonic()
+        self.assertEqual(self.line()["line"], "Prints reports for the shop.")
+        self.assertLess(time.monotonic() - started, 2.0)
+
+    def test_a_heading_with_closing_marks_is_still_a_heading(self):
+        self.put("README.md", "# Loom #\n\n## Install ##\n\nPrints reports for the shop.\n")
+        self.assertEqual(self.line()["line"], "Prints reports for the shop.")
+
+    def test_inline_tags_in_a_sentence_leave_the_sentence_and_not_the_tags(self):
+        self.put("README.md", "<b>Loom</b> prints reports for the <i>shop</i><br>and <a href=\"x\">its</a> clients.\n")
+        self.assertEqual(self.line()["line"], "Loom prints reports for the shop and its clients.")
+
+    def test_an_html_block_runs_to_the_blank_line_and_is_skipped_whole(self):
+        self.put("README.md", "<h1 align=\"center\">Loom</h1>\nPrints reports for the shop.\n\n"
+                              "<div>\n  <img src=\"logo.png\">\n</div>\nMore about the logo.\n\n"
+                              "<img src=\"a.png\"> <img src=\"b.png\">\n\n"
+                              "<a href=\"x\"><img src=\"y.png\"></a>\n\n"
+                              "<a href=\"x\"><img src=\"y.png\"> Loom</a> prints reports.\n\n"
+                              "<banner-note class=\"x\">\nPrints reports.\n\n"
+                              "Second paragraph.\n")
+        self.assertEqual(self.line()["line"], "Second paragraph.")
+
+    def test_an_html_block_ends_the_paragraph_before_it(self):
+        self.put("README.md", "Prints reports for the shop.\n<div>\n  <img src=\"logo.png\">\n</div>\n")
+        self.assertEqual(self.line()["line"], "Prints reports for the shop.")
+
+    def test_a_nul_in_the_text_is_not_mistaken_for_a_code_span(self):
+        self.put("README.md", "Use `a` and \x000\x00 and `b` here.\n")
+        self.assertEqual(self.line()["line"], "Use a and 0 and b here.")
+
+    def test_a_row_of_links_alone_is_not_prose_in_markdown_or_in_html(self):
+        rows = ["[English](README.md) | [Fran\u00e7ais](README.fr.md) | [Deutsch](README.de.md)",
+                "[English][en] \u00b7 [Fran\u00e7ais][fr]",
+                "<a href=\"README.md\">English</a> | <a href=\"README.fr.md\">Fran\u00e7ais</a>",
+                "**[Docs](docs/index.md)**",
+                "[![ci](c.svg)](https://ci.example) [Docs](docs/index.md)"]
+        for row in rows:
+            with self.subTest(row=row):
+                self.put("README.md", f"# loom\n\n{row}\n\nPrints reports for the shop.\n")
+                self.assertEqual(self.line()["line"], "Prints reports for the shop.")
+
+    def test_a_sentence_with_a_link_in_it_is_still_prose(self):
+        self.put("README.md", "[Loom](https://loom.example) prints reports for the shop.\n")
+        self.assertEqual(self.line()["line"], "Loom prints reports for the shop.")
+
+    def test_markup_in_a_code_span_is_code_and_not_markup(self):
+        for text, line in (("Expands `<!-- include: a.md -->` directives in Markdown files.",
+                            "Expands <!-- include: a.md --> directives in Markdown files."),
+                           ("Flags every unclosed `<!--` in a page.\n\nMore text.",
+                            "Flags every unclosed <!-- in a page."),
+                           ("Generates `__init__.py` files for Python packages.",
+                            "Generates __init__.py files for Python packages."),
+                           ("Use `<b>` for bold and `**` for stars.", "Use <b> for bold and ** for stars."),
+                           ("See [the `loom` tool](https://loom.example) for reports.",
+                            "See the loom tool for reports."),
+                           ("Code like `a` and `b` stays, **bold `c`** too.", "Code like a and b stays, bold c too.")):
+            with self.subTest(text=text):
+                self.put("README.md", text + "\n")
+                self.assertEqual(self.line()["line"], line)
+
+    def test_a_comment_after_a_code_span_is_still_a_comment(self):
+        self.put("README.md", "Run `make` <!-- hidden --> to build.\n")
+        self.assertEqual(self.line()["line"], "Run make to build.")
 
     def test_a_paragraph_that_is_a_wall_of_text_is_cut_before_it_is_read(self):
         self.put("README.md", "word " * 50000 + "\n")

@@ -70,7 +70,14 @@ def guess(rows):
 # ------------------------------------------------------------ reading markdown
 
 FENCE = re.compile(r"^\s*(```|~~~)")
-HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$")
+# The rest of a heading line is taken whole and its closing marks are cut in
+# Python: a pattern that tries to find them itself backtracks cubically on a
+# line of many spaces, and this runs on every poll.
+HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(.*)$")
+CLOSING_MARKS = re.compile(r"(?:^|\s)#+\s*$")
+# `**Outcome:** text` or `**Outcome**: text`: some goal files label a section
+# in bold, on a line of its own or with its text after it, not with a heading.
+LABEL = re.compile(r"^\s{0,3}\*\*([^*:\n]+?)(?::\*\*|\*\*\s*:)\s*(.*)$")
 BOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]")
 STATUS = re.compile(r"^\s*[_*]*status:[_*\s]*([a-z]+)", re.IGNORECASE)
 STATUS_WORDS = ("OPEN", "PAUSED", "MET")
@@ -86,6 +93,12 @@ POINTS_TO = r"(?:\((?:[^()]|\([^()]*\))*\)|\[[^\]]*\])"
 LINK = re.compile(r"\[([^\]]*)\]" + POINTS_TO)
 IMAGE = re.compile(r"!\[[^\]]*\]" + POINTS_TO)
 BOLD = re.compile(r"(\*\*|__)(.+?)\1")
+CODE = re.compile(r"`([^`]+)`")
+# Tags that only format a word: they go, their text stays. Any other tag
+# is left as it was written, and the page prints it as text.
+FORMATTING = re.compile(r"</?(a|abbr|b|big|br|cite|code|del|em|font|i|ins|kbd|mark|s|small|span|strike|strong"
+                        r"|sub|sup|u)\b[^<>]*>", re.IGNORECASE)
+HTML_LINK = re.compile(r"<a\b[^<>]*>[^<]*</a>", re.IGNORECASE)
 READ = 100_000       # a goal or a README is read this far, no further
 
 
@@ -111,18 +124,31 @@ def unfenced(text):
             yield line
 
 
+def heading_text(heading):
+    """The words of a heading line, without its closing marks."""
+    return CLOSING_MARKS.sub("", heading.group(2)).strip()
+
+
 def section(lines, title):
-    """The lines under the first heading called `title`, up to the next
-    heading of the same or a higher level."""
-    out, level = [], None
+    """The lines under the first heading, or bold label, called `title`. A
+    heading's section runs to the next heading of the same or a higher level; a
+    label's, to the next heading or label, and what follows the label on its
+    own line is the section's first line."""
+    out, level = [], None                       # level 0: opened by a label
     for line in lines:
         heading = HEADING.match(line)
-        if heading:
-            if level is not None and len(heading.group(1)) <= level:
-                break
-            if level is None and heading.group(2).strip(" :*_`").casefold() == title:
-                level = len(heading.group(1))
-                continue
+        label = None if heading else LABEL.match(line)
+        depth = len(heading.group(1)) if heading else 0
+        if level is not None and ((heading and (level == 0 or depth <= level)) or (label and level == 0)):
+            break
+        if level is None and heading and heading_text(heading).strip(" :*_`").casefold() == title:
+            level = depth
+            continue
+        if level is None and label and label.group(1).strip(" _`").casefold() == title:
+            level = 0
+            if label.group(2):
+                out.append(label.group(2))
+            continue
         if level is not None:
             out.append(line)
     return out
@@ -146,10 +172,20 @@ def paragraphs(lines):
 
 def plain(text):
     """Markdown as the plain text it says: a link is its label, an image is
-    nothing, bold and code lose their marks. Anything else, tags included, is
-    left as it was written."""
+    nothing, bold and code lose their marks, and so do the tags that only
+    format. What stands inside a code span is code and stays exactly as it
+    was written. Anything else, other tags included, is left as it was."""
+    spans = []
+
+    def keep(code):
+        spans.append(code.group(1))
+        return f"\0{len(spans) - 1}\0"
+
+    text = CODE.sub(keep, text.replace("\0", ""))      # the NULs are ours from here on
     text = LINK.sub(r"\1", IMAGE.sub("", text))
-    return squash(BOLD.sub(r"\2", text).replace("`", ""))
+    text = FORMATTING.sub(lambda tag: " " if tag.group(1).lower() == "br" else "", text)
+    text = BOLD.sub(r"\2", text)
+    return squash(re.sub(r"\0(\d+)\0", lambda at: spans[int(at.group(1))], text).replace("`", ""))
 
 
 def first_sentence(text):
@@ -161,9 +197,9 @@ def first_sentence(text):
 
 
 def bare_tag(text):
-    """A text that is one tag, like the `<REPLACE: one sentence.>` a goal
-    template holds until someone writes the sentence."""
-    return text.startswith("<") and text.endswith(">")
+    """A text that is one tag and nothing else, like the `<REPLACE: one
+    sentence.>` a goal template holds until someone writes the sentence."""
+    return re.fullmatch(r"<[^<>]*>", text) is not None
 
 
 # ------------------------------------------------------------------ the track
@@ -198,6 +234,7 @@ def track_card(track):
 
 # ------------------------------------------------------------- the repository
 
+OPENS = re.compile(r"`[^`\n]+`|<!--")
 FRONT_MATTER = re.compile(r"\A\s*---\s*\n.*?\n---\s*(?:\n|\Z)", re.DOTALL)
 INCLUDE = re.compile(r"^\s*@\S+\s*$")
 REFERENCE = re.compile(r"^\s*\[[^\]]+\]:\s")
@@ -208,6 +245,14 @@ NOT_PROSE = re.compile(r"^(\s{4,}|\t|[-*+]\s|\d+[.)]\s|\||>)")
 # before it: a list (a numbered one only from 1) or a quote.
 INTERRUPTS = re.compile(r"^\s{0,3}([-*+]\s|1[.)]\s|>)")
 TAGS = re.compile(r"<[^>]*>")
+# A line that opens an HTML block, which runs to the next blank line and is
+# skipped whole: a block-level tag, a linked image, or a line that is one
+# tag and nothing else.
+BLOCK_TAGS = ("address|article|aside|blockquote|center|dd|details|dialog|div|dl|dt|fieldset|figcaption|figure|"
+              "footer|form|h[1-6]|header|hr|iframe|img|li|main|menu|nav|ol|p|picture|pre|script|section|style|"
+              "summary|table|tbody|td|th|thead|tr|ul|video")
+HTML_BLOCK = re.compile(rf"^\s{{0,3}}(?:</?(?:{BLOCK_TAGS})(?:[\s/>]|$)|<a\b[^<>]*>\s*<img\b|<[A-Za-z][^<>]*>\s*$)",
+                        re.IGNORECASE)
 # README, then the instructions for agents, then Claude's own: AGENTS.md is
 # the file a project writes about itself, CLAUDE.md often only includes it.
 DESCRIBED_BY = (("readme.md", "readme.markdown", "readme.txt", "readme"),
@@ -216,16 +261,22 @@ DESCRIBED_BY = (("readme.md", "readme.markdown", "readme.txt", "readme"),
 
 def without_comments(text):
     """The text with its HTML comments taken out. One that never closes runs to
-    the end, as it does when the README is shown. Found with `find`, not a
-    pattern: a pattern tries every `<!--` against the whole rest of the file."""
+    the end, as it does when the README is shown. A code span on a line is
+    code: a `<!--` inside it opens nothing. The end of a comment is found with
+    `find`, not a pattern: a pattern tries every `<!--` against the whole rest
+    of the file."""
     out, at = [], 0
     while True:
-        start = text.find("<!--", at)
-        if start < 0:
+        found = OPENS.search(text, at)
+        if found is None:
             out.append(text[at:])
             return "".join(out)
-        out.append(text[at:start])
-        end = text.find("-->", start + 4)
+        if found.group() != "<!--":                 # a code span goes by as it stands
+            out.append(text[at:found.end()])
+            at = found.end()
+            continue
+        out.append(text[at:found.start()])
+        end = text.find("-->", found.end())
         if end < 0:
             return "".join(out)
         at = end + 3
@@ -241,13 +292,20 @@ def prose(par):
             break
     par = [line for line in par if not (INCLUDE.match(line) or REFERENCE.match(line)
                                         or RULE.match(line))]
-    if not par or HEADING.match(par[0]) or NOT_PROSE.match(par[0]):
+    if not par or HEADING.match(par[0]) or NOT_PROSE.match(par[0]) or HTML_BLOCK.match(par[0]):
         return ""
-    par = par[:next((i for i, line in enumerate(par) if i and INTERRUPTS.match(line)), len(par))]
-    text = plain(" ".join(par)[:PARAGRAPH_MAX])
-    if bare_tag(text):
-        return ""
-    return text if re.search(r"\w", TAGS.sub("", text)) else ""
+    par = par[:next((i for i, line in enumerate(par)
+                     if i and (INTERRUPTS.match(line) or HTML_BLOCK.match(line))), len(par))]
+    raw = " ".join(par)[:PARAGRAPH_MAX]
+    text = plain(raw)
+    return "" if bare_tag(text) or not has_words(raw) else text
+
+
+def has_words(raw):
+    """Whether markdown has words of its own: not only links, badges and tags,
+    like a row of badges or the switcher between a README's languages."""
+    rest = HTML_LINK.sub("", LINK.sub("", IMAGE.sub("", raw)))
+    return re.search(r"\w", TAGS.sub("", rest)) is not None
 
 
 def first_prose(text):

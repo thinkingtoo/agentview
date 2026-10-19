@@ -56,14 +56,17 @@ Under a project's name the card says what it is about, in one line cut at about
 1. **Your own line**, written in place on the card (click the line) and kept in
    `config.json` as `project_lines`, keyed by the project's identity, so a track
    and a repository with one name never share a line. An empty line takes it back.
-2. **A track's goal**: the first sentence of `## Outcome` in
-   `~/.claude/pm/<track>.goal.md`. Beside the name, the `_Status:` word (OPEN,
-   PAUSED, MET) and "N of M" from the boxes under `## Done when`; a MET track
-   says "done" whatever its boxes say.
+2. **A track's goal**: the first sentence of `## Outcome` (or a bold
+   `**Outcome:**` label) in `~/.claude/pm/<track>.goal.md`. Beside the name, the
+   `_Status:` word (OPEN, PAUSED, MET) and "N of M" from the boxes under
+   `## Done when` (or `**Done when:**`); a MET track says "done" whatever its
+   boxes say.
 3. **A repository's own words**: the first prose paragraph of its README, else of
-   `AGENTS.md`, else of `CLAUDE.md` (headings, badges, tables, lists, code and
-   `@` includes skipped). Read from the main checkout, so every worktree says
-   the same.
+   `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, tables,
+   lists, code, HTML blocks and `@` includes skipped). Read from the main
+   checkout, so every worktree says the same. The line is a reminder, not a
+   rendering of the page: links give their label, formatting tags go, and code
+   stays as written.
 4. **A guess**: the two latest session titles, greyed, with "add a line".
 
 The default name is the slug made readable (`overview-build` is "Overview
