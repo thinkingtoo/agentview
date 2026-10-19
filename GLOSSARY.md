@@ -58,11 +58,11 @@ _Avoid_: dashboard, roster
 A session that cannot move on without something changing, of a kind the overview can name.
 
 **Needs you**:
-A kind of stuck: the session cannot go on until the person answers, approves, or does something themselves, such as running a command, sending a mail or buying something.
+A kind of stuck: the session cannot go on until the person answers, approves, or does something themselves, such as running a command, sending a mail or buying something. A dialog Claude Code raises itself counts when it says what it waits on; a menu the person opened does not.
 _Avoid_: waiting, ready, your turn
 
 **Limit**:
-A kind of stuck: the usage limit was reached and the session's last word is that error. It goes on by itself when the limit resets, or when the person tells it to.
+A kind of stuck: the usage limit was reached and the session's last word is that error, or a "Session paused" dialog is open on usage credits. It goes on by itself when the limit resets, or when the person tells it to.
 _Avoid_: rate limit error, throttled
 
 **Error**:

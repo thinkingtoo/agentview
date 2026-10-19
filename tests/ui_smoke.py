@@ -118,6 +118,12 @@ def limit_kind(resets=None, held=22.0, text=""):
             "context": {"resetsAt": resets, "held": held, "text": text}}
 
 
+def pause_kind(words):
+    """"Session paused" for usage credits: a Limit told by the dialog's own words."""
+    return {"kind": "limit", "source": "dialog", "reason": "Session paused",
+            "context": {"resetsAt": None, "held": None, "text": words}}
+
+
 def error_kind(reason, text="", ago=3.0, type_="server_error"):
     return {"kind": "error", "source": "api", "reason": reason,
             "context": {"type": type_, "text": text, "ago": ago}}
@@ -1430,7 +1436,17 @@ def kinds_pass(browser):
         S("q1", "Rhea", "waiting", "waiting", note="sandbox request", stuck=request_kind("sandbox request")),
         S("q2", "Soren", "waiting", "waiting", note="goal proposal", stuck=request_kind("goal proposal")),
         S("q3", "Tove", "waiting", "waiting", note="dialog open")])
-    fake = Fake(roster([mix_p, errors_p, hung_p, limit_p, quiet_p, ask_p]))
+    # Ticket 15: a dialog Claude Code raised itself carries a `needs` text; "Session paused" for
+    # usage credits is a Limit. The words are Claude Code's own, as the dialog table has them.
+    billing = "acknowledge the classifier billing notice (Enter continues in auto mode)"
+    usage = "choose: continue on usage credits or switch models"
+    dialogs_p = ("dialogs", "dialogs", [
+        S("d1", "Una", "waiting", "waiting", note="dialog open", stuck=request_kind(billing)),
+        S("d3", "Wen", "waiting", "waiting", note="dialog open")])
+    pause_p = ("pause", "pause", [
+        S("d2", "Vik", "waiting", "waiting", note="dialog open", stuck=pause_kind(usage)),
+        S("d4", "Xia", "idle")])
+    fake = Fake(roster([mix_p, errors_p, hung_p, limit_p, quiet_p, ask_p, dialogs_p, pause_p]))
     page = new_page(browser, fake)
     open_at(page)
     page.wait_for_selector(".ov-col")
@@ -1481,6 +1497,17 @@ def kinds_pass(browser):
           (reason("q1"), reason("q2")))
     check("and a menu the person opened (dialog open) is waiting, not Needs you",
           t("q3").locator(".stuck-box").count() == 0 and t("q3").locator(".flag.needs").count() == 0)
+    check("a dialog with a `needs` text is Needs you, and the text is the reason, with nothing under it",
+          t("d1").locator(".flag.needs").inner_text().lower() == "needs you"
+          and reason("d1") == billing[:1].upper() + billing[1:]
+          and t("d1").locator(".stuck-box .say, .stuck-box .late, .stuck-box .cmd").count() == 0
+          and t("d3").locator(".stuck-box").count() == 0 and t("d3").locator(".flag.needs").count() == 0,
+          (reason("d1"), t("d3").locator(".stuck-box").count()))
+    check("Session paused for usage credits is a Limit: the tag, the reason, the dialog's words, no clock",
+          t("d2").locator(".flag.limit").inner_text().lower() == "limit" and reason("d2") == "Session paused"
+          and t("d2").locator(".stuck-box .say").inner_text() == usage and late("d2") == []
+          and paint(t("d2"), "borderTopColor") == probe("--limit"),
+          (reason("d2"), late("d2"), t("d2").locator(".stuck-box .say").all_inner_texts()))
 
     # Colour: the border and the dot, per kind.
     check("Error and Hung are red, Limit is purple, on the border",
@@ -1505,7 +1532,9 @@ def kinds_pass(browser):
             ("hangs", "HUNG", "--bad", "1 moving · 3 stuck · 0 idle"),
             ("limits", "LIMIT", "--limit", "1 moving · 4 stuck · 0 idle"),
             ("quiet", "MOVING", "--busy", "1 moving · 0 stuck · 1 idle"),
-            ("asks", "NEEDS YOU", "--wait", "0 moving · 2 stuck · 1 idle")):
+            ("asks", "NEEDS YOU", "--wait", "0 moving · 2 stuck · 1 idle"),
+            ("dialogs", "NEEDS YOU", "--wait", "0 moving · 1 stuck · 1 idle"),
+            ("pause", "LIMIT", "--limit", "0 moving · 1 stuck · 1 idle")):
         h = head(project)
         check(f"{project}: the card reads {word}", h.locator(".ov-state").inner_text() == word,
               h.locator(".ov-state").inner_text())
@@ -1529,15 +1558,18 @@ def kinds_pass(browser):
     hostile = ("hostile", "hostile", [
         S("x1", "Vera", "idle", stuck=error_kind(BOMB, BOMB, 3.0, BOMB)),
         S("x2", "Mei", "busy", "stuck", note="14m", stuck=hung_kind(14, BOMB, 14.0)),
-        S("x3", "Nour", "idle", stuck=limit_kind(None, None, BOMB))])
+        S("x3", "Nour", "idle", stuck=limit_kind(None, None, BOMB)),
+        S("x4", "Odile", "waiting", "waiting", note="dialog open", stuck=request_kind(BOMB)),
+        S("x5", "Pim", "waiting", "waiting", note="dialog open", stuck=pause_kind(BOMB))])
     page = new_page(browser, Fake(roster([hostile])))
     seen = len(errors)
     open_at(page)
     page.wait_for_selector(".tile")
     page.wait_for_timeout(300)
     text = page.locator("#main").inner_text().lower()
-    check("R7: markup in an error's reason and words, a last tool, and a limit's words is shown as text",
-          text.count(BOMB.lower()) == 4, text.count(BOMB.lower()))
+    check("R7: markup in an error's reason and words, a last tool, a limit's words, a dialog's words "
+          "and a pause's words is shown as text",
+          text.count(BOMB.lower()) == 6, text.count(BOMB.lower()))
     check("R7: and builds no element from it",
           page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0)
     check("R7: no dialog, no page error", len(errors) == seen, errors[seen:])

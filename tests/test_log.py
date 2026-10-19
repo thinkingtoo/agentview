@@ -47,6 +47,80 @@ class Transitions(unittest.TestCase):
         self.assertEqual(got, ["cwd"])
 
 
+def dialog(pid, name, needs=None, waiting_for="dialog open", status="waiting"):
+    got = {**peer(pid, name, status), "waitingFor": waiting_for}
+    if needs is not None:
+        got["needs"] = needs
+    return got
+
+
+class Needs(unittest.TestCase):
+    """Ticket 15: how many `dialog open` openings carry a `needs` text, per kind.
+    The log writes the kind, a short label, and never the words: they may be
+    a classifier's reading of a transcript."""
+    def events(self, before, after):
+        return [(k, f) for k, f in log.transitions(before, after) if k == "needs"]
+
+    def test_a_dialog_that_opens_with_a_needs_text_writes_its_kind_and_not_its_words(self):
+        words = "choose: run ultraplan in the cloud"
+        before = {1: dialog(1, "Vera")}
+        after = {1: dialog(1, "Vera", words)}
+        (kind, fields), = self.events(before, after)
+        self.assertEqual((fields["from"], fields["to"], fields["name"], fields["pid"]),
+                         (None, "ultraplan", "Vera", 1))
+        self.assertNotIn("ultraplan in the cloud", json.dumps(log.transitions(before, after)))
+
+    def test_each_text_claude_code_writes_has_its_kind_and_any_other_is_other(self):
+        for words, kind in (("choose: continue on usage credits or switch models", "usage"),
+                            ("choose: retry on fallback model or edit prompt", "fallback"),
+                            ("acknowledge the classifier billing notice (Enter continues in auto mode)", "billing"),
+                            ("choose: make auto mode the default permission mode", "auto mode"),
+                            ("Invented: a sentence about the transcript of a session", "other")):
+            with self.subTest(kind=kind):
+                (_, fields), = self.events({1: dialog(1, "Vera")}, {1: dialog(1, "Vera", words)})
+                self.assertEqual(fields["to"], kind)
+
+    def test_the_words_never_reach_any_event(self):
+        words = "Invented: a sentence about the transcript of a session"
+        got = log.transitions({1: dialog(1, "Vera")}, {1: dialog(1, "Vera", words)})
+        self.assertNotIn("sentence about", json.dumps(got))
+        got = log.transitions({}, {1: dialog(1, "Vera", words)})
+        self.assertNotIn("sentence about", json.dumps(got))
+
+    def test_the_dialog_closing_writes_the_kind_going_away(self):
+        words = "choose: continue on usage credits or switch models"
+        (_, fields), = self.events({1: dialog(1, "Vera", words)}, {1: dialog(1, "Vera", status="busy", waiting_for=None)})
+        self.assertEqual((fields["from"], fields["to"]), ("usage", None))
+
+    def test_a_menu_the_person_opened_has_no_kind_and_writes_no_needs_event(self):
+        self.assertEqual(self.events({1: peer(1, "Vera", "busy")}, {1: dialog(1, "Vera")}), [])
+
+    def test_it_reads_back_as_a_kind_coming_and_going(self):
+        at = "2026-10-19T10:00:00.000"
+        self.assertIn("None -> usage", log.render({"at": at, "kind": "needs", "name": "Vera", "from": None, "to": "usage"}))
+        self.assertIn("usage -> None", log.render({"at": at, "kind": "needs", "name": "Vera", "from": "usage", "to": None}))
+
+    def test_a_needs_text_beside_no_dialog_is_not_a_dialog(self):
+        # The classifier writes `needs` for a session that is not in a dialog.
+        words = "choose: run ultraplan in the cloud"
+        for rec in ({**peer(1, "Vera", "idle"), "needs": words},
+                    dialog(1, "Vera", words, waiting_for="permission prompt"),
+                    dialog(1, "Vera", words, waiting_for="input needed"),
+                    dialog(1, "Vera", words, status="busy")):
+            with self.subTest(waiting_for=rec.get("waitingFor")):
+                self.assertEqual(self.events({1: peer(1, "Vera")}, {1: rec}), [])
+
+    def test_the_same_kind_staying_open_says_nothing_more(self):
+        words = "choose: run ultraplan in the cloud"
+        self.assertEqual(self.events({1: dialog(1, "Vera", words)},
+                                     {1: {**dialog(1, "Vera", words), "updatedAt": 9}}), [])
+
+    def test_a_needs_text_that_is_not_text_is_no_text(self):
+        for value in (7, True, ["x"], {"a": 1}, "", "   "):
+            with self.subTest(value=value):
+                self.assertEqual(self.events({1: dialog(1, "Vera")}, {1: dialog(1, "Vera", value)}), [])
+
+
 class Writing(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
