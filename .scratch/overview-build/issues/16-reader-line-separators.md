@@ -4,7 +4,9 @@
 
 **Blocked by:** 08
 
-**Status:** ready-for-agent
+**Claimed by:** Bettina 2026-10-19 21:20
+
+**Status:** in-progress
 
 - [ ] Tests on invented records whose strings hold U+2028, U+2029 and U+0085: each record is read whole, in the one-pass reader and in the incremental reader cut at every record boundary, for the Claude and the Codex reader
 - [ ] Counts on the real transcripts before and after, counts only: records read, records dropped, tool calls seen; after the change none is dropped for a line separator
