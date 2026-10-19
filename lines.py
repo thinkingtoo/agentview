@@ -22,6 +22,7 @@ written.
 Kept beside `seen.json` rather than in `config.json`: that file is yours to
 hand-edit, and this one is rewritten by a hook every time a session stops.
 """
+import codecs
 import json
 import os
 import re
@@ -200,11 +201,16 @@ def kept_did(session_id, root=None):
     path = _did_file(session_id, root)
     if path is None:
         return ""
+    # Like the line and the turn, the did is read without waiting on what is at its
+    # path: every poll reads it for every session, under the lock the page waits on.
+    # Room for the blanks `_clip` squeezes out of a padded line, at four bytes a character.
+    data = _small_bytes(path, 16 * LIMIT)
+    if data is None:
+        return ""
     try:
-        with path.open(encoding="utf-8") as fh:
-            # Room for the blanks `_clip` squeezes out of a padded line.
-            return _clip(fh.read(4 * LIMIT))
-    except (OSError, ValueError):
+        # Not the final chunk: the bound may fall inside a character, which is no error.
+        return _clip(codecs.getincrementaldecoder("utf-8")().decode(data))
+    except ValueError:
         return ""
 
 

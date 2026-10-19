@@ -422,7 +422,8 @@ Known limits, accepted:
   `tests/__pycache`.
 - The hook folds a command's lines into one, so a heredoc (`<<EOF`) or a `\`
   continuation is offered as a one-line command that is not the one written.
-- A session's line file behind a filesystem that has stopped answering (a link
+- A session's line file, its turn file or its kept `did` (the three files the
+  hook keeps for it) behind a filesystem that has stopped answering (a link
   into a network mount that went away) is waited on for half a second, once, and
   reads as no line until the mount answers. The read stays out on a thread of its
   own and cannot be given up on, so a process that ends while it is out ends when

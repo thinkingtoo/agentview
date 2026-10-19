@@ -142,12 +142,52 @@ class HandWritten(unittest.TestCase):
         with self.guarded():
             self.assertEqual(lines.current_turn("abc", self.root), "")
 
+    def test_a_pipe_where_the_kept_did_should_be_reads_as_none_and_a_prompt_still_starts_its_turn(self):
+        # The did is read on every poll, for every session, to fill the card's first
+        # line; and by the hook that starts a turn, which a pipe must not hang either.
+        os.mkfifo(self.root / "abc.did")
+        with self.guarded():
+            self.assertEqual(lines.kept_did("abc", self.root), "")
+            self.assertTrue(lines.begin_turn("abc", self.root))
+        self.assertTrue(lines.current_turn("abc", self.root))
+
     def test_a_file_that_has_no_end_reads_as_nothing(self):
-        for name in ("abc.json", "abc.turn"):
+        for name in ("abc.json", "abc.turn", "abc.did"):
             (self.root / name).symlink_to("/dev/zero")
         with self.guarded():
             self.assertEqual(lines.read("abc", self.root), {})
             self.assertEqual(lines.current_turn("abc", self.root), "")
+            self.assertEqual(lines.kept_did("abc", self.root), "")
+
+    def test_a_kept_did_that_cannot_be_read_is_none_and_not_a_raise(self):
+        (self.root / "link.did").symlink_to("/proc/self/mem")
+        (self.root / "dir.did").mkdir()
+        with self.guarded():
+            self.assertEqual(lines.kept_did("link", self.root), "")
+            self.assertEqual(lines.kept_did("dir", self.root), "")
+            self.assertEqual(lines.kept_did("missing", self.root), "")
+
+    def test_a_kept_did_is_read_only_as_far_as_a_line_can_be(self):
+        (self.root / "abc.did").write_text("word " * 1_000_000, encoding="utf-8")
+        wanted = []
+        real = lines._plain_bytes
+
+        def spy(path, limit):
+            wanted.append(limit)
+            return real(path, limit)
+
+        with mock.patch.object(lines, "_plain_bytes", spy), self.guarded():
+            got = lines.kept_did("abc", self.root)
+        self.assertEqual(got, ("word " * lines.LIMIT)[:lines.LIMIT - 1].rstrip() + "…")
+        self.assertEqual(len(wanted), 1)
+        self.assertLessEqual(wanted[0], 16 * lines.LIMIT)
+
+    def test_a_kept_did_cut_inside_a_character_by_the_bound_is_still_a_did(self):
+        # Three bytes a character: the bound falls in the middle of one.
+        (self.root / "abc.did").write_text("€" * 5000, encoding="utf-8")
+        self.assertEqual(lines.kept_did("abc", self.root), "€" * (lines.LIMIT - 1) + "…")
+        (self.root / "bad.did").write_bytes(b"Card form \xff wired")
+        self.assertEqual(lines.kept_did("bad", self.root), "")
 
     def test_a_file_far_larger_than_any_line_reads_as_no_line(self):
         record = {"did": "x", "ask": "y", "n": 1, "at": 1, "pad": "z" * lines.MAX_BYTES}
@@ -174,7 +214,9 @@ class HandWritten(unittest.TestCase):
             "root = sys.argv[2]\n"
             "os.symlink(name, root + '/abc.json')\n"
             "os.symlink(name, root + '/abc.turn')\n"
+            "os.symlink(name, root + '/abc.did')\n"
             "assert lines.read('abc', root) == {} and lines.current_turn('abc', root) == ''\n"
+            "assert lines.kept_did('abc', root) == ''\n"
             "try:\n"
             "    os.close(os.open('/dev/tty', os.O_RDONLY))\n"
             "except OSError:\n"
@@ -187,12 +229,13 @@ class HandWritten(unittest.TestCase):
     def test_a_pipe_is_refused_at_once_and_not_after_the_time_bound(self):
         # The time bound would hide a read that waits on the pipe: the answer is the
         # same, only half a second late and with a thread left waiting for ever.
-        for name in ("abc.json", "abc.turn"):
+        for name in ("abc.json", "abc.turn", "abc.did"):
             os.mkfifo(self.root / name)
-        for call in (lines.read, lines.current_turn):
-            t0 = time.monotonic()
-            call("abc", self.root)
-            self.assertLess(time.monotonic() - t0, lines.READ_BUDGET / 2)
+        with self.guarded():
+            for call in (lines.read, lines.current_turn, lines.kept_did):
+                t0 = time.monotonic()
+                call("abc", self.root)
+                self.assertLess(time.monotonic() - t0, lines.READ_BUDGET / 2)
         self.assertEqual(lines._reading, {})
 
     def test_only_the_bound_is_read_of_a_larger_file(self):
@@ -214,14 +257,18 @@ class HandWritten(unittest.TestCase):
     def test_reading_leaves_no_file_open(self):
         (self.root / "abc.json").write_text(json.dumps({"did": "x", "ask": "y", "n": 1, "at": 1}), encoding="utf-8")
         (self.root / "abc.turn").write_text("0123abcd", encoding="utf-8")
+        (self.root / "abc.did").write_text("Notes page built.", encoding="utf-8")
         os.mkfifo(self.root / "fifo.json")
+        os.mkfifo(self.root / "fifo.did")
         (self.root / "dir.json").mkdir()
+        (self.root / "dir.did").mkdir()
         before = len(os.listdir("/proc/self/fd"))
         with self.guarded():
             for _ in range(60):
                 for sid in ("abc", "fifo", "dir", "missing"):
                     lines.read(sid, self.root)
                     lines.current_turn(sid, self.root)
+                    lines.kept_did(sid, self.root)
         self.assertEqual(len(os.listdir("/proc/self/fd")), before)
 
     def test_a_turn_that_is_not_text_reads_as_no_turn(self):
@@ -343,6 +390,26 @@ class FilesystemThatStopsAnswering(unittest.TestCase):
         self.assertEqual(got, "")
         self.assertLess(took, 5)
         self.assertEqual(lines.fresh("stuck", self.root), {})
+
+    def test_a_kept_did_that_does_not_answer_reads_as_none_after_the_budget_and_is_paid_once(self):
+        got, took = self.timed(lines.kept_did, "stuck")
+        self.assertEqual(got, "")
+        self.assertGreaterEqual(took, self.BUDGET * 0.8, "a read was given up on before its budget")
+        self.assertLess(took, 5)
+        for _ in range(4):
+            got, took = self.timed(lines.kept_did, "stuck")
+            self.assertEqual(got, "")
+            self.assertLess(took, self.BUDGET / 2, "the next poll waited again on a read still out")
+        self.assertEqual(self.calls.count("stuck.did"), 1)
+        got, took = self.timed(lines.kept_did, "fine")
+        self.assertEqual(got, "Notes page built.")
+        self.assertLess(took, self.BUDGET / 2)
+
+    def test_a_prompt_in_a_session_whose_files_do_not_answer_still_starts_its_turn(self):
+        t0 = time.monotonic()
+        turn = lines.begin_turn("stuck", self.root)
+        self.assertTrue(turn)
+        self.assertLess(time.monotonic() - t0, 6 * self.BUDGET)
 
     def test_the_wait_is_paid_once_and_no_second_read_piles_up_behind_it(self):
         before = threading.active_count()
