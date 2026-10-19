@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 from providers import base
+from providers import codex
 from providers.codex import CodexProvider
 import test_columns
 
@@ -267,6 +268,32 @@ class Writes(Fixture):
         self.assertEqual(len(got), 1)
         return got[0]["writes"]
 
+    def test_a_session_whose_rollout_is_not_there_has_no_strip_rather_than_zeros(self):
+        os.chmod(self.home.proc / "4242" / "fd", 0)          # not held: found by its date, and it is not there
+        self.addCleanup(os.chmod, self.home.proc / "4242" / "fd", 0o755)
+        for path in self.home.day.glob("*.jsonl"):
+            path.unlink()
+        con = sqlite3.connect(self.home.db)
+        con.execute("delete from threads")
+        con.commit()
+        con.close()
+        got = self.home.provider().live()
+        self.assertEqual(len(got), 1)
+        self.assertIsNone(got[0]["writes"])
+
+    def test_a_big_rollout_read_from_its_tail_does_not_know_the_minutes_before_it(self):
+        filler = "x" * 100
+        records = [meta(ts=stamp(self.NOW - 3 * 3600))]
+        records += [rec(stamp(self.NOW - 1700 + i * 0.065), "event_msg", type="token_count", pad=filler)
+                    for i in range(30000)]
+        self.home.rollout(records=records)
+        self.assertGreater(os.path.getsize(next(self.home.day.glob("*.jsonl"))), 2_000_000)
+        p = self.home.provider()
+        p.clock = lambda: self.NOW
+        got = p.live()[0]["writes"]
+        self.assertIsNone(got[0])
+        self.assertIsInstance(got[-1], int)
+
     def test_the_strip_has_thirty_slots_with_this_minute_last(self):
         got = self.writes(10, 20, 75, 75, 75)
         self.assertEqual(len(got), 30)
@@ -342,6 +369,11 @@ class Failures(Fixture):
         self.assertEqual(self.limit("12:05 AM")["resetsAt"], 1792368300000 + 86400000)   # tomorrow, 00:05
         self.assertEqual(self.limit("12:30 PM")["resetsAt"], 1792413000000)
 
+    def test_a_reset_time_that_is_this_very_minute_is_tomorrow_s(self):
+        got = self.failure(done(ts="2026-10-19T12:00:00.000Z", message=LIMIT % "12:00 PM",
+                                codex_error_info="usage_limit_exceeded"))
+        self.assertEqual(got["resetsAt"], 1792411200000 + 86400000)
+
     def test_the_reset_time_is_read_in_the_time_of_the_machine(self):
         os.environ["TZ"] = "CET-1CEST,M3.5.0,M10.5.0/3"         # Brussels: UTC+2 until Oct 25
         time.tzset()
@@ -352,7 +384,7 @@ class Failures(Fixture):
         self.assertEqual((got["kind"], got["resetsAt"]), ("limit", None))
 
     def test_a_time_that_cannot_be_is_none(self):
-        for when in ("25:99 PM", "13:00 PM", "Foo 3rd, 2026 3:14 AM", "Feb 31st, 2026 3:14 AM"):
+        for when in ("25:99 PM", "13:00 PM", "3:75 PM", "0:30 AM", "Foo 3rd, 2026 3:14 AM", "Feb 31st, 2026 3:14 AM"):
             with self.subTest(when=when):
                 self.assertIsNone(self.limit(when)["resetsAt"])
 
@@ -492,6 +524,23 @@ class Approvals(Fixture):
         s = self.turn(rec(T1, "response_item", type="function_call", name="exec_command",
                           arguments="{not json require_escalated", call_id="c1"))
         self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+    def test_a_call_that_only_mentions_the_word_in_its_command_is_not_an_escalation(self):
+        s = self.turn(call(T1, "c1", cmd="echo require_escalated"))
+        self.assertEqual((s["status"], s.get("asking")), ("busy", None))
+
+    def test_a_call_written_after_the_turn_ended_is_not_asked_about(self):
+        s = self.turn(rec(T2, "event_msg", type="task_complete"), call(T3, "c1", cmd="make", escalate=True))
+        self.assertEqual((s["status"], s.get("asking")), ("idle", None))
+
+    def test_a_flood_of_escalations_nobody_answers_is_kept_to_what_a_tile_can_use(self):
+        p = self.home.provider()
+        self.home.rollout(records=[meta(), rec(T0, "event_msg", type="task_started"), policy(T0),
+                                   *[call(T1, f"f{i}", cmd=f"make {i}", escalate=True) for i in range(500)]])
+        got = p.live()[0]
+        state = next(iter(p.tail.cache.values()))
+        self.assertLessEqual(len(state["calls"]), codex.MAX_CALLS)
+        self.assertEqual(got["asking"]["command"], f"make {500 - codex.MAX_CALLS}")
 
     def test_a_flood_of_calls_nobody_answers_does_not_hide_the_one_that_asks(self):
         flood = [call(T1, f"f{i}", cmd="ls") for i in range(500)]

@@ -19,7 +19,7 @@ SLOTS = 30
 
 def pid_of(raw):
     pid = raw.get("pid")
-    return pid if isinstance(pid, int) and not isinstance(pid, bool) and pid > 1 else None
+    return pid if isinstance(pid, int) and pid > 1 else None
 
 
 def is_run(raw):
@@ -45,8 +45,7 @@ def added(strips):
 
 def ancestors_of(raw):
     above = raw.get("ancestors")
-    return [p for p in above if isinstance(p, int) and not isinstance(p, bool) and p > 1] \
-        if isinstance(above, list) else []
+    return [p for p in above if isinstance(p, int) and p > 1] if isinstance(above, list) else []
 
 
 def one_run(group):
@@ -70,10 +69,9 @@ def fold(pairs, now):
                 and not (isinstance(raw.get("routine"), str) and raw["routine"])):
             owners.setdefault(pid_of(raw), index)
     groups = {}
-    for index, (provider, raw) in enumerate(pairs):
+    for index, (_, raw) in enumerate(pairs):
         if is_run(raw):
-            same = (provider.name, pid_of(raw)) if pid_of(raw) else (provider.name, id(raw))
-            groups.setdefault(same, []).append((index, raw))
+            groups.setdefault(pid_of(raw) or ("raw", id(raw)), []).append((index, raw))
     out, amended = list(pairs), {}
     for members in groups.values():
         run = one_run([raw for _, raw in members])

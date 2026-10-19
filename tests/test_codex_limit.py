@@ -121,6 +121,22 @@ class OnDisk(unittest.TestCase):
         os.utime(path, (NOW, NOW))
         self.assertIsNone(self.limit())
 
+    def test_a_refusal_a_few_days_back_still_holds_when_it_has_not_lifted(self):
+        # A weekly limit: nothing has run since, in the folders of the days after.
+        rollout(self.home, "16", "a" * 36, refused(NOW - 3 * 86400, "Oct 21st, 2026 3:14 AM"))
+        for day in ("17", "18", "19"):
+            rollout(self.home, day, day * 18, rec(stamp(NOW - 60), "event_msg", type="task_started") | {"at": NOW - 60})
+        self.assertEqual(self.limit()["resetsAt"], 1792552440000)
+
+    def test_files_looked_at_are_forgotten_when_they_leave_the_window(self):
+        path = rollout(self.home, "19", "a" * 36, refused(NOW - 60))
+        self.limit()
+        self.assertEqual(len(self.p.done_tail.cache), 1)
+        path.unlink()
+        self.p.clock = lambda: NOW + 11
+        self.limit()
+        self.assertEqual(self.p.done_tail.cache, {})
+
     def test_nothing_on_disk_is_no_limit(self):
         self.assertIsNone(self.limit())
 
@@ -136,7 +152,7 @@ class OnDisk(unittest.TestCase):
     def test_files_that_are_not_rollouts_or_not_json_are_passed_over(self):
         folder = self.home.codex / "sessions" / "2026" / "10" / "19"
         folder.mkdir(parents=True)
-        (folder / "notes.txt").write_text(json.dumps(refused(NOW)))
+        (folder / "notes.txt").write_text(json.dumps(refused(NOW)) + "\n")
         (folder / f"rollout-2026-10-19T10-00-00-{'e' * 36}.jsonl").write_text("not json\n{\"a\"\n[1]\n")
         self.assertIsNone(self.limit())
 

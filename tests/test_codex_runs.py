@@ -37,9 +37,10 @@ def starter(sid="s", pid=100, **over):
     return session(sid, status="idle", pid=pid, updatedAt=ago(30), quietFor=29.0, **over)
 
 
-def run(sid="r", pid=4242, above=(200, 100), minutes=2.0, label="codex review", project="maple", **over):
+def run(sid="r", pid=4242, above=(200, 100), minutes=2.0, label="codex review", project="maple", kind="exec", **over):
     """A `codex exec` run that began `minutes` ago, with these processes above it."""
-    return session(sid, project, status="busy", pid=pid, kind="exec", run=label, ancestors=list(above) if isinstance(above, (tuple, list)) else above,
+    return session(sid, project, status="busy", pid=pid, kind=kind, run=label,
+                   ancestors=list(above) if isinstance(above, (tuple, list)) else above,
                    startedAt=ago(minutes), updatedAt=ago(minutes), quietFor=0.05, **over)
 
 
@@ -98,6 +99,15 @@ class Folded(Base):
         got = self.tiles([starter()], [run("a", 4242, label="codex exec"), run("b", 4242, label="codex review")])
         self.assertEqual(got["claude:s"]["movement"]["text"], "waiting on: codex review, 2 min")
 
+    def test_a_run_is_as_old_as_its_oldest_thread(self):
+        got = self.tiles([starter()], [run("a", 4242, minutes=2.0), run("b", 4242, minutes=5.0)])
+        self.assertEqual(got["claude:s"]["movement"]["text"], "waiting on: codex review, 5 min")
+
+    def test_a_session_nothing_can_be_made_of_is_nobody_s_starter(self):
+        nameless = {k: v for k, v in starter().items() if k != "id"}
+        _, tiles = Alone.run_tile(self, run(), claude=[nameless])
+        self.assertEqual(list(tiles), ["codex:r"])
+
     def test_a_run_inside_a_run_is_in_the_session_above_both(self):
         got = self.tiles([starter()], [run("outer", 4242, above=(200, 100)),
                                        run("inner", 4300, above=(4242, 200, 100), label="codex exec")])
@@ -148,12 +158,17 @@ class Alone(Base):
                                  run("b", 4242, above=(), label="codex review"))
         self.assertEqual(list(tiles), ["codex:a"])
 
+    def test_the_exec_thread_stands_for_a_run_that_has_none_to_show(self):
+        _, tiles = self.run_tile(run("review", 4242, above=(), kind="review", label="codex review"),
+                                 run("main", 4242, above=(), label="codex exec"))
+        self.assertEqual(list(tiles), ["codex:main"])
+
     def test_an_interactive_codex_session_is_a_tile_that_is_not_exec(self):
         _, tiles = self.run_tile(session("i", status="idle", pid=4242, ancestors=[100]), claude=[starter()])
         self.assertEqual(tiles["codex:i"]["tags"], ["codex"])
 
     def test_what_a_provider_says_about_ancestors_is_checked(self):
-        for odd in (None, "100", 100, [True], ["100"], [None, 1.5], {"a": 1}, [-4, 0]):
+        for odd in (None, "100", 100, [True], ["100"], [None, 1.5], {"a": 1}, [-4, 0], [[100]], [{"a": 100}]):
             with self.subTest(odd=odd):
                 _, tiles = self.run_tile(run(above=odd), claude=[starter()])
                 self.assertIn("codex:r", tiles)

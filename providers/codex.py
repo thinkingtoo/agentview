@@ -86,8 +86,6 @@ def _resets_at(message, at):
     hour = hour % 12 + (12 if half.upper() == "PM" else 0)
     try:
         if month:
-            if month.lower() not in MONTHS:
-                return None
             when = datetime.datetime(int(year), MONTHS.index(month.lower()) + 1, int(day), hour, minute)
         else:
             then = datetime.datetime.fromtimestamp(at / 1000)
@@ -277,7 +275,6 @@ def _absorb(state, text):
             state["calls"].clear()
         elif what in ("task_complete", "turn_aborted"):
             state["status"], state["statusAt"] = "idle", _ms(rec.get("timestamp"))
-            state["calls"].clear()
             if what == "task_complete":
                 state["failure"] = _failure(payload.get("error"), rec.get("timestamp"))
         elif what == "entered_review_mode":

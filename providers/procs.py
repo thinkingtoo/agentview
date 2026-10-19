@@ -128,7 +128,7 @@ def ancestors(proc, pid):
       is the same exit seen from the other side;
     - a process met twice (a loop), and a walk longer than `MAX_UP`.
     """
-    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+    if not isinstance(pid, int) or pid <= 1:
         return []
     at, found = pid, []
     here, seen = _parent(proc, at), {pid}
