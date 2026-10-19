@@ -6,7 +6,9 @@
 
 **Claimed by:** Bettina 2026-10-19 09:52
 
-**Status:** in-progress
+**Status:** done
+
+Merged to origin/dev as `fa67fb5`
 
 - [x] Each kind is detected from fixture records and shown with its reason and context
 - [x] A session waiting on a subagent or background job is never Hung
@@ -14,7 +16,7 @@
 - [x] `hung_after_minutes` is read from config
 - [x] The card's mix line counts stuck by kind, the same way the card state does: a session counted stuck always has a stuck kind on its tile, and a menu or dialog the person opened is not stuck (raised in 07, 2026-10-19)
 
-**Evidence (Bettina/Paloma, 2026-10-19, branch `overview/08-limit-error-hung`, final head `bd261d3`: the branch merged with origin/dev `a7ba62e` (merge commit `e6f688f`, so with ticket 03). Pushed. Not merged: waits for the boss's merge order). Gate: Mistral rounds 08-1, 08-2 and 08-3 on `cd668ac` stalled (all NO-GO, 25 findings, 0 real bugs; `mistral-review-08-1.md` to `-08-3.md` and `mistral-replies-08-1.md` to `-08-3.md` in `/home/tiroir/Projects/agentview-wt/reviews/`), so the owner's standing waiver of 2026-10-19 08:3x applies (worker rules, "The owner's waiver is standing"); the gate is the Opus hunt `/home/tiroir/Projects/agentview-wt/reviews/opus-hunt-08-7.md`, `HUNT: CLEAN` on `bd261d3`.**
+**Evidence (Bettina/Paloma, 2026-10-19, branch `overview/08-limit-error-hung`, final head `bd261d3`: the branch merged with origin/dev `a7ba62e` (merge commit `e6f688f`, so with ticket 03). Pushed. Merged on the boss's merge order of 2026-10-19). Gate: Mistral rounds 08-1, 08-2 and 08-3 on `cd668ac` stalled (all NO-GO, 25 findings, 0 real bugs; `mistral-review-08-1.md` to `-08-3.md` and `mistral-replies-08-1.md` to `-08-3.md` in `/home/tiroir/Projects/agentview-wt/reviews/`), so the owner's standing waiver of 2026-10-19 08:3x applies (worker rules, "The owner's waiver is standing"); the gate is the Opus hunt `/home/tiroir/Projects/agentview-wt/reviews/opus-hunt-08-7.md`, `HUNT: CLEAN` on `bd261d3`.**
 
 1. Tests: `python3 -m unittest discover -s tests` on `bd261d3`, `PYTHONDONTWRITEBYTECODE=1`, short private `TMPDIR` (`verify.sh`): 1283 tests, OK (skipped=1).
 
