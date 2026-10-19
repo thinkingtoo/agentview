@@ -348,11 +348,38 @@ def _assigned_project(value, known_as):
     return _project("folder", value, value)
 
 
+def _moved(project, assigned, known_as):
+    """Where you moved this whole project to, or the project itself.
+
+    `assigned` is keyed by a session (`provider:id`) or, since you can move a
+    track or a repository, by the identity of the project the session would
+    have been in. The two never meet: a session key starts with a provider,
+    an identity with one of the four prefixes `KINDS` names.
+
+    A project you moved away is gone, and whatever is put into it goes where
+    it went -- a session assigned to it, another project moved into it. The
+    walk never visits a project twice, so two projects moved into each other
+    swap places instead of looping.
+    """
+    seen = {project["id"]}
+    while project is not NO_PROJECT:
+        value = assigned.get(project["id"])
+        if not isinstance(value, str) or not value.strip():
+            break
+        target = _assigned_project(value.strip(), known_as)
+        if target["id"] in seen:
+            break
+        seen.add(target["id"])
+        project = target
+    return project
+
+
 def assign_all(members, folder_rule, assigned):
     """Every session's project: `{session key: project}`.
 
-    First match wins, in the order the person thinks of it: their own setting,
-    then the boss's track, then the repository, then the folder, then none.
+    First match wins, in the order the person thinks of it: their own setting
+    for the session, then their move of its whole project, then the boss's
+    track, then the repository, then the folder, then none.
     """
     boss_tracks = _boss_tracks(members)
     live = set(boss_tracks.values())
@@ -382,5 +409,8 @@ def assign_all(members, folder_rule, assigned):
                     known_as[name].append(project)
     for m in members:
         if _is_assigned(assigned, m["key"]):
-            by_key[m["key"]] = _assigned_project(assigned[m["key"]].strip(), known_as)
+            by_key[m["key"]] = _moved(_assigned_project(assigned[m["key"]].strip(), known_as),
+                                      assigned, known_as)
+        else:
+            by_key[m["key"]] = _moved(by_key[m["key"]], assigned, known_as)
     return by_key

@@ -48,8 +48,19 @@ kind (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track
 and a repository that share a name stay two projects; `pinned`, `names` and
 `assign` take an identity, or a plain name as they did before.
 
+**By hand**, on the overview: click a project's name to rename it (its raw name
+stays on hover); the ✳ on its card pins it, and the ‹ › on a pinned card move
+it along the pinned ones, the ✳ again unpins; **merge…** puts all of the
+project into another and carries its pin and its context line with it; the ⋯
+on a tile moves that one session, which lasts as long as the session does.
+Merge and move of a whole project are `assign` keyed by the project's identity
+(`"track:x": "repo:host/o/n"`), so they hold for sessions that start later; a
+project you moved away is gone, and what is put into it follows. Each click is
+one change to `config.json`, made under a lock, so clicks made at once all
+hold (`/api/pin`, `/api/merge`, and `/api/name` and `/api/assign` as before).
+
 The page this README describes below is still there as the **block view**, at
-`/?view=blocks` (a link in the header goes each way). Rename, pin, assign, fold,
+`/?view=blocks` (a link in the header goes each way). Fold,
 hold, the boss nesting and the routines block exist only on the block view for
 now; the overview retires it later.
 

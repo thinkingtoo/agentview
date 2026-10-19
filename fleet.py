@@ -87,20 +87,43 @@ def config_value(key, default):
     return got if isinstance(got, type(default)) else default
 
 
-def write_config(patch):
-    """Merge a patch into config.json, atomically.
+# The page can send a rename, a move and a pin in the same breath, and the
+# server answers each on a thread of its own. Every change to the file goes
+# through here, one at a time.
+_CONFIG_LOCK = threading.RLock()
+
+
+def update_config(change):
+    """Let `change(config)` edit config.json in place, atomically, and return
+    what was written.
+
+    Reading, editing and replacing happen under one lock, so two changes made
+    at once both land -- a change that reads the file first and writes it
+    later would put back what the other had just removed. Each write goes
+    through a temp file of its own beside the config, so nobody replaces what
+    another is still writing.
 
     The file is hand-editable and holds comments as `_`-prefixed keys, so it is
-    read, merged and rewritten rather than regenerated.
+    read, edited and rewritten rather than regenerated.
     """
-    merged = read_config()
-    merged.update(patch)
-    tmp = CONFIG.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(merged, fh, indent=2, ensure_ascii=False)
-        fh.write("\n")
-    tmp.replace(CONFIG)
-    return merged
+    with _CONFIG_LOCK:
+        merged = read_config()
+        change(merged)
+        tmp = CONFIG.with_name(f"{CONFIG.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as fh:
+                json.dump(merged, fh, indent=2, ensure_ascii=False)
+                fh.write("\n")
+            tmp.replace(CONFIG)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        return merged
+
+
+def write_config(patch):
+    """Merge a patch into config.json, atomically."""
+    return update_config(lambda config: config.update(patch))
 
 
 def config(cfg_dir=None):
@@ -626,7 +649,7 @@ def columns_of(blocks):
     grouped = {}
     for m in members:
         grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
-    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names),
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names, pinned),
                 _column_order(rows, by_key[rows[0]["key"]], names, pinned))
                for rows in grouped.values()]
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
@@ -637,7 +660,7 @@ def _column_name(project, names):
             else names.get("No project") or "No project")
 
 
-def _column(rows, project, folder_rule, names):
+def _column(rows, project, folder_rule, names, pinned):
     # A boss leads its column, whatever the activity: who leads before who
     # works. The rest are in the order the blocks have always used.
     rows = order_members(list(rows))
@@ -646,6 +669,7 @@ def _column(rows, project, folder_rule, names):
     return {
         "project": project["id"], "raw": project["raw"], "kind": project["kind"],
         "name": _column_name(project, names),
+        "pinned": project is not NO_PROJECT and projects.pin_rank(project, pinned) is not None,
         "strip": strip_of(rows), "summary": mix_of(tiles),
         "sessions": tiles,
     }
