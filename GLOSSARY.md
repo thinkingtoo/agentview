@@ -57,6 +57,21 @@ A session that cannot move on without something changing, of a kind the overview
 A kind of stuck: the session cannot go on until the person answers, approves, or does something themselves, such as running a command, sending a mail or buying something.
 _Avoid_: waiting, ready, your turn
 
+**Limit**:
+A kind of stuck: the usage limit was reached and the session's last word is that error. It goes on by itself when the limit resets, or when the person tells it to.
+_Avoid_: rate limit error, throttled
+
+**Error**:
+A kind of stuck: any other API or authentication error is the session's last word (overloaded, auth, server). It ends the way any Failure does.
+_Avoid_: crash
+
+**Failure**:
+The API error that is a session's last word: a Limit if it is the usage limit, an Error for any other. It ends when the model is asked or says anything again; a slash command run locally, or a `!` shell line, does not end it.
+
+**Hung**:
+A kind of stuck: the session is busy and nothing shows it moving, for ten minutes (`hung_after_minutes`) counted from its last sign of life of any kind. Waiting on a subagent, a background job or a command using CPU is moving, not Hung, for the six hours such a wait counts and the ten minutes after; so is a session whose processes could not be read.
+_Avoid_: frozen, stalled, the old `stuck` flag
+
 **Jump**:
 One click that puts the terminal showing a session in front of the person. A session at a terminal has its own pane; a background session has none, so the click opens a new tab attached to it.
 

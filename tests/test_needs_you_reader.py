@@ -223,6 +223,46 @@ class Asking(mp.Provider):
         got = self.open([tool(30, "Bash", {"command": "make test"})], waiting_for="dialog open")
         self.assertIsNone(got)
 
+    # Claude Code names what a `waiting` session is blocked on, and the words
+    # it uses are a short list (read out of its own code, 2026-10-19: input
+    # needed, permission prompt, sandbox request, worker request, goal
+    # proposal, dialog open; and, on this machine's event log, the first three
+    # of those plus dialog open). Four wait on an answer or an approval, and
+    # one is a menu the person opened.
+    def test_each_request_that_waits_on_an_approval_is_a_request_with_its_name(self):
+        for value in ("sandbox request", "worker request", "goal proposal"):
+            with self.subTest(value=value):
+                self.assertEqual(self.open([text(30)], waiting_for=value),
+                                 {"kind": "request", "what": value})
+
+    def test_a_request_is_a_request_whatever_call_is_still_open(self):
+        got = self.open([tool(30, "Bash", {"command": "make test"})], waiting_for="sandbox request")
+        self.assertEqual(got, {"kind": "request", "what": "sandbox request"})
+
+    def test_a_word_for_a_dialog_this_reader_has_not_met_is_a_request_too(self):
+        # Claude Code says `waiting` when it waits on the person; only the menu
+        # word says it does not.
+        self.assertEqual(self.open([text(30)], waiting_for="a new kind of dialog"),
+                         {"kind": "request", "what": "a new kind of dialog"})
+
+    def test_a_waiting_session_that_names_nothing_asks_nothing(self):
+        for value in ("", "   ", None, 7, ["sandbox request"], {"a": 1}):
+            with self.subTest(value=value):
+                self.assertIsNone(self.open([text(30)], waiting_for=value))
+
+    def test_the_menu_word_is_a_menu_in_any_case_and_with_blanks_around_it(self):
+        for value in ("Dialog open", "DIALOG OPEN", "  dialog open  "):
+            with self.subTest(value=value):
+                self.assertIsNone(self.open([text(30)], waiting_for=value))
+
+    def test_a_request_the_session_has_since_left_is_not_open(self):
+        self.assertIsNone(self.open([text(30)], status="busy", waiting_for="sandbox request"))
+        self.assertIsNone(self.open([text(30)], status="idle", waiting_for="sandbox request"))
+
+    def test_the_question_dialog_and_the_permission_prompt_are_what_they_were(self):
+        self.assertEqual(self.open([text(30)], waiting_for="input needed"), {"kind": "question", "questions": []})
+        self.assertEqual(self.open([text(30)], waiting_for="permission prompt")["kind"], "permission")
+
     def test_a_session_that_is_idle_asks_nothing(self):
         self.assertIsNone(self.open([text(30)], status="idle", waiting_for=""))
 

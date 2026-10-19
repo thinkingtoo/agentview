@@ -104,6 +104,61 @@ class Sources(Base):
         self.assertFalse(got["context"]["copy"])
 
 
+class Requests(Base):
+    """A `waiting` session whose dialog is neither a question nor a permission
+    prompt: a sandbox request, a worker's request, a goal proposal. Each waits
+    on the person's approval, and says so with its own name."""
+
+    def stuck(self, *sessions, **kw):
+        return self.tile(*sessions, **kw)["stuck"]
+
+    def request(self, what="sandbox request", **over):
+        return session("a", status="waiting", waitingFor=what,
+                       asking={"kind": "request", "what": what}, **over)
+
+    def test_a_request_is_needs_you_and_its_name_is_the_reason(self):
+        for what, reason in (("sandbox request", "Sandbox request"), ("worker request", "Worker request"),
+                             ("goal proposal", "Goal proposal")):
+            with self.subTest(what=what):
+                self.assertEqual(self.stuck(self.request(what)),
+                                 {"kind": "needs", "source": "request", "reason": reason,
+                                  "context": {"what": what}})
+
+    def test_the_card_says_needs_you_for_it(self):
+        self.assertEqual(self.roster(self.request())["columns"][0]["state"], "needs")
+
+    def test_it_is_counted_stuck_in_the_mix(self):
+        got = self.roster(self.request())["columns"][0]["summary"]
+        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0})
+
+    def test_the_menu_a_person_opened_is_still_not_stuck(self):
+        self.assertIsNone(self.stuck(session("a", status="waiting", waitingFor="dialog open")))
+
+    def test_its_words_are_cut_to_a_label_and_are_text_only(self):
+        got = self.stuck(self.request(INJECTION + "w" * 500))
+        self.assertLessEqual(len(got["context"]["what"]), fleet.LABEL_LEN)
+        self.assertEqual(got["reason"], got["context"]["what"][:1].upper() + got["context"]["what"][1:])
+
+    def test_a_request_that_names_nothing_is_nothing(self):
+        for junk in (None, "", "   ", 5, ["x"]):
+            with self.subTest(junk=junk):
+                row = session("a", status="waiting", waitingFor="x", asking={"kind": "request", "what": junk})
+                self.assertIsNone(self.stuck(row))
+
+    def test_a_question_open_beats_it(self):
+        row = session("a", status="waiting", waitingFor="input needed", asking=asks())
+        self.assertEqual(self.stuck(row)["source"], "question")
+
+    def test_the_chime_rings_exactly_as_it_did_without_the_request(self):
+        # The flag and the counts are the old ones: a named waitingFor rings.
+        read = lambda *rows: [{k: b[k] for k in ("alarms", "blocked", "ready", "busy")}
+                              | {"members": [{k: m[k] for k in Chime.READ} for m in b["members"]]}
+                              for b in self.roster(*rows)["blocks"]]
+        bare = session("a", status="waiting", waitingFor="sandbox request")
+        self.assertEqual(read(self.request()), read(bare))
+        self.assertEqual((read(bare)[0]["alarms"], read(bare)[0]["members"][0]["flag"]), (1, "waiting"))
+
+
 class SessionLine(Base):
     def line(self, sid, ask="", n=0, by="session"):
         """The session has written its own line for the turn it is in."""
@@ -350,7 +405,9 @@ class Shapes(Base):
             for status, waiting_for in (("waiting", "input needed"), ("waiting", "permission prompt"),
                                         ("idle", ""), ("busy", "")):
                 with self.subTest(junk=junk, status=status):
-                    got = self.tile(session("a", status=status, waitingFor=waiting_for, asking=junk))["stuck"]
+                    # Written a moment ago, so a busy one is not Hung: this is about `asking`.
+                    got = self.tile(session("a", status=status, waitingFor=waiting_for, asking=junk,
+                                            quietFor=0.1))["stuck"]
                     if got is not None:
                         self.assertEqual(set(got), {"kind", "source", "reason", "context"})
                         self.assertEqual(got["kind"], "needs")

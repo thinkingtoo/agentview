@@ -54,6 +54,7 @@ class Base(unittest.TestCase):
         self.path = self.dir / "proj" / "sid.jsonl"
         claude._cache.clear()
         claude.SUBS.cache.clear()
+        claude._teams.clear()
 
     def scan(self):
         return claude.scan_session(self.path, now=NOW.timestamp())
@@ -251,6 +252,323 @@ class Subagents(Base):
         stray.parent.mkdir(parents=True)
         stray.write_text("not json\n")
         self.assertEqual(sum(self.scan()["writes"]), 1)
+
+
+class Workflows(Base):
+    """A workflow's agents write one folder deeper than a background agent:
+    `<session>/subagents/workflows/<run>/agent-*.jsonl`. A session waiting on
+    the workflow is waiting on subagents (ticket 08, box 2)."""
+
+    def agent(self, run, name, records, seconds_ago=5):
+        agent = self.path.with_suffix("") / "subagents" / "workflows" / run / f"{name}.jsonl"
+        write(agent, records, "w")
+        touch(agent, seconds_ago)
+        return agent
+
+    def test_a_workflow_agents_writes_are_added_to_the_sessions_strip(self):
+        write(self.path, [record(600)], "w")
+        self.agent("wf_one", "agent-a1", [record(15), record(16)])
+        writes = self.scan()["writes"]
+        self.assertEqual((writes[29], sum(writes)), (2, 3))      # the session's own write is 10 minutes back
+
+    def test_when_a_workflow_agent_last_wrote_is_the_subagent_time(self):
+        write(self.path, [record(900)], "w")
+        self.agent("wf_one", "agent-a1", [record(130)], seconds_ago=130)
+        self.agent("wf_two", "agent-b2", [record(400)], seconds_ago=400)
+        self.assertAlmostEqual(self.scan()["subQuiet"], 130 / 60)
+
+    def test_a_background_agent_and_a_workflow_agent_are_one_sum(self):
+        write(self.path, [record(600)], "w")
+        sub = self.path.with_suffix("") / "subagents" / "agent-a1.jsonl"
+        write(sub, [record(12)], "w")
+        touch(sub, 12)
+        self.agent("wf_one", "agent-b2", [record(14)])
+        self.assertEqual(self.scan()["writes"][29], 2)
+
+    def test_a_workflow_agent_that_stopped_long_ago_is_neither_read_nor_counted(self):
+        write(self.path, [record(10)], "w")
+        old = self.agent("wf_one", "agent-old", [record(3 * 3600)], seconds_ago=3 * 3600)
+        with reads_of_files() as reads:
+            writes = self.scan()["writes"]
+        self.assertEqual(sum(writes), 1)
+        self.assertEqual([path for path, _ in reads if path == str(old)], [])
+
+    def test_a_file_in_a_workflow_folder_that_is_not_a_transcript_is_ignored(self):
+        write(self.path, [record(10)], "w")
+        meta = self.path.with_suffix("") / "subagents" / "workflows" / "wf_one" / "agent-a1.meta.json"
+        meta.parent.mkdir(parents=True)
+        meta.write_text("{}\n")
+        self.assertEqual(sum(self.scan()["writes"]), 1)
+        self.assertIsNone(self.scan()["subQuiet"])
+
+
+LEAD = "6f0c91aa-1111-4222-8333-444455556666"
+HEADER = [{"type": "agent-setting", "agentSetting": "general-purpose", "sessionId": "m"},
+          {"type": "mode", "mode": "normal", "sessionId": "m"}]
+
+
+class Teammates(Base):
+    """A named teammate is not under the session's folder: it writes a transcript
+    of its own next to the session's, and says whose team it is in its first
+    message, `teamName: session-<first 8 of the session's id>`. A session
+    waiting on one is waiting on a subagent (ticket 08, box 2)."""
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.dir / "proj" / f"{LEAD}.jsonl"
+        write(self.path, [record(600)], "w")
+
+    def mate(self, name, records, team=f"session-{LEAD[:8]}", seconds_ago=5, header=HEADER, folder=None):
+        """A transcript beside the session's (or in another project folder, next
+        to the session's own): header lines, then the messages, each stamped
+        with the team when it has one."""
+        extra = {"teamName": team, "agentName": name} if team else {}
+        path = (self.dir / folder if folder else self.path.parent) / f"{name}.jsonl"
+        write(path, header + [{**r, **extra} for r in records], "w")
+        touch(path, seconds_ago)
+        return path
+
+    def test_a_teammates_writes_are_added_to_the_sessions_strip(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user"), record(16)])
+        writes = self.scan()["writes"]
+        self.assertEqual((writes[29], sum(writes)), (2, 3))      # the session's own write is 10 minutes back
+
+    def test_when_a_teammate_last_wrote_is_the_subagent_time(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(130, "user")], seconds_ago=130)
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(400, "user")], seconds_ago=400)
+        self.assertAlmostEqual(self.scan()["subQuiet"], 130 / 60)
+
+    def test_a_transcript_of_another_sessions_team_or_of_no_team_is_not_a_teammate(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], team="session-99999999")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], team=None)
+        got = self.scan()
+        self.assertEqual(sum(got["writes"]), 1)
+        self.assertIsNone(got["subQuiet"])
+
+    def test_a_teammate_that_stopped_long_ago_is_not_counted(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(3 * 3600, "user")], seconds_ago=3 * 3600)
+        got = self.scan()
+        self.assertEqual(sum(got["writes"]), 1)
+        self.assertIsNone(got["subQuiet"])
+
+    def test_a_teammate_whose_first_message_is_not_written_yet_counts_once_it_is(self):
+        mate = self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [])
+        self.assertIsNone(self.scan()["subQuiet"])
+        write(mate, [{**record(3, "user"), "teamName": f"session-{LEAD[:8]}"}])
+        touch(mate, 3)
+        self.assertAlmostEqual(self.scan()["subQuiet"], 3 / 60)
+
+    def test_a_teammate_is_not_read_again_for_what_team_it_is_in(self):
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")])
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], team=None)
+        self.scan()
+        looked = []
+        with mock.patch.object(claude, "_team_of", lambda path: looked.append(path)):
+            self.assertAlmostEqual(self.scan()["subQuiet"], 5 / 60)
+        self.assertEqual(looked, [])
+
+    def test_what_team_a_file_is_in_is_kept_for_a_bounded_number_of_files(self):
+        for n in range(5):
+            self.mate(f"33333333-aaaa-4bbb-8ccc-00000000000{n}", [record(15, "user")], team=None)
+        with mock.patch.object(claude, "MAX_TEAMS", 3):
+            self.scan()
+        self.assertLessEqual(len(claude._teams), 3)
+
+    def test_the_sessions_own_transcript_is_not_its_teammate(self):
+        # Its first message says it is in its own team, so only the exclusion
+        # of its own file keeps it from being its own subagent.
+        write(self.path, [{**record(5, "user"), "teamName": f"session-{LEAD[:8]}"}], "w")
+        touch(self.path, 5)
+        self.assertIsNone(self.scan()["subQuiet"])
+
+    # Hunt 08-2, finding 2. A session that moves to another directory keeps its
+    # transcript in the folder it started in, and a teammate it spawns after
+    # that writes in the folder of the directory it is in then (2 of 118
+    # teammates on this machine; both a `<project>-wt/<name>` worktree, both
+    # one of the session's own directories).
+
+    def lead_in(self, *directories):
+        write(self.path, [record(600 - n, cwd=cwd) for n, cwd in enumerate(directories)], "w")
+
+    def test_a_teammate_in_the_folder_of_a_directory_the_session_moved_to_is_its_teammate(self):
+        self.lead_in("/work/proj", "/work/proj-wt/ana")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-proj-wt-ana")
+        got = self.scan()
+        self.assertAlmostEqual(got["subQuiet"], 5 / 60)
+        self.assertEqual(sum(got["writes"]), 3)      # the session's two records, and the teammate's
+
+    def test_a_folder_of_a_directory_the_session_never_had_is_not_looked_into(self):
+        self.lead_in("/work/proj")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-elsewhere")
+        got = self.scan()
+        self.assertIsNone(got["subQuiet"])
+        self.assertEqual(sum(got["writes"]), 1)
+
+    def test_a_teammate_of_another_team_in_such_a_folder_is_still_not_its_teammate(self):
+        self.lead_in("/work/proj", "/work/proj-wt/ana")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], team="session-99999999",
+                  folder="-work-proj-wt-ana")
+        self.assertIsNone(self.scan()["subQuiet"])
+
+    def test_the_sessions_own_folder_named_by_a_directory_is_not_counted_twice(self):
+        self.lead_in("proj")        # a directory whose folder is the one the transcript is in
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")])
+        self.assertEqual(sum(self.scan()["writes"]), 2)
+
+    def test_only_the_newest_directories_are_remembered(self):
+        # The teammates stopped at different times, so which of them was found
+        # shows in the session's subagent time: the one in -work-a would give
+        # 40 s, the one in -work-c 7 s.
+        self.lead_in("/work/a", "/work/b", "/work/c")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-a", seconds_ago=40)
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], folder="-work-c", seconds_ago=7)
+        with mock.patch.object(claude, "MAX_CWDS", 2):
+            got = self.scan()
+        self.assertAlmostEqual(got["subQuiet"], 7 / 60, places=2)
+        self.assertEqual(sum(got["writes"]), 4)      # the session's three records, and the one in -work-c
+
+    def test_a_directory_is_remembered_by_when_the_session_was_last_in_it(self):
+        # a, b, a, c with room for two: the session came back to a after b, so
+        # it is b that goes. (The teammate in -work-a is 40 s back, the one in
+        # -work-b 7 s back: which of them was found shows in the subagent time.)
+        write(self.path, [record(600, cwd="/work/a"), record(590, cwd="/work/b"), record(580, cwd="/work/a"),
+                          record(570, cwd="/work/c")], "w")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-a", seconds_ago=40)
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000002", [record(15, "user")], folder="-work-b", seconds_ago=7)
+        with mock.patch.object(claude, "MAX_CWDS", 2):
+            self.assertAlmostEqual(self.scan()["subQuiet"], 40 / 60, places=2)
+
+    def test_a_subagents_directory_in_the_sessions_file_is_not_the_sessions_own(self):
+        write(self.path, [record(600, cwd="/work/proj"), record(30, cwd="/work/other", isSidechain=True)], "w")
+        self.mate("22222222-aaaa-4bbb-8ccc-000000000001", [record(15, "user")], folder="-work-other")
+        self.assertIsNone(self.scan()["subQuiet"])
+
+
+class TurnEnd(Base):
+    """The reader says when the session's own newest word is the end of a turn:
+    Claude Code writes the stop hooks' summary and the turn's duration, and the
+    registry may go on saying busy (hunt 08-2, finding 1)."""
+
+    def over(self, *records):
+        # One file written over and over: the reader's cache would take a longer
+        # one that begins alike for the same file grown.
+        claude._cache.clear()
+        write(self.path, records, "w")
+        return self.scan()["turnOver"]
+
+    def test_a_turn_duration_is_the_end_of_a_turn(self):
+        self.assertTrue(self.over(record(30), {"type": "system", "subtype": "turn_duration", "timestamp": at(29)}))
+
+    def test_a_stop_hook_summary_is_the_end_of_a_turn(self):
+        self.assertTrue(self.over(record(30), {"type": "system", "subtype": "stop_hook_summary", "timestamp": at(29)}))
+
+    def test_a_session_still_working_is_not_over(self):
+        self.assertFalse(self.over(record(30)))
+        self.assertFalse(self.over())
+
+    def test_what_is_said_after_the_end_of_a_turn_opens_it_again(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(29)}
+        self.assertFalse(self.over(record(30), end, record(20, "user")))
+        self.assertFalse(self.over(record(30), end, record(20)))
+
+    def test_a_subagents_end_of_turn_in_the_sessions_file_is_not_the_sessions(self):
+        self.assertFalse(self.over(record(30), {"type": "system", "subtype": "turn_duration",
+                                                "timestamp": at(29), "isSidechain": True}))
+
+    def test_other_system_records_are_neither(self):
+        notice = {"type": "system", "subtype": "informational", "timestamp": at(28)}
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(29)}
+        self.assertTrue(self.over(record(30), end, notice))
+        self.assertFalse(self.over(record(30), notice))
+
+    # Hunt 08-3, finding 1. A turn can end on an API error, and Claude Code does
+    # not always write a turn end after it: three interactive sessions on a rate
+    # limit have none, and the registry goes on saying busy (034f15b5, e9f2fc08
+    # and 04f28c2b, 2026-10-17 and 18: busy for 12 to 74 minutes).
+
+    def api_error(self, seconds_ago, **extra):
+        return {"type": "assistant", "timestamp": at(seconds_ago), "isApiErrorMessage": True,
+                "error": "rate_limit", "apiErrorStatus": 429,
+                "message": {"content": [{"type": "text", "text": "x"}]}, **extra}
+
+    def test_an_api_error_as_the_last_word_is_the_end_of_a_turn(self):
+        self.assertTrue(self.over(record(30), self.api_error(29)))
+        self.assertTrue(self.over(record(30), self.api_error(29, error="server_error", apiErrorStatus=529)))
+
+    def test_what_is_said_after_an_api_error_opens_the_turn_again(self):
+        self.assertFalse(self.over(record(30), self.api_error(29), record(20, "user")))
+        self.assertFalse(self.over(record(30), self.api_error(29), record(20)))
+
+    def test_a_record_nobody_typed_does_not_open_it_again_but_a_typed_one_does(self):
+        # Hunt 08-4, note 3: the model is not called by a notification or a
+        # message from another session, so the error is still the last word.
+        notice = record(20, "user", origin={"kind": "task-notification"})
+        peer = record(20, "user", origin={"kind": "peer"}, isMeta=True)
+        typed = record(20, "user", origin={"kind": "human"})
+        self.assertTrue(self.over(record(30), self.api_error(29), notice))
+        self.assertTrue(self.over(record(30), self.api_error(29), peer))
+        self.assertFalse(self.over(record(30), self.api_error(29), notice, typed))
+        self.assertFalse(self.over(record(30), self.api_error(29), notice, record(10)))
+
+    def test_an_api_error_that_is_not_marked_as_one_is_an_ordinary_reply(self):
+        self.assertFalse(self.over(record(30), self.api_error(29, isApiErrorMessage=False)))
+        self.assertFalse(self.over(record(30), self.api_error(29, isApiErrorMessage="yes")))
+
+    def test_a_subagents_api_error_in_the_sessions_file_is_not_the_sessions(self):
+        self.assertFalse(self.over(record(30), self.api_error(29, isSidechain=True)))
+
+    # Hunt 08-3, finding 2. Claude Code compacts a session by itself while it is
+    # idle (98 times on this machine), or the person runs /compact; it writes a
+    # user record with `isCompactSummary` and no turn end after it. The model is
+    # asked to summarise, not to go on with the work.
+
+    def compaction(self, seconds_ago):
+        return [{"type": "system", "subtype": "compact_boundary", "timestamp": at(seconds_ago)},
+                record(seconds_ago, "user", isCompactSummary=True),
+                {"type": "system", "subtype": "informational", "timestamp": at(seconds_ago - 1)}]
+
+    def test_a_compaction_does_not_open_a_turn_that_is_over(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(3000)}
+        self.assertTrue(self.over(record(3001), end, *self.compaction(60)))
+
+    def test_nor_does_it_end_a_turn_that_is_open(self):
+        self.assertFalse(self.over(record(3001), *self.compaction(60)))
+
+    def test_the_model_speaking_after_a_compaction_opens_the_turn(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(3000)}
+        self.assertFalse(self.over(record(3001), end, *self.compaction(60), record(30)))
+        self.assertFalse(self.over(record(3001), end, *self.compaction(60), record(30, "user")))
+
+    def test_only_a_summary_marked_as_one_is_a_compaction(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(3000)}
+        for flag in (False, "yes", 1, None):
+            with self.subTest(flag=flag):
+                self.assertFalse(self.over(record(3001), end, record(60, "user", isCompactSummary=flag)))
+
+    def test_a_compaction_after_an_api_error_leaves_the_turn_over(self):
+        self.assertTrue(self.over(record(3001), self.api_error(3000), *self.compaction(60)))
+
+    # Hunt 08-6, ruled 2026-10-19: Claude Code writes an assistant record of its
+    # own when it resumes a session (model `<synthetic>`, not marked as an
+    # error). The model was not called, so an error is still the last word.
+
+    def no_response(self, seconds_ago, **extra):
+        return {"type": "assistant", "timestamp": at(seconds_ago), "isApiErrorMessage": False,
+                "message": {"model": "<synthetic>", "content": [{"type": "text", "text": "No response requested."}]},
+                **extra}
+
+    def test_the_no_response_record_does_not_open_a_turn_that_ended_on_an_api_error(self):
+        resume = record(20, "user", isMeta=True)
+        self.assertTrue(self.over(record(30), self.api_error(29), resume, self.no_response(19)))
+        self.assertTrue(self.over(record(30), self.api_error(29), self.no_response(19)))
+        self.assertFalse(self.over(record(30), self.api_error(29), resume, self.no_response(19), record(10)))
+
+    def test_with_no_error_before_it_the_no_response_record_opens_the_turn_like_any_reply(self):
+        end = {"type": "system", "subtype": "turn_duration", "timestamp": at(29)}
+        self.assertFalse(self.over(record(30), end, self.no_response(19)))
+
+    def test_a_subagents_no_response_record_is_not_the_sessions(self):
+        self.assertTrue(self.over(record(30), self.api_error(29), self.no_response(19, isSidechain=True)))
 
 
 def started(seconds_ago, tool_id, command="pytest -q", description="Run the unit tests"):

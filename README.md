@@ -118,7 +118,12 @@ session waiting on a dialog is not "writing". CPU with no call in flight is a
 shell left behind and proves nothing.
 Any command or job counts for at most six hours (`WAIT_MAX_MINUTES` in
 `fleet.py`); past that the tile still says what it waits on, and the session
-stops counting as moving.
+stops counting as moving once `hung_after_minutes` more have passed (the
+ten minutes are counted from the moment the six hours ended, not from the last
+write). The same count runs from the last time CPU was seen moving under a
+command it waits on: a command that burned CPU two minutes ago is a session
+that was moving two minutes ago. That time is kept per session, not per
+command, and in memory only: after a restart, CPU from before it is unknown.
 
 Each project card draws a **strip**: one bar per minute for the last 30,
 oldest first, the records written by all of the project's sessions and their
@@ -127,9 +132,58 @@ counters ride on the incremental tail the reader already keeps; they add no
 read. After a restart a transcript is read from its last 2 MB, so the minutes
 before that window are **unknown**, not empty: the strip leaves them as dotted
 stubs, and a minute any session in the project could not see is unknown for the
-project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session that
-needs you is stuck even while a job runs, and a busy session nothing proves is
-moving counts as stuck.
+project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session is
+stuck when its tile carries a kind (below), even while a job runs. A menu the
+person opened (`dialog open`) is not stuck, and neither is a busy session whose
+processes could not be read.
+
+## Stuck: Needs you, Error, Hung, Limit
+
+A tile that is stopped says so with a **kind**: a tag, a border and a dot in the
+kind's colour, a reason, and what the person needs to decide before they jump.
+A session has the most urgent kind that holds, in this order, and the card's
+state word (under its name) is the most urgent of its sessions':
+**NEEDS YOU** (amber), **ERROR** and **HUNG** (red), **LIMIT** (purple), then
+MOVING (green) and ALL IDLE (grey).
+
+| kind | when | reason | context |
+|---|---|---|---|
+| Needs you | an open question, an open permission prompt, another request that waits on the person (below), or a session line with things left | Question, Permission prompt, Sandbox request, Worker request, Goal proposal, "3 things left for you" | the question and its options; the tool and its command; the request's name and nothing more; the line's ask |
+| Error | an API or auth error is the session's last word | Overloaded, Auth error, Server error, or the error's own name | the error's words and how long ago |
+| Hung | busy, and nothing shows it moving for `hung_after_minutes` (default 10) | "Not moving for 14 min" | the last tool it called and how long ago |
+| Limit | the usage limit is the session's last word | Rate limit | when it resets (the error carries it) and how long it has been held |
+
+A `waiting` session says what it waits on (`waitingFor`, Claude Code's own
+word). `input needed` is a question and `permission prompt` a permission
+prompt; `sandbox request` (a sandboxed command wants the network), `worker
+request` (a teammate's worker asks) and `goal proposal` (Claude proposes a
+session goal) each wait on an approval, and read Needs you under their own
+name. `dialog open` is a menu or panel the person opened themselves: not
+stuck. A word this page has not met reads Needs you too, since Claude Code only
+says `waiting` when it waits on someone. The chime rings for every one of them,
+as before.
+
+A failure (a Limit or an Error) is **the last word** until the model answers or
+you type: a reply of the model's own, a prompt you typed, a compaction. What
+nobody typed does not end it, because it does not call the model: a task
+notification, a message from another session, a tool's result, the prompt a
+skill expands. Neither do the records Claude Code writes on its own after an
+error (a turn duration, a title, a queued line, a snapshot, the "No response
+requested." it writes when it resumes a session and no model was called), nor a
+slash command run locally or a `!` shell line. A subagent's records are not the
+session's. Until then the tile stays Error or Limit and is not turned into Hung.
+
+Hung is `moving` turned round (see Movement), so a session waiting on a
+subagent, a background job or a command using CPU is never Hung, for the six
+hours such evidence counts and `hung_after_minutes` after. It is also not
+said when `/proc` could not answer: the first look at a command after a restart
+has nothing to compare its CPU with, and a folder that will not be read, or a
+command that exits mid-walk, is no evidence of absence. The same goes for a
+transcript that cannot be read: with no writes to see, silence is not known.
+
+The flags the chime reads (`stuck`, `waiting`, `ready`, `tool`) are computed as
+before and stay on `blocks`; the kinds are on the tiles. Hung replaces `stuck`
+on the overview.
 
 ## After a reboot
 

@@ -250,6 +250,10 @@ class CodexProvider(Provider):
             "prompt": state["prompt"],
             "said": state["said"],
             "quietFor": quiet,
+            # Codex writes nothing to its rollout while a command runs, and
+            # nothing here looks at what runs under the session: silence is
+            # not known to be silence, so the core must not call it Hung.
+            "procsUnknown": True,
             "extras": extras,
         }
         if held:
