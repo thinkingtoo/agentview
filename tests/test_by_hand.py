@@ -97,6 +97,15 @@ class Moves(TrackFixtures):
         self.assertEqual(self.keys(self.column(after, LOOM)), ["claude:n"])
         self.assertEqual(self.keys(self.column(after, ORCHARD)), ["claude:b"])
 
+    def test_a_tile_says_it_was_moved_by_hand_and_the_others_do_not(self):
+        # The page offers the way back on the tiles you moved and on no other.
+        loom, orchard = self.repo("loom"), self.repo("orchard")
+        self.config = {"assign": {"claude:a": ORCHARD, LOOM: ORCHARD}}
+        got = self.claude(sess("a", loom, name="Femi"), sess("b", loom, name="Odile"),
+                          sess("c", orchard, name="Ilse"))
+        tiles = {t["key"]: t["assigned"] for c in got["columns"] for t in c["sessions"]}
+        self.assertEqual(tiles, {"claude:a": True, "claude:b": False, "claude:c": False})
+
     def test_the_move_of_one_session_beats_the_move_of_its_repository(self):
         loom, orchard = self.repo("loom"), self.repo("orchard")
         self.config = {"assign": {LOOM: "track:checkout", "claude:a": ORCHARD}}

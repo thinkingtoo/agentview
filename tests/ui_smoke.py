@@ -1342,6 +1342,22 @@ def e2e_pass(browser):
         wait_order(["folder:orchard", "folder:maple"])
         check("e2e: a merge is a move of the whole project in the config",
               stored()["assign"] == {"folder:pear": "folder:maple"}, stored())
+
+        # One session: moved, shown as moved, and taken back.
+        tile = col("folder:maple").locator('.tile[data-sid="fake:c"]')
+        tile.hover()
+        tile.locator(".move").click()
+        page.locator("select.pick").select_option("folder:orchard")
+        page.locator(".ov-form button", has_text="move").click()
+        page.wait_for_function("() => document.querySelector('.ov-col[data-project=\"folder:orchard\"] .tile[data-sid=\"fake:c\"] .clear')")
+        check("e2e: a session moved by hand is in the config under its own key and says so on its tile",
+              stored()["assign"] == {"folder:pear": "folder:maple", "fake:c": "folder:orchard"}
+              and col("folder:orchard").locator('.tile[data-sid="fake:c"] .clear').is_visible(), stored())
+        col("folder:orchard").locator('.tile[data-sid="fake:c"] .clear').click()
+        page.wait_for_function("() => document.querySelector('.ov-col[data-project=\"folder:maple\"] .tile[data-sid=\"fake:c\"]')")
+        check("e2e: the way back takes it out of the config and puts it where its project is",
+              stored()["assign"] == {"folder:pear": "folder:maple"}
+              and col("folder:maple").locator('.tile[data-sid="fake:c"] .clear').count() == 0, stored())
         page.close()
 
         # A restart: the same config, a new server.

@@ -722,6 +722,8 @@ def tile_of(m, suggestion=None):
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
         "status": m["status"], "suggestion": suggestion,
+        # Put where it is by hand: the page offers the way back.
+        "assigned": m["assigned"],
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
         "line": "" if line.strip() == m["name"].strip() else line,
         "jump": jump_of(m),
