@@ -4,7 +4,9 @@
 
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Claimed by:** Yohana 2026-10-19 22:49
+
+**Status:** in-progress
 
 - [ ] `find /tmp -maxdepth 1 -name 'tmp????????' -user $USER | wc -l` is the same before and after a full unit run (run with TMPDIR pointed at a fresh empty dir and count there)
 - [ ] No test's assertions change (diff shows only cleanup lines and imports)
