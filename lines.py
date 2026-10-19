@@ -14,6 +14,11 @@ to answer from the page; four of them are a trip to the terminal, and quoting
 the first of four would misrepresent the size of the job -- so the page
 renders the count instead.
 
+`ask` and `n` belong to the turn they were written in: the next prompt is the
+answer to them. `did` is the job the session is on, and the next prompt does
+not change that, so the last one is kept beside the line until a newer one is
+written.
+
 Kept beside `seen.json` rather than in `config.json`: that file is yours to
 hand-edit, and this one is rewritten by a hook every time a session stops.
 """
@@ -50,6 +55,11 @@ def _turn_file(session_id, root=None):
     return None if path is None else path.with_suffix(".turn")
 
 
+def _did_file(session_id, root=None):
+    path = _file(session_id, root)
+    return None if path is None else path.with_suffix(".did")
+
+
 def current_turn(session_id, root=None):
     """Which turn this session is in, or `""` when nothing is tracking it."""
     path = _turn_file(session_id, root)
@@ -65,7 +75,8 @@ def begin_turn(session_id, root=None):
     """A new turn: forget the last line and mint an identity for this one.
 
     The prompt that restarted a session is the answer to whatever it asked,
-    so the line goes at the same moment. The identity is what lets a line
+    so the line goes at the same moment. The last `did` stays (`kept_did`):
+    it says what job the session is on, which a prompt does not end. The identity is what lets a line
     that outlives its turn be recognised -- a moment in time could not,
     because a session can go idle, busy and idle again between two polls.
     """
@@ -90,6 +101,21 @@ def fresh(session_id, root=None):
     if got and got["turn"] != current_turn(session_id, root):
         return {}
     return got
+
+
+def kept_did(session_id, root=None):
+    """The last `did` this session wrote, in whatever turn, or `""`.
+
+    Never raises, like `read`.
+    """
+    path = _did_file(session_id, root)
+    if path is None:
+        return ""
+    try:
+        with path.open(encoding="utf-8") as fh:
+            return _clip(fh.read(4 * LIMIT))
+    except (OSError, ValueError):
+        return ""
 
 
 def read(session_id, root=None):
@@ -186,7 +212,26 @@ def write(session_id, did="", ask="", n=0, root=None, at=None, by="session",
             except OSError:
                 pass
         return None
+    if rec["did"]:
+        _keep_did(session_id, rec["did"], root)
     return rec
+
+
+def _keep_did(session_id, did, root=None):
+    """Remember a `did` past the turn it was written in. A line with none
+    leaves the last one standing, and failing to keep one loses only that."""
+    path = _did_file(session_id, root)
+    tmp = None
+    try:
+        tmp = _tmp_for(path)
+        tmp.write_text(did, encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, ValueError):
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def drop(session_id, root=None):
@@ -204,7 +249,8 @@ def forget(live, root=None):
     """Drop the lines of sessions that are gone, so the directory is bounded."""
     root = Path(root) if root else store()
     try:
-        found = list(root.glob("*.json")) + list(root.glob("*.turn"))
+        found = (list(root.glob("*.json")) + list(root.glob("*.turn"))
+                 + list(root.glob("*.did")))
     except OSError:
         return
     # A crashed write leaves `<id>.<random>.tmp` behind, whose stem is not a

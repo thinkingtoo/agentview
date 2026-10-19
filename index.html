@@ -232,8 +232,10 @@
   .tile .go.none { opacity:1; color:var(--faint); }
   .tile .why { color:var(--bad); font-size:12px; overflow-wrap:anywhere; }
   .tile .why.note { color:var(--dim); }
-  .tile .tline { color:var(--dim); font-size:13px; overflow-wrap:anywhere;
-                 display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  /* The working-on line is one line; the hover has all of it. A stand-in (the
+     last prompt, the branch or the folder) is said more quietly. */
+  .tile .tline { color:var(--dim); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tile .tline.stand-in { color:var(--faint); }
   .tile.waiting { border-color:var(--wait); }
   .tile.stuck { border-color:var(--bad); }
   .tile.ready { border-color:color-mix(in srgb,var(--accent) 55%,var(--line)); }
@@ -1119,6 +1121,11 @@ function movementOf(c) {
 // the tile comes from this list, never from the server's text.
 const KIND_TAG = { needs: "needs you", error: "error", hung: "hung", limit: "limit" };
 
+// Where a tile's working-on line came from, and how it is said: the last
+// prompt, the branch and the folder stand in for a line, so they are greyed.
+// The class comes from this list too.
+const LINE_CLASS = { own: "", did: "", title: "", prompt: "stand-in", place: "stand-in" };
+
 function tile(t) {
   const kind = known(KIND_TAG, t.stuck?.kind) ? t.stuck.kind : "";
   const needs = kind === "needs" ? " needs" : "";
@@ -1134,7 +1141,7 @@ function tile(t) {
     <div class="rhead">
       ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${moveButton(t)}${jumpLabel(t, via)}
     </div>
-    ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
+    ${t.line ? `<div class="tline ${known(LINE_CLASS, t.lineSource)}" title="${esc(t.line)}">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
     ${stuckBox(t)}
     ${handRow(t)}
