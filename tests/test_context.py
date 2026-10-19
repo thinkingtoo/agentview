@@ -29,6 +29,10 @@ class Names(TrackFixtures):
         column = self.first(sess("a", self.repo("tiroir-central")))
         self.assertEqual(column["name"], "tiroir central")
 
+    def test_the_brand_is_lowercase_wherever_and_however_it_is_written(self):
+        self.assertEqual(self.first(sess("a", self.repo("Tiroir-Central")))["name"], "tiroir Central")
+        self.assertEqual(self.first(sess("a", self.repo("My-TIROIR-site")))["name"], "My tiroir site")
+
     def test_a_track_is_prettified_like_a_repository(self):
         column = self.claude(self.boss("b", self.repo("loom"), "overview-build"))["columns"][0]
         self.assertEqual((column["name"], column["raw"]), ("Overview build", "overview-build"))
@@ -238,6 +242,7 @@ class Repositories(Cards):
     def test_headings_badges_html_blocks_lists_tables_quotes_and_code_are_not_prose(self):
         self.put("README.md", "---\ntitle: Loom\n---\n<!-- a comment\nover lines -->\n"
                               "Loom\n====\n\n<p align=\"center\"><img src=\"logo.png\"></p>\n\n"
+                              "<h1 align=\"center\"><b>Loom</b> the reports</h1>\n\n"
                               "![badge](b.svg) [![ci](c.svg)](https://ci.example)\n\n"
                               "- not prose\n- a list\n\n| a | b |\n|---|---|\n\n> a quote\n\n"
                               "```\nnot prose either\n```\n\n    indented code\n\n"

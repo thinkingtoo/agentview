@@ -48,6 +48,35 @@ kind (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track
 and a repository that share a name stay two projects; `pinned`, `names` and
 `assign` take an identity, or a plain name as they did before.
 
+## What a project is about
+
+Under a project's name the card says what it is about, in one line cut at about
+140 characters (the whole text is the hover). The first of these that exists:
+
+1. **Your own line**, written in place on the card (click the line) and kept in
+   `config.json` as `project_lines`, keyed by the project's identity, so a track
+   and a repository with one name never share a line. An empty line takes it back.
+2. **A track's goal**: the first sentence of `## Outcome` in
+   `~/.claude/pm/<track>.goal.md`. Beside the name, the `_Status:` word (OPEN,
+   PAUSED, MET) and "N of M" from the boxes under `## Done when`; a MET track
+   says "done" whatever its boxes say.
+3. **A repository's own words**: the first prose paragraph of its README, else of
+   `AGENTS.md`, else of `CLAUDE.md` (headings, badges, tables, lists, code and
+   `@` includes skipped). Read from the main checkout, so every worktree says
+   the same.
+4. **A guess**: the two latest session titles, greyed, with "add a line".
+
+The default name is the slug made readable (`overview-build` is "Overview
+build"; the brand stays lowercase) with the raw name on hover; a name you give
+in `names` is shown exactly as you wrote it. The No project column has no line.
+
+The **notes** link on a card searches your own notes for the project's name and
+line, on a click and never before, and shows the top three hits. It needs a local
+file, like meaning search does: `~/.config/tiroir/agentview-brain.env` (or the
+path in `$AGENTVIEW_BRAIN_ENV`), mode 0600, with `BRAIN_URL` and
+`BRAIN_API_KEY`. Without it the link says "notes search is not set up here".
+The notes are never where a context line comes from.
+
 The page this README describes below is still there as the **block view**, at
 `/?view=blocks` (a link in the header goes each way). Rename, pin, assign, fold,
 hold, the boss nesting and the routines block exist only on the block view for

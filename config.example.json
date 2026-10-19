@@ -9,6 +9,8 @@
   "_zoom": "Base scale of the page. Set this instead of zooming in the browser every time; keep the browser itself at 100% or the two multiply.",
   "zoom": 1.5,
   "names": {},
+  "_project_lines": "project_lines: your own line under a project's name, keyed by the project's identity (track:x, repo:host/owner/name, client:..., folder:x). It beats the track's goal, the README and the guess. The page writes it when you click a line.",
+  "project_lines": {},
   "pinned": [],
   "lines": {},
   "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by provider:id — it also retitles that terminal tab. pinned: projects held at the top, in this order. assign: a session's project, keyed by provider:id. A project is named by its identity (track:x, repo:host/owner/name, folder:x) or by its plain name.",
