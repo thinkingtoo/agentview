@@ -89,20 +89,43 @@ def config_value(key, default):
     return got if isinstance(got, type(default)) else default
 
 
-def write_config(patch):
-    """Merge a patch into config.json, atomically.
+# The page can send a rename, a move and a pin in the same breath, and the
+# server answers each on a thread of its own. Every change to the file goes
+# through here, one at a time.
+_CONFIG_LOCK = threading.RLock()
+
+
+def update_config(change):
+    """Let `change(config)` edit config.json in place, atomically, and return
+    what was written.
+
+    Reading, editing and replacing happen under one lock, so two changes made
+    at once both land -- a change that reads the file first and writes it
+    later would put back what the other had just removed. Each write goes
+    through a temp file of its own beside the config, so nobody replaces what
+    another is still writing.
 
     The file is hand-editable and holds comments as `_`-prefixed keys, so it is
-    read, merged and rewritten rather than regenerated.
+    read, edited and rewritten rather than regenerated.
     """
-    merged = read_config()
-    merged.update(patch)
-    tmp = CONFIG.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(merged, fh, indent=2, ensure_ascii=False)
-        fh.write("\n")
-    tmp.replace(CONFIG)
-    return merged
+    with _CONFIG_LOCK:
+        merged = read_config()
+        change(merged)
+        tmp = CONFIG.with_name(f"{CONFIG.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as fh:
+                json.dump(merged, fh, indent=2, ensure_ascii=False)
+                fh.write("\n")
+            tmp.replace(CONFIG)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        return merged
+
+
+def write_config(patch):
+    """Merge a patch into config.json, atomically."""
+    return update_config(lambda config: config.update(patch))
 
 
 def config(cfg_dir=None):
@@ -448,7 +471,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
     # Keyed to the moment it stopped, so a session that works and stops
     # again is ready once more without anything having to clear it.
     unseen = seen.ready(key, updated, marks)
-    project = assigned.get(key) or resolve_project(cwd, shelves)
+    project = projects.landed(assigned, assigned.get(key)) or resolve_project(cwd, shelves)
     # Only guess for the ones that have nothing better -- the guess costs a
     # vote over every path touched, and a session with a real cwd does not
     # need it. A routine is never guessed for.
@@ -616,7 +639,7 @@ def columns_of(blocks):
     """What the overview page draws: one column per project, in display order.
 
     The sessions come from the blocks, but the grouping is the overview's own
-    (`projects.assign_all`): a project is what the person thinks of, not the
+    (`projects.place`): a project is what the person thinks of, not the
     folder a block was keyed by. The page reads these and decides nothing of
     its own. Routines are not on the page; their sessions stay in `blocks`,
     which the chime reads.
@@ -626,11 +649,12 @@ def columns_of(blocks):
     own_lines = config_value("project_lines", {})
     pinned = config_value("pinned", [])
     members = [m for b in blocks if not b["routines"] for m in b["members"]]
-    by_key = projects.assign_all(members, folder_rule, config_value("assign", {}))
+    by_key, follow = projects.place(members, folder_rule, config_value("assign", {}))
     grouped = {}
     for m in members:
         grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
-    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, names, own_lines),
+    merged = projects.merged_into(config_value("assign", {}))
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, follow, names, pinned, merged, own_lines),
                 _column_order(rows, by_key[rows[0]["key"]], names, pinned))
                for rows in grouped.values()]
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
@@ -650,17 +674,21 @@ def _column_name(project, names):
             else names.get("No project") or "No project")
 
 
-def _column(rows, project, folder_rule, names, own_lines):
+def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines):
     # A boss leads its column, whatever the activity: who leads before who
     # works. The rest are in the order the blocks have always used.
     rows = order_members(list(rows))
     rows.sort(key=lambda s: not s["boss"])
-    tiles = [tile_of(m, _suggestion(m, project, folder_rule, names)) for m in rows]
+    tiles = [tile_of(m, _suggestion(m, project, folder_rule, follow, names)) for m in rows]
     name = _column_name(project, names)
     about, track = context.card(project, rows, own_lines)
     return {
         "project": project["id"], "raw": project["raw"], "kind": project["kind"],
         "name": name,
+        "pinned": _pin_rank(project, pinned) is not None,
+        # What you moved into this project, which the page can take back.
+        "merged": [{"project": ident, "name": projects.display_name(projects.from_identity(ident), names)}
+                   for ident in merged.get(project["id"], [])],
         "context": about, "track": track,
         # What the card's notes link asks the brain, once someone clicks it.
         "notes": None if about is None else {"query": context.notes_query(name, about)},
@@ -669,24 +697,31 @@ def _column(rows, project, folder_rule, names, own_lines):
     }
 
 
+def _pin_rank(project, pinned):
+    """Where you pinned a project -- never No project, which is not one."""
+    return None if project is NO_PROJECT else projects.pin_rank(project, pinned)
+
+
 def _column_order(rows, project, names, pinned):
     """Your pins lead, in your order; then the tracks, the repositories and
     the folders; No project last whatever. Inside a kind they go by name and
     stay put: a column that jumps sideways because a session woke up is the
     reshuffling this page exists to stop."""
-    pin = None if project is NO_PROJECT else projects.pin_rank(project, pinned)
+    pin = _pin_rank(project, pinned)
     return (project is NO_PROJECT,
             len(pinned) if pin is None else pin,
             projects.COLUMN_RANK[project["kind"]],
             _column_name(project, names).casefold(), project["id"])
 
 
-def _suggestion(m, project, folder_rule, names):
+def _suggestion(m, project, folder_rule, follow, names):
     """Where a session with no project probably belongs, as the one click
-    that puts it there -- or None."""
+    that puts it there -- or None. A project you moved away is not offered:
+    the guess goes where the project went, as a session assigned to it would."""
     guessed = projects.guess(m.get("paths") or [], folder_rule) if project is NO_PROJECT else None
     if not guessed:
         return None
+    guessed = follow(guessed)
     return {"project": guessed["id"], "name": projects.display_name(guessed, names)}
 
 
@@ -705,6 +740,8 @@ def tile_of(m, suggestion=None):
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
         "status": m["status"], "suggestion": suggestion,
+        # Put where it is by hand: the page offers the way back.
+        "assigned": bool(m.get("assigned")),
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
         "line": "" if line.strip() == m["name"].strip() else line,
         "jump": jump_of(m),

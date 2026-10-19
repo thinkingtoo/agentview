@@ -84,15 +84,17 @@ def display_name(project, names):
     return names.get(project["id"]) or names.get(project["raw"]) or pretty(project["raw"])
 
 
+def is_pin_of(pin, project):
+    """Does this pin name this project? A pin names the identity; one written
+    before projects had identities names the raw name, which a project of any
+    kind may carry."""
+    return isinstance(pin, str) and bool(pin) and (
+        pin == project["id"] or (from_identity(pin) is None and pin == project["raw"]))
+
+
 def pin_rank(project, pinned):
-    """Where the person pinned this project, or None. A pin names the
-    identity; one written before projects had identities names the raw name,
-    which a project of any kind may carry."""
-    for i, pin in enumerate(pinned):
-        if isinstance(pin, str) and pin and (
-                pin == project["id"] or (from_identity(pin) is None and pin == project["raw"])):
-            return i
-    return None
+    """Where the person pinned this project, or None."""
+    return next((i for i, pin in enumerate(pinned) if is_pin_of(pin, project)), None)
 
 
 # ------------------------------------------------------- the repository
@@ -380,6 +382,37 @@ def _worker_track(m, live, teams, trackers):
 
 # --------------------------------------------------------- the assignment
 
+def merged_into(assigned):
+    """`{project identity: [identities you moved into it]}`, by name: what the
+    page offers to take back."""
+    out = {}
+    for key, value in assigned.items():
+        if isinstance(value, str) and from_identity(key) and from_identity(value.strip()) and key != value.strip():
+            out.setdefault(value.strip(), []).append(key)
+    return {into: sorted(keys) for into, keys in out.items()}
+
+
+def landed(assigned, value):
+    """The project identity a session assigned to `value` is in once the moves of
+    whole projects are followed -- `assigned` holds those too, keyed by identity.
+    The block view names a session you moved after this, and a project you
+    merged away is no longer one it can be asked to pin, rename or drop on. A
+    value that is not a project's identity (a plain name, anything else) is
+    returned as it is, and so is one nothing was moved from. It always ends: a
+    project is not visited twice."""
+    if not isinstance(value, str) or not from_identity(value.strip()):
+        return value
+    here, seen = value.strip(), set()
+    while here not in seen:
+        seen.add(here)
+        step = assigned.get(here)
+        step = step.strip() if isinstance(step, str) else ""
+        if not from_identity(step) or step in seen:
+            break
+        here = step
+    return here if here != value.strip() else value
+
+
 def _is_assigned(assigned, key):
     return isinstance(assigned.get(key), str) and bool(assigned[key].strip())
 
@@ -397,11 +430,45 @@ def _assigned_project(value, known_as):
     return _project("folder", value, value)
 
 
-def assign_all(members, folder_rule, assigned):
-    """Every session's project: `{session key: project}`.
+def _follow_moves(project, assigned, known_as):
+    """Where you moved this whole project to, or the project itself.
 
-    First match wins, in the order the person thinks of it: their own setting,
-    then the boss's track, then the repository, then the folder, then none.
+    `assigned` is keyed by a session (`provider:id`) or, since you can move a
+    track or a repository, by the identity of the project the session would
+    have been in. The two never meet: a session key starts with a provider,
+    an identity with one of the four prefixes `KINDS` names.
+
+    A project you moved away is gone, and whatever is put into it goes where
+    it went -- a session assigned to it, another project moved into it. The
+    walk never visits a project twice, so two projects moved into each other
+    swap places instead of looping.
+    """
+    seen = {project["id"]}
+    while project is not NO_PROJECT:
+        value = assigned.get(project["id"])
+        if not isinstance(value, str) or not value.strip():
+            break
+        target = _assigned_project(value.strip(), known_as)
+        if target["id"] in seen:
+            break
+        seen.add(target["id"])
+        project = target
+    return project
+
+
+def assign_all(members, folder_rule, assigned):
+    """Every session's project: `{session key: project}`. See `place`."""
+    return place(members, folder_rule, assigned)[0]
+
+
+def place(members, folder_rule, assigned):
+    """`(by_key, follow)`: every session's project, `{session key: project}`,
+    and `follow(project)`, which carries any project to where you moved it --
+    for what is not a session's project yet, such as a suggestion.
+
+    First match wins, in the order the person thinks of it: their own setting
+    for the session, then their move of its whole project, then the boss's
+    track, then the repository, then the folder, then none.
     """
     boss_tracks = _boss_tracks(members)
     live = set(boss_tracks.values())
@@ -429,7 +496,11 @@ def assign_all(members, folder_rule, assigned):
             for name in (project["raw"], folder_rule(m["cwd"])):
                 if name and project not in known_as.setdefault(name, []):
                     known_as[name].append(project)
+    def follow(project):
+        return _follow_moves(project, assigned, known_as)
+
     for m in members:
-        if _is_assigned(assigned, m["key"]):
-            by_key[m["key"]] = _assigned_project(assigned[m["key"]].strip(), known_as)
-    return by_key
+        start = (_assigned_project(assigned[m["key"]].strip(), known_as)
+                 if _is_assigned(assigned, m["key"]) else by_key[m["key"]])
+        by_key[m["key"]] = follow(start)
+    return by_key, follow
