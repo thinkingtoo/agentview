@@ -100,13 +100,16 @@ class Guess(Base):
     def test_several_things_left_quote_nothing_and_so_offer_nothing(self):
         self.assertEqual(self.commands('Run "make test", and may I push it?', n=2), [])
 
-    def test_a_command_in_the_last_words_of_a_session_with_no_line_is_offered_too(self):
-        tile = self.tile(session("a", said='Done. Should I run "make test" before I push?'))
+    def test_words_read_out_of_the_transcript_offer_no_command(self):
+        # `ask_from` takes out `*`, `_`, backticks and `#` to make a sentence of
+        # the last words, so a command in them is not what the session wrote:
+        # "pip install my_package" would be offered as "pip install mypackage".
+        tile = self.tile(session("a", said='Done. Should I run "pip install my_package" next?'))
         self.assertEqual((tile["need"], tile["guessedCommands"]), (
-            'Should I run "make test" before I push?', ["make test"]))
+            'Should I run "pip install mypackage" next?', []))
 
-    def test_a_line_read_out_of_the_transcript_offers_the_same_commands(self):
-        self.assertEqual(self.commands('Should I run "make test" first?', by="read"), ["make test"])
+    def test_a_line_the_hook_read_for_the_session_offers_no_command_either(self):
+        self.assertEqual(self.commands('Should I run "make test" first?', by="read"), [])
 
     def test_a_command_cut_short_by_the_length_of_the_line_is_not_offered(self):
         # A line holds 160 characters and ends in an ellipsis when it was cut.
@@ -141,6 +144,10 @@ class Guess(Base):
     def test_a_dollar_sign_followed_by_a_word_of_prose_is_not_a_command(self):
         self.assertEqual(self.commands("Should we charge in $ or in euros?"), [])
         self.assertEqual(self.commands("Is the price in $ per month the one we agreed?"), [])
+
+    def test_an_amount_with_a_dollar_after_it_is_not_a_command(self):
+        self.assertEqual(self.commands("Le budget est de 20 $ / mois, ok ?"), [])
+        self.assertEqual(self.commands("Is 20 $ . a month fine?"), [])
 
     def test_a_dollar_command_may_be_a_program_of_the_projects_own(self):
         self.assertEqual(self.commands("Run $ maple-sync next , please."), ["maple-sync next"])
@@ -186,7 +193,7 @@ class Guess(Base):
                         "docker compose up -d", "npm run build", "npm test", "uv run pytest",
                         "pip install -r requirements.txt", "kubectl get pods", "gh pr merge 12",
                         "systemctl restart maple-notes", "sudo systemctl restart maple-notes",
-                        "python3 scripts/rebuild.py", "cd maple", "ls notes", "ssh root@maple.example",
+                        "python3 scripts/rebuild.py", "cd ~/maple", "ls notes", "ssh root@maple.example",
                         "ssh-add -l", "brew install jq", "ollama run llama3", "/home/alice/bin/sync.py now",
                         "MAPLE_ENV=test make test", "tar xzf notes.tar.gz", "grep -rn TODO notes"):
             with self.subTest(command=command):
@@ -237,6 +244,48 @@ class Guess(Base):
     def test_a_command_written_twice_is_offered_once(self):
         self.assertEqual(self.commands('Run "make test" now, and "make test" again after the push?'),
                          ["make test"])
+
+    def test_a_dot_or_two_standing_alone_in_a_command_do_not_end_it(self):
+        # `.` is the folder, `./...` every package: a period ends the sentence
+        # only after a word, never after a space or another dot.
+        for ask, command in (
+                ("Tests are written. Could you run $ go test ./...?", "go test ./..."),
+                ('Run $ find . -name "*.md" -mtime -1?', 'find . -name "*.md" -mtime -1'),
+                ("Then run $ pip install -e .?", "pip install -e ."),
+                ("Run $ cd .. && make test.", "cd .. && make test"),
+                ('Run $ git add . && git commit -m "wip".', 'git add . && git commit -m "wip"'),
+                ('Could you run $ docker build -t maple . && docker run --rm maple sh -c '
+                 '"pytest -q tests/"?',
+                 'docker build -t maple . && docker run --rm maple sh -c "pytest -q tests/"'),
+                ("Run $ ls ./deploy.sh.", "ls ./deploy.sh")):
+            with self.subTest(ask=ask):
+                self.assertEqual(self.commands(ask), [command])
+
+    def test_a_single_quote_left_open_is_not_offered_either(self):
+        self.assertEqual(self.commands("Run $ git commit -m 'fix typo, then push it"), [])
+        self.line("a", "On the VPS run $ ssh root@maple.example 'sudo systemctl restart maple-notes; "
+                       "journalctl -u maple-notes -n 50, then tail the log and tell me what it says "
+                       "about the notes service and the sync job that runs at night'")
+        tile = self.tile(session("a"))
+        self.assertTrue(tile["stuck"]["context"]["text"].endswith("\u2026"))
+        self.assertEqual(tile["guessedCommands"], [])
+
+    def test_an_apostrophe_after_a_dollar_command_is_not_an_open_quote(self):
+        self.assertEqual(self.commands("Run $ make test, it's what the owner's CI runs."), ["make test"])
+        self.assertEqual(self.commands("Run $ git commit -m 'wip' when it's ready."),
+                         ["git commit -m 'wip' when it's ready"])
+
+    def test_names_that_are_also_words_need_a_sign_in_quotes_too(self):
+        for phrase in ("diff view", "sudo access", "cd into the repo", "tailscale setup", "bash scripting",
+                       "brew coffee", "apt choice", "tar pit"):
+            with self.subTest(phrase=phrase):
+                self.assertEqual(self.commands(f'Is "{phrase}" or "release notes" the title?'), [])
+
+    def test_a_wrapper_such_as_sudo_gives_way_to_the_command_it_runs(self):
+        for command in ("sudo systemctl restart maple-notes", "sudo apt install jq", "sudo tar xzf notes.tar.gz",
+                        "sudo diff a.txt b.txt", "nohup make build", "watch ls -l"):
+            with self.subTest(command=command):
+                self.assertEqual(self.commands(f"Could you run `{command}` for me?"), [command])
 
 
 if __name__ == "__main__":

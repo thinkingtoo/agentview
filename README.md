@@ -135,26 +135,31 @@ A command a session leaves for you in its line gets a **copy** button. The
 session-line hook is unchanged, so `ask` is free text and `ask_commands.py`
 guesses: text in quotes (straight, curly, « » or backticks), or after a `$ `,
 that reads as a command. Three tiers keep prose out: names nobody says in a
-sentence (`cd`, `brew`, `psql`) take any argument; tools with fixed
-subcommands (`git`, `docker`, `npm`, `make`, `systemctl` ...) need one of
-theirs, so "git status" gets a button and "git history" does not; words that
-are also programs (`find`, `touch`, `echo`, `ssh`, `python`, `claude`) need a
-sign no plain sentence has after them: a flag, a path, a dot between letters,
-a bare number, a string, an `@` or `=`. A path to a script, or `VAR=1 cmd`,
-counts too. After a `$` one word is enough if it is a known program or has a
-hyphen, dot or slash in it.
+sentence (`ls`, `rm`, `psql`) take any argument; tools with fixed
+subcommands (`git`, `docker`, `npm`, `make`, `brew` ...) need one of theirs,
+so "git status" gets a button and "git history" does not; words that are also
+programs (`find`, `cd`, `echo`, `ssh`, `python`, `claude`) need a sign no plain
+sentence has after them: a flag, a path, a dot between letters, a bare number,
+a string, an `@` or `=`. `sudo` and its kind are judged by the command after
+them. A path to a script, or `VAR=1 cmd`, counts too. After a `$` one word is
+enough if it is a known program or has a hyphen, dot or slash in it.
 
 Known limits, accepted: a program the lists do not know (`tiroir-work next` in
 quotes) gets no button; a title that starts with a tool's name and a sign gets
-one; a `$` command runs to the end of its sentence (`. , ? !` or a dash, not
-inside a quoted argument), so one with no sentence end after it swallows the
-words that follow.
-A command cut by the line's length, or with a quote left open, is not offered,
-and neither are the quotes inside it. The tile carries the list
-as `guessedCommands`, only when the ask is on the tile (an open dialog is shown
-over it), and the page prints one row per command with its own button. Copying
-puts the text on the clipboard and sends nothing to the server; approving stays
-in the session's pane.
+one; a `$` command runs to the end of its sentence (`, ? !`, a dash, or a
+period after a word; not inside a quoted argument, and not a `.` or `..` of
+its own), so one with no sentence end after it swallows the words that follow;
+a quote escaped inside a quote (`\"`) is not understood.
+
+What is not offered, so that half a command is never one click away: a command
+cut by the line's length, one with a quote left open, and the quotes inside
+either. Only the session's own line is guessed on, the one it wrote as its one
+thing left. Words read out of its last message are shown as before and get no
+button: reading them takes out `*`, `_`, backticks and `#`, so a command in
+them is not the command the session wrote. The tile carries the list as
+`guessedCommands`, and the page prints one row per command with its own button.
+Copying puts the text on the clipboard and sends nothing to the server;
+approving stays in the session's pane.
 
 ## After a reboot
 

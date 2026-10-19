@@ -21,8 +21,10 @@ QUOTES = [re.compile(p) for p in (
 # engine never has to try the quoted and the plain way of reading each quote.
 DOLLAR_COMMAND = re.compile(
     r"(?:^|[\s:])\$ +([A-Za-z./~](?:\"[^\"\n]*\"|`[^`\n]*`|(?<!\w)'[^'\n]*'(?!\w)|[^\n])*?)"
-    # Where the command ends and the sentence goes on.
-    r"(?=\s\$ |,\s|\.(?:\s|$)|[?!](?:\s|$)|\s[—–]\s|\s\(|\n|$)")
+    # Where the command ends and the sentence goes on. A period ends it only
+    # after a word or a closing quote or bracket: `find .`, `cd ..` and
+    # `go test ./...` have periods of their own.
+    r"(?=\s\$ |,\s|(?<=[\w\"'`)\]])\.(?:\s|$)|[?!](?:\s|$)|\s[—–]\s|\s\(|\n|$)")
 
 PATHS = ("./", "../", "~/")
 SCRIPT = re.compile(r"\.(sh|bash|py|js|mjs|rb|pl)$")
@@ -38,9 +40,12 @@ ARGUMENT_SIGN = re.compile(r"""^-+\w|^\.|^~|^\d+$|[/@=*\\|&;<>$"`]|\w\.\w""")
 #
 # Names nobody says in a sentence: anything after them is an argument.
 ANY_ARGUMENT = frozenset("""
-cd ls cp mv rm mkdir chmod chown ln sudo bash sh grep rg sed awk tar diff jq pytest ruff
-brew apt apt-get dpkg crontab psql sqlite3 ollama openssl ssh-add ssh-keygen tailscale ufw certbot
+ls cp mv rm mkdir chmod chown ln grep rg sed awk jq pytest ruff psql sqlite3 crontab openssl
+ssh-add ssh-keygen apt-get dpkg ufw certbot
 """.split())
+# Words that run another command: what is after them is judged by itself, so
+# "sudo systemctl restart maple" is a command and "sudo access" is not.
+WRAPPERS = frozenset("sudo nohup time watch".split())
 # Tools with a fixed set of subcommands. "git status" is a command and "git
 # history" is a title, so a plain word after them has to be one of theirs.
 BUILD_TARGETS = "test build install run clean lint check fmt vet all deploy tidy dev generate".split()
@@ -61,6 +66,10 @@ SUBCOMMANDS = {name: frozenset(words.split()) for name, words in {
     "systemctl": "start stop restart reload status enable disable daemon-reload is-active mask unmask "
                  "edit cat list-units",
     "kubectl": "get apply delete describe logs exec rollout scale port-forward config",
+    "brew": "install uninstall update upgrade list search info services tap cleanup",
+    "apt": "install remove update upgrade search purge autoremove",
+    "ollama": "run pull list serve rm show",
+    "tailscale": "up down status ip ssh serve funnel",
     "make": " ".join(BUILD_TARGETS),
     "go": " ".join(BUILD_TARGETS) + " mod get",
 }.items()}
@@ -69,10 +78,10 @@ SUBCOMMANDS = {name: frozenset(words.split()) for name, words in {
 # carries one of the signs above.
 PROSE_PROGRAMS = frozenset("""
 find head tail cat source export kill pkill claude codex python python3 node npx ssh scp rsync
-curl wget touch echo tmux journalctl ps df du
+curl wget touch echo tmux journalctl ps df du cd diff tar bash sh
 """.split())
 
-KNOWN = ANY_ARGUMENT | SUBCOMMANDS.keys() | PROSE_PROGRAMS
+KNOWN = ANY_ARGUMENT | SUBCOMMANDS.keys() | PROSE_PROGRAMS | WRAPPERS
 
 
 class Hit(NamedTuple):
@@ -98,6 +107,8 @@ def reads_as_command(text):
         return True
     if ENV_ASSIGNMENT.match(first):
         return True
+    if first in WRAPPERS:
+        return reads_as_command(" ".join(rest))
     if first in ANY_ARGUMENT:
         return True
     if first in KNOWN and any(ARGUMENT_SIGN.search(w) for w in rest):
@@ -111,15 +122,24 @@ def reads_as_prompted(text):
     ("in $ or euros"). A program of the project's own has a hyphen, an
     underscore, a dot or a slash in its name."""
     words = text.split()
-    return bool(words) and (words[0] in KNOWN or words[0].startswith(PATHS)
-                            or ENV_ASSIGNMENT.match(words[0]) is not None
-                            or any(c in words[0] for c in "-_./"))
+    # "/ mois" and "." are no program: a name has a letter in it.
+    if not words or not re.search(r"[A-Za-z]", words[0]):
+        return False
+    return (words[0] in KNOWN or words[0].startswith(PATHS)
+            or ENV_ASSIGNMENT.match(words[0]) is not None
+            or any(c in words[0] for c in "-_./"))
+
+
+QUOTED_RUN = re.compile(r"\"[^\"\n]*\"|`[^`\n]*`|(?<!\w)'[^'\n]*'(?!\w)")
+QUOTE_OPENER = re.compile(r"[\"`]|(?<!\w)'")
 
 
 def cut_or_broken(command):
     """Half a command pasted into a terminal is worse than none: the line was
-    cut with an ellipsis, or a quote opened in it was never closed."""
-    return command.endswith("\u2026") or command.count('"') % 2 or command.count("`") % 2
+    cut with an ellipsis, or a quote opened in it was never closed. An
+    apostrophe inside a word ("it's") does not open a quote."""
+    return (command.endswith("\u2026")
+            or QUOTE_OPENER.search(QUOTED_RUN.sub(" ", command)) is not None)
 
 
 def guess(text):

@@ -792,9 +792,10 @@ def guessed_pass(browser):
           stuck=prompts("Bash", cmd)),
         S("g5", "Elin", "idle", line="Cleanup", need=f"Run $ {hostile_cmd}.", commands=[hostile_cmd])])
     body = roster([maple])
-    # A line read out of the transcript is not stuck: the ask is the words under the name.
+    # Words read out of the transcript are not the session's own line: the tile shows them
+    # under the name (`need`, no stuck box) and the roster offers no command in them.
     next(x for x in body["columns"][0]["sessions"] if x["key"] == "g3").update(
-        need="Is `make test` enough?", guessedCommands=["make test"])
+        need="Is `make test` enough?")
     fake = Fake(body)
     page = new_page(browser, fake)
     open_at(page)
@@ -803,12 +804,12 @@ def guessed_pass(browser):
 
     check("a copy button for each guessed command, none for prose with quotes",
           t("g1").locator("button.copy").count() == 2 and t("g2").locator("button.copy").count() == 0
-          and t("g3").locator("button.copy").count() == 1 and t("g5").locator("button.copy").count() == 1,
+          and t("g3").locator("button.copy").count() == 0 and t("g5").locator("button.copy").count() == 1,
           [t(k).locator("button.copy").count() for k in ("g1", "g2", "g3", "g5")])
     check("each button sits with the command it copies, in the order written",
           t("g1").locator(".guessed code").all_inner_texts() == ["make test", "git push origin main"]
           and t("g1").locator(".guessed .cmd").nth(1).locator("button.copy").count() == 1)
-    check("the ask itself is still shown, and so is a line read from the transcript",
+    check("the ask itself is still shown, and so are the words read from the transcript, with no button",
           t("g1").locator(".say").inner_text() == ask and t("g3").locator(".need").inner_text() == "Is `make test` enough?")
     check("the permission-prompt button of ticket 07 is the one it was: one, no index",
           t("g4").locator("button.copy").count() == 1 and t("g4").locator("button.copy").get_attribute("data-i") is None
@@ -835,7 +836,6 @@ def guessed_pass(browser):
     t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
     for label, loc, want in (("first", t("g1").locator("button.copy").nth(0), "make test"),
                              ("second", t("g1").locator("button.copy").nth(1), "git push origin main"),
-                             ("line read from the transcript", t("g3").locator("button.copy"), "make test"),
                              ("permission prompt", t("g4").locator("button.copy"), cmd),
                              ("markup, quotes and spaces", t("g5").locator("button.copy"), hostile_cmd)):
         loc.click()

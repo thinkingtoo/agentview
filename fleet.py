@@ -786,13 +786,15 @@ def stuck_of(m):
 
 
 def guessed_commands_of(m, stuck):
-    """The commands guessed in the ask the tile shows, or none.
+    """The commands guessed in the ask the session wrote for the tile, or none.
 
-    The ask is on the tile when it is its one thing left or the words under
-    its name; an open dialog is shown over it, and several things left are
-    only counted.
+    Only the session's own line, which is the ask verbatim and shown as its
+    one thing left: an open dialog is shown over it, several things left are
+    only counted, and words read out of the transcript have had their `*`,
+    `_`, backticks and `#` taken out (`ask_from`), so a command in them is
+    not the command the session wrote.
     """
-    if m["n"] != 1 or (stuck and stuck["source"] != "line"):
+    if m["n"] != 1 or not (stuck and stuck["source"] == "line"):
         return []
     return ask_commands.guess(m["ask"])
 
