@@ -81,7 +81,7 @@ def _resets_at(message, at):
         return None
     month, day, year, hour, minute, half = hit.groups()
     hour, minute = int(hour), int(minute)
-    if not (1 <= hour <= 12 and minute < 60):
+    if not 1 <= hour <= 12:
         return None
     hour = hour % 12 + (12 if half.upper() == "PM" else 0)
     try:

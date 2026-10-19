@@ -167,6 +167,12 @@ class Alone(Base):
         _, tiles = self.run_tile(session("i", status="idle", pid=4242, ancestors=[100]), claude=[starter()])
         self.assertEqual(tiles["codex:i"]["tags"], ["codex"])
 
+    def test_a_pid_that_is_not_a_number_is_nobody_s(self):
+        for odd in ([1], {"a": 1}, "100", None, 1.5, True, -3):
+            with self.subTest(odd=odd):
+                _, tiles = self.run_tile(run(pid=odd, above=(100,)), claude=[starter(pid=odd)])
+                self.assertEqual(sorted(tiles), ["claude:s", "codex:r"])
+
     def test_what_a_provider_says_about_ancestors_is_checked(self):
         for odd in (None, "100", 100, [True], ["100"], [None, 1.5], {"a": 1}, [-4, 0], [[100]], [{"a": 100}]):
             with self.subTest(odd=odd):
