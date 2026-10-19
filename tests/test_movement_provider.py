@@ -62,6 +62,7 @@ class Provider(unittest.TestCase):
         self.transcript = self.cfg / "projects" / "-tmp" / f"{SID}.jsonl"
         claude._cache.clear()
         claude.SUBS.cache.clear()
+        claude._teams.clear()
         self.provider = claude.ClaudeProvider(self.cfg, proc=self.fake.root)
 
     def session(self, records, status="busy"):

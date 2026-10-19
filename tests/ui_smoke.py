@@ -35,6 +35,7 @@ Playwright is needed (`pip install playwright`); the chromium it drives must
 already be installed.
 """
 import copy
+import datetime
 import hashlib
 import json
 import os
@@ -44,6 +45,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 
 from playwright.sync_api import sync_playwright
@@ -82,6 +84,8 @@ def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=Tru
         moving = status == "busy" and flag != "stuck"
     if stuck is None and need:
         stuck = needs("line", "1 thing left for you", {"text": need})
+    if stuck is None and flag == "stuck":
+        stuck = hung_kind(int(note.rstrip("m")))
     return {"key": key, "name": name, "status": status, "flag": flag, "note": note,
             "line": line, "tags": list(tags), "can": can, "need": need, "mv": mv,
             "moving": moving, "stuck": stuck, "extra": extra, "via": via, "why": why}
@@ -90,6 +94,27 @@ def S(key, name, status="idle", flag=None, *, note="", line="", tags=(), can=Tru
 def needs(source, reason, context):
     """What the server says of a session that waits on you."""
     return {"kind": "needs", "source": source, "reason": reason, "context": context}
+
+
+def hung_kind(minutes, tool="", ago=None):
+    """What the server says of a busy session nothing proves is moving."""
+    return {"kind": "hung", "source": "silence", "reason": f"Not moving for {minutes} min",
+            "context": {"tool": tool, "ago": ago}}
+
+
+def limit_kind(resets=None, held=22.0, text=""):
+    return {"kind": "limit", "source": "api", "reason": "Rate limit",
+            "context": {"resetsAt": resets, "held": held, "text": text}}
+
+
+def error_kind(reason, text="", ago=3.0, type_="server_error"):
+    return {"kind": "error", "source": "api", "reason": reason,
+            "context": {"type": type_, "text": text, "ago": ago}}
+
+
+def request_kind(what):
+    """A dialog that waits on an approval and is neither a question nor a permission prompt."""
+    return needs("request", what[:1].upper() + what[1:], {"what": what})
 
 
 def asks(question, options, header="Publish", multi=False):
@@ -105,8 +130,10 @@ def prompts(tool, command="", target="", copy=None):
 
 
 def state_of(sessions):
-    if any(s["stuck"] for s in sessions):
-        return "needs"
+    kinds = {s["stuck"]["kind"] for s in sessions if s["stuck"]}
+    for kind in ("needs", "error", "hung", "limit"):
+        if kind in kinds:
+            return kind
     return "moving" if any(s["moving"] for s in sessions) else "idle"
 
 
@@ -133,8 +160,9 @@ def jump_field(s):
 
 
 def tile(s):
-    # The overview never gets the `tool` flag: the movement sign says it.
-    flag = None if s["flag"] == "tool" else s["flag"]
+    # The overview never gets the `tool` flag (the movement sign says it) nor
+    # `stuck` (it is the kind Hung).
+    flag = None if s["flag"] in ("tool", "stuck") else s["flag"]
     sign = s["mv"] or (f"waiting on: Running the full suite, {s['note'][:-1]} min"
                        if s["flag"] == "tool" else None)
     return {"key": s["key"], "name": s["name"], "provider": "claude", "status": s["status"],
@@ -153,8 +181,7 @@ STRIPS = {"maple": [None] * 6 + [0, 0, 1, 3, 2, 0, 0, 0, 4, 9, 6, 2, 0, 0, 1, 1,
 def mix(sessions):
     out = {"moving": 0, "stuck": 0, "idle": 0}
     for s in sessions:
-        stuck = s["flag"] in ("waiting", "stuck") or s["need"] or (s["status"] == "busy" and not s["moving"])
-        out["stuck" if stuck else "moving" if s["moving"] else "idle"] += 1
+        out["stuck" if s["stuck"] else "moving" if s["moving"] else "idle"] += 1
     return out
 
 
@@ -187,7 +214,8 @@ def routine_block():
 
 
 MAPLE = ("maple", "maple", [
-    S("m1", "Vera", "waiting", "waiting", note="input needed", line="Port the importer", tags=["boss"]),
+    S("m1", "Vera", "waiting", "waiting", note="input needed", line="Port the importer", tags=["boss"],
+      stuck=asks("Publish the notes page under /docs?", [("Yes, under /docs", ""), ("No", "")])),
     S("m2", "Mei", "busy", "stuck", note="17m", line="Rewrite the parser"),
     S("m3", "Nour", "idle", "ready", line="Two had no composer — guess or skip?",
       need="Which table should I drop?"),
@@ -449,10 +477,13 @@ def overview_pass(browser):
     check("one tile per session", page.locator(".tile").count() == 8, page.locator(".tile").count())
 
     t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
-    check("a waiting tile says waiting, and what on",
-          t("m1").locator(".flag.waiting").count() == 1 and t("m1").locator(".wf").inner_text() == "input needed"
-          and "waiting" in t("m1").get_attribute("class"))
-    check("a stuck tile says for how long", "17m" in t("m2").locator(".flag.stuck").inner_text().lower())
+    check("a waiting tile that needs you says so, once, and keeps its waiting tint",
+          t("m1").locator(".flag.needs").count() == 1 and t("m1").locator(".flag.waiting").count() == 0
+          and "waiting" in t("m1").get_attribute("class") and "needs" in t("m1").get_attribute("class"))
+    check("a busy session nothing proves is moving is Hung, and says for how long",
+          t("m2").locator(".flag.hung").inner_text().lower() == "hung"
+          and t("m2").locator(".stuck-box .reason").inner_text() == "Not moving for 17 min"
+          and t("m2").locator(".flag.stuck").count() == 0)
     check("a long tool call is a movement sign now, not a flag, and no alarm tint",
           t("m4").locator(".mv").inner_text() == "waiting on: Running the full suite, 34 min"
           and t("m4").locator(".flag").count() == 0
@@ -489,7 +520,7 @@ def overview_pass(browser):
           and t("m5").locator(".go:not(.none)").count() == 0)
     check("a session that wrote down what it is blocked on shows it, whatever its flag",
           t("m3").locator(".stuck-box .say").inner_text() == "Which table should I drop?"
-          and t("m2").locator(".stuck-box").count() == 0)
+          and t("m5").locator(".stuck-box").count() == 0)
 
     # Geometry: box 3.
     widths = page.locator(".ov-col").evaluate_all("els => els.map(e => e.offsetWidth)")
@@ -930,6 +961,204 @@ def needs_pass(browser):
     page.wait_for_timeout(200)
     check("without a clipboard API, copy falls back to the selection and copies the command",
           page.evaluate("window.__copied") == cmd, page.evaluate("window.__copied"))
+    page.close()
+
+
+def clock_said(line):
+    """The time of day a line says, as (hour, minute, on another day), whatever
+    the browser's locale writes it as: `14:20`, `2:20 PM`, `Tue 14.20`."""
+    got = re.search(r"(?:(?P<day>[^\W\d_]{2,})\.?\s+)?(?P<h>\d{1,2})[:.](?P<m>\d{2})\s*(?P<ap>[AaPp])?\.?[Mm]?", line)
+    if not got:
+        return None
+    hour = int(got["h"]) % 12 + (12 if (got["ap"] or "").lower() == "p" else 0) if got["ap"] else int(got["h"])
+    return hour, int(got["m"]), bool(got["day"])
+
+
+def when(line):
+    """The time part of 'resets 14:20 · held 22 min': what stands between the verb and the dot."""
+    return line.split(" · ")[0].split(" ", 1)[1]
+
+
+def clock_is(ms):
+    """The same, from Python's own clock: what the page should have written."""
+    moment = datetime.datetime.fromtimestamp(ms / 1000)
+    return moment.hour, moment.minute, moment.date() != datetime.date.today()
+
+
+def kinds_pass(browser):
+    """Ticket 08: Error, Hung and Limit on the tile and on the card, in the
+    card's full order. Fixtures are invented; so is every error and tool in them."""
+    now_ms = int(time.time() * 1000)       # the page compares resets with its own clock
+    soon, passed = now_ms + 98 * 60000, now_ms - 40 * 60000
+    mix_p = ("mixed", "mixed", [
+        S("a1", "Vera", "waiting", "waiting", note="input needed", stuck=asks("Publish?", [("Yes", ""), ("No", "")])),
+        S("a2", "Mei", "idle", stuck=error_kind("Overloaded", "Invented: the service is busy", 3.0, "server_error")),
+        S("a3", "Nour", "busy", "stuck", note="14m", stuck=hung_kind(14, "Run the unit tests", 14.0)),
+        S("a4", "Aziz", "idle", stuck=limit_kind(soon, 22.0, "Invented: limit reached")),
+        S("a5", "Dmitri", "busy", mv="writing · 8s ago"),
+        S("a6", "Elin", "idle")])
+    errors_p = ("errs", "errs", [
+        S("e1", "Odile", "idle", stuck=error_kind("Auth error", "Invented: not signed in", 1.0, "authentication_failed")),
+        S("e2", "Femi", "idle", stuck=error_kind("API error", "", None, "")),
+        S("e3", "Gus", "busy", mv="writing · 8s ago")])
+    hung_p = ("hangs", "hangs", [
+        S("h1", "Ilse", "busy", "stuck", note="14m", stuck=hung_kind(14, "Run the unit tests", 14.0)),
+        S("h2", "Joaquin", "busy", "stuck", note="190m", stuck=hung_kind(190)),
+        S("h3", "Kasper", "idle", stuck=limit_kind(None, 5.0)),
+        S("h4", "Lena", "busy", mv="writing · 8s ago")])
+    limit_p = ("limits", "limits", [
+        S("l1", "Maud", "idle", stuck=limit_kind(soon, 22.0, "Invented: limit reached")),
+        S("l2", "Noor", "idle", stuck=limit_kind(passed, 301.0, "Invented: limit reached")),
+        S("l3", "Odin", "idle", stuck=limit_kind(None, 5.0, "")),
+        S("l4", "Pia", "idle", stuck=limit_kind(None, None, "Invented: limit reached")),
+        S("l5", "Quin", "busy", mv="writing · 8s ago")])
+    quiet_p = ("quiet", "quiet", [S("z1", "Rune", "idle"), S("z2", "Sol", "busy", mv="writing · 8s ago")])
+    ask_p = ("asks", "asks", [
+        S("q1", "Rhea", "waiting", "waiting", note="sandbox request", stuck=request_kind("sandbox request")),
+        S("q2", "Soren", "waiting", "waiting", note="goal proposal", stuck=request_kind("goal proposal")),
+        S("q3", "Tove", "waiting", "waiting", note="dialog open")])
+    fake = Fake(roster([mix_p, errors_p, hung_p, limit_p, quiet_p, ask_p]))
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
+    head = lambda project: page.locator(f'.ov-col[data-project="{project}"] .ov-head')
+    probe = lambda v: page.evaluate("""v => { const d = document.createElement('div'); d.style.color = `var(${v})`;
+      document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c }""", v)
+    paint = lambda loc, prop: loc.evaluate(f"e => getComputedStyle(e).{prop}")
+    reason = lambda k: t(k).locator(".stuck-box .reason").inner_text()
+    late = lambda k: t(k).locator(".stuck-box .late").all_inner_texts()
+
+    # The tile: tag, reason, context.
+    check("Limit: the tag, the reason, and when it resets and how long it has been held",
+          t("a4").locator(".flag.limit").inner_text().lower() == "limit"
+          and reason("a4") == "Rate limit" and len(late("a4")) == 1
+          and late("a4")[0].startswith("resets ") and late("a4")[0].endswith(" · held 22 min")
+          and clock_said(when(late("a4")[0])) == clock_is(soon),
+          (reason("a4"), late("a4"), clock_is(soon)))
+    check("Limit: a reset time already past says reset, not resets",
+          len(late("l2")) == 1 and late("l2")[0].startswith("reset ") and not late("l2")[0].startswith("resets ")
+          and late("l2")[0].endswith(" · held 5 h") and clock_said(when(late("l2")[0])) == clock_is(passed),
+          (late("l2"), clock_is(passed)))
+    check("Limit: with no reset time it says only how long, and with nothing, its own words",
+          late("l3") == ["held 5 min"] and t("l4").locator(".stuck-box .say").inner_text() == "Invented: limit reached"
+          and late("l4") == [], (late("l3"), late("l4")))
+    check("Error: the tag, the type as the reason, the error's words and when",
+          t("a2").locator(".flag.error").inner_text().lower() == "error" and reason("a2") == "Overloaded"
+          and t("a2").locator(".stuck-box .say").inner_text() == "Invented: the service is busy"
+          and late("a2") == ["3 min ago"], (reason("a2"), late("a2")))
+    check("Error: a login failure, and one that names nothing and has no words",
+          reason("e1") == "Auth error" and late("e1") == ["1 min ago"]
+          and reason("e2") == "API error" and t("e2").locator(".stuck-box .say").count() == 0
+          and late("e2") == [], (reason("e1"), reason("e2")))
+    check("Hung: the tag, how long, and the last tool with its age",
+          t("h1").locator(".flag.hung").inner_text().lower() == "hung" and reason("h1") == "Not moving for 14 min"
+          and late("h1") == ["last tool: Run the unit tests · 14 min ago"], (reason("h1"), late("h1")))
+    check("Hung: with no tool to name it says so, and long silences are in hours",
+          late("h2") == ["no tool called yet"] and reason("h2") == "Not moving for 190 min", late("h2"))
+    check("a tile with a kind has no flag of the old pages beside it",
+          all(t(k).locator(".flag").count() == 1 for k in ("a2", "a3", "a4", "h1", "l1", "e1"))
+          and t("a3").locator(".flag.stuck").count() == 0)
+    check("a session with no kind has no box", t("a5").locator(".stuck-box").count() == 0
+          and t("a6").locator(".stuck-box").count() == 0)
+    check("Needs you by a request: the tag, and its name as the reason, with nothing under it",
+          t("q1").locator(".flag.needs").inner_text().lower() == "needs you"
+          and reason("q1") == "Sandbox request" and reason("q2") == "Goal proposal"
+          and t("q1").locator(".stuck-box .say, .stuck-box .late, .stuck-box .cmd").count() == 0,
+          (reason("q1"), reason("q2")))
+    check("and a menu the person opened (dialog open) is waiting, not Needs you",
+          t("q3").locator(".stuck-box").count() == 0 and t("q3").locator(".flag.needs").count() == 0)
+
+    # Colour: the border and the dot, per kind.
+    check("Error and Hung are red, Limit is purple, on the border",
+          paint(t("a2"), "borderTopColor") == probe("--bad") == paint(t("a3"), "borderTopColor")
+          and paint(t("a4"), "borderTopColor") == probe("--limit") != probe("--bad"),
+          (paint(t("a2"), "borderTopColor"), paint(t("a4"), "borderTopColor"), probe("--limit")))
+    check("and the dot takes the kind's colour, not the green of a busy session or a tick",
+          paint(t("a3").locator(".dot"), "backgroundColor") == probe("--bad")
+          and paint(t("a2").locator(".dot"), "backgroundColor") == probe("--bad")
+          and paint(t("a4").locator(".dot"), "backgroundColor") == probe("--limit")
+          and t("a2").locator(".tick").count() == 0)
+    check("the tag takes the colour too",
+          paint(t("a2").locator(".flag"), "color") == probe("--bad")
+          and paint(t("a4").locator(".flag"), "color") == probe("--limit")
+          and paint(t("a4").locator(".stuck-box .reason"), "color") == probe("--limit")
+          and paint(t("a3").locator(".stuck-box .reason"), "color") == probe("--bad"))
+
+    # The card: the full order, the word, the colours, and the mix by kind.
+    for project, word, var, mixline in (
+            ("mixed", "NEEDS YOU", "--wait", "1 moving · 4 stuck · 1 idle"),
+            ("errs", "ERROR", "--bad", "1 moving · 2 stuck · 0 idle"),
+            ("hangs", "HUNG", "--bad", "1 moving · 3 stuck · 0 idle"),
+            ("limits", "LIMIT", "--limit", "1 moving · 4 stuck · 0 idle"),
+            ("quiet", "MOVING", "--busy", "1 moving · 0 stuck · 1 idle"),
+            ("asks", "NEEDS YOU", "--wait", "0 moving · 2 stuck · 1 idle")):
+        h = head(project)
+        check(f"{project}: the card reads {word}", h.locator(".ov-state").inner_text() == word,
+              h.locator(".ov-state").inner_text())
+        check(f"{project}: its top edge, word and bars are {var}",
+              paint(h, "borderTopColor") == probe(var) and paint(h.locator(".ov-state"), "color") == probe(var)
+              and paint(h.locator(".strip i:not(.u):not(.z)").first, "backgroundColor") == probe(var),
+              (paint(h, "borderTopColor"), probe(var)))
+        check(f"{project}: the mix counts stuck by kind", h.locator(".mix").inner_text() == mixline,
+              h.locator(".mix").inner_text())
+    check("a card of Error, Hung and Limit is red before it is purple; Limit alone is purple",
+          paint(head("hangs"), "borderTopColor") == probe("--bad") != paint(head("limits"), "borderTopColor"))
+
+    # A click on a tile with a kind still jumps and keeps its reason.
+    t("h1").locator(".nm").click()
+    page.wait_for_timeout(150)
+    check("a click on a Hung tile jumps and keeps its reason", reason("h1") == "Not moving for 14 min"
+          and any(p == "/api/jump" for p, _ in fake.posts))
+    page.close()
+
+    # R7: what Claude Code and a session wrote is text, in every place a kind prints it.
+    hostile = ("hostile", "hostile", [
+        S("x1", "Vera", "idle", stuck=error_kind(BOMB, BOMB, 3.0, BOMB)),
+        S("x2", "Mei", "busy", "stuck", note="14m", stuck=hung_kind(14, BOMB, 14.0)),
+        S("x3", "Nour", "idle", stuck=limit_kind(None, None, BOMB))])
+    page = new_page(browser, Fake(roster([hostile])))
+    seen = len(errors)
+    open_at(page)
+    page.wait_for_selector(".tile")
+    page.wait_for_timeout(300)
+    text = page.locator("#main").inner_text().lower()
+    check("R7: markup in an error's reason and words, a last tool, and a limit's words is shown as text",
+          text.count(BOMB.lower()) == 4, text.count(BOMB.lower()))
+    check("R7: and builds no element from it",
+          page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0)
+    check("R7: no dialog, no page error", len(errors) == seen, errors[seen:])
+    page.close()
+
+    # A kind the page does not know is shown without a class of its own.
+    odd = ("odd", "odd", [S("w1", "Wim", "idle", stuck={"kind": "x\"><b>", "source": "api", "reason": "Odd",
+                                                             "context": {}})])
+    page = new_page(browser, Fake(roster([odd])))
+    open_at(page)
+    page.wait_for_selector(".tile")
+    check("an unknown kind builds no markup and adds no class from the server's text",
+          page.locator("#main b").count() == 0 and "<" not in (t("w1").get_attribute("class") or ""),
+          t("w1").get_attribute("class"))
+    page.close()
+
+    # A word every object has (`constructor`, `toString`) is not a kind or a state the page knows.
+    inherited = roster([("inherit", "inherit", [
+        S("i1", "Ivo", "idle", stuck={"kind": "constructor", "source": "api", "reason": "Inherited", "context": {}}),
+        S("i2", "Jana", "idle", stuck={"kind": "toString", "source": "api", "reason": "Inherited too", "context": {}})])])
+    inherited["columns"][0]["state"] = "toString"
+    page = new_page(browser, Fake(inherited))
+    open_at(page)
+    page.wait_for_selector(".tile")
+    text = page.locator("#main").inner_text()
+    check("an inherited object key is no kind: no code printed, no class, no tag",
+          "native code" not in text and "function" not in text
+          and all("constructor" not in (t(k).get_attribute("class") or "") and "toString" not in (t(k).get_attribute("class") or "")
+                  for k in ("i1", "i2"))
+          and t("i1").locator(".flag.constructor, .flag.toString").count() == 0,
+          (text, t("i1").get_attribute("class")))
+    check("and the card says the word it was given, as a state of no colour",
+          page.locator(".ov-state").inner_text() == "TOSTRING" and "st-other" in page.locator(".ov-head").get_attribute("class"),
+          page.locator(".ov-head").get_attribute("class"))
     page.close()
 
 
@@ -1844,6 +2073,7 @@ def main():
         overview_pass(browser)
         card_pass(browser)
         needs_pass(browser)
+        kinds_pass(browser)
         hand_pass(browser)
         picker_pass(browser)
         e2e_pass(browser)

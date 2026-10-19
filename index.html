@@ -8,12 +8,12 @@
   :root {
     --bg:#0e1013; --card:#171a1f; --line:#262b33; --ink:#e7eaee; --dim:#9aa3ae;
     --faint:#6b7480; --busy:#3ddc84; --wait:#f5c451; --idle:#5c6570; --accent:#7aa2f7;
-    --claude:#d97757; --bad:#e5534b;
+    --claude:#d97757; --bad:#e5534b; --limit:#b794f6;
   }
   @media (prefers-color-scheme: light) {
     :root { --bg:#f6f7f9; --card:#fff; --line:#e2e5ea; --ink:#14171c; --dim:#5b6472;
             --faint:#8a929e; --busy:#1a9e5c; --wait:#b8860b; --idle:#a2aab5; --accent:#3b5bdb;
-            --claude:#c2410c; --bad:#c0392b; }
+            --claude:#c2410c; --bad:#c0392b; --limit:#7a4fc7; }
   }
   html { zoom: {{ZOOM}}; }
   * { box-sizing:border-box; }
@@ -257,6 +257,13 @@
   .ov-head.st-needs { border-top-color:var(--wait); background:color-mix(in srgb,var(--wait) 9%,var(--card)); }
   .ov-head.st-needs .ov-state { color:var(--wait); }
   .ov-head.st-needs .strip i:not(.u) { background:var(--wait); }
+  /* Error and Hung are red, Limit is purple: a wait for a reset is not a fault. */
+  .ov-head.st-error, .ov-head.st-hung { border-top-color:var(--bad); background:color-mix(in srgb,var(--bad) 8%,var(--card)); }
+  .ov-head.st-error .ov-state, .ov-head.st-hung .ov-state { color:var(--bad); }
+  .ov-head.st-error .strip i:not(.u), .ov-head.st-hung .strip i:not(.u) { background:var(--bad); }
+  .ov-head.st-limit { border-top-color:var(--limit); background:color-mix(in srgb,var(--limit) 8%,var(--card)); }
+  .ov-head.st-limit .ov-state { color:var(--limit); }
+  .ov-head.st-limit .strip i:not(.u) { background:var(--limit); }
   .ov-head.st-moving { border-top-color:var(--busy); background:color-mix(in srgb,var(--busy) 7%,var(--card)); }
   .ov-head.st-moving .ov-state { color:var(--busy); }
   .ov-head.st-idle { border-top-color:var(--idle); background:color-mix(in srgb,var(--idle) 7%,var(--card)); }
@@ -267,6 +274,15 @@
      the session left. All of it is text a session wrote. */
   .tile.needs { border-color:var(--wait); }
   .flag.needs { color:var(--wait); border:1px solid color-mix(in srgb,var(--wait) 45%,transparent); }
+  /* Error, Hung and Limit: the kind is the tag, the border and the dot. */
+  .tile.error, .tile.hung { border-color:var(--bad); }
+  .tile.limit { border-color:var(--limit); }
+  .tile.error .dot, .tile.hung .dot { animation:nudge 1.8s ease-in-out infinite; background:var(--bad); }
+  .tile.limit .dot { animation:none; background:var(--limit); }
+  .flag.error, .flag.hung { color:var(--bad); border:1px solid color-mix(in srgb,var(--bad) 45%,transparent); }
+  .flag.limit { color:var(--limit); border:1px solid color-mix(in srgb,var(--limit) 45%,transparent); }
+  .stuck-box.error .reason, .stuck-box.hung .reason { color:var(--bad); }
+  .stuck-box.limit .reason { color:var(--limit); }
   .stuck-box { margin-top:3px; display:flex; flex-direction:column; gap:4px; font-size:13px; }
   .stuck-box .reason { color:var(--wait); font-weight:600; font-size:12px; overflow-wrap:anywhere; }
   .stuck-box .late { color:var(--dim); font-size:12px; }
@@ -981,14 +997,20 @@ function overview(cols) {
   main.scrollLeft = x;
 }
 
+// What a table says about a key, and nothing a plain object inherits: a kind
+// the server calls "constructor" is not on the list.
+const known = (table, key) => Object.prototype.hasOwnProperty.call(table, key) ? table[key] : "";
+
 // The card's state word. The server decides the state (the most urgent of its
 // sessions); this is only how each is said.
-const STATE_WORD = { needs: "NEEDS YOU", moving: "MOVING", idle: "ALL IDLE" };
+const STATE_WORD = { needs: "NEEDS YOU", error: "ERROR", hung: "HUNG", limit: "LIMIT",
+                     moving: "MOVING", idle: "ALL IDLE" };
 
 function column(c) {
   // The state is always the card's second line, never above the name.
-  const word = STATE_WORD[c.state] || (c.state ? String(c.state).toUpperCase() : "");
-  const st = STATE_WORD[c.state] ? c.state : "other";
+  const said = known(STATE_WORD, c.state);
+  const word = said || (c.state ? String(c.state).toUpperCase() : "");
+  const st = said ? c.state : "other";
   return `<section class="ov-col" data-project="${esc(c.project)}">
     <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${contextOf(c)}${footOf(c)}${movementOf(c)}${mergedOf(c)}</div>
     ${c.sessions.map(tile).join("")}
@@ -1093,22 +1115,49 @@ function movementOf(c) {
   </div>`;
 }
 
+// The kinds of stuck a tile can carry, and the word on its tag. The class on
+// the tile comes from this list, never from the server's text.
+const KIND_TAG = { needs: "needs you", error: "error", hung: "hung", limit: "limit" };
+
 function tile(t) {
-  const needs = t.stuck?.kind === "needs" ? " needs" : "";
-  const alarm = (["waiting", "stuck", "ready"].includes(t.flag) ? t.flag : "") + needs;
+  const kind = known(KIND_TAG, t.stuck?.kind) ? t.stuck.kind : "";
+  const needs = kind === "needs" ? " needs" : "";
+  // Error, Hung and Limit are told by their kind alone: the dot is theirs, not
+  // a tick for a finished turn, and no flag of the old pages is added to it.
+  const notNeeds = kind && kind !== "needs";
+  const alarm = notNeeds ? kind : (["waiting", "stuck", "ready"].includes(t.flag) ? t.flag : "") + needs;
   const via = t.jump?.via;
   const can = via === "pane" || via === "attach";
   const tags = (t.tags || []).map(g =>
     `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
   return `<div class="tile ${can ? "can" : ""} ${alarm}" data-sid="${esc(t.key)}">
     <div class="rhead">
-      ${mark({ ...t, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${moveButton(t)}${jumpLabel(t, via)}
+      ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${moveButton(t)}${jumpLabel(t, via)}
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
     ${stuckBox(t)}
     ${handRow(t)}
   </div>`;
+}
+
+// A span of minutes the way the server says it ("<1 min", "14 min", "3 h").
+function minutesText(min) {
+  const m = Number(min);
+  if (!(m >= 0)) return "";
+  if (m < 1) return "<1 min";
+  if (m < 60) return `${Math.floor(m)} min`;
+  if (m < 48 * 60) return `${Math.floor(m / 60)} h`;
+  return `${Math.floor(m / 1440)} d`;
+}
+
+// A moment the way it is read on a clock: the time today, the day and the
+// time on any other day.
+function clock(ms) {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? time
+    : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
 }
 
 // What you can do to one session. The button puts it in any project, for as
@@ -1146,6 +1195,20 @@ function stuckBox(t) {
   } else if (s.source === "permission") {
     const what = c.command || c.target;
     body = `<div class="cmd"><span class="tool">${esc(c.tool || "a tool")}</span>${c.copy ? copyButton(t.key) : ""}${what ? `<code>${esc(what)}</code>` : ""}</div>`;
+  } else if (s.kind === "limit") {
+    // Where the reset is, and how long it has been held. A reset already past
+    // still says so: the session has not picked up again.
+    const reset = Number(c.resetsAt) > 0 ? `${c.resetsAt > Date.now() ? "resets" : "reset"} ${clock(c.resetsAt)}` : "";
+    const held = c.held == null ? "" : `held ${minutesText(c.held)}`;
+    const line = [reset, held].filter(Boolean).join(" · ");
+    body = line ? `<div class="late">${esc(line)}</div>` : (c.text ? `<div class="say">${esc(c.text)}</div>` : "");
+  } else if (s.kind === "error") {
+    body = (c.text ? `<div class="say">${esc(c.text)}</div>` : "")
+         + (c.ago == null ? "" : `<div class="late">${esc(minutesText(c.ago))} ago</div>`);
+  } else if (s.kind === "hung") {
+    body = c.tool
+      ? `<div class="late">last tool: ${esc(c.tool)}${c.ago == null ? "" : ` · ${esc(minutesText(c.ago))} ago`}</div>`
+      : `<div class="late">no tool called yet</div>`;
   } else if (c.text) {
     body = `<div class="say">${esc(c.text)}</div>`;
   }
@@ -1212,8 +1275,10 @@ function jumpLabel(t, via) {
 }
 
 function tileFlag(t) {
-  // Needs you says what the flag would, and says it once.
-  if (t.stuck?.kind === "needs") return `<span class="flag needs">needs you</span>`;
+  // A kind says what the flag would, and says it once.
+  const kind = t.stuck?.kind;
+  const tag = known(KIND_TAG, kind);
+  if (tag) return `<span class="flag ${esc(kind)}">${esc(tag)}</span>`;
   // `flagNote` is finished by the server: what a waiting session is blocked
   // on, or the minutes a stuck session has been quiet and a tool call has run.
   return t.flag === "waiting"
