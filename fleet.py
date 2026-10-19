@@ -442,7 +442,7 @@ def jump_to(p, s):
 # has nothing to say about it. A conforming session can leave any of these
 # out and the row is still whole.
 DEFAULTS = {
-    "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "", "run": "",
+    "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "",
     "waitingFor": "", "boss": False, "bg": False, "title": "", "prompt": "",
     "branch": "", "track": "", "attach": "", "noJump": "",
 }
@@ -589,6 +589,8 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
         "key": key, "provider": p.name, "id": sid,
         "status": status, "cwd": cwd, "pid": pid,
         "updatedAt": updated, "startedAt": _int(raw.get("startedAt")),
+        # What a one-shot run is called; blank is no name, and no run (`runs.is_run`).
+        "run": _text(raw.get("run")).strip(),
         "project": project, "routine": routine,
         "assigned": key in assigned,
         "suggestion": guess,
