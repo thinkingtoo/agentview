@@ -292,5 +292,45 @@ class Bounds(Base):
         self.assertEqual(len(got), fleet.QUESTION_LEN)
 
 
+class Shapes(Base):
+    """What the code downstream of the row may rely on: `stuck_of` and
+    `state_of` do not re-check these, because the producer makes them true for
+    anything a provider hands over."""
+    JUNK = ("a question", 7, None, [], {}, {"kind": "poll"}, {"kind": "permission"},
+            {"kind": "permission", "tool": 7, "command": ["ls"], "target": {"a": 1}},
+            {"kind": "question"}, {"kind": "question", "questions": [None, "x", {"question": 4}]},
+            {"kind": "question", "questions": [{"question": "Which?", "options": "docs"}]},
+            {"kind": "question", "questions": [{"question": "Which?"}]})
+
+    def test_asking_is_nothing_or_a_dict_with_every_key_the_tile_reads(self):
+        for junk in self.JUNK + (asks(), prompt(), prompt("Edit", None)):
+            with self.subTest(junk=junk):
+                got = fleet.asking_of(junk)
+                if got is None:
+                    continue
+                if got["kind"] == "permission":
+                    self.assertEqual(set(got), {"kind", "tool", "command", "cut", "target"})
+                    self.assertTrue(all(isinstance(got[k], str) for k in ("tool", "command", "target")))
+                    self.assertIsInstance(got["cut"], bool)
+                else:
+                    self.assertEqual(set(got), {"kind", "questions"})
+                    self.assertTrue(got["questions"])
+                    for q in got["questions"]:
+                        self.assertEqual(set(q), {"question", "header", "multi", "options"})
+                        self.assertTrue(q["question"])
+                        self.assertTrue(all(set(o) == {"label", "description"} for o in q["options"]))
+
+    def test_a_tile_has_no_stuck_or_a_whole_one_whatever_the_provider_sent(self):
+        for junk in self.JUNK + (asks(), prompt()):
+            for status, waiting_for in (("waiting", "input needed"), ("waiting", "permission prompt"),
+                                        ("idle", ""), ("busy", "")):
+                with self.subTest(junk=junk, status=status):
+                    got = self.tile(session("a", status=status, waitingFor=waiting_for, asking=junk))["stuck"]
+                    if got is not None:
+                        self.assertEqual(set(got), {"kind", "source", "reason", "context"})
+                        self.assertEqual(got["kind"], "needs")
+                        self.assertIsInstance(got["context"], dict)
+
+
 if __name__ == "__main__":
     unittest.main()

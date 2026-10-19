@@ -128,6 +128,19 @@ class Asking(mp.Provider):
         self.assertEqual(claude.asking_of("waiting", "permission prompt", [("Bash", {})]),
                          {"kind": "permission", "tool": "Bash", "command": "", "target": ""})
 
+    def test_the_calls_a_prompt_is_built_from_are_always_a_name_and_an_object(self):
+        # `asking_of` does not re-check its calls: the one place that makes
+        # them, the transcript view, makes them so.
+        self.open([tool(30, "Bash", {"command": 7}, "toolu_1"),
+                   tool(29, "AskUserQuestion", {"questions": "why"}, "toolu_2"),
+                   tool(28, "Edit", {"file_path": ["x"]}, "toolu_3"),
+                   tool(27, "", {}, "toolu_4")], waiting_for="permission prompt")
+        calls = claude.scan_session(self.transcript)["calls"]
+        self.assertEqual(len(calls), 4)
+        for name, inp in calls:
+            self.assertIsInstance(name, str)
+            self.assertIsInstance(inp, dict)
+
     def test_a_shell_command_that_is_not_text_is_no_command(self):
         for junk in (7, ["make", "build"], {"cmd": "make build"}, None, True):
             with self.subTest(junk=junk):
