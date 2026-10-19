@@ -4,7 +4,9 @@
 
 **Blocked by:** 09
 
-**Status:** ready-for-agent
+**Claimed by:** Hugo 2026-10-19 20:41
+
+**Status:** in-progress
 
 - [ ] Rollout facts tested on fixture rollouts (records and fields only, no conversation text)
 - [ ] A pending escalated command reads as Needs you, not Hung
