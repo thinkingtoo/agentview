@@ -782,9 +782,42 @@ class TwoTabs(Corrected):
         # orchard into maple (one tab), pear into orchard (another); then maple merged into pear.
         self.seed(assign={"folder:orchard": "folder:maple", "folder:pear": "folder:orchard"})
         self.assertEqual(self.post("/api/merge", {"source": "folder:maple", "target": "folder:pear"})[0], 200)
-        self.assertEqual(self.stored()["assign"], {"folder:pear": "folder:orchard", "folder:maple": "folder:pear"})
+        self.assertEqual(self.stored()["assign"], {"folder:pear": "folder:orchard", "folder:maple": "folder:orchard"})
         self.assertEqual(self.names(), ["orchard"])
         self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+
+    def test_a_merge_into_a_project_another_tab_merged_away_goes_where_that_one_went(self):
+        # Hunt 5: pear is pinned; one tab merges orchard into maple; the other, whose
+        # picker still offers orchard, merges pear into it. Pear's pin must follow
+        # its sessions to the card that holds them, and that card must name pear.
+        self.seed(pinned=["folder:pear"])
+        self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
+        self.assertEqual(self.post("/api/merge", {"source": "folder:pear", "target": "folder:orchard"})[0], 200)
+        got = self.stored()
+        self.assertEqual(got["assign"], {"folder:orchard": "folder:maple", "folder:pear": "folder:maple"})
+        self.assertEqual(got["pinned"], ["folder:maple"])
+        self.assertEqual(self.names(), ["maple"])
+        self.assertEqual(self.keys("folder:maple"), ["fake:a", "fake:b", "fake:c", "fake:d"])
+        self.assertEqual(sorted(m["project"] for m in self.column("folder:maple")["merged"]),
+                         ["folder:orchard", "folder:pear"])
+
+    def test_the_same_two_merges_in_the_other_order_end_in_the_same_place(self):
+        self.seed(pinned=["folder:pear"])
+        self.post("/api/merge", {"source": "folder:pear", "target": "folder:orchard"})
+        self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})
+        got = self.stored()
+        self.assertEqual(got["assign"], {"folder:orchard": "folder:maple", "folder:pear": "folder:maple"})
+        self.assertEqual(got["pinned"], ["folder:maple"])
+
+    def test_a_merge_into_a_project_moved_through_two_others_goes_to_the_end_of_the_way(self):
+        self.fake._sessions.append(minimal(id="e", name="Kasper", cwd="/home/alice/Projects/plum"))
+        self.seed(pinned=["folder:plum"], assign={"folder:orchard": "folder:maple", "folder:maple": "folder:pear"})
+        self.assertEqual(self.post("/api/merge", {"source": "folder:plum", "target": "folder:orchard"})[0], 200)
+        got = self.stored()
+        self.assertEqual(got["assign"]["folder:plum"], "folder:pear")
+        self.assertEqual(got["pinned"], ["folder:pear"])
+        self.assertEqual(self.names(), ["pear"])
+        self.assertIn("folder:plum", [m["project"] for m in self.column("folder:pear")["merged"]])
 
     def test_a_move_that_closes_no_ring_leaves_the_other_moves_as_they_are(self):
         self.seed(assign={"folder:orchard": "folder:pear", "fake:c": "folder:maple"})

@@ -120,6 +120,23 @@ def _unring(config, key, target):
         here = value
 
 
+def _lands(config, project):
+    """Where a project you moved away has gone: the project it was moved into,
+    and that one's, to the end of the way. A tab that is behind can still offer
+    a project another tab has merged away; what is merged into it is merged
+    into where it went, so that its pin and its name for it follow its sessions
+    to the card that holds them."""
+    assign = _table(config, "assign")
+    seen = {project}
+    while True:
+        value = assign.get(project)
+        value = value.strip() if isinstance(value, str) else ""
+        if value in seen or not projects.from_identity(value):
+            return project
+        seen.add(value)
+        project = value
+
+
 def move(config, key, target):
     """Move a session (its key) or a whole track or repository (its identity)
     into a project. An empty target puts it back where it belongs. A move of a
@@ -182,7 +199,9 @@ def merge(config, source, target, shown=None):
     pinned, its context line. Its name goes: the target keeps its own.
 
     No project is left moved into `source`, so one absorbed twice over, or one
-    that was itself the target of an earlier merge, ends in one place. A session
+    that was itself the target of an earlier merge, ends in one place. A target
+    that was merged away since the page was drawn (another tab) is not the one
+    merged into: its sessions are in the project it went to, so that is. A session
     you moved there is left as you moved it: it follows the project, and taking
     the merge back puts it where you had put it.
     """
@@ -191,6 +210,8 @@ def merge(config, source, target, shown=None):
         raise Refused("a project cannot be merged into itself")
     shown = _shown(shown)
     _unring(config, source, target)
+    target = _lands(config, target)
+    kept = _named(target, "target")
     assign = _table(config, "assign")
     for key, value in assign.items():
         if isinstance(value, str) and value.strip() == source and projects.from_identity(key):

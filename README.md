@@ -66,7 +66,9 @@ plain name can hold two cards and a session moved by hand is a block of its own
 in the block view, and only the page knows which is which. The page never
 writes a ring of moves (two projects moved into each other): a move or a merge
 that a tab which is behind asks for the other way round from one already made,
-or round a longer way through others, turns that one around. A ring written into `config.json` by hand is not
+or round a longer way through others, turns that one around; a merge into a
+project that another tab has merged away since goes where that one went, with
+the pin. A ring written into `config.json` by hand is not
 supported: it neither crashes nor loops, and every session still has a card,
 but the cards swap places and a click aimed at one card can land in another.
 
