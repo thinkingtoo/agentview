@@ -1,4 +1,4 @@
-import json, sys, tempfile, unittest
+import json, shutil, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -131,6 +131,7 @@ class Needs(unittest.TestCase):
 class Writing(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, True)
         self.old, log.LOG = log.LOG, self.dir / "events.jsonl"
 
     def tearDown(self):
@@ -203,6 +204,7 @@ if __name__ == "__main__":
 class Flags(unittest.TestCase):
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, True)
         self.old, log.LOG = log.LOG, self.dir / "events.jsonl"
         log._flags.clear()
 

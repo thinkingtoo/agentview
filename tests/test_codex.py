@@ -8,6 +8,7 @@ lock exists *and* a process holds its rollout open, which `/proc` can say.
 import datetime
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import shutil

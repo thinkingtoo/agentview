@@ -5,6 +5,7 @@ its map, and a repo that is not configured is never served. Nothing here
 calls GitHub or starts a Claude.
 """
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -62,6 +63,7 @@ class Decide(unittest.TestCase):
 class State(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
         patcher = mock.patch.dict(os.environ, {"XDG_STATE_HOME": self.dir})
         patcher.start()
         self.addCleanup(patcher.stop)

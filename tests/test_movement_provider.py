@@ -5,6 +5,7 @@ config folder and a fake `/proc`. Nothing here reads the real ones.
 import datetime
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -52,9 +53,11 @@ def ended(task_id):
 class Provider(unittest.TestCase):
     def setUp(self):
         base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, True)
         self.cfg = base / "claude"
         (self.cfg / "sessions").mkdir(parents=True)
         self.fake = FakeProc()
+        self.addCleanup(shutil.rmtree, self.fake.root, True)
         # The session itself, on a terminal, the way the registry wants it.
         self.fake.add(100, cmd="claude\0")
         (self.fake.root / "100" / "stat").write_text(

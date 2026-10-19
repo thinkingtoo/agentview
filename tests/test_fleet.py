@@ -57,9 +57,10 @@ class Summary(unittest.TestCase):
     """
 
     def write(self, records):
-        import json, tempfile
+        import json, shutil, tempfile
         from pathlib import Path as P
         path = P(tempfile.mkdtemp()) / "t.jsonl"
+        self.addCleanup(shutil.rmtree, path.parent, True)
         with path.open("w", encoding="utf-8") as fh:
             for r in records:
                 fh.write(json.dumps(r) + "\n")
