@@ -78,8 +78,8 @@ def _task_of(proc, pid):
     return None
 
 
-def _stat(proc, pid):
-    """(start time, CPU ticks used so far) of a process, or None.
+def _fields(proc, pid):
+    """The fields of a process's `stat` after its command, or None.
 
     The command in the second field sits in parentheses and may contain
     spaces and parentheses of its own, so the fields are counted from the
@@ -90,9 +90,17 @@ def _stat(proc, pid):
         return None
     text = raw.decode("utf-8", "replace")
     try:
-        fields = text[text.rindex(")") + 2:].split()
+        return text[text.rindex(")") + 2:].split()
+    except ValueError:
+        return None
+
+
+def _stat(proc, pid):
+    """(start time, CPU ticks used so far) of a process, or None."""
+    fields = _fields(proc, pid)
+    try:
         return int(fields[19]), int(fields[11]) + int(fields[12])
-    except (ValueError, IndexError):
+    except (TypeError, ValueError, IndexError):
         return None
 
 
@@ -102,16 +110,11 @@ MAX_UP = 64
 
 
 def _parent(proc, pid):
-    """(parent pid, start time) of a process, or None. As for `_stat`, the
-    fields are counted from the last parenthesis."""
-    raw = _read(f"{proc}/{pid}/stat")
-    if raw is None:
-        return None
-    text = raw.decode("utf-8", "replace")
+    """(parent pid, start time) of a process, or None."""
+    fields = _fields(proc, pid)
     try:
-        fields = text[text.rindex(")") + 2:].split()
         return int(fields[1]), int(fields[19])
-    except (ValueError, IndexError):
+    except (TypeError, ValueError, IndexError):
         return None
 
 
@@ -215,3 +218,25 @@ class Shells:
             return None
         now = time.time() if now is None else now
         return max(0.0, (now - seen) / 60)
+
+
+def task_above(proc, pid, above):
+    """The id of the background task that holds `pid`, or None: the first of `pid`
+    and the processes above it, nearest first, whose standard output is a task's
+    output file (see `_task_of`).
+
+    A command a session runs in the background has its shell write to that file,
+    and whatever the command starts sits below the shell -- or is the shell, when
+    it ran the command in its own place. So a run knows which of its starter's
+    tasks it is. A process that is gone or not ours to read says nothing and the
+    next one is asked.
+    """
+    if not isinstance(pid, int) or pid <= 1:
+        return None
+    chain = [pid] + [p for p in (above if isinstance(above, list) else ())[:MAX_UP]
+                     if isinstance(p, int) and p > 1]
+    for at in chain:
+        task = _task_of(proc, at)
+        if task:
+            return task
+    return None

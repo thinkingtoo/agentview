@@ -1,11 +1,12 @@
 """One-shot runs started by a session, folded into that session's tile.
 
-A `codex exec` run lasts a minute or two and there are many of them (1,563 of
-1,808 rollouts here). A tile each would flood the page, so a run is shown where
+A `codex exec` run lasts a minute or two and there are many of them (most of
+the rollouts on a busy machine). A tile each would flood the page, so a run is shown where
 it matters: as movement inside the tile of the session that started it,
 "waiting on: codex review, 2 min". A provider tells what a run is (`run`, a
-label) and which processes are above it (`ancestors`, nearest first, see
-`base.py`); this looks for a session of any provider among them. A run whose
+label), which processes are above it (`ancestors`, nearest first) and which
+background task of its starter holds it, if one does (`task`; see `base.py`);
+this looks for a session of any provider among the processes. A run whose
 starter is not on the page -- not found, not running, a routine, which has no
 tile -- is left to be a tile of its own, marked exec.
 
@@ -41,6 +42,12 @@ def added(strips):
     if not strips:
         return None
     return [None if any(s[i] is None for s in strips) else sum(s[i] for s in strips) for i in range(SLOTS)]
+
+
+def task_of(raw):
+    """The id of the starter's background task that holds the run, if the run says."""
+    task = raw.get("task")
+    return task if isinstance(task, str) and task.strip() else None
 
 
 def ancestors_of(raw):
@@ -86,7 +93,11 @@ def fold(pairs, now):
         provider, raw = amended.get(starter) or (out[starter][0], dict(out[starter][1]))
         since = max(0.0, (now * 1000 - run["startedAt"]) / 60000) if run["startedAt"] else 0.0
         jobs = list(raw["bgTasks"]) if isinstance(raw.get("bgTasks"), list) else []
-        raw["bgTasks"] = jobs + [{"label": run["run"], "since": since}]
+        # A run under one of the starter's own background tasks is that task, which
+        # the starter already lists: a second job would count the one shell twice.
+        held = task_of(run)
+        if held is None or not any(isinstance(job, dict) and job.get("id") == held for job in jobs):
+            raw["bgTasks"] = jobs + [{"label": run["run"], "since": since}]
         if strip_of(raw) is not None and run["writes"] is not None:
             raw["writes"] = added([strip_of(raw), run["writes"]])
         amended[starter] = out[starter] = (provider, raw)

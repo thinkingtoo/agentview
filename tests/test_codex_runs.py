@@ -94,6 +94,30 @@ class Folded(Base):
         got = self.tiles([starter()], [run("r1", 4242, minutes=2.0), run("r2", 4300, minutes=5.0)])
         self.assertEqual(got["claude:s"]["movement"]["text"], "waiting on: 2 background jobs, 5 min")
 
+    def test_a_run_that_is_a_background_task_of_the_session_is_that_job_and_not_a_second_one(self):
+        # Claude lists the shell it started, and the run is what that shell runs.
+        job = {"id": "bg1", "label": "Second opinion on the diff", "since": 2.0}
+        got = self.tiles([starter(bgTasks=[job])], [run(task="bg1")])
+        self.assertEqual(got["claude:s"]["movement"]["text"], "waiting on: Second opinion on the diff, 2 min")
+
+    def test_a_run_under_some_other_task_is_one_more_job(self):
+        job = {"id": "bg1", "label": "A dev server", "since": 40.0}
+        got = self.tiles([starter(bgTasks=[job])], [run(task="bg9")])
+        self.assertEqual(got["claude:s"]["movement"]["text"], "waiting on: 2 background jobs, 40 min")
+
+    def test_a_task_that_cannot_be_matched_does_not_hide_the_run(self):
+        listed = {"label": "Second opinion", "since": 2.0}                   # no id to match
+        for task in (None, "", "   ", 5, True, ["bg1"], {"id": "bg1"}):
+            for job in (listed, {**listed, "id": 7}, {**listed, "id": ""}):
+                with self.subTest(task=task, job=job):
+                    got = self.tiles([starter(bgTasks=[job])], [run(task=task)])
+                    self.assertEqual(got["claude:s"]["movement"]["text"], "waiting on: 2 background jobs, 2 min")
+
+    def test_a_run_matched_to_a_task_is_still_the_session_moving_by_its_writes(self):
+        job = {"id": "bg1", "label": "Second opinion", "since": 30.0}
+        got = self.tiles([starter(bgTasks=[job])], [run(task="bg1", writes=[2] * 30)])
+        self.assertTrue(got["claude:s"]["moving"])
+
     def test_a_run_s_two_threads_are_one_run(self):
         # `codex exec review` writes a rollout for the run and one for its review.
         got = self.tiles([starter()], [run("a", 4242, label="codex exec"), run("b", 4242, label="codex review")])
@@ -196,6 +220,12 @@ class Counted(Base):
         got = self.column([starter(writes=[1] * 30)], [run(writes=[2] * 30)])
         self.assertEqual([t["key"] for t in got["sessions"]], ["claude:s"])
         self.assertEqual(sum(got["strip"]), 90)
+
+    def test_a_run_that_is_one_of_the_session_s_tasks_still_adds_its_writes_once(self):
+        job = {"id": "bg1", "label": "Second opinion", "since": 2.0}
+        got = self.column([starter(bgTasks=[job], writes=[1] * 30)],
+                          [run(task="bg1", writes=[2] * 30)])
+        self.assertEqual(got["strip"], [3] * 30)
 
     def test_two_threads_of_one_run_add_both_their_rollouts(self):
         got = self.column([starter(writes=[1] * 30)],

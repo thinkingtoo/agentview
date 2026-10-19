@@ -676,6 +676,33 @@ class Runs(Fixture):
         s = self.one(meta(source={"subagent": "review"}))
         self.assertEqual((s["kind"], s["run"], s["ancestors"]), ("review", "codex review", [200, 100]))
 
+    def stdout(self, pid, target):
+        folder = self.home.proc / str(pid) / "fd"
+        folder.mkdir(parents=True, exist_ok=True)
+        os.symlink(target, folder / "1")
+
+    def test_a_run_under_a_background_task_says_which_task_holds_it(self):
+        self.stdout(200, "/home/alice/.claude/tmp/tasks/bg1.output")
+        self.assertEqual(self.one(meta())["task"], "bg1")
+
+    def test_a_run_that_is_the_shell_s_own_command_says_so_too(self):
+        self.stdout(4242, "/home/alice/.claude/tmp/tasks/bg2.output")
+        self.assertEqual(self.one(meta())["task"], "bg2")
+
+    def test_a_run_under_no_task_names_none(self):
+        self.stdout(200, "/dev/pts/3")
+        self.assertNotIn("task", self.one(meta()))
+
+    def test_a_review_thread_holds_the_same_task_as_its_run(self):
+        self.stdout(200, "/home/alice/.claude/tmp/tasks/bg3.output")
+        self.home.thread(source='{"subagent":"review"}')
+        self.assertEqual(self.one(meta(source={"subagent": "review"}))["task"], "bg3")
+
+    def test_an_interactive_session_names_no_task(self):
+        self.stdout(200, "/home/alice/.claude/tmp/tasks/bg1.output")
+        self.home.thread(source="cli")
+        self.assertNotIn("task", self.one(meta(source="cli")))
+
     def test_an_interactive_session_is_nobody_s_run(self):
         self.home.thread(source="cli")
         s = self.one(meta(source="cli"))

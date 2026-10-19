@@ -568,6 +568,9 @@ class CodexProvider(Provider):
             # A one-shot: somebody started it, and the processes above it say who.
             out["run"] = "codex review" if state["review"] or out["kind"] == "review" else "codex exec"
             out["ancestors"] = procs.ancestors(self.proc, held[0]) if held else []
+            task = procs.task_above(self.proc, held[0], out["ancestors"]) if held else None
+            if task:
+                out["task"] = task
         if held:
             out["pid"] = held[0]
         return out

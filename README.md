@@ -652,7 +652,12 @@ What the overview reads from the rollout, with the same words as for Claude:
 - **Needs you, inferred**: Codex never writes a request for approval, but the
   call it is about is there: an `exec_command` with `sandbox_permissions:
   "require_escalated"` and no output yet, in a turn of a session that can ask
-  (`approval_policy` is not `never`). It reads as a permission prompt with the
+  (`approval_policy` is not `never`). The call is written two ways, both read:
+  a `function_call` with JSON `arguments` (until August 2026), and a
+  `custom_tool_call` named `exec` whose `input` is a script calling
+  `tools.exec_command({...})` (since). The script is read as far as JavaScript
+  is: a text is one thing whatever it says and a comment is nothing, so a
+  command that only mentions the words is not a request. It reads as a permission prompt with the
   command (and a copy button), the status is `waiting`, and Hung never gets to
   say anything about it. An escalated command the person allowed and that is
   still running reads the same until its output arrives; the rollout cannot
@@ -670,6 +675,10 @@ What the overview reads from the rollout, with the same words as for Claude:
   roster looks for a session of any provider among them (`runs.py`): the run is
   then a job of that session ("waiting on: codex review, 2 min"), the session
   counts as moving, and the run's writes are added to the session's own, once.
+  When the run sits under one of that session's background tasks (its shell
+  writes to `tasks/<id>.output`; `procs.task_above`), the run says which
+  (`task`) and is that job, not a second one. While a session is in the middle
+  of a call of its own, the call names what it waits on first.
   A run with no such session (not found, not running, a routine) is a tile of
   its own tagged `exec`, placed by the folder it was launched in. Two rollouts
   held by one process (`codex exec review` writes one for the run and one for

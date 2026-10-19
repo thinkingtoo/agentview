@@ -85,7 +85,10 @@ exec` run): what to call it ("codex review", "codex exec"). `ancestors` is then
 the pids of the processes above it, nearest first, [] when they could not be
 walked. The core looks for a session of any provider among them and shows the
 run as movement inside that session's tile (`runs.py`); a run with no starter on
-the page is a tile of its own, told by its `kind`.
+the page is a tile of its own, told by its `kind`. `task` is the id of the
+starter's background task that holds the run, when the processes above it say so;
+a starter that lists its tasks by `id` (`bgTasks`) has that one already, and the
+run is not a second job.
 
 A provider may also say, apart from its sessions, that the whole account is held:
 `limit()` returns `{"name", "at", "resetsAt"}` or None (see `Provider.limit`).
