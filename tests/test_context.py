@@ -40,6 +40,7 @@ class Names(TrackFixtures):
 
 FOLDER = "/home/alice/Projects/orchard"      # no repository there: a project by the folder rule
 EARLY, MIDDLE, LATE = 1790000000000, 1790000100000, 1790000200000
+HOSTILE = "<img src=x onerror=alert(1)>"     # R7: every text reaches the page as text
 
 
 class Cards(TrackFixtures):
@@ -91,6 +92,13 @@ class ContextLine(Cards):
         self.assertTrue(110 <= len(got["line"]) <= 140, len(got["line"]))
         self.assertTrue(words.startswith(got["line"][:-1]))
         self.assertEqual(got["line"][-8], " ")            # cut between words, not inside one
+
+    def test_markup_in_your_line_or_in_a_title_is_kept_as_the_text_it_is(self):
+        self.config = {"project_lines": {"folder:orchard": "Sells " + HOSTILE}}
+        self.assertEqual(self.context(sess("a", FOLDER))["line"], "Sells " + HOSTILE)
+        self.config = {}
+        got = self.context(sess("a", FOLDER, title="Fix " + HOSTILE))
+        self.assertEqual((got["source"], got["line"], got["full"]), ("guess", "Fix " + HOSTILE, "Fix " + HOSTILE))
 
     # -- R9: a track and a repository with one name are two projects ---------
 
@@ -150,6 +158,10 @@ class Tracks(Cards):
         (self.pm / "checkout.goal.md").write_text("# Objective\n_Status: OPEN_\n\n## Done when\n- [ ] x\n")
         self.assertEqual(self.track(nogoal=True)["context"]["source"], "guess")
 
+    def test_markup_in_the_outcome_is_kept_as_the_text_it_is(self):
+        got = self.track(outcome=f"Pay with {HOSTILE} cards. Then done.")["context"]
+        self.assertEqual((got["line"], got["full"]), (f"Pay with {HOSTILE} cards.", f"Pay with {HOSTILE} cards. Then done."))
+
     def test_your_line_beats_the_goal(self):
         self.config = {"project_lines": {"track:checkout": "Mine"}}
         got = self.track()
@@ -203,6 +215,111 @@ class Tracks(Cards):
     def test_the_notes_query_is_the_name_and_the_line(self):
         self.assertEqual(self.track()["notes"],
                          {"query": "Checkout Customers pay with a saved card."})
+
+
+class Repositories(Cards):
+    def setUp(self):
+        super().setUp()
+        self.loom = self.repo("loom")
+
+    def put(self, name, text, root=None):
+        (root or self.loom).joinpath(name).write_text(text)
+
+    def line(self, root=None):
+        return self.context(sess("a", root or self.loom))
+
+    def test_a_repository_says_the_first_prose_paragraph_of_its_readme(self):
+        self.put("README.md", "# loom\n\n[![Build](b.svg)](https://ci.example)\n\n"
+                              "A tiny tool that prints\nreports for the **shop**.\n\n## Install\nRun `make`.\n")
+        self.assertEqual(self.line(), {
+            "source": "readme", "line": "A tiny tool that prints reports for the shop.",
+            "full": "A tiny tool that prints reports for the shop.", "guess": False})
+
+    def test_headings_badges_html_blocks_lists_tables_quotes_and_code_are_not_prose(self):
+        self.put("README.md", "---\ntitle: Loom\n---\n<!-- a comment\nover lines -->\n"
+                              "Loom\n====\n\n<p align=\"center\"><img src=\"logo.png\"></p>\n\n"
+                              "![badge](b.svg) [![ci](c.svg)](https://ci.example)\n\n"
+                              "- not prose\n- a list\n\n| a | b |\n|---|---|\n\n> a quote\n\n"
+                              "```\nnot prose either\n```\n\n    indented code\n\n"
+                              "---\n\n[ref]: https://example.com\n\nFinally some prose.\n")
+        self.assertEqual(self.line()["line"], "Finally some prose.")
+
+    def test_a_setext_title_directly_above_its_text_does_not_hide_the_text(self):
+        self.put("README.md", "Loom\n====\nPrints reports for the shop.\n")
+        self.assertEqual(self.line()["line"], "Prints reports for the shop.")
+
+    def test_a_long_paragraph_is_cut_and_the_hover_keeps_it_whole(self):
+        text = "Prints " + " ".join(["reports"] * 40) + " for the shop."
+        self.put("README.md", text + "\n")
+        got = self.line()
+        self.assertTrue(got["line"].endswith("\u2026") and len(got["line"]) <= 140)
+        self.assertEqual(got["full"], text)
+
+    def test_without_a_readme_the_agent_instructions_are_next_and_includes_are_skipped(self):
+        self.put("AGENTS.md", "# loom \u2014 for agents\n\n@./OTHER.md\n\nThis is the repository of the shop tooling.\n")
+        self.put("CLAUDE.md", "@./AGENTS.md\n")
+        self.assertEqual(self.line()["line"], "This is the repository of the shop tooling.")
+        self.assertEqual(self.line()["source"], "readme")
+
+    def test_a_readme_with_no_prose_hands_over_to_the_instructions_and_those_to_claude_md(self):
+        self.put("README.md", "# loom\n\n![logo](l.png)\n")
+        self.put("AGENTS.md", "# agents\n")
+        self.put("CLAUDE.md", "@./AGENTS.md\n\nClaude-only notes for the shop tooling.\n")
+        self.assertEqual(self.line()["line"], "Claude-only notes for the shop tooling.")
+
+    def test_markup_in_the_readme_or_the_instructions_is_kept_as_the_text_it_is(self):
+        text = f"Prints {HOSTILE} reports.\n"
+        for name in ("README.md", "AGENTS.md", "CLAUDE.md"):
+            for old in ("README.md", "AGENTS.md", "CLAUDE.md"):
+                (self.loom / old).unlink(missing_ok=True)
+            self.put(name, text)
+            self.assertEqual(self.line()["line"], f"Prints {HOSTILE} reports.", name)
+
+    def test_a_readme_wins_over_the_instructions(self):
+        self.put("README.md", "Prints reports.\n")
+        self.put("AGENTS.md", "Instructions for agents.\n")
+        self.assertEqual(self.line()["line"], "Prints reports.")
+
+    def test_a_file_name_in_another_case_is_still_the_readme(self):
+        self.put("readme.md", "Prints reports.\n")
+        self.assertEqual(self.line()["line"], "Prints reports.")
+
+    def test_nothing_readable_there_is_a_guess_from_the_titles(self):
+        (self.loom / "README.md").mkdir()                       # not a file
+        (self.loom / "AGENTS.md").write_bytes(b"\xff\xfe\x00\x01")  # not text
+        got = self.context(sess("a", self.loom, title="Card form"))
+        self.assertEqual((got["source"], got["line"], got["guess"]), ("guess", "Card form", True))
+
+    def test_your_line_beats_the_readme(self):
+        self.put("README.md", "Prints reports.\n")
+        self.config = {"project_lines": {"repo:example.com/alice/loom": "Mine"}}
+        self.assertEqual(self.line()["source"], "own")
+
+    def test_a_worktree_reads_the_main_checkout_whichever_session_comes_first(self):
+        self.put("README.md", "Prints reports.\n")
+        side = self.worktree(self.loom, "loom-side")
+        self.put("README.md", "A different branch says other things.\n", root=side)
+        got = self.roster(sess("a", side, updatedAt=LATE), sess("b", self.loom, updatedAt=EARLY))
+        self.assertEqual(got["columns"][0]["context"]["line"], "Prints reports.")
+
+    def test_a_worktree_alone_reads_the_main_checkout_too(self):
+        self.put("README.md", "Prints reports.\n")
+        side = self.worktree(self.loom, "loom-side")
+        self.assertEqual(self.line(side)["line"], "Prints reports.")
+
+    def test_a_client_folder_in_a_repository_is_not_described_by_the_repository(self):
+        self.put("README.md", "Prints reports.\n")
+        (self.loom / "clients" / "acme").mkdir(parents=True)
+        column = self.first(sess("a", self.loom / "clients" / "acme", title="Acme invoices"))
+        self.assertEqual((column["kind"], column["context"]["source"]), ("folder", "guess"))
+
+    def test_a_plain_folder_with_a_readme_is_not_read(self):
+        # Only a repository's files describe it; a folder has the guess.
+        shelf = self.folder("Projects")
+        self.config = {"shelves": [str(shelf)]}
+        (self.folder("Projects", "orchard") / "README.md").write_text("Sells apples.\n")
+        got = self.context(sess("a", self.folder("Projects", "orchard"), title="Cider"))
+        self.assertEqual((got["source"], got["line"]), ("guess", "Cider"))
 
 
 if __name__ == "__main__":

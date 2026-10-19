@@ -12,6 +12,7 @@ Every text in here is whatever a file or a session said, kept as it was said:
 the page prints it as text and never as markup, so nothing is stripped for
 safety here.
 """
+import os
 import re
 
 import projects
@@ -173,6 +174,74 @@ def track_card(track):
     return outcome, {"status": status, "progress": progress}
 
 
+# ------------------------------------------------------------- the repository
+
+COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+FRONT_MATTER = re.compile(r"\A\s*---\s*\n.*?\n---\s*(?:\n|\Z)", re.DOTALL)
+INCLUDE = re.compile(r"^\s*@\S+\s*$")
+REFERENCE = re.compile(r"^\s*\[[^\]]+\]:\s")
+RULE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
+SETEXT = re.compile(r"^\s*(=+|-+)\s*$")
+NOT_PROSE = re.compile(r"^(\s{4,}|\t|[-*+]\s|\d+[.)]\s|\||>)")
+TAGS = re.compile(r"<[^>]*>")
+# README, then the instructions for agents, then Claude's own: AGENTS.md is
+# the file a project writes about itself, CLAUDE.md often only includes it.
+DESCRIBED_BY = (("readme.md", "readme.markdown", "readme.txt", "readme"),
+                ("agents.md",), ("claude.md",))
+
+
+def prose(par):
+    """The text of a paragraph that is prose, or "" when it is a heading,
+    a list, a table, a quote, code, a badge row, an HTML block or an
+    include."""
+    par = [line for line in par if not (INCLUDE.match(line) or REFERENCE.match(line)
+                                        or RULE.match(line))]
+    for i, line in enumerate(par):                  # a title with its underline
+        if i and SETEXT.match(line):
+            par = par[i + 1:]
+            break
+    if not par or HEADING.match(par[0]) or NOT_PROSE.match(par[0]):
+        return ""
+    text = plain(" ".join(par))
+    if text.startswith("<") and text.endswith(">"):
+        return ""
+    return text if re.search(r"\w", TAGS.sub("", text)) else ""
+
+
+def first_prose(text):
+    """The first paragraph of a markdown text that is prose, or ""."""
+    text = COMMENT.sub("", FRONT_MATTER.sub("", text, count=1))
+    return next((got for got in map(prose, paragraphs(unfenced(text))) if got), "")
+
+
+def named(folder, wanted):
+    """The file in a folder whose name is one of `wanted`, in any case, or None."""
+    try:
+        with os.scandir(folder) as entries:
+            found = {e.name.casefold(): e.path for e in entries if e.is_file()}
+    except OSError:
+        return None
+    return next((found[w] for w in wanted if w in found), None)
+
+
+def repository_text(rows):
+    """What the repository says about itself: the first prose of its README,
+    else of its agent instructions. Read from the main checkout when it is
+    there, so that the line is the same whichever worktree a session is in
+    and whichever session comes first."""
+    roots = {}
+    for m in sorted(rows, key=lambda m: m["key"]):
+        for rank, root in enumerate(projects.checkouts(m["cwd"])):
+            roots.setdefault(root, rank)
+    for root in sorted(roots, key=lambda r: (roots[r], str(r))):
+        for wanted in DESCRIBED_BY:
+            path = named(root, wanted)
+            text = first_prose(read(path)) if path else ""
+            if text:
+                return text
+    return ""
+
+
 # ----------------------------------------------------------------- the line
 
 def card(project, rows, own_lines):
@@ -188,4 +257,7 @@ def card(project, rows, own_lines):
         return made("own", own), track
     if outcome:
         return made("goal", first_sentence(outcome), outcome), track
+    about = repository_text(rows) if project["kind"] == "repository" else ""
+    if about:
+        return made("readme", about), track
     return made("guess", guess(rows)), track

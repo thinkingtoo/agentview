@@ -115,6 +115,21 @@ def _repository(cwd):
     return None
 
 
+def checkouts(cwd):
+    """The folders the repository of a launch folder is checked out in: its
+    main checkout first -- the one all its worktrees share -- then the
+    checkout the folder is in, if that is another. Empty when there is none."""
+    found = _repository(cwd) if cwd and os.path.isabs(cwd) else None
+    if not found:
+        return []
+    common, inside = found
+    own = Path(cwd)
+    for _ in inside.parts:
+        own = own.parent
+    main = common.parent if common.name == ".git" else None
+    return [main, own] if main and main != own else [own]
+
+
 SECTION = re.compile(r'^\s*\[\s*remote\s+"([^"]+)"\s*\]\s*$')
 URL = re.compile(r"^\s*url\s*=\s*(\S+)\s*$")
 SCP_LIKE = re.compile(r"^(?:[\w.-]+@)?([\w.-]+):(?!//)(.+)$")
