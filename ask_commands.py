@@ -240,8 +240,17 @@ def argument_of_a_runner(before):
     return any(w.strip("()[]{}\"'`,.:;").lower() in RUNNERS for w in clause.split()[-6:])
 
 
+# The hook clips a line to 160 characters and the store clips it again on the
+# way out, so nothing longer comes from a session. Matching a run of quote marks
+# costs the square of its length, so a bound on the text is a bound on the time:
+# a longer text is not a line, and offers nothing.
+LONGEST = 400
+
+
 def guess(text):
     """The commands in `text`, in the order they were written, each once."""
+    if len(text) > LONGEST:
+        return []
     # Whatever stands after a `$`, or between quotes, is the argument of
     # something: it claims every quote inside it, whether or not it can be
     # offered itself, so the inside of a command the lists do not know is never

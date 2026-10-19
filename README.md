@@ -176,16 +176,45 @@ program that runs what it is given (`ssh`, `watch`, `timeout`, `docker`,
 shell, and so is one right after a flag; neither is a command of its own.
 Between `« »` a space each side is how French sets it.
 
-Known limits, accepted: a program the lists do not know (`tiroir-work next` in
-quotes) gets no button; a title that starts with a tool's name and a sign
-(`"python 3.12"`), or with a tool and one of its own subcommands
-(`"git rebase workflow"`, `"pip install problems"`), gets one; a `$` command
-with no sentence end after it runs on into the words that close the sentence
-(`Run $ make test now?` offers `make test now`; a colon or a semicolon after
-it does the same, and languages that put the verb last, Dutch above all,
-always do: `Kun je $ make test draaien?` offers `make test draaien`). A word
-that is both a program and a word of a sentence after a `$` (`$ diff` as in
-"$ diff or % diff") is judged like a quoted one: it needs a sign.
+What always holds, on any text: what a button copies is a piece of the ask
+exactly as the session wrote it, markup in it is shown as text and never run,
+the guesser does not raise, and its time stays bounded (a text longer than any
+line can be, 400 characters, offers nothing). A wrong guess is a different
+thing: where a command ends and which words are one cannot always be told, so
+the shapes below are named and accepted. A wrong guess on a line a session
+really wrote is a bug; on a shape listed here it is a known limit.
+
+Known limits, accepted:
+
+- A program the lists do not know (`tiroir-work next` in quotes) gets no
+  button. A title that starts with a tool's name and a sign (`"python 3.12"`),
+  or with a tool and one of its own subcommands (`"git rebase workflow"`,
+  `"pip install problems"`), gets one.
+- A `$` command with no sentence end after it runs on into the words that
+  close the sentence (`Run $ make test now?` offers `make test now`; a colon
+  or a semicolon after it does the same, and languages that put the verb last,
+  Dutch above all, always do: `Kun je $ make test draaien?` offers `make test
+  draaien`). A word that is both a program and a word of a sentence after a
+  `$` (`$ diff` as in "$ diff or % diff") is judged like a quoted one: it
+  needs a sign, and money prose with a hyphenated word and a number after it
+  (`$ per-seat price be 12 or 15`) passes.
+- A quoted argument is told from a command only after the programs listed
+  above, and only within the six words before it. `ssh` with seven or more
+  words of options before the quote, a program that runs a string but is not
+  listed (`pm2 start "npm run start"`, `npx concurrently "..."`,
+  `git submodule foreach '...'`, `hyperfine`, `trap`, `screen`), and a quoted
+  argument of a program that runs nothing (`echo '...' >> ~/.bashrc`,
+  `ps aux | grep "node server.js"`, `git config core.sshCommand "..."`) are
+  offered as commands.
+- Sentence punctuation written inside the closing quote, the American way
+  (`"git push origin dev."`), stays on the command. `"pip install -e ."` and
+  `"git add ."` are right as they are.
+- A mark that closes a `$` command without being a sentence end stays on it:
+  `*`, `_`, `’` and ` |`; and a Python dunder at the end of one
+  (`$ rm -rf tests/__pycache__`) is read as a markdown closer and cut to
+  `tests/__pycache`.
+- The hook folds a command's lines into one, so a heredoc (`<<EOF`) or a `\`
+  continuation is offered as a one-line command that is not the one written.
 
 What is not offered, so that half a command is never one click away: a command
 cut by the line's length, one with a quote left open, a bracket that closes

@@ -9,7 +9,9 @@ accepted; a guess never answers the session and never runs anything.
 Through `roster()` with fake providers, like `test_needs_you`. Sessions,
 branches and commands are all invented.
 """
+import random
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -716,6 +718,84 @@ class GuessGrid(unittest.TestCase):
                         if ask_commands.guess(line) != [command]:
                             missing.append((line, ask_commands.guess(line)))
         self.assertEqual(missing[:12], [], f"{len(missing)} of {seen} lines miss their command")
+
+
+class GuessInvariants(unittest.TestCase):
+    """What holds on any input, invented or real, with no exceptions.
+
+    A wrong guess on a shape nobody writes is a known limit and is named in the
+    README. These are the properties a button can never lose: the text it
+    copies is a piece of the ask exactly as written, markup in it is only ever
+    text (the page escapes it; see `test_a_guessed_command_with_markup...`), the
+    guesser never raises, and its time does not grow faster than the line.
+    """
+
+    PIECES = ('"', "'", "`", "\u201c", "\u201d", "\u00ab", "\u00bb", "\u2018", "\u2019", "$", "$ ", "\\", "<<", "**",
+              "__", "|", "&&", "||", ";", "(", ")", "[", "]", "{", "}", ".", "..", "...", "\u2026", "?", "!", ",", ":",
+              "-", "--", "-F,", "=", "~/", "./", "/", "*", "\u2014", "\u00a0", "\u2028", "make test",
+              "git push origin dev", "rm -rf /srv/maple/cache/*", "ssh maple", "echo", "sudo", "run", "then", "and",
+              "Could you", "please", "-e", "go test ./...", "A=1", "12", "$5", "20 $", "it's", "users'", "!!", "# x",
+              "<b>x</b>", "<script>alert(1)</script>", "&lt;", "$(rm -rf ~)", "${HOME}")
+
+    def test_whatever_is_offered_is_a_piece_of_the_ask_as_written(self):
+        rng = random.Random(14)
+        bad, offers = [], 0
+        for _ in range(20000):
+            joiner = rng.choice(("", " ", " "))
+            ask = lines._clip(joiner.join(rng.choice(self.PIECES) for _ in range(rng.randint(1, 45))))
+            for command in ask_commands.guess(ask):
+                offers += 1
+                if not (command and command == command.strip() and command in ask):
+                    bad.append((ask, command))
+        self.assertGreater(offers, 100)
+        self.assertEqual(bad[:5], [], f"{len(bad)} of {offers} offers are not a piece of their ask")
+
+    def test_the_grid_and_the_cut_lines_offer_only_pieces_of_the_ask(self):
+        bad = []
+        for command in GuessGrid.COMMANDS:
+            for kind, line, _ in GuessGrid(methodName="test_a_command_with_a_plain_end_is_offered_whole").lines(command):
+                for k in (len(line), len(line) // 2, len(line) // 3):
+                    ask = line if k == len(line) else line[:k].rstrip() + "\u2026"
+                    bad.extend((ask, c) for c in ask_commands.guess(ask) if c not in ask)
+        self.assertEqual(bad[:5], [])
+
+    def test_markup_in_the_ask_reaches_the_page_only_as_text(self):
+        # The guesser copies markup as it is; the page escapes every value it
+        # paints (R7). Both halves are checked: this one keeps the markup in the
+        # offered text intact, the page smoke checks the escaping.
+        ask = 'Run "echo <b>x</b> | tee /tmp/maple-notes" for me?'
+        self.assertEqual(ask_commands.guess(ask), ["echo <b>x</b> | tee /tmp/maple-notes"])
+
+    def test_no_line_makes_the_guesser_raise_or_slow_down(self):
+        rng = random.Random(15)
+        worst = 0.0
+        for _ in range(20000):
+            ask = lines._clip(rng.choice(("", " "))
+                              .join(rng.choice(self.PIECES) for _ in range(rng.randint(1, 60))))
+            started = time.perf_counter()
+            ask_commands.guess(ask)
+            worst = max(worst, time.perf_counter() - started)
+        self.assertLess(worst, 0.05)
+
+    def test_a_long_run_of_one_mark_costs_a_bounded_time(self):
+        # The line is clipped to 160 characters before it gets here, so this is
+        # about the guesser alone: a text longer than any line offers nothing,
+        # and one at the bound costs little, however it is made of marks.
+        for unit in ("\u201c", "' \" ", '"', "$ make ", "\\ ", "\u00ab ", "`", "** ", "a. ", "-F, '", "( $ a "):
+            with self.subTest(unit=unit):
+                started = time.perf_counter()
+                self.assertEqual(ask_commands.guess(unit * (30000 // len(unit))), [])
+                ask_commands.guess((unit * ask_commands.LONGEST)[:ask_commands.LONGEST])
+                self.assertLess(time.perf_counter() - started, 0.1)
+
+    def test_a_line_as_long_as_the_hook_allows_is_still_guessed_on(self):
+        ask = lines._clip("Please run `make test` " + "and then tell me how it went, " * 10)
+        self.assertLessEqual(len(ask), lines.LIMIT)
+        self.assertEqual(ask_commands.guess(ask), ["make test"])
+
+    def test_what_the_roster_hands_over_is_never_longer_than_the_hook_allows(self):
+        stored = lines._clip("x " * 5000 + "$ make test")
+        self.assertLessEqual(len(stored), lines.LIMIT)
 
 
 if __name__ == "__main__":
