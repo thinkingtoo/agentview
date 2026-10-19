@@ -7,6 +7,7 @@ lock exists *and* a process holds its rollout open, which `/proc` can say.
 """
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -88,6 +89,7 @@ class Home:
 class Liveness(unittest.TestCase):
     def setUp(self):
         self.home = Home()
+        self.addCleanup(shutil.rmtree, self.home.root, True)
         self.home.thread()
 
     def test_a_lock_with_a_process_behind_it_is_a_live_session_with_a_pid(self):
@@ -137,6 +139,7 @@ class Liveness(unittest.TestCase):
 class Rollout(unittest.TestCase):
     def setUp(self):
         self.home = Home()
+        self.addCleanup(shutil.rmtree, self.home.root, True)
         self.home.thread()
         self.home.lock()
         self.home.holder(4242)
@@ -224,6 +227,7 @@ class Hung(test_columns.Base):
     def setUp(self):
         super().setUp()
         self.home = Home()
+        self.addCleanup(shutil.rmtree, self.home.root, True)
         self.home.thread()
         self.home.lock()
         self.home.holder(4242)

@@ -64,6 +64,7 @@ class FakeProc:
 class Base(unittest.TestCase):
     def setUp(self):
         self.fake = FakeProc()
+        self.addCleanup(shutil.rmtree, self.fake.root, True)
         self.fake.add(SESSION, cmd="claude\0")
         self.watch = procs.Shells(proc=self.fake.root)
 
