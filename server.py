@@ -14,6 +14,7 @@ from pathlib import Path
 import archive
 import context
 import embedder
+import finished
 import fleet
 import hand
 import jump
@@ -267,7 +268,7 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or "{}")
 
     ROUTES = ("jump", "seen", "order", "name", "line", "assign", "pin", "merge", "hold", "chime", "restore",
-              "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes")
+              "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep")
 
     def do_POST(self):
         if not self._local():
@@ -309,6 +310,21 @@ class Handler(BaseHTTPRequestHandler):
         if not fleet.look(key):
             return self.send_error(404, "no such live session")
         self._send(json.dumps({"ok": True}), "application/json")
+
+    def _keep(self, body):
+        """Pin a finished session open as a full tile, or let it shrink again.
+
+        Kept with the seen marks, not in config.json: it is a click, and it
+        ends with the session (`finished.forget`, on every poll). Only a
+        session that is alive can be pinned, the way only one can be jumped to.
+        """
+        key, pinned = body.get("key"), body.get("pinned")
+        if not isinstance(key, str) or not isinstance(pinned, bool):
+            return self.send_error(400, "expected {key, pinned: true|false}")
+        if not fleet.find(key):
+            return self.send_error(404, "no such live session")
+        finished.pin(key, pinned)
+        self._send(json.dumps({"ok": True, "pinned": pinned}), "application/json")
 
     def _jump(self, body):
         key = body.get("key")
@@ -504,6 +520,7 @@ class Handler(BaseHTTPRequestHandler):
             # forgotten: a missed round must not bring back as `ready`
             # everything you had already read.
             seen.forget(live, answered=answered)
+            finished.forget(live, answered=answered)
             if not fleet.ROUND["failed"]:
                 lines.forget({m["id"] for b in blocks for m in b["members"]})
             status = {name: {"ok": True} for name in answered}

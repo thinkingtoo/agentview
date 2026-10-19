@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 import context
+import finished
 import jump
 import lines
 import projects
@@ -336,6 +337,7 @@ def sessions(providers=None):
         shelves = config()
         assigned = config_value("assign", {})
         marks = seen.load()
+        kept = finished.load()
         thresholds = {
             "after": config_value("stuck_after_minutes", 5),
             "tool_after": config_value("long_tool_minutes", 20),
@@ -353,7 +355,7 @@ def sessions(providers=None):
                 continue
             answered.add(p.name)
             for raw in got:
-                row = normalize(p, raw, shelves, assigned, marks, thresholds, now)
+                row = normalize(p, raw, shelves, assigned, marks, thresholds, now, kept)
                 if row:
                     out.append(row)
         ROUND["failed"], ROUND["answered"] = failed, answered
@@ -391,8 +393,11 @@ def look(key):
 
 
 def mark_seen(key, s):
-    """Note that you have seen this session as it is now."""
-    seen.mark(key, _int(s.get("updatedAt")))
+    """Note that you have seen this session as it is now: for the chime, and as
+    a handover read in the overview (`finished.py` says why those are two)."""
+    stamp = _int(s.get("updatedAt"))
+    seen.mark(key, stamp)
+    finished.mark_read(key, stamp)
 
 
 def jump_to(p, s):
@@ -486,9 +491,11 @@ def extras_of(value):
     return kept
 
 
-def normalize(p, raw, shelves, assigned, marks, thresholds, now):
+def normalize(p, raw, shelves, assigned, marks, thresholds, now, kept=None):
     """One provider's facts, made into the row the page draws. None if the
-    session is not even minimally conforming."""
+    session is not even minimally conforming. `kept` is what the overview
+    remembers (`finished.load()`): the handovers you read and the pins."""
+    kept = kept or {"read": {}, "pinned": []}
     if not isinstance(raw, dict):
         return None
     sid = raw.get("id")
@@ -579,6 +586,10 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
         "flag": flag,
         **moves,
         "canJump": can_jump,
+        # What the overview needs to tell a finished session from an idle one.
+        "idleFor": idle_for(status, updated, quiet, moves["writes"], now),
+        "read": finished.is_read(key, updated, kept),
+        "pinned": key in kept["pinned"],
         "asking": asking_of(raw.get("asking")),
         # How it stopped, if an API error is its last word; and the last call
         # it made (what a hung session was doing).
@@ -593,6 +604,27 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now):
                    doing=_text(raw.get("doing"))),
     })
     return row
+
+
+def idle_for(status, updated, quiet, writes, now):
+    """Minutes an idle session has shown no sign of life, or None when that
+    cannot be told: it is not idle, or it has no stop to count from.
+
+    The registry's stop is one clock; the newest write to the transcript is
+    another, and a write after the stop is a sign of life the status has not
+    caught up with, so the session has been idle only since the latest of them.
+    A provider's strip of writes (one slot per minute, this minute last) says
+    the same for the last half hour.
+    """
+    if status != "idle" or not updated:
+        return None
+    since = max(0.0, (now * 1000 - updated) / 60000)
+    if quiet is not None:
+        since = min(since, max(0.0, quiet))
+    for ago, count in enumerate(reversed(writes or ())):
+        if count:
+            return min(since, float(ago))
+    return since
 
 
 # ---------------------------------------------------------------- roster
@@ -684,6 +716,10 @@ def roster(providers=None):
             "banners": banners_of()}
 
 
+# A session idle this long, with nothing pending, is finished.
+FINISHED_AFTER = 120
+
+
 def columns_of(blocks):
     """What the overview page draws: one column per project, in display order.
 
@@ -703,7 +739,8 @@ def columns_of(blocks):
     for m in members:
         grouped.setdefault(by_key[m["key"]]["id"], []).append(m)
     merged = projects.merged_into(config_value("assign", {}))
-    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, follow, names, pinned, merged, own_lines),
+    done = positive_value("finished_after_minutes", FINISHED_AFTER)
+    columns = [(_column(rows, by_key[rows[0]["key"]], folder_rule, follow, names, pinned, merged, own_lines, done),
                 _column_order(rows, by_key[rows[0]["key"]], names, pinned))
                for rows in grouped.values()]
     return [column for column, _ in sorted(columns, key=lambda pair: pair[1])]
@@ -788,12 +825,19 @@ def _column_name(project, names):
             else names.get("No project") or "No project")
 
 
-def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines):
+def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines, finished_after):
     # A boss leads its column, whatever the activity: who leads before who
     # works. The rest are in the order the blocks have always used.
     rows = order_members(list(rows))
     rows.sort(key=lambda s: not s["boss"])
-    tiles = [tile_of(m, _suggestion(m, project, folder_rule, follow, names)) for m in rows]
+    made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names))) for m in rows]
+    # Finished sessions leave the tiles for the foot of the column, and with
+    # them everything the tiles are counted in: the card's state, its summary,
+    # the header. A column of pills alone has no tiles, so it reads all idle.
+    done = [is_finished(m, t, finished_after) for m, t in made]
+    tiles = [t for (m, t), gone in zip(made, done) if not gone]
+    pills = sorted((pill_of(m, t) for (m, t), gone in zip(made, done) if gone),
+                   key=lambda p: (p["idle"]["since"], p["key"]))
     name = _column_name(project, names)
     about, track = context.card(project, rows, own_lines)
     return {
@@ -807,7 +851,7 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
         # What the card's notes link asks the brain, once someone clicks it.
         "notes": None if about is None else {"query": context.notes_query(name, about)},
         "strip": strip_of(rows), "summary": mix_of(tiles),
-        "state": state_of(tiles), "sessions": tiles,
+        "state": state_of(tiles), "sessions": tiles, "pills": pills,
     }
 
 
@@ -839,6 +883,26 @@ def _suggestion(m, project, folder_rule, follow, names):
     return {"project": guessed["id"], "name": projects.display_name(guessed, names)}
 
 
+def is_finished(m, tile, after):
+    """Idle for `after` minutes and not held open, its handover read, and nothing
+    left for you. Any sign of life -- a prompt, a write, a job -- or any kind of
+    stuck is a tile again, and a session with things left for you (`n`) is wanted
+    however old it is. Unread, it stays a tile: a pill is also a way of not looking."""
+    return (m["idleFor"] is not None and m["idleFor"] >= after
+            and m["read"] and not m["pinned"] and m["n"] <= 0
+            and not m["moving"] and not tile["stuck"])
+
+
+def pill_of(m, tile):
+    """A finished session as the one line at the foot of its column."""
+    since = round(m["idleFor"], 1)
+    return {"key": m["key"], "name": m["name"], "tags": tile["tags"],
+            "idle": {"since": since, "text": span_text(since)},
+            "line": tile["line"], "jump": tile["jump"],
+            # What the filter box looks through, as it does for a tile.
+            "find": tile["find"]}
+
+
 def tile_of(m, suggestion=None):
     """One session as a tile: today's data, finished for the page to print.
 
@@ -852,9 +916,15 @@ def tile_of(m, suggestion=None):
     # a busy session nothing proves is moving is Hung (its kind).
     flag = None if m["flag"] in ("tool", "stuck") else m["flag"]
     stuck = stuck_of(m)
+    # What it told you when it stopped, until you have read it in the overview.
+    # The chime's `ready` is another question and is not touched.
+    unread = m["status"] == "idle" and bool(m["updatedAt"]) and not m["read"]
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
         "status": m["status"], "suggestion": suggestion,
+        "unread": unread, "handover": m["said"] if unread else "",
+        # Held open as a full tile by you, until you unpin it or it closes.
+        "pinned": m["pinned"],
         # Put where it is by hand: the page offers the way back.
         "assigned": bool(m.get("assigned")),
         "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],

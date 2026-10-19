@@ -249,6 +249,52 @@ default `~/.claude`), where transcripts are written. It says "Disk full: 212 MB
 left where sessions write". A disk that cannot be read is no banner. The page
 prints a banner's words as text and looks for nothing of its own.
 
+## Finished sessions: pills
+
+A session that has been **idle for `finished_after_minutes`** (default 120, a
+number of minutes more than nothing, else 120) leaves its column's tiles for a
+**pill** at the foot of the column, in the roster's `pills`: its name, how long
+it has been idle, the working-on line as the hover, and a click that jumps the
+way a tile's does. A pill with nowhere to go says "no terminal" before the click,
+and a click on it says why and does nothing: it posts nothing and marks nothing
+seen. Pills are never hidden.
+
+It is finished only when **all** of these hold, and any one failing keeps the
+full tile however old it is:
+
+- idle, and nothing shows a sign of life: the registry's stop and the newest write
+  to its transcript are both `finished_after_minutes` old, a provider's strip of
+  writes has none in the last half hour, and no background job runs under it;
+- **its handover read**, in the overview (below);
+- nothing left for the person: no open question or prompt, no `n` above nothing,
+  no Error, Hung or Limit;
+- not pinned.
+
+Pills are counted in nothing: not the card's state (a project of pills alone is
+ALL IDLE), not its mix, not the header's counts (the page's "N sessions" counts
+tiles). Any sign of life -- a prompt, a write, a stuck kind -- makes it a tile
+again, and it shrinks again after the next two hours idle.
+
+**Reading a handover.** A tile that has stopped and has not been read shows what
+the session said, in quotes, and an "unread" tag. A jump that reached the
+terminal, or a click on a tile that has none, reads it. What is remembered is not
+"you saw this session" but *the stop you read*, so a session that works and stops
+again has a handover nobody has read. This is `finished.json` in the state folder,
+beside `seen.json`, and it is a separate fact from the chime's seen mark. **The
+marks the block view left behind do not count as having read a handover here**:
+they say a row was clicked (a jump that failed used to write one too), and the old
+row did not put what the session said in front of you. They keep driving the chime
+and the `ready` flag exactly as before; a session whose only mark is one of those
+stays a full tile, with its handover shown, until it is looked at once in the
+overview. `fleet.mark_seen` writes both, so a click is enough.
+
+**Pin.** The pin button on a pill keeps it open as a full tile until you unpin it
+or the session closes (`POST /api/keep {key, pinned}`; only a live session can be
+pinned). A pinned idle session is an ordinary idle tile. The pin is in
+`finished.json`, not in `config.json`, and is dropped when a poll in which its
+provider answered no longer lists the session (so a missed poll does not unpin
+anything).
+
 ## After a reboot
 
 tmux-resurrect brings tmux back, but every pane that ran Claude comes back as
@@ -996,7 +1042,8 @@ Tuesday* with the same grey dot. So the page works out one flag per session:
 | **green, breathing** | Working | `busy` |
 
 **Ready is keyed to the moment it stopped**, not to the session
-(`~/.local/state/agentview/seen.json`). A session that works again and stops
+(`~/.local/state/agentview/seen.json`; `finished.json` beside it holds the
+handovers read in the overview and the pins). A session that works again and stops
 again carries a new `statusUpdatedAt`, so it comes back as ready by itself —
 nothing has to be cleared and nothing can go stale. Clicking a card marks it
 seen, whether or not the jump lands. A ready row prints **the last thing the

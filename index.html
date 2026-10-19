@@ -314,7 +314,30 @@
      column with none is only its card. Columns keep their width. */
   .tile.dim { opacity:.3; }
   .tile.lit { box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent); }
-  .ov-col.shrunk .tile { display:none; }
+  .ov-col.shrunk .tile, .ov-col.shrunk .pills { display:none; }
+  /* Finished sessions: one line each at the foot of their column, name and how
+     long idle; the working-on line is the hover. Quiet on purpose, never hidden. */
+  .pills { display:flex; flex-direction:column; gap:4px; }
+  .pill { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; padding:3px 10px;
+          font-size:12.5px; color:var(--dim); border:1px solid var(--line); border-radius:999px; }
+  .pill.can { cursor:pointer; }
+  .pill.can:hover { border-color:var(--accent); color:var(--ink); }
+  .pill.can:hover .go { opacity:1; }
+  .pill .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pill .for { margin-left:auto; color:var(--faint); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .pill .go.none { opacity:1; color:var(--faint); }
+  .pill .why { flex:1 0 100%; color:var(--bad); font-size:12px; overflow-wrap:anywhere; }
+  .pill .why.note { color:var(--dim); }
+  .pill.jumped { animation:flash .7s ease-out; }
+  .pill.failed { animation:flash-bad 1.4s ease-out; }
+  .pill.dim { opacity:.3; }
+  /* Pin: nothing moves when the pointer arrives, the control is only unlit. */
+  button.keep { padding:0 6px; font-size:12px; line-height:18px; border-color:transparent; background:none;
+                color:var(--faint); opacity:0; }
+  .tile:hover button.keep, .tile:focus-within button.keep, .pill:hover button.keep,
+  .pill:focus-within button.keep, button.keep.on { opacity:1; }
+  button.keep:hover { color:var(--accent); }
+  .tile .said { margin-top:0; }
   /* A condition of the whole machine, across the top under the header's row.
      The negative margin cancels the header's own 14px 20px padding, so the band
      runs edge to edge and sits flush with the header's bottom. */
@@ -1019,7 +1042,8 @@ function filteredColumns(cols) {
   return cols.map(c => {
     if (hit(c.name) || hit(c.raw)) return c;
     const sessions = c.sessions.filter(t => hit(t.find));
-    return sessions.length ? { ...c, sessions } : null;
+    const pills = (c.pills || []).filter(p => hit(p.find));
+    return sessions.length || pills.length ? { ...c, sessions, pills } : null;
   }).filter(Boolean);
 }
 
@@ -1103,6 +1127,7 @@ function column(c) {
   return `<section class="ov-col ${shrunk ? "shrunk" : ""}" data-project="${esc(c.project)}">
     <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${contextOf(c)}${footOf(c)}${movementOf(c)}${mergedOf(c)}</div>
     ${c.sessions.map(tile).join("")}
+    ${pillsOf(c)}
   </section>`;
 }
 
@@ -1222,13 +1247,41 @@ function tile(t) {
   const light = !LIGHT ? "" : t.counted === LIGHT ? " lit" : " dim";
   return `<div class="tile ${can ? "can" : ""} ${alarm}${light}" data-sid="${esc(t.key)}">
     <div class="rhead">
-      ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${moveButton(t)}${jumpLabel(t, via)}
+      ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${keepButton(t)}${moveButton(t)}${jumpLabel(t, via)}
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
+    ${t.handover ? `<div class="said">“${esc(t.handover)}”</div>` : ""}
     ${stuckBox(t)}
     ${handRow(t)}
   </div>`;
+}
+
+// Finished sessions, as the server chose them: one line each, name and idle
+// time, the working-on line as the hover, a click to jump. A pill that has
+// nowhere to go says so before the click and does nothing when clicked: it was
+// read already, and a click that reaches nothing has shown you nothing.
+function pillsOf(c) {
+  const list = (c.pills || []).filter(p => p && typeof p.key === "string");
+  return list.length ? `<div class="pills">${list.map(pill).join("")}</div>` : "";
+}
+
+function pill(p) {
+  const via = p.jump?.via;
+  const can = via === "pane" || via === "attach";
+  const tags = (p.tags || []).map(g => `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
+  return `<div class="pill ${can ? "can" : ""}${LIGHT ? " dim" : ""}" data-sid="${esc(p.key)}" title="${esc(p.line)}">
+    <span class="dot"></span><span class="nm">${esc(p.name)}</span>${tags}<span class="for">${esc(p.idle?.text)}</span>${keepButton(p, true)}${jumpLabel(p, via)}
+  </div>`;
+}
+
+// Pin a pill open as a tile, or let a pinned tile shrink again. The server
+// keeps the pin until it is undone or the session closes.
+function keepButton(t, isPill = false) {
+  if (t.pinned) return `<button class="keep on" data-sid="${esc(t.key)}" data-pinned="1" aria-pressed="true"
+    title="pinned open: click to let it shrink to a pill again when it is finished">unpin</button>`;
+  return isPill ? `<button class="keep" data-sid="${esc(t.key)}" aria-pressed="false"
+    title="keep it open as a full tile until you unpin it or it closes">pin</button>` : "";
 }
 
 // A span of minutes the way the server says it ("<1 min", "14 min", "3 h").
@@ -1375,20 +1428,26 @@ function tileFlag(t) {
     ? `<span class="flag waiting">waiting</span>` + (t.flagNote ? `<span class="wf">${esc(t.flagNote)}</span>` : "")
     : t.flag === "stuck"
       ? `<span class="flag stuck">stuck ${esc(t.flagNote)}</span>`
-      : t.flag === "ready" ? `<span class="flag ready">ready</span>` : "";
+      : t.flag === "ready" ? `<span class="flag ready">ready</span>`
+        // Seen by the chime's marks, not yet read here: it stays a tile.
+        : t.unread ? `<span class="flag ready">unread</span>` : "";
 }
 
 // A tile is a session you can go to, the way a row is. The click is
 // acknowledged first for the reason given on the row's handler below.
 document.getElementById("main").addEventListener("click", async ev => {
-  const el = ev.target.closest(".tile");
-  if (!el || ev.target.closest(".hand, .move, .ov-form")) return;   // these pick; none of them jumps
+  const el = ev.target.closest(".tile, .pill");
+  if (!el || ev.target.closest(".hand, .move, .keep, .ov-form")) return;   // these pick; none of them jumps
   const post = (path, body) => fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: JSON.stringify(body),
   });
   if (!el.classList.contains("can")) {
+    // A tile with no terminal is looked at, and that is all a click means. A
+    // pill was read already and has nothing new on its face: its click only
+    // says why it cannot open, and marks nothing.
+    if (el.classList.contains("pill")) return say(el.dataset.sid, el.querySelector(".go")?.title || "no terminal", false);
     post("/api/seen", { key: el.dataset.sid }).then(load).catch(() => {});
     return;
   }
@@ -1410,7 +1469,7 @@ document.getElementById("main").addEventListener("click", async ev => {
 // the page. The tile is found again by its key: a slow jump is answered after
 // a poll has replaced every node, and the one that was clicked is gone.
 function say(key, text, bad) {
-  const el = [...document.querySelectorAll(".tile")].find(t => t.dataset.sid === key);
+  const el = [...document.querySelectorAll(".tile, .pill")].find(t => t.dataset.sid === key);
   if (!el) return;
   el.classList.remove("jumped");
   el.querySelector(".why")?.remove();
@@ -1752,6 +1811,16 @@ document.getElementById("main").addEventListener("click", async ev => {
   const col = ev.target.closest(".ov-col");
   if (!col) return;
   const project = col.dataset.project;
+  const keep = ev.target.closest(".keep");
+  if (keep) {
+    ev.stopPropagation();
+    fetch("/api/keep", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+      body: JSON.stringify({ key: keep.dataset.sid, pinned: keep.dataset.pinned !== "1" }),
+    }).then(load).catch(() => {});
+    return;
+  }
   const move = ev.target.closest(".move");
   if (move) {
     ev.stopPropagation();

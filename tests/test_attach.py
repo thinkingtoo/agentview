@@ -443,10 +443,10 @@ class Tile(test_columns.Base):
         self.assertEqual(got["jump"], {"via": "none", "reason": "no terminal"})
 
 
-class Click(FakeRegistry):
-    """`POST /api/jump` end to end, on a server of its own: port 0, throwaway
-    stores, a fake registry behind the real Claude provider, and nowhere a
-    terminal could be reached."""
+class ClickServer(FakeRegistry):
+    """A server of its own, for a click to land on: port 0, throwaway stores, a
+    fake registry behind the real Claude provider, and nowhere a terminal could
+    be reached. `Click` and the pill tests (`test_finished_route.py`) stand on it."""
 
     def setUp(self):
         super().setUp()
@@ -500,13 +500,21 @@ class Click(FakeRegistry):
             e.close()
             return e.code, None
 
-    def tile(self):
+    def column(self):
         url = f"http://127.0.0.1:{self.httpd.server_address[1]}/api/roster"
         with urllib.request.urlopen(url, timeout=10) as r:
-            return json.loads(r.read())["columns"][0]["sessions"][0]
+            return json.loads(r.read())["columns"][0]
+
+    def tile(self):
+        return self.column()["sessions"][0]
 
     def unread(self):
         return self.seen.ready(f"claude:{SID}", 1790000000000, self.seen.load())
+
+
+
+class Click(ClickServer):
+    """`POST /api/jump` end to end."""
 
     def test_the_session_is_unread_until_a_jump_reaches_it(self):
         self.background(statusUpdatedAt=1790000000000)
@@ -525,7 +533,10 @@ class Click(FakeRegistry):
         status, done = self.post({"key": f"claude:{SID}"})
         self.assertEqual((status, done["ok"]), (200, True))
         self.assertFalse(self.unread())
-        self.assertNotEqual(self.tile()["flag"], "ready")
+        # Read, and idle since long before: it is a pill now, not a ready tile.
+        column = self.column()
+        self.assertEqual(([t["key"] for t in column["sessions"]], [p["key"] for p in column["pills"]]),
+                         ([], [f"claude:{SID}"]))
 
     def test_a_failed_jump_leaves_the_handover_unread_and_says_why(self):
         self.background(statusUpdatedAt=1790000000000)
