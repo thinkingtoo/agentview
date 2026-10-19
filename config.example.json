@@ -11,7 +11,7 @@
   "names": {},
   "pinned": [],
   "lines": {},
-  "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by provider:id — it also retitles that terminal tab. pinned: projects held at the top, in this order. assign: a session's project, keyed by provider:id. A project is named by its identity (track:x, repo:host/owner/name, folder:x) or by its plain name.",
+  "_overrides": "names: your label for a project, keyed by its resolved name. lines: your text for a session, keyed by provider:id — it also retitles that terminal tab. pinned: projects held at the top, in this order. assign: a session's project, keyed by provider:id, or a whole track's or repository's, keyed by its identity: it holds for sessions that start later. A project is named by its identity (track:x, repo:host/owner/name, folder:x) or by its plain name.",
   "assign": {},
   "_stuck": "A busy session whose transcript has been silent this many minutes is stuck. A `waiting` session is flagged at once, whatever this says.",
   "stuck_after_minutes": 5,

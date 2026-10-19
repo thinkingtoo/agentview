@@ -172,6 +172,34 @@
   .ov-col { flex:1 0 230px; max-width:330px; display:flex; flex-direction:column; gap:8px; }
   .ov-head { background:var(--card); border:1px solid var(--line); border-top:3px solid var(--line);
              border-radius:10px; padding:10px 12px; font-weight:650; font-size:15px; overflow-wrap:anywhere; }
+  /* By hand: the name edits in place, the tools sit beside it and say nothing
+     until they are needed. A pinned card is lit, as a pinned block is. */
+  .ov-top { display:flex; align-items:baseline; gap:6px; }
+  .ov-top .ov-name { flex:1 1 auto; min-width:0; }
+  .ov-top input.inline { min-width:0; width:100%; font-weight:400; }
+  .ov-tools { display:flex; align-items:center; gap:2px; flex:none; font-weight:400; }
+  .ov-tools button, .ov-form button, .ov-merged button { padding:0 6px; font-size:12px; line-height:20px;
+                                      border-color:transparent; background:none; color:var(--faint); }
+  .ov-tools button:hover, .ov-form button:hover, .ov-merged button:hover { color:var(--accent); border-color:transparent; }
+  .ov-merged { margin-top:6px; display:flex; flex-wrap:wrap; gap:0 10px; font-weight:400; font-size:12px;
+               color:var(--dim); overflow-wrap:anywhere; }
+  .ov-tools .ov-pin { font-size:13px; }
+  .ov-tools .ov-pin.on { color:var(--claude); }
+  .ov-tools .ov-merge { opacity:0; }
+  .ov-head:hover .ov-merge, .ov-head:focus-within .ov-merge { opacity:1; }
+  .ov-form { margin-top:6px; display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px;
+             font-weight:400; font-size:12px; color:var(--dim); }
+  select.pick { font:inherit; font-size:12px; color:var(--ink); background:var(--bg); max-width:100%;
+                border:1px solid var(--claude); border-radius:6px; padding:2px 5px; }
+  /* Nothing moves when the pointer arrives: the control is there, only unlit,
+     so a click meant to open the session never lands on something that
+     appeared under it. */
+  .tile button.move { margin-left:auto; padding:0 5px; font-size:13px; line-height:18px; border-color:transparent;
+                      background:none; color:var(--faint); opacity:0; }
+  .tile button.move + .go { margin-left:0; }
+  .tile:hover button.move, .tile:focus-within button.move { opacity:1; }
+  .tile button.move:hover { color:var(--accent); }
+  .tile .ov-form { margin-top:4px; }
   .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 11px;
           display:flex; flex-direction:column; gap:3px; }
   .tile.can { cursor:pointer; }
@@ -332,6 +360,7 @@ const VIEW = new URLSearchParams(location.search).get("view") === "blocks" ? "bl
 let PINNED = [];
 let LATEST = [];            // the last roster the server sent, to repaint from
 let COLUMNS = [];           // and its `columns`, which the overview prints as they come
+let SHOWN = [];             // the columns painted now: the filter may hide some of them
 let HOLD = false;           // is the order frozen where you last saw it?
 let CHIME = true;           // does a session that starts waiting ring?
 let WAITING = null;         // who was waiting last poll -- null before the first
@@ -808,7 +837,7 @@ function drawHold() {
 }
 
 function busyWithUser() {
-  return editing || dragging || !!document.querySelector("input.inline");
+  return editing || dragging || !!document.querySelector("input.inline, select.pick");
 }
 
 async function load() {
@@ -891,8 +920,14 @@ function paint() {
   } else {
     overview(filteredColumns(COLUMNS));
   }
-  document.getElementById("stamp").textContent =
-    "updated " + new Date().toLocaleTimeString();
+  document.getElementById("stamp").textContent = stampText();
+}
+
+// The line over the header: when the roster was read, or -- for a few seconds
+// after a refusal -- what happened, so that the next poll does not wipe it.
+let NOTE = null;
+function stampText() {
+  return NOTE && Date.now() < NOTE.until ? NOTE.text : "updated " + new Date().toLocaleTimeString();
 }
 
 function nothing() {
@@ -918,6 +953,7 @@ function filteredColumns(cols) {
 }
 
 function overview(cols) {
+  SHOWN = cols;
   const main = document.getElementById("main");
   const x = main.scrollLeft;          // a repaint every poll must not send you back to the first column
   main.innerHTML = cols.length ? cols.map(column).join("") : nothing();
@@ -933,9 +969,42 @@ function column(c) {
   const word = STATE_WORD[c.state] || (c.state ? String(c.state).toUpperCase() : "");
   const st = STATE_WORD[c.state] ? c.state : "other";
   return `<section class="ov-col" data-project="${esc(c.project)}">
-    <div class="ov-head st-${st}"><span class="ov-name">${esc(c.name)}</span>${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${movementOf(c)}</div>
+    <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${movementOf(c)}${mergedOf(c)}</div>
     ${c.sessions.map(tile).join("")}
   </section>`;
+}
+
+// What you moved into this project, each with the way back. Undoing puts the
+// project back as its own; its pin, name and line were carried and stay here.
+function mergedOf(c) {
+  if (!(c.merged || []).length) return "";
+  return `<div class="ov-merged">${c.merged.map(m => `<span>includes ${esc(m.name)}
+    <button data-act="unmerge" data-from="${esc(m.project)}"
+      title="make ${esc(m.name)} its own project again (its pin, name and line are not given back)">undo</button></span>`).join("")}</div>`;
+}
+
+// The name, and what you can do to the project: pin it, move a pinned one
+// along the row, merge it into another. A project is what you correct, so
+// "No project" -- the pile of sessions waiting for one -- has none of it.
+// The raw name stays on hover: renaming never hides what it is.
+function headOf(c) {
+  if (c.kind === "none") return `<div class="ov-top"><span class="ov-name">${esc(c.name)}</span></div>`;
+  // The neighbours are the cards on the page, not those a filter has hidden.
+  const pins = SHOWN.filter(x => x.pinned);
+  const at = pins.findIndex(x => x.project === c.project);
+  const arrow = (to, glyph, word) => to ? `<button class="ov-arrow" data-act="swap" data-with="${esc(to.project)}" data-side="${word}"
+      title="${word} of ${esc(to.name)}" aria-label="${word} of ${esc(to.name)}">${glyph}</button>` : "";
+  return `<div class="ov-top">
+    <span class="ov-name edit" data-edit="name" title="${esc(c.raw)}: click to rename">${esc(c.name)}</span>
+    <span class="ov-tools">
+      ${c.pinned ? arrow(pins[at - 1], "‹", "before") + arrow(pins[at + 1], "›", "after") : ""}
+      <button class="ov-pin ${c.pinned ? "on" : ""}" data-act="${c.pinned ? "unpin" : "pin"}"
+        title="${c.pinned ? "pinned: click to unpin" : "pin to the front"}"
+        aria-pressed="${c.pinned ? "true" : "false"}">${c.pinned ? "★" : "☆"}</button>
+      <button class="ov-merge" data-act="merge-form"
+        title="merge all of it into another project; holds for sessions that start later">merge…</button>
+    </span>
+  </div>`;
 }
 
 // The card's movement: the strip the server summed over the project's
@@ -963,13 +1032,27 @@ function tile(t) {
     `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
   return `<div class="tile ${can ? "can" : ""} ${alarm}" data-sid="${esc(t.key)}">
     <div class="rhead">
-      ${mark({ ...t, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${jumpLabel(t, via)}
+      ${mark({ ...t, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${moveButton(t)}${jumpLabel(t, via)}
     </div>
     ${t.line ? `<div class="tline">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
     ${stuckBox(t)}
-    ${t.suggestion ? suggestionChip(t) : ""}
+    ${handRow(t)}
   </div>`;
+}
+
+// What you can do to one session. The button puts it in any project, for as
+// long as the session lasts; the chip (in No project) is where the roster
+// thinks it belongs, and once you have moved it the way back is always there.
+function moveButton(t) {
+  return `<button class="move" data-sid="${esc(t.key)}" aria-label="move this session to another project"
+    title="move this session to another project (for this session only)">⋯</button>`;
+}
+
+function handRow(t) {
+  const back = t.assigned ? `<span class="clear" data-sid="${esc(t.key)}"
+    title="back to the project it belongs to">moved by you · back</span>` : "";
+  return t.suggestion || back ? `<div class="assign hand">${t.suggestion ? suggestionChip(t) : ""}${back}</div>` : "";
 }
 
 // Why a session is stopped, and what you need to know before you go to it.
@@ -1045,8 +1128,8 @@ document.getElementById("main").addEventListener("click", async ev => {
 // In No project: where the roster thinks this session belongs, one click away.
 // The click is the page's existing `.guess` handler, which assigns it.
 function suggestionChip(t) {
-  return `<div class="assign"><span class="guess" data-sid="${esc(t.key)}"
-    data-project="${esc(t.suggestion.project)}">→ ${esc(t.suggestion.name)}</span></div>`;
+  return `<span class="guess" data-sid="${esc(t.key)}"
+    data-project="${esc(t.suggestion.project)}">→ ${esc(t.suggestion.name)}</span>`;
 }
 
 // The jump is worked out by the server before anyone clicks: a pane to raise,
@@ -1074,7 +1157,7 @@ function tileFlag(t) {
 // acknowledged first for the reason given on the row's handler below.
 document.getElementById("main").addEventListener("click", async ev => {
   const el = ev.target.closest(".tile");
-  if (!el || ev.target.closest(".guess")) return;      // the chip assigns; it does not jump
+  if (!el || ev.target.closest(".hand, .move, .ov-form")) return;   // these pick; none of them jumps
   const post = (path, body) => fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
@@ -1205,11 +1288,12 @@ document.getElementById("main").addEventListener("click", ev => {
         : kind === "assign"
           ? { key: sid, project: input.value }
           : { key: sid, text: input.value };
-      await fetch(endpoint, {
+      const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Fleet": "1" },
         body: JSON.stringify(body),
       });
+      if (await changedElsewhere(r)) return;
     }
     load();
   };
@@ -1299,21 +1383,17 @@ main.addEventListener("drop", async ev => {
   // Dropping pins everything above and including the drop point: the ones
   // you have deliberately placed are exactly the ones that should stop moving.
   const pinned = order.slice(0, Math.max(to, from) + 1);
-  await fetch("/api/order", {
+  const r = await fetch("/api/order", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ pinned }),
+    body: JSON.stringify({ pinned, shown: order }),
   });
+  if (await changedElsewhere(r)) return;
   load();
 });
 
-async function assign(sid, project) {
-  await fetch("/api/assign", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ key: sid, project }),
-  });
-  load();
+function assign(sid, project) {
+  return correct("/api/assign", { key: sid, project });
 }
 
 main.addEventListener("click", ev => {
@@ -1333,12 +1413,119 @@ main.addEventListener("click", async ev => {
   // Read the pinned set off the page rather than off a variable the last
   // refresh happened to fill: clicking straight after a drop must still work.
   const current = [...main.querySelectorAll(".block.pinned")].map(b => b.dataset.project);
-  await fetch("/api/order", {
+  const r = await fetch("/api/order", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ pinned: current.filter(p => p !== holder.dataset.project) }),
+    body: JSON.stringify({ pinned: current.filter(p => p !== holder.dataset.project), shown: PAINTED }),
   });
+  if (await changedElsewhere(r)) return;
   load();
+});
+
+// By hand. Every click is one correction, made by the server on its own, so
+// two in quick succession (or from two tabs) both hold. A picker keeps the
+// poll from repainting while it is open, as an inline field does, and goes
+// when you press Escape or click away.
+async function correct(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify(body),
+  });
+  if (await changedElsewhere(r)) return;
+  if (!r.ok) document.getElementById("stamp").textContent = "not done: " + (r.statusText || r.status);
+  load();
+}
+
+// 409: another tab changed the card this page drew, so nothing was written.
+// Read the roster again and say so, calmly: the line holds for a few seconds.
+async function changedElsewhere(r) {
+  if (r.status !== 409) return false;
+  NOTE = { text: "changed in another tab, refreshed", until: Date.now() + 6000 };
+  await load();
+  document.getElementById("stamp").textContent = stampText();
+  return true;
+}
+
+// Other projects you can put something in, named so two with one name differ:
+// by kind, then (a client folder and a folder are both folders) by what the
+// identity starts with, then -- two repositories called alike -- by the identity.
+function projectOptions(except) {
+  const open = COLUMNS.filter(c => c.kind !== "none" && c.project !== except);
+  const prefix = c => c.project.split(":", 1)[0];
+  const tag = c => {
+    const same = open.filter(o => o.name === c.name);
+    if (same.length < 2) return "";
+    if (same.filter(o => o.kind === c.kind).length < 2) return ` (${c.kind})`;
+    if (same.filter(o => prefix(o) === prefix(c)).length < 2) return ` (${prefix(c)})`;
+    return ` (${c.project})`;
+  };
+  return open.map(c => `<option value="${esc(c.project)}">${esc(c.name)}${esc(tag(c))}</option>`).join("");
+}
+
+// Closed once: taking out the button you pressed fires its focusout, and that
+// would close the picker a second time from inside the first.
+function closePicker(form, then = load) {
+  if (form.dataset.closed) return;
+  form.dataset.closed = "1";
+  form.remove();
+  then();
+}
+
+function picker(host, html, onChoose) {
+  if (document.querySelector("select.pick") || editing) return null;
+  const form = document.createElement("div");
+  form.className = "ov-form";
+  form.innerHTML = html;
+  host.append(form);
+  const sel = form.querySelector("select.pick");
+  sel.focus();
+  form.addEventListener("keydown", e => { if (e.key === "Escape") closePicker(form); });
+  form.addEventListener("focusout", e => {
+    // Leaving the page for another window must not drop what you were choosing.
+    if (!form.contains(e.relatedTarget) && document.hasFocus()) closePicker(form);
+  });
+  form.addEventListener("click", e => {
+    const go = e.target.closest("[data-act]")?.dataset.act;
+    if (go === "cancel") closePicker(form);
+    if (go === "go" && sel.value) closePicker(form, () => onChoose(sel.value));
+  });
+  return form;
+}
+
+document.getElementById("main").addEventListener("click", async ev => {
+  const col = ev.target.closest(".ov-col");
+  if (!col) return;
+  const project = col.dataset.project;
+  const move = ev.target.closest(".move");
+  if (move) {
+    ev.stopPropagation();
+    const sid = move.dataset.sid;
+    picker(move.closest(".tile"), `<select class="pick" aria-label="move this session to">
+        <option value="" disabled selected>move this session to…</option>${projectOptions(project)}</select>
+        <button data-act="go">move</button><button data-act="cancel">cancel</button>`,
+      to => correct("/api/assign", { key: sid, project: to }));
+    return;
+  }
+  const act = ev.target.closest("[data-act]");
+  if (!act || act.closest(".ov-form")) return;
+  ev.stopPropagation();
+  const what = act.dataset.act;
+  // The server is told which cards are pinned as you see them: a pin written
+  // by plain name can hold two cards, and only the page knows which is which.
+  const shown = COLUMNS.filter(c => c.pinned).map(c => c.project);
+  if (what === "pin" || what === "unpin") return correct("/api/pin", { project, action: what, shown });
+  // The arrow says which way it goes and the undo says where it saw the project,
+  // so that the same click from a tab that is behind is refused, not repeated.
+  if (what === "swap") return correct("/api/pin", { project, action: "swap", with: act.dataset.with, side: act.dataset.side, shown });
+  if (what === "unmerge") return correct("/api/assign", { key: act.dataset.from, project: "", was: project });
+  if (what === "merge-form") {
+    picker(col.querySelector(".ov-head"), `merge all of it into
+        <select class="pick" aria-label="merge into">
+        <option value="" disabled selected>choose…</option>${projectOptions(project)}</select>
+        <button data-act="go">merge</button><button data-act="cancel">cancel</button>`,
+      into => correct("/api/merge", { source: project, target: into, shown }));
+  }
 });
 
 const box = document.getElementById("q");
