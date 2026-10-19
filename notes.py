@@ -138,7 +138,7 @@ def _result(text):
         text = data[-1] if data else ""
     try:
         message = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):            # nested deeper than a decoder reads
         message = None
     if not isinstance(message, dict):
         raise Unavailable(UNKNOWN)
@@ -184,7 +184,7 @@ def _from_text(content):
             continue
         try:
             block = json.loads(part.get("text"))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, RecursionError):
             raise Unavailable(UNKNOWN) from None
         if isinstance(block, dict) and isinstance(block.get("result"), list):
             block = block["result"]

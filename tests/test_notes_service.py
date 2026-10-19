@@ -41,6 +41,7 @@ class Service:
         self.status = None                  # answer every POST with this status
         self.hangup = self.garbage = self.rpc_error = self.is_error = False
         self.odd = None                     # a result of this shape, instead of the hits
+        self.raw = None                     # these exact bytes, as the answer to the search
         self.garbage_start = False          # a page that is not the service, in answer to the first call
         self.delete_hangup = False          # ends no session: a service may refuse to
         self.redirect = None
@@ -96,6 +97,8 @@ class Service:
                 if method != "tools/call":
                     return self.say(202)
                 time.sleep(service.delay)
+                if service.raw is not None:
+                    return self.say(200, service.raw, [("Content-Type", "application/json")])
                 if service.garbage:
                     return self.say(200, b"<html>not json</html>", [("Content-Type", "text/html")])
                 if service.rpc_error:
@@ -304,6 +307,17 @@ class Trouble(unittest.TestCase):
             with self.subTest(found=found):
                 self.service.odd = {"structuredContent": {"result": found},
                                     "content": [{"type": "text", "text": "{}"}], "isError": False}
+                self.assertEqual(self.refused(), "the notes service gave an answer this code does not know")
+
+    def test_an_answer_nested_deeper_than_a_decoder_can_read_is_an_answer_not_understood(self):
+        deep_list = "[" * 100000 + "]" * 100000
+        deep_object = '{"a":' * 100000 + "1" + "}" * 100000
+        for name, odd, raw in (
+                ("in a text block", {"content": [{"type": "text", "text": deep_list}], "isError": False}, None),
+                ("in the message", None, deep_object.encode()),
+                ("in an event stream", None, b"event: message\ndata: " + deep_object.encode() + b"\n\n")):
+            with self.subTest(name):
+                self.service.odd, self.service.raw = odd, raw
                 self.assertEqual(self.refused(), "the notes service gave an answer this code does not know")
 
     def test_a_first_answer_that_is_not_the_service_ends_it_there(self):
