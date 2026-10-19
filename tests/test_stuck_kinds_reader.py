@@ -198,6 +198,15 @@ class LocalCommands(Base):
         got = self.failure([api_error(120)] + tail)
         self.assertEqual(got and got["kind"], "limit")
 
+    def test_each_tag_claude_code_opens_a_local_record_with_leaves_it_there(self):
+        # Read out of Claude Code 2.1.295 and out of real transcripts: the first
+        # six are written by slash commands, the last three by a `!` line.
+        for tag in ("local-command-caveat", "local-command-stdout", "local-command-stderr",
+                    "command-name", "command-message", "bash-input", "bash-stdout", "bash-stderr"):
+            with self.subTest(tag=tag):
+                got = self.failure([api_error(120), local(60, f"<{tag}>an invented line</{tag}>")])
+                self.assertEqual(got and got["kind"], "limit")
+
     def test_leading_blank_space_does_not_change_what_the_record_is(self):
         got = self.failure([api_error(120), local(60, "\n  " + NAME)])
         self.assertEqual(got and got["kind"], "limit")
