@@ -20,7 +20,13 @@ cannot be read (hidepid, a container, another user's process) the provider
 degrades: the session shows without a jump. It never invents a pid.
 
 Codex knows busy from idle and nothing about waiting, so it declares
-neither `waiting` nor `status`; the chime never rings for it.
+neither `waiting` nor `status`; the chime never rings for it. What the rollout
+does say, the overview reads: writes per minute, the error a turn ended in
+(Limit or Error), an escalated command with no output yet (Needs you, inferred;
+the session is then `waiting`), and for a `codex exec` run the processes above
+it, which is how the roster finds the session that started it. It cannot say
+Hung: a rollout is silent while a command runs, and nothing looks under the
+process, so a busy session's silence is never called a hang.
 """
 import datetime
 import json
@@ -466,12 +472,13 @@ class CodexProvider(Provider):
             "writes": minutes.strip(state, now) if path else None,
             # Codex writes nothing to its rollout while a command runs, and
             # nothing here looks at what runs under the session: silence is
-            # not known to be silence, so the core must not call it Hung.
+            # not known to be silence, so the core must not call it Hung. A
+            # pending escalated command is not Hung either: it is Needs you.
             "procsUnknown": True,
             "extras": extras,
         }
         if asked:
-            out["asking"] = {"kind": "permission", "tool": "exec_command", "command": asked[1], "target": ""}
+            out["asking"] = {"kind": "permission", "tool": "Shell", "command": asked[1], "target": ""}
         if out["kind"] in RUNS:
             # A one-shot: somebody started it, and the processes above it say who.
             out["run"] = "codex review" if state["review"] or out["kind"] == "review" else "codex exec"

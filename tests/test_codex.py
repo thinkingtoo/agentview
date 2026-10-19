@@ -426,7 +426,7 @@ class Approvals(Fixture):
     def test_a_call_that_asks_to_leave_the_sandbox_and_has_no_output_is_waiting_on_you(self):
         s = self.turn(call(T1, "c1", cmd="git push origin dev", escalate=True, justification="needs the network"))
         self.assertEqual(s["status"], "waiting")
-        self.assertEqual(s["asking"], {"kind": "permission", "tool": "exec_command",
+        self.assertEqual(s["asking"], {"kind": "permission", "tool": "Shell",
                                        "command": "git push origin dev", "target": ""})
         self.assertEqual(s["updatedAt"], 1790074140000)           # since the call
 
@@ -482,7 +482,7 @@ class Approvals(Fixture):
 
     def test_a_call_with_no_command_still_asks_and_has_nothing_to_copy(self):
         s = self.turn(call(T1, "c1", escalate=True))
-        self.assertEqual(s["asking"], {"kind": "permission", "tool": "exec_command", "command": "", "target": ""})
+        self.assertEqual(s["asking"], {"kind": "permission", "tool": "Shell", "command": "", "target": ""})
 
     def test_a_command_longer_than_a_prompt_can_hold_comes_with_one_character_more(self):
         s = self.turn(call(T1, "c1", cmd="x" * (base.COMMAND_LIMIT + 500), escalate=True))
@@ -604,7 +604,7 @@ class Tiles(test_columns.Base):
                 self.assertEqual(got["status"], "waiting")
                 self.assertEqual(got["stuck"], {
                     "kind": "needs", "source": "permission", "reason": "Permission prompt",
-                    "context": {"tool": "exec_command", "command": "git push origin dev",
+                    "context": {"tool": "Shell", "command": "git push origin dev",
                                 "target": "", "copy": True}})
                 self.assertEqual((got["counted"], got["moving"]), ("needs", False))
 
