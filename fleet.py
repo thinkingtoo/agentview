@@ -23,6 +23,7 @@ import jump
 import lines
 import projects
 import providers
+import runs
 import seen
 import working
 from providers import base, claude
@@ -356,17 +357,17 @@ def sessions(providers=None):
             "hung_after": positive_value("hung_after_minutes", 10),
         }
         now = time.time()
-        out, failed, answered = [], {}, set()
+        asked, failed, answered = [], {}, set()
         for p in (providers if providers is not None else _providers()):
             got, err = _ask(p)
             if err:
                 failed[p.name] = err
                 continue
             answered.add(p.name)
-            for raw in got:
-                row = normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered)
-                if row:
-                    out.append(row)
+            asked.extend((p, raw) for raw in got)
+        # Runs are folded into the tile of the session that started them (runs.py).
+        out = [row for row in (normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered)
+                               for p, raw in runs.fold(asked, now)) if row]
         ROUND["failed"], ROUND["answered"] = failed, answered
         return out
 
@@ -956,7 +957,8 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         "pinned": m["pinned"],
         # Put where it is by hand: the page offers the way back.
         "assigned": bool(m.get("assigned")),
-        "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex")) if on],
+        "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex"),
+                                 ("exec", m["kind"] in ("exec", "review"))) if on],
         "line": line, "lineSource": source,
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
