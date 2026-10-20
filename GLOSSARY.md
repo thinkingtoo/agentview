@@ -101,7 +101,7 @@ A finished session as one line at the foot of its project's column: name and idl
 _Avoid_: badge, chip
 
 **Flags**:
-The roster's list of every session on the machine, routines and finished sessions included, one row each: `{key, id, name, flag, blocked}`. `flag` is the raw one the transcript gave (`waiting`, `ready`, `tool`, `stuck` or none) and `blocked` whether the session wrote down what blocks it. The chime and the server's marks read this list; the tiles may say less than it does. It replaced the roster's `blocks`.
+The roster's list of every session on the machine, routines and finished sessions included, one row each: `{key, id, name, flag, blocked}`. `flag` is the raw one the transcript gave (`waiting`, `ready`, `tool`, `stuck` or none), except that a row of a provider that cannot say `waiting` (Codex) and carries an open request in `asking` is sent as `waiting`, so the chime rings for it and `blocked` whether the session wrote down what blocks it. The chime and the server's marks read this list; the tiles may say less than it does. It replaced the roster's `blocks`.
 _Avoid_: blocks
 
 **Pin (a session)**:

@@ -71,5 +71,71 @@ class AnnounceSound(unittest.TestCase):
         self.assertEqual(got, want)
 
 
+SEQUENCE = """
+let CHIME = true, WAITING = null, READY = null, sounds = [];
+function ring(){ sounds.push("ring"); }
+function tick(){ sounds.push("tick"); }
+%s
+const polls = %s;
+const out = [];
+for (const rows of polls) { sounds = []; announce(rows); out.push(sounds.join(",") || "silence"); }
+console.log(out.join("|"));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "needs node to run the page's JS")
+class CodexWaitRings(unittest.TestCase):
+    """The flags the server really sends for a Codex row, through the real `announce()`."""
+
+    def test_a_codex_wait_rings_once_and_rings_again_for_the_next_one(self):
+        import json
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        import test_flags
+        ask = test_flags.CodexRings.ASK
+        row = lambda **o: test_flags.session("c", **o)
+        base = test_flags.Base()
+        base.setUp()
+        self.addCleanup(base.doCleanups)
+        polls = [
+            [row(status="busy", quietFor=0.1)],          # page opened, working
+            [row(status="busy", quietFor=0.1)],
+            [row(status="waiting", asking=ask)],         # escalates: rings
+            [row(status="waiting", asking=ask)],         # same wait: silent
+            [row(status="waiting", asking=ask)],
+            [row(status="busy", quietFor=0.1)],          # approved
+            [row(status="waiting", asking=ask)],         # a new wait: rings
+        ]
+        sent = []
+        for sessions in polls:
+            fleet_flags = base.roster(*sessions, provider=test_flags.Fake(sessions, test_flags.CodexRings.CODEX))["flags"]
+            sent.append([{"key": f["key"], "flag": f["flag"], "blocked": f["blocked"]} for f in fleet_flags])
+        script = SEQUENCE % (_announce_js(), json.dumps(sent))
+        proc = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip().split("|"),
+                         ["silence", "silence", "ring", "silence", "silence", "silence", "ring"])
+
+    def test_a_codex_row_that_is_only_busy_or_idle_never_makes_a_sound(self):
+        import json
+        import sys
+        sys.path.insert(0, str(ROOT / "tests"))
+        import test_flags
+        base = test_flags.Base()
+        base.setUp()
+        self.addCleanup(base.doCleanups)
+        polls = [[test_flags.session("c", status=s, **q)] for s, q in
+                 (("idle", {}), ("busy", {"quietFor": 0.1}), ("idle", {}), ("busy", {"quietFor": 0.1}))]
+        sent = []
+        for sessions in polls:
+            rows = base.roster(*sessions, provider=test_flags.Fake(sessions, test_flags.CodexRings.CODEX))["flags"]
+            sent.append([{"key": f["key"], "flag": f["flag"], "blocked": f["blocked"]} for f in rows])
+        proc = subprocess.run(["node", "-e", SEQUENCE % (_announce_js(), json.dumps(sent))],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # A finished Codex turn may tick (ready); it never rings.
+        self.assertNotIn("ring", proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

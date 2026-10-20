@@ -96,7 +96,8 @@ A provider may also say, apart from its sessions, that the whole account is held
 import os
 
 # What a provider can know. Two of these change what the core does: without
-# `waiting` the chime never rings for that provider; without `jump` no row of
+# `waiting` the chime never rings for that provider's `status` (a row that
+# carries `asking` still rings, `fleet.flags_of`); without `jump` no row of
 # its is clickable to raise a terminal. The other three say whether a missing
 # field is data that is absent or data that will never exist.
 CAPABILITIES = frozenset({"jump", "branch", "waiting", "name", "status"})

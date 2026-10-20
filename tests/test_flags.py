@@ -96,6 +96,59 @@ class Flags(Base):
         self.assertIsNone(row["flag"])
 
 
+class CodexRings(Base):
+    """A provider that cannot say `waiting` still has a row that asks: a Codex
+    command that escalated and has no answer. The tile says Needs you; the
+    chime reads the same row as a waiting one, whatever the provider's
+    capabilities."""
+
+    CODEX = {"jump", "branch"}
+    ASK = {"kind": "permission", "tool": "Shell", "command": "git push origin dev", "target": ""}
+
+    def flag(self, caps, *sessions):
+        fleet.CONFIG.write_text("{}")
+        rows = fleet.roster(providers=[Fake(sessions, caps)])["flags"]
+        return {r["id"]: r["flag"] for r in rows}
+
+    def codex(self, sid="c", **over):
+        return session(sid, status="waiting", asking=self.ASK, **over)
+
+    def test_a_codex_row_that_asks_is_waiting_to_the_chime(self):
+        self.assertEqual(self.flag(self.CODEX, self.codex()), {"c": "waiting"})
+
+    def test_and_its_tile_is_still_needs_you_with_the_flag_the_tile_always_had(self):
+        fleet.CONFIG.write_text("{}")
+        got = fleet.roster(providers=[Fake([self.codex()], self.CODEX)])["columns"][0]["sessions"][0]
+        self.assertEqual((got["stuck"]["kind"], got["stuck"]["source"], got["flag"]), ("needs", "permission", None))
+
+    def test_a_codex_row_that_is_busy_or_idle_never_rings(self):
+        for status in ("busy", "idle"):
+            with self.subTest(status=status):
+                got = self.flag(self.CODEX, session("c", status=status, quietFor=0.1, asking=self.ASK))
+                self.assertNotEqual(got["c"], "waiting")
+        self.assertIsNone(self.flag(self.CODEX, session("c", status="busy", quietFor=0.1))["c"])
+
+    def test_a_codex_row_that_waits_with_nothing_to_approve_does_not_ring(self):
+        self.assertIsNone(self.flag(self.CODEX, session("c", status="waiting"))["c"])
+
+    def test_any_open_request_rings_as_it_is_needs_you_on_the_tile(self):
+        got = self.flag(self.CODEX, session("c", status="waiting", asking={"kind": "question", "questions": []}))
+        self.assertEqual(got["c"], "waiting")
+
+    def test_a_pause_is_a_limit_on_the_tile_and_does_not_ring(self):
+        got = self.flag(self.CODEX, session("c", status="waiting", asking={"kind": "pause", "what": "Usage credits"}))
+        self.assertIsNone(got["c"])
+
+    def test_a_claude_row_rings_as_before(self):
+        # Within the first seconds an unnamed wait is still not an alarm, even
+        # with a permission prompt open: the new path is not for providers that
+        # can say `waiting` themselves.
+        fresh = session("c", status="waiting", asking=self.ASK, updatedAt=fleet.time.time() * 1000)
+        self.assertIsNone(self.flag({"jump", "branch", "waiting", "name", "status"}, fresh)["c"])
+        self.assertEqual(self.flag({"jump", "branch", "waiting", "name", "status"},
+                                   waiting("c", asking=self.ASK))["c"], "waiting")
+
+
 class Members(Base):
     """`members()` is what the roster is made from, kept for the tests that
     read a session's raw fields: the flag, `silentFor`, what the round dropped."""
