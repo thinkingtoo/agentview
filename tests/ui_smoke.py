@@ -1859,6 +1859,63 @@ def working_pass(browser):
               widths(long, width) == widths("short line", width), (widths(long, width), widths("short line", width)))
 
 
+def codex_pass(browser):
+    """Ticket 12 at the page: a Codex run nobody started from a session is a tile
+    marked exec, an escalated command is Needs you with the command to copy, a
+    usage limit is a banner, a Limit and an Error are tiles. R7: what a rollout
+    says -- a name, a command, an error -- is text, in a text position and in an
+    attribute. Fixtures are invented."""
+    cmd = "git push origin feature/maple-notes"
+    maple = ("maple", "maple", [
+        S("c1", "Ilse", "busy", tags=["codex", "exec"], line="Review the notes page", mv="writing · 8s ago"),
+        S("c2", "Mei", "waiting", "waiting", tags=["codex"], line="Ship the notes", stuck=prompts("Shell", cmd)),
+        S("c3", "Nour", "idle", tags=["codex"], line="Plan the cutover", stuck=limit_kind(None, 12.0, "Try again later")),
+        S("c4", "Aziz", "idle", tags=["codex"], line="Rewrite the parser",
+          stuck=error_kind("Overloaded", "The servers are busy.", 4.0, "server_overloaded")),
+        S("c5", "Femi", "busy", tags=["claude"], line="Dispatching", mv="waiting on: codex review, 2 min")])
+    body = roster([maple], banners=[{"kind": "limit", "text": "Codex usage limit reached, resets at 14:20"}])
+    page = new_page(browser, Fake(body))
+    open_at(page)
+    page.wait_for_selector(".tile")
+    t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
+    check("a run nobody started from a session is a tile marked codex and exec",
+          [x.lower() for x in t("c1").locator(".bg-tag").all_inner_texts()] == ["codex", "exec"]
+          and t("c1").locator(".bg-tag.exec").count() == 1)
+    check("an escalated command: Needs you, the tool and the whole command, with a copy button",
+          t("c2").locator(".stuck-box .reason").inner_text() == "Permission prompt"
+          and t("c2").locator(".tool").inner_text().lower() == "shell"
+          and t("c2").locator("code").inner_text() == cmd and t("c2").locator("button.copy").count() == 1)
+    check("a Codex usage limit on a session is a Limit tile, an error an Error tile",
+          "limit" in t("c3").get_attribute("class") and "error" in t("c4").get_attribute("class"))
+    check("a session waiting on a codex run says so as movement",
+          t("c5").locator(".mv").inner_text().strip().startswith("waiting on: codex review, 2 min"), t("c5").inner_text())
+    check("the usage limit is one banner across the top, with its reset time",
+          page.locator("#banners .banner").all_inner_texts() == ["Codex usage limit reached, resets at 14:20"])
+    check("and none of the tiles repeats it", page.locator(".tile", has_text="usage limit reached").count() == 0)
+    page.close()
+
+    # R7: the words of a rollout, a command and an error are text.
+    seen = len(errors)
+    hostile = ("hostile", "hostile", [
+        S("h1", BOMB, "busy", tags=["codex", BOMB], line=ATTR, mv="writing · 8s ago"),
+        S("h2", "Mei", "waiting", "waiting", tags=["codex"], line="Ship it", stuck=prompts("Shell", BOMB)),
+        S("h3", "Nour", "idle", tags=["codex"], line="Plan it", stuck=limit_kind(None, 12.0, BOMB)),
+        S("h4", "Aziz", "idle", tags=["codex"], line="Fix it", stuck=error_kind(BOMB, BOMB, 4.0, BOMB))])
+    page = new_page(browser, Fake(roster([hostile], banners=[{"kind": "limit", "text": BOMB}])))
+    open_at(page)
+    page.wait_for_selector(".tile")
+    page.wait_for_timeout(500)
+    check("R7: a hostile name, line, tag, command, error and banner are shown as text",
+          page.locator("#banners .banner").inner_text() == BOMB
+          and page.locator('.tile[data-sid="h1"] .nm').inner_text() == BOMB
+          and page.locator('.tile[data-sid="h2"] code').inner_text() == BOMB
+          and page.locator("#main").inner_text().count(BOMB) >= 5)
+    check("R7: and builds no element or attribute from them",
+          page.locator("img").count() == 0 and page.locator("#main [onerror], #banners [onerror]").count() == 0)
+    check("R7: no dialog, no page error", len(errors) == seen, errors[seen:])
+    page.close()
+
+
 def hostile_pass(browser, view):
     """R7 at the page: markup in a project, a name and a line is text."""
     s = S("h1", BOMB, "idle", line="line: " + BOMB, mv="waiting on: " + BOMB + ", 3 min")
@@ -2801,6 +2858,7 @@ def main():
         needs_pass(browser)
         guessed_pass(browser)
         kinds_pass(browser)
+        codex_pass(browser)
         hand_pass(browser)
         picker_pass(browser)
         e2e_pass(browser)

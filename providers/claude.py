@@ -23,6 +23,10 @@ import lines
 from providers import base, procs, registry
 from providers.base import (Provider, Tailed, on_a_terminal, jsonl_lines,
                             read_from as _read_from)
+from providers.minutes import (KEEP_MINUTES, blank_counts as _blank_counts,
+                               cold_counts as _cold_counts, count as _count,
+                               prune as _prune, seconds_of as _seconds_of,
+                               strip as _strip)
 
 
 def claude_dir():
@@ -174,71 +178,6 @@ MAX_USES = 64
 # How many of the directories a session has worked in to remember: where a
 # teammate it spawns may write (`_subagent_files`).
 MAX_CWDS = 8
-
-
-# Movement is counted per minute, 30 of them, as the records go by. A minute
-# is a whole number of minutes since the epoch; the strip is read off it.
-STRIP_MINUTES = 30
-KEEP_MINUTES = STRIP_MINUTES + 10
-
-
-def _seconds_of(stamp):
-    try:
-        return datetime.datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
-    except (ValueError, AttributeError, OverflowError):
-        return None
-
-
-def _minute_of(stamp):
-    seconds = _seconds_of(stamp)
-    return None if seconds is None else int(seconds // 60)
-
-
-def _blank_counts():
-    # `seen_from` is the first minute this reader saw from its beginning. 0
-    # means the file was read from the top, so every minute is known; a larger
-    # number means a cold start began mid-file, and earlier minutes are
-    # unknown rather than empty.
-    return {"offset": 0, "ino": None, "head": b"",
-            "minutes": collections.Counter(), "first": None, "seen_from": 0}
-
-
-def _count(state, rec):
-    """One more write, in the minute its record is stamped with. A record with
-    no stamp (a title, a mode switch) is bookkeeping, not the session at work."""
-    minute = _minute_of(rec.get("timestamp"))
-    if minute is None:
-        return
-    state["minutes"][minute] += 1
-    if state["first"] is None or minute < state["first"]:
-        state["first"] = minute
-
-
-def _prune(state):
-    """Minutes the strip can no longer show are not kept. Measured from the
-    newest write, not the clock, so a session quiet for a day keeps its last
-    few minutes and nothing older."""
-    minutes = state["minutes"]
-    if minutes:
-        edge = max(minutes) - KEEP_MINUTES
-        for minute in [m for m in minutes if m < edge]:
-            del minutes[minute]
-
-
-def _cold_counts(state):
-    """The first sight of a big file read only its tail. The first minute in
-    that tail may be cut short, so what is known starts one minute after it."""
-    first = state["first"]
-    state["seen_from"] = (first + 1 if first is not None
-                          else int(time.time() // 60) + 1)
-
-
-def _strip(state, now):
-    """30 per-minute write counts, oldest first, newest (this minute) last.
-    None where this reader was not yet looking."""
-    newest = int(now // 60)
-    return [None if minute < state["seen_from"] else state["minutes"].get(minute, 0)
-            for minute in range(newest - STRIP_MINUTES + 1, newest + 1)]
 
 
 # Background commands the session started and has not been told are over.
@@ -424,7 +363,7 @@ def _failure(state, rec):
         "kind": "limit" if name == "rate_limit" else "error",
         "type": name if isinstance(name, str) else "",
         "status": base.whole_number(status),
-        "text": words if len(words) <= base.FAILURE_LEN else words[:base.FAILURE_LEN - 1].rstrip() + "…",
+        "text": base.failure_text(words),
         "at": None if seconds is None else int(seconds * 1000),
         "resetsAt": base.milliseconds(quota, seconds=True)}
 

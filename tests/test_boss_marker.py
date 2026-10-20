@@ -6,6 +6,7 @@ reads the same file, so the badge means what the hooks mean: a registered
 boss. A session that only typed `/boss` and never registered is not one.
 """
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -20,6 +21,7 @@ SID = "11111111-1111-1111-1111-111111111111"
 class Fixture(unittest.TestCase):
     def setUp(self):
         self.cfg = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.cfg, True)
         self.markers = self.cfg / "pm" / ".boss-sessions"
         self.cwd = "/work/demo"
         self.transcripts = self.cfg / "projects" / "-work-demo"

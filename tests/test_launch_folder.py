@@ -7,6 +7,7 @@ session around. The reader must hand over the first, not the second.
 """
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ SID = "33333333-3333-3333-3333-333333333333"
 class LaunchFolder(unittest.TestCase):
     def test_a_session_that_moved_to_another_folder_is_still_placed_by_where_it_started(self):
         cfg = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, cfg, True)
         folder = cfg / "projects" / "-work-demo"
         folder.mkdir(parents=True)
         moves = [{"type": "user", "cwd": "/work/demo", "message": {"content": "start"}},

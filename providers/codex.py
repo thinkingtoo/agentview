@@ -20,21 +20,31 @@ cannot be read (hidepid, a container, another user's process) the provider
 degrades: the session shows without a jump. It never invents a pid.
 
 Codex knows busy from idle and nothing about waiting, so it declares
-neither `waiting` nor `status`; the chime never rings for it.
+neither `waiting` nor `status`; the chime never rings for it. What the rollout
+does say, the overview reads: writes per minute, the error a turn ended in
+(Limit or Error), an escalated command with no output yet (Needs you, inferred;
+the session is then `waiting`), and for a `codex exec` run the processes above
+it, which is how the roster finds the session that started it. It cannot say
+Hung: a rollout is silent while a command runs, and nothing looks under the
+process, so a busy session's silence is never called a hang.
 """
 import datetime
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import time
 from pathlib import Path
 
+from providers import base, minutes, procs
 from providers.base import Provider, Tailed, jsonl_lines
 
 # `source` in the thread table, said the page's way. `exec` is `codex exec`,
 # a one-shot like `claude -p`; a review subagent is the JSON-ish third one.
 KINDS = {"cli": "interactive", "exec": "exec"}
+# The kinds that are one-shot runs, started by something else.
+RUNS = ("exec", "review")
 TITLE_LEN = 80
 
 
@@ -51,9 +61,371 @@ def _ms(stamp):
     return int(when.timestamp() * 1000)
 
 
+# When a usage limit lifts, in the words Codex ends its message with: the time
+# alone ("try again at 2:35 PM."), or with its day ("... at Oct 21st, 2026 3:14 AM.").
+# Local time, with no zone: the machine that ran Codex wrote it.
+MONTHS = tuple(name.lower() for name in base.MONTHS)
+RESETS = re.compile(r"try again at (?:([A-Za-z]{3}) (\d{1,2})(?:st|nd|rd|th), (\d{4}) )?"
+                    r"(\d{1,2}):(\d{2}) ([AP]M)", re.I)
+
+
+def _resets_at(message, at):
+    """When the limit in this message lifts, milliseconds since 1970, or None.
+
+    A time without a day is the next such time after the error (`at`, the
+    moment it happened); a time with its day is that day's. None for words
+    that are not one: a time that cannot be (25:99, a 31st of February) is no time.
+    """
+    hit = RESETS.search(message) if isinstance(message, str) else None
+    if not hit or not at:
+        return None
+    month, day, year, hour, minute, half = hit.groups()
+    hour, minute = int(hour), int(minute)
+    if not 1 <= hour <= 12:
+        return None
+    hour = hour % 12 + (12 if half.upper() == "PM" else 0)
+    try:
+        if month:
+            when = datetime.datetime(int(year), MONTHS.index(month.lower()) + 1, int(day), hour, minute)
+        else:
+            then = datetime.datetime.fromtimestamp(at / 1000).replace(second=0, microsecond=0)
+            # Codex writes the minute, not the second ("try again at 12:00 PM"
+            # for 12:00:40): the refusal's own minute is still today. The night the
+            # clock goes back, a time of the repeated hour happens twice (`fold`), so
+            # the instants are compared, not the clock faces: the first one not before the error.
+            days = [then.date() + datetime.timedelta(days=plus) for plus in (0, 1)]
+            instants = sorted(datetime.datetime(d.year, d.month, d.day, hour, minute, fold=fold).timestamp()
+                              for d in days for fold in (0, 1))
+            return int(next((t for t in instants if t >= then.timestamp()), instants[-1]) * 1000)
+        return int(when.timestamp() * 1000)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _failure(error, stamp):
+    """The error a turn ended in, as a provider hands it over (`base.py`), or
+    None when it ended well. `codex_error_info` is a word, or an object holding
+    the word and what goes with it (`{"http_connection_failed": {"http_status_code": 502}}`)."""
+    if not isinstance(error, dict):
+        return None
+    info, status = error.get("codex_error_info"), None
+    if isinstance(info, dict) and len(info) == 1:
+        info, extra = next(iter(info.items()))
+        status = base.whole_number(extra.get("http_status_code")) if isinstance(extra, dict) else None
+    name = info if isinstance(info, str) else ""
+    words = " ".join(error["message"].split()) if isinstance(error.get("message"), str) else ""
+    at = _ms(stamp)
+    return {"kind": "limit" if name == "usage_limit_exceeded" else "error",
+            "type": name, "status": status,
+            "text": base.failure_text(words),
+            "at": at or None,
+            "resetsAt": _resets_at(words, at) if name == "usage_limit_exceeded" else None}
+
+
+# Calls kept while they wait for an output: more than this is a runaway, not a queue.
+MAX_CALLS = 64
+# The longest `arguments` text worth reading for a command.
+MAX_ARGUMENTS = 200_000
+
+
+def _command(args):
+    """The command a call runs, as one text of at most `COMMAND_LIMIT` characters plus
+    one when it had to be cut -- `cmd` is a text, an older `command` a list of words."""
+    cmd = args.get("cmd", args.get("command"))
+    if isinstance(cmd, list) and all(isinstance(word, str) for word in cmd):
+        cmd = " ".join(cmd)
+    return cmd[:base.COMMAND_LIMIT + 1] if isinstance(cmd, str) else ""
+
+
+# A call is written two ways. Until August 2026 it is a `function_call` whose
+# `arguments` are JSON. Since then it is a `custom_tool_call` whose `input` is a
+# script that calls the tool, `await tools.exec_command({cmd: "...", ...})`. A
+# script is read the way JavaScript reads it, as far as that goes: a text is one
+# thing whatever it says, a comment is nothing, and only the object handed to
+# the tool speaks for the call.
+_NAME = re.compile(r"[A-Za-z_$][\w$]*|\d[\w.]*")
+_ESCAPE = re.compile(r"\\(u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|.)", re.DOTALL)
+_PLAIN = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
+_CALL = (("name", "tools"), (".", "."), ("name", "exec_command"), ("(", "("), ("{", "{"))
+
+
+def _unescape(text):
+    return _ESCAPE.sub(lambda m: chr(int(m.group(1)[1:], 16)) if len(m.group(1)) > 1
+                       else _PLAIN.get(m.group(1), m.group(1)), text)
+
+
+# After one of these a `/` opens a regular expression; after anything else (a name, a
+# number, a text, a closing bracket) it divides.
+_BEFORE_REGEX = frozenset("(,=:[!&|?{};+-*%<>~^")
+_KEYWORDS = frozenset("return typeof case in of do else new delete void throw yield await instanceof".split())
+_LINE_ENDS = "\n\r\u2028\u2029"
+_FLAG = re.compile(r"[A-Za-z]*")
+
+
+def _regex_end(code, at, budget):
+    """Where the regular expression opened by the `/` at `at` ends (flags included) and
+    how many characters it took to see, or `(0, steps)` when the line has no closing `/`.
+    A `/` inside `[...]` or after a backslash does not close it; a line ending does not
+    continue it."""
+    i, inside = at + 1, False
+    while i < len(code) and i - at <= budget:
+        ch = code[i]
+        if ch in _LINE_ENDS:
+            break
+        if ch == "\\":
+            if i + 1 >= len(code) or code[i + 1] in _LINE_ENDS:
+                break
+            i += 2
+            continue
+        if ch == "/" and not inside:
+            return _FLAG.match(code, i + 1).end(), i - at
+        if ch == "[":
+            inside = True
+        elif ch == "]":
+            inside = False
+        i += 1
+    return 0, i - at
+
+
+def _tokens(code):
+    """A script as (kind, text) pairs: "text" for a quoted text (unescaped), "template"
+    for a backtick text that holds a `${` (it says nothing, its value is not its
+    letters), "regex" for a regular expression, "name" for a word or a number, the
+    character itself for anything else (`++` and `--` are one token each). Comments and
+    blanks are dropped. A text that is never closed ends the list: nothing after it can
+    be told.
+
+    A template is read the way the script is: what stands in its `${ }` is code, with
+    texts, regular expressions, templates and braces of its own, so a quote or a backtick
+    there closes nothing of the outer one. That code is read only to find where the
+    template ends; it is no part of the list. One template is one token."""
+    top = []
+    # What is open, innermost last. Code (the script, or what stands in a `${ }`):
+    # [its tokens so far, braces open in it, 0]. The text of a template:
+    # [None, whether it holds a `${`, where it began]. A list, not a call per level.
+    frames, at = [[top, 0, 0]], 0
+    # What the regular expressions may cost in all: a `/` that opens nothing is a
+    # division after the look, and a line of them must not be looked at once each.
+    spent, allowed = 0, 4 * len(code) + 64
+    while at < len(code):
+        frame = frames[-1]
+        out, ch = frame[0], code[at]
+        if out is None:
+            if ch == "\\":
+                at += 2
+            elif ch == "`":
+                frames.pop()
+                # (The text is cut out only when it is used: a nest of templates is a text per level.)
+                frames[-1][0].append(("template", "") if frame[1] else ("text", _unescape(code[frame[2] + 1:at])))
+                at += 1
+            elif code.startswith("${", at):
+                frame[1] = 1
+                frames.append([[], 0, 0])
+                at += 2
+            else:
+                at += 1
+        elif ch.isspace():
+            at += 1
+        elif code.startswith("//", at):
+            at = code.find("\n", at)
+            if at < 0:
+                break
+        elif code.startswith("/*", at):
+            at = code.find("*/", at + 2)
+            if at < 0:
+                break
+            at += 2
+        elif ch == "`":
+            frames.append([None, 0, at])
+            at += 1
+        elif ch in "\"'":
+            close = at + 1
+            while close < len(code) and code[close] != ch:
+                close += 2 if code[close] == "\\" else 1
+            if close >= len(code):
+                break
+            out.append(("text", _unescape(code[at + 1:close])))
+            at = close + 1
+        elif ch == "}" and frame[1] == 0 and len(frames) > 1:
+            frames.pop()
+            at += 1
+        else:
+            prev = out[-1] if out else None
+            end = 0
+            # A keyword leaves a value only as a word of its own: after a `.` it is a property.
+            if ch == "/" and (prev is None or prev[0] in _BEFORE_REGEX
+                              or prev[0] == "name" and prev[1] in _KEYWORDS
+                              and not (len(out) > 1 and out[-2][0] == ".")):
+                end, steps = _regex_end(code, at, allowed - spent)
+                spent += steps
+            if end:
+                out.append(("regex", ""))
+                at = end
+                continue
+            word = _NAME.match(code, at)
+            if word:
+                out.append(("name", word.group()))
+                at = word.end()
+            else:
+                sign = code[at:at + 2] if code.startswith(("++", "--"), at) else ch
+                out.append((sign, sign))
+                at += len(sign)
+                if ch == "{":
+                    frame[1] += 1
+                elif ch == "}" and frame[1]:
+                    frame[1] -= 1
+    return top
+
+
+def _script_arguments(code):
+    """The objects a script hands to `tools.exec_command`, each as the keys at its
+    top level whose value is ONE text -- not a text joined to another, not a template
+    with a `${` in it -- `{key: text}`, oldest call first. An object never closed
+    is not one. The script is read once: a call nested in another call's object has
+    a frame of its own on the stack, and only the innermost open one takes a key."""
+    tokens, found, frames, depth = _tokens(code), [], [], 0
+    for i, (kind, text) in enumerate(tokens):
+        if kind in ("{", "[", "("):
+            depth += 1
+            if kind == "{" and tuple(tokens[max(i - 4, 0):i + 1]) == _CALL:
+                frames.append((depth, {}, i))
+        elif kind in ("}", "]", ")"):
+            depth -= 1
+            while frames and depth < frames[-1][0]:
+                found.append(frames.pop())
+        elif (frames and depth == frames[-1][0] and kind in ("name", "text") and tokens[i - 1][0] in ("{", ",")
+              and i + 1 < len(tokens) and tokens[i + 1][0] == ":"):
+            # A key written twice is what its last value says: one text, or nothing.
+            one = (i + 3 < len(tokens) and tokens[i + 2][0] == "text" and tokens[i + 3][0] in (",", "}"))
+            if one:
+                frames[-1][1][text] = tokens[i + 2][1]
+            else:
+                frames[-1][1].pop(text, None)
+    return [keys for _, keys, _ in sorted(found, key=lambda frame: frame[2])]
+
+
+def _json_arguments(text):
+    try:
+        args = json.loads(text)
+    except ValueError:
+        return []
+    return [args] if isinstance(args, dict) else []
+
+
+def _escalation(payload):
+    """The arguments of a call that asks to leave the sandbox, or None."""
+    what, name = payload.get("type"), payload.get("name")
+    if what == "function_call" and name == "exec_command":
+        text, read = payload.get("arguments"), _json_arguments
+    elif what == "custom_tool_call" and name == "exec":
+        text, read = payload.get("input"), _script_arguments
+    else:
+        return None
+    if not isinstance(text, str) or "require_escalated" not in text or len(text) > MAX_ARGUMENTS:
+        return None
+    return next((args for args in read(text) if args.get("sandbox_permissions") == "require_escalated"), None)
+
+
+def _calls(state, rec, payload):
+    """Calls that ask to leave the sandbox, and have no output yet.
+
+    A request for approval is not written to the rollout (`policy.rs`: it is a
+    transient event), but the call it is about is, and its output comes only
+    after the person has decided. Only those calls are kept, by their id.
+    """
+    what, cid = payload.get("type"), payload.get("call_id")
+    if not isinstance(cid, str):
+        return
+    calls = state["calls"]
+    if what in ("function_call_output", "custom_tool_call_output"):
+        calls.pop(cid, None)
+        return
+    args = _escalation(payload)
+    if args is not None:
+        calls[cid] = (_ms(rec.get("timestamp")), _command(args))
+        for old in list(calls)[:-MAX_CALLS]:
+            del calls[old]
+
+
+def _asked(state):
+    """The call the person is probably being asked about, as (when, command), or None.
+
+    Believed only of a session that can ask (a policy of `never` answers such a
+    call at once, with a refusal) and only inside a turn: whatever the turn left
+    unanswered is gone with it. The oldest wins, as it would be asked first.
+    """
+    if state["status"] != "busy" or state["policy"] in ("", "never") or not state["calls"]:
+        return None
+    return next(iter(state["calls"].values()))
+
+
+# The account's usage limit outlives the run that hit it, so it is looked for on
+# disk: in the newest finished turn of the rollouts of the last few days.
+LIMIT_DAYS = 8
+LIMIT_FILES = 60
+LIMIT_EVERY = 10.0         # seconds between two looks
+
+
+def _blank_done():
+    return {"offset": 0, "ino": None, "head": b"", "done": None}
+
+
+def _absorb_done(state, text):
+    """Of a rollout, only the last turn that finished: when, and in what error."""
+    for line in jsonl_lines(text):
+        if '"task_complete"' not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        payload = rec.get("payload") if isinstance(rec, dict) else None
+        if (isinstance(payload, dict) and rec.get("type") == "event_msg"
+                and payload.get("type") == "task_complete" and _ms(rec.get("timestamp"))):
+            state["done"] = (_ms(rec.get("timestamp")), _failure(payload.get("error"), rec.get("timestamp")))
+    return state
+
+
+def _numbered(folder):
+    """The sub-folders of `folder` named for a number, the highest first."""
+    try:
+        names = [e.name for e in os.scandir(folder) if e.name.isdigit() and e.is_dir()]
+    except OSError:
+        return []
+    return sorted(names, reverse=True)
+
+
+def _recent_days(root, count):
+    """The `count` newest day folders of `sessions/YYYY/MM/DD`."""
+    days = []
+    for year in _numbered(root):
+        for month in _numbered(root / year):
+            for day in _numbered(root / year / month):
+                days.append(root / year / month / day)
+                if len(days) == count:
+                    return days
+    return days
+
+
+def _source(value):
+    """A thread's `source` as one word. Most are a word (`exec`, `cli`); a
+    subagent's thread carries an object, `{"subagent": "review"}` (the thread
+    table keeps it as that object's text), and is told by the subagent's
+    name. Anything else is no word at all."""
+    if isinstance(value, str) and value.startswith("{"):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return ""
+    if isinstance(value, dict):
+        value = value.get("subagent")
+    return value if isinstance(value, str) else ""
+
+
 def _blank():
-    return {"offset": 0, "ino": None, "head": b"", "status": "", "statusAt": 0,
-            "said": "", "prompt": "", "cwd": "", "startedAt": 0, "source": ""}
+    return {**minutes.blank_counts(), "status": "", "statusAt": 0,
+            "said": "", "prompt": "", "cwd": "", "startedAt": 0, "source": "",
+            "failure": None, "policy": "", "calls": {}, "review": False}
 
 
 def _absorb(state, text):
@@ -64,26 +436,41 @@ def _absorb(state, text):
             continue
         if not isinstance(rec, dict):
             continue
+        minutes.count(state, rec)
         kind, payload = rec.get("type"), rec.get("payload") or {}
         if not isinstance(payload, dict):
             continue
         if kind == "session_meta":
             state["cwd"] = payload.get("cwd") or state["cwd"]
-            state["source"] = payload.get("source") or state["source"]
+            state["source"] = _source(payload.get("source")) or state["source"]
             state["startedAt"] = _ms(rec.get("timestamp")) or state["startedAt"]
+            continue
+        if kind == "turn_context":
+            how = payload.get("approval_policy")
+            state["policy"] = how if isinstance(how, str) else ""
+            continue
+        if kind == "response_item":
+            _calls(state, rec, payload)
             continue
         if kind != "event_msg":
             continue
         what = payload.get("type")
         if what == "task_started":
             state["status"], state["statusAt"] = "busy", _ms(rec.get("timestamp"))
+            state["failure"] = None
+            state["calls"].clear()
         elif what in ("task_complete", "turn_aborted"):
             state["status"], state["statusAt"] = "idle", _ms(rec.get("timestamp"))
+            if what == "task_complete":
+                state["failure"] = _failure(payload.get("error"), rec.get("timestamp"))
+        elif what == "entered_review_mode":
+            state["review"] = True
         elif what == "agent_message" and isinstance(payload.get("message"), str):
             state["said"] = payload["message"]
         elif what == "user_message" and isinstance(payload.get("message"), str):
             # Your next prompt ends the turn that said something.
             state["prompt"], state["said"] = payload["message"], ""
+    minutes.prune(state)
     return state
 
 
@@ -100,7 +487,12 @@ class CodexProvider(Provider):
     def __init__(self, home=None, proc="/proc"):
         self.home = Path(home) if home else Path.home() / ".codex"
         self.proc = Path(proc)
-        self.tail = Tailed(_blank, _absorb)
+        # A big rollout's first sight reads only its tail: the minutes before it are not known.
+        self.tail = Tailed(_blank, _absorb, lambda state, path: minutes.cold_counts(state))
+        self.done_tail = Tailed(_blank_done, _absorb_done)
+        self.clock = time.time
+        self.limited = None    # the account's usage limit, as `limit()` says it
+        self.looked = None     # when it was last looked for
         self.holders = {}      # thread id -> (pid, fd) seen holding its rollout
         self.orphans = {}      # thread id -> lock identity already found unheld
 
@@ -219,14 +611,15 @@ class CodexProvider(Provider):
     def _session(self, tid, held, row):
         path = Path(held[2]) if held else self._rollout_for(tid, row)
         state = self.tail.scan(path) if path else _blank()
+        now = self.clock()
         quiet = None
         if path:
             try:
-                quiet = (time.time() - path.stat().st_mtime) / 60
+                quiet = (now - path.stat().st_mtime) / 60
             except OSError:
                 quiet = None
         row = row or {}
-        source = state["source"] or row.get("source") or ""
+        source = state["source"] or _source(row.get("source")) or ""
         started = state["startedAt"] or (row.get("createdAt") or 0)
         title = " ".join((row.get("title") or "").split())
         if len(title) > TITLE_LEN:
@@ -236,13 +629,14 @@ class CodexProvider(Provider):
             extras["model"] = str(row["model"])
         if isinstance(row.get("tokens"), int) and row["tokens"] > 0:
             extras["tokens"] = f"{row['tokens'] / 1000:.0f}k"
+        asked = _asked(state)
         out = {
             "id": tid,
             "cwd": state["cwd"] or row.get("cwd") or "",
             # No status event yet -- a fresh session before its first turn --
-            # is idle since it started.
-            "status": state["status"] or "idle",
-            "updatedAt": state["statusAt"] or started,
+            # is idle since it started. One waiting on an approval says so.
+            "status": "waiting" if asked else state["status"] or "idle",
+            "updatedAt": (asked[0] if asked else state["statusAt"]) or state["statusAt"] or started,
             "startedAt": started,
             "kind": KINDS.get(source, "review" if "review" in source else source or "?"),
             "branch": row.get("branch") or "",
@@ -250,17 +644,73 @@ class CodexProvider(Provider):
             "prompt": state["prompt"],
             "said": state["said"],
             "quietFor": quiet,
+            # What the last turn ended in, if it was an error: Limit or Error.
+            "failure": state["failure"],
+            # Records per minute, 30 of them: what the project's graph is made of.
+            # A session with no rollout yet has none to count, which is not zero.
+            "writes": minutes.strip(state, now) if path else None,
             # Codex writes nothing to its rollout while a command runs, and
             # nothing here looks at what runs under the session: silence is
-            # not known to be silence, so the core must not call it Hung.
+            # not known to be silence, so the core must not call it Hung. A
+            # pending escalated command is not Hung either: it is Needs you.
             "procsUnknown": True,
             "extras": extras,
         }
+        if asked:
+            out["asking"] = {"kind": "permission", "tool": "Shell", "command": asked[1], "target": ""}
+        if out["kind"] in RUNS:
+            # A one-shot: somebody started it, and the processes above it say who.
+            out["run"] = "codex review" if state["review"] or out["kind"] == "review" else "codex exec"
+            out["ancestors"] = procs.ancestors(self.proc, held[0]) if held else []
+            task = procs.task_above(self.proc, held[0], out["ancestors"]) if held else None
+            if task:
+                out["task"] = task
         if held:
             out["pid"] = held[0]
         return out
 
+    def _limit(self):
+        """The account's usage limit, or None: the newest finished turn of the
+        recent rollouts is a refusal. A file's modified time is when it last
+        wrote, so once the next one is older than the newest finished turn
+        found, none after it can hold a newer."""
+        files = []
+        for day in _recent_days(self.home / "sessions", LIMIT_DAYS):
+            try:
+                entries = list(os.scandir(day))
+            except OSError:
+                continue
+            for entry in entries:
+                try:
+                    if entry.name.startswith("rollout-") and entry.name.endswith(".jsonl") and entry.is_file():
+                        files.append((entry.stat().st_mtime, entry.path))
+                except OSError:
+                    continue
+        files.sort(reverse=True)
+        newest, looked = None, set()
+        for mtime, path in files[:LIMIT_FILES]:
+            if newest and mtime + 1 < newest[0] / 1000:
+                break
+            looked.add(("state", path))
+            done = self.done_tail.scan(Path(path))["done"]
+            if done and (newest is None or done[0] > newest[0]):
+                newest = done
+        self.done_tail.cache = {k: v for k, v in self.done_tail.cache.items() if k in looked}
+        if newest and newest[1] and newest[1]["kind"] == "limit":
+            return {"name": "Codex", "at": newest[0], "resetsAt": newest[1]["resetsAt"]}
+        return None
+
+    def limit(self):
+        return self.limited
+
     def live(self):
+        now = self.clock()
+        if self.looked is None or not 0 <= now - self.looked < LIMIT_EVERY:
+            self.looked = now
+            try:
+                self.limited = self._limit()
+            except OSError:         # a rollout went while it was looked at: the next look will see
+                self.limited = None
         locks = self._locks()
         if not locks:
             return []

@@ -6,6 +6,7 @@ set`, which remembers the name as assigned, so the resume starts under it.
 """
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -18,6 +19,7 @@ import snapshot  # noqa: E402
 class SeedName(unittest.TestCase):
     def setUp(self):
         self.cfg = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.cfg, True)
         self.old = os.environ.get("CLAUDE_CONFIG_DIR")
         os.environ["CLAUDE_CONFIG_DIR"] = str(self.cfg)
         self.calls = self.cfg / "calls"
