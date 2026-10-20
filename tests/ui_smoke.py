@@ -81,9 +81,9 @@ def head_counts(page):
 
 
 # --- fixtures -----------------------------------------------------------------
-# One description of a session produces the row the block view reads (`blocks`,
-# which the chime and the counts also read) and the tile the overview prints
-# (`columns`), so the two never disagree about who is waiting.
+# One description of a session produces the row the chime reads (`flags`) and
+# the tile the overview prints (`columns`), so the two never disagree about who
+# is waiting.
 
 def S(key, name, status="idle", flag=None, *, note="", line="", source="did", tags=(), can=True,
       need="", mv=None, moving=None, stuck=None, via=None, why="", commands=(), **extra):
@@ -154,20 +154,12 @@ def state_of(sessions):
     return "moving" if any(s["moving"] for s in sessions) else "idle"
 
 
-def member(s, project):
-    m = {"name": s["name"], "status": s["status"], "kind": "interactive", "provider": "claude",
-         "cwd": f"/home/alice/Projects/{project}", "tmux": "", "pid": 111, "key": s["key"],
-         "updatedAt": 1787830000000, "project": project, "title": s["line"] or f"{s['name']} at work",
-         "prompt": "carry on", "branch": "main", "canJump": s["can"], "assigned": False,
-         "suggestion": None, "quietFor": 0.2, "toolFor": None, "flag": s["flag"],
-         "startedAt": 1787830000000,
-         "ask": s["need"], "n": 1 if s["need"] else 0, "blocked": bool(s["need"])}
-    if s["flag"] == "waiting":
-        m["waitingFor"] = s["note"]
-    if s["flag"] in ("stuck", "tool"):
-        m["quietFor"] = float(s["note"].rstrip("m"))
-        m["toolFor"] = m["quietFor"] if s["flag"] == "tool" else None
-    return {**m, **s["extra"]}
+def flag_row(s):
+    """What the roster says of a session for the chime and the marks: the raw
+    flag the transcript gave it, and whether it wrote down what blocks it. The
+    tile may say less; the chime does not."""
+    return {"key": s["key"], "id": s["key"], "name": s["name"], "flag": s["flag"],
+            "blocked": bool(s["need"])}
 
 
 def jump_field(s):
@@ -213,33 +205,24 @@ def mix(sessions):
 
 def roster(projects, **top):
     """projects: [(key, display name, [S, ...])], key "" for No project."""
-    blocks, columns = [], []
+    columns = []
     for key, name, sessions in projects:
         orphan = key == ""
-        members = [member(s, key or "none") for s in sessions]
-        blocks.append({
-            "project": key or "No project", "label": name, "orphan": orphan, "routines": False,
-            "renamed": False, "pinned": False, "branches": ["main"], "updatedAt": 1787830000000,
-            "busy": sum(s["status"] == "busy" for s in sessions),
-            "alarms": sum(s["flag"] in ("waiting", "stuck") for s in sessions),
-            "ready": sum(s["flag"] == "ready" for s in sessions), "members": members})
         columns.append({"project": key, "name": name, "raw": key,
                         "kind": "none" if orphan else "folder",
                         "strip": STRIPS.get(key, [0] * 29 + [2]), "summary": mix(sessions),
                         "state": state_of(sessions), "sessions": [tile(s) for s in sessions]})
     counts = {k: sum(counted(s) == k for _, _, sessions in projects for s in sessions)
               for k in ("needs", "otherStuck", "moving")}
-    return {"blocks": blocks, "columns": columns, "counts": counts, "banners": [],
-            "hold": False, "chime": True, "providers": {},
+    flags = [flag_row(s) for _, _, sessions in projects for s in sessions]
+    return {"columns": columns, "counts": counts, "banners": [], "flags": flags,
+            "chime": True, "providers": {},
             "restore": None, "closed": [], "saved": None, **top}
 
 
-def routine_block():
-    ms = [member(S(k, n, "busy"), "Routines") | {"routine": r, "canJump": False, "project": None}
-          for k, n, r in (("r1", "Ansgar", "nightly-report"), ("r2", "Bruno", "disk-check"))]
-    return {"project": "Routines", "label": "Routines", "orphan": False, "routines": True,
-            "renamed": False, "pinned": False, "branches": [], "busy": 2, "alarms": 0, "ready": 0,
-            "updatedAt": 1787830000000, "members": ms}
+def routine_flags():
+    """The routines the columns leave out: the chime still hears them."""
+    return [flag_row(S(k, n, "busy")) for k, n in (("r1", "Ansgar"), ("r2", "Bruno"))]
 
 
 MAPLE = ("maple", "maple", [
@@ -257,10 +240,10 @@ LOOSE = ("", "No project", [S("o1", "Rosalie", "idle", line="a loose end")])
 
 def overview_fixture():
     """Columns in an order no browser rule would produce (not alphabetical, the
-    waiting session not first), blocks the other way round with a routine block
-    the columns leave out: whatever the page shows came from `columns`."""
+    waiting session not first), and flags that carry routines the columns leave
+    out: whatever the page shows came from `columns`."""
     got = roster([PMD, MAPLE, LOOSE])
-    got["blocks"] = [routine_block()] + list(reversed(got["blocks"]))
+    got["flags"] = routine_flags() + list(reversed(got["flags"]))
     return got
 
 
@@ -294,7 +277,7 @@ FOUND = {"query": "importer", "index": {"conversations": 2, "last_run": None}, "
 class Fake:
     """Answers the page's whole conversation with the server, from fixtures.
 
-    Stateful just enough that a click shows its effect (a name, a pin, the hold,
+    Stateful just enough that a click shows its effect (a pin, a move, a merge,
     the chime), so the page is checked end to end without a server behind it.
     """
 
@@ -312,27 +295,10 @@ class Fake:
     def of(self, path):
         return [b for p, b in self.posts if p == path]
 
-    def block(self, project):
-        return next(b for b in self.body["blocks"] if b["project"] == project)
-
     def apply(self, path, b):
-        if path == "/api/hold":
-            self.body["hold"] = b["hold"]
-        elif path == "/api/chime":
+        if path == "/api/chime":
             self.body["chime"] = b["chime"]
-        elif path == "/api/name":
-            blk = self.block(b["project"])
-            blk["label"], blk["renamed"] = b["label"], bool(b["label"])
-        elif path == "/api/line":
-            for blk in self.body["blocks"]:
-                for m in blk["members"]:
-                    if m["key"] == b["key"]:
-                        m["title"], m["overridden"] = b["text"], bool(b["text"])
         elif path == "/api/assign":
-            for blk in self.body["blocks"]:
-                for m in blk["members"]:
-                    if m["key"] == b["key"]:
-                        m["assigned"] = bool(b["project"])
             self.move_tile(b["key"], b["project"])
             for c in self.body["columns"]:
                 c["merged"] = [m for m in c.get("merged", []) if m["project"] != b["key"]]
@@ -347,12 +313,6 @@ class Fake:
             target["sessions"].extend(source["sessions"])
             target.setdefault("merged", []).append({"project": source["project"], "name": source["name"]})
             cols.remove(source)
-        elif path == "/api/order":
-            pins = b["pinned"]
-            for blk in self.body["blocks"]:
-                blk["pinned"] = blk["project"] in pins
-            self.body["blocks"].sort(key=lambda blk: pins.index(blk["project"])
-                                     if blk["project"] in pins else len(pins))
 
     def keep(self, key, pinned):
         """The server's pin, as far as the page can tell: a pinned pill is a full
@@ -508,6 +468,18 @@ def real_pass(browser, url, pid):
             f"{sent['otherStuck']} other stuck", f"{sent['moving']} moving"]
     check("unrouted: the header shows the roster's counts, and they are the tiles that name them",
           head["shown"] == want and all(head["named"].get(k, 0) == sent[k] for k in ("needs", "otherStuck", "moving")), head)
+    # The roster the server sent, read through the same GET the page makes: a row of
+    # flags per session on the machine (R21), the old `blocks` and `hold` gone, and
+    # the page's chime has taken its sets from it.
+    sent = page.evaluate("async () => await (await fetch('/api/roster', {cache: 'no-store'})).json()")
+    row_keys = {"key", "id", "name", "flag", "blocked"}
+    flags = sent.get("flags")
+    check("unrouted: the roster has flags, one row per session, and no blocks",
+          isinstance(flags, list) and all(set(f) == row_keys for f in flags)
+          and "blocks" not in sent and "hold" not in sent, sorted(sent))
+    check("unrouted: every tile has its flag row, and the chime has read them",
+          isinstance(flags, list) and set(got["keys"]) <= {f["key"] for f in flags}
+          and page.evaluate("WAITING instanceof Set && READY instanceof Set"), (len(got["keys"]), len(flags or [])))
     page.wait_for_timeout(3500)       # one more poll, still no clicks
     check("unrouted: read-only (only GET page and roster)", not aborted and set(seen) <= {"/", "/api/roster", "/favicon.ico"},
           aborted or sorted(set(seen)))
@@ -525,9 +497,9 @@ def overview_pass(browser):
     names = lambda: [t.strip() for t in page.locator(".ov-name").all_inner_texts()]
 
     check("one column per project", cols() == 3, cols())
-    check("columns in the order the server sent, not the blocks' or a sort",
+    check("columns in the order the server sent, not a sort",
           names() == ["pmd", "maple", "No project"], names())
-    check("the routine block is not a column", "Routines" not in names())
+    check("a routine is not a column", "Routines" not in names())
     check("sessions in the order the server sent",
           page.locator('.ov-col[data-project="maple"] .tile').evaluate_all("els => els.map(e => e.dataset.sid)")
           == ["m1", "m2", "m3", "m4", "m5"])
@@ -677,15 +649,23 @@ def overview_pass(browser):
     check("a running one is jumped to", fake.of("/api/reopen")[-1] == {"id": "run-1"})
     find.press("Escape")
 
-    # The chime and the tab title read `blocks` in both views; the overview's
-    # header is the roster's counts (`header_pass`), not the chime's alarms.
+    # The tab title and the header are the roster's counts (`header_pass`), not
+    # the chime's flags.
     check("the overview's header counts what the roster counted, not the chime's alarms",
           head_counts(page) == ["2 need you", "1 other stuck", "3 moving"], head_line(page))
-    check("the tab title counts what wants you: waiting, stuck and blocked",
-          page.title().startswith("(3)"), page.title())
-    check("the overview has no hold button and a way to the block view",
-          page.locator("#hold").is_hidden() and page.locator("#view").get_attribute("href") == "?view=blocks")
+    check("the tab title is the header's \"need you\" count, not the chime's alarms",
+          page.title() == "(2) agentview", (page.title(), head_counts(page)))
+    check("there is no hold button and no way to another view",
+          page.locator("#hold").count() == 0 and page.locator("#view").count() == 0)
     check("overview: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+    # The address the block view used to have opens the overview, and no query brings the old page back.
+    page = new_page(browser, Fake(overview_fixture()))
+    open_at(page, "/?view=blocks")
+    page.wait_for_selector(".ov-col")
+    check("the old block-view address still opens the overview, and nothing of the block view is on it",
+          cols() == 3 and page.locator(".block, .row, .bhead").count() == 0, cols())
     page.close()
 
 
@@ -760,6 +740,8 @@ def finished_pass(browser):
     check("the header counts the tiles and none of the pills",
           head_line(page).split(" · ")[:2] == ["4 sessions", "4 projects"] and head_counts(page)
           == ["0 need you", "0 other stuck", "2 moving"], head_line(page))
+    check("with none needing you the tab title carries no count",
+          page.title() == "agentview", page.title())
     check("a tile with an unread handover quotes it and says unread",
           tile_("m2").locator(".said").inner_text() == "“Release notes drafted; the docs page links to it.”"
           and tile_("m2").locator(".flag.unread").inner_text().lower() == "unread")
@@ -1034,18 +1016,6 @@ def header_pass(browser):
           and page.locator(".banner").nth(1).inner_text() == "Another condition")
     check("a banner with no words is not one", page.locator(".banner").count() == 2)
     check("header: nothing stray reached the routes", not fake.stray, fake.stray)
-    page.close()
-
-    # The block view keeps its own header, and shows the same banner.
-    fake = Fake(header_fixture() | {"banners": [{"kind": "disk", "text": "Disk full: 212 MB left where sessions write"}]})
-    page = new_page(browser, fake)
-    open_at(page, "/?view=blocks")
-    page.wait_for_selector(".block")
-    check("the block view's header is as it was: busy and the chime's alarms, no counts",
-          "busy" in head_line(page) and page.locator("button.hc").count() == 0
-          and "need you" not in head_line(page), head_line(page))
-    check("the block view shows the banner too",
-          page.locator(".banner").inner_text() == "Disk full: 212 MB left where sessions write")
     page.close()
 
 
@@ -1716,6 +1686,36 @@ def suggestion_pass(browser):
     page.close()
 
 
+def wrap_pass(browser):
+    """A word with no place to break -- a 40-character file name -- wraps inside its
+    column in the movement sign, the No-project chip and the unread handover's quote."""
+    word = "quarterly_summary_of_every_finding_xy.md"
+    assert len(word) == 40
+    body = roster([("pmd", "pmd", [S("w1", "Vera", "busy", line="Write the summary", mv=f"writing {word}"),
+                                   S("w2", "Hugo", "idle", line="Hand the summary over")]),
+                   ("", "No project", [S("o1", "Rosalie", "idle", line="a loose end")])])
+    column = {c["project"]: c for c in body["columns"]}
+    column["pmd"]["sessions"][1]["handover"] = f"Saved it as {word}"
+    column[""]["sessions"][0]["suggestion"] = {"project": "repo:example.com/alice/pmd", "name": word}
+    fake = Fake(body)
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    # The narrowest a column gets (its flex-basis, which it never shrinks under); a
+    # wide window would hold the word without any help.
+    page.add_style_tag(content=".ov-col { flex:0 0 230px; max-width:230px; }")
+    inside = """el => { const col = el.closest('.ov-col').getBoundingClientRect(), r = el.getBoundingClientRect();
+                         return {wrap: getComputedStyle(el).overflowWrap,
+                                 fits: el.scrollWidth <= el.clientWidth + 1 && r.right <= col.right + 1}; }"""
+    for label, selector in (("the movement sign", ".tile .mv"), ("the No-project chip", ".guess"),
+                            ("the unread handover's quote", ".tile .said")):
+        got = page.locator(selector).first.evaluate(inside)
+        check(f"an unbreakable 40-character word in {label} wraps inside its column",
+              got == {"wrap": "anywhere", "fits": True}, got)
+    check("wrap: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
 def jump_pass(browser):
     """The three jumps and their failures. Every POST is the route's: nothing
     is attached, raised or opened, and a request the routes do not know fails."""
@@ -1916,27 +1916,27 @@ def codex_pass(browser):
     page.close()
 
 
-def hostile_pass(browser, view):
+def hostile_pass(browser):
     """R7 at the page: markup in a project, a name and a line is text."""
     s = S("h1", BOMB, "idle", line="line: " + BOMB, mv="waiting on: " + BOMB + ", 3 min")
     fake = Fake(roster([(BOMB, BOMB, [s])]))
     seen = len(errors)
     page = new_page(browser, fake)
-    open_at(page, "/?view=blocks" if view == "blocks" else "/")
-    page.wait_for_selector(".block" if view == "blocks" else ".tile")
+    open_at(page)
+    page.wait_for_selector(".tile")
     page.wait_for_timeout(500)
     text = page.locator("#main").inner_text()
     # The overview also prints what the session is waiting on, which is the
     # words of its own tool call.
-    check(f"{view}: markup in a project, a name, a line and a sign is shown as text",
-          text.count(BOMB) >= (3 if view == "blocks" else 4), text[:200])
-    check(f"{view}: and builds no element from it",
+    check("markup in a project, a name, a line and a sign is shown as text",
+          text.count(BOMB) >= 4, text[:200])
+    check("and builds no element from it",
           page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0)
-    check(f"{view}: no dialog, no page error", len(errors) == seen, errors[seen:])
+    check("no dialog, no page error", len(errors) == seen, errors[seen:])
     page.close()
 
 
-def separator_pass(browser, view):
+def separator_pass(browser):
     """R7 at the page, for ticket 16: the reader now keeps a record whose text
     holds U+2028, U+2029 or U+0085, so such words reach the page. They are
     text, in a project, a name, a line and a sign, and markup beside them is
@@ -1946,24 +1946,26 @@ def separator_pass(browser, view):
     fake = Fake(roster([(words + BOMB, words + BOMB, [s])]))
     seen = len(errors)
     page = new_page(browser, fake)
-    open_at(page, "/?view=blocks" if view == "blocks" else "/")
-    page.wait_for_selector(".block" if view == "blocks" else ".tile")
+    open_at(page)
+    page.wait_for_selector(".tile")
     page.wait_for_timeout(500)
     # `textContent`, not `innerText`: the second one is what is laid out, and may fold a separator into a break.
     text = page.locator("#main").text_content()
-    check(f"{view}: words that hold a line separator are shown, whole, as text",
-          text.count(words + BOMB) >= (3 if view == "blocks" else 4), text[:200])
-    check(f"{view}: and still build no element from the markup beside them",
+    check("words that hold a line separator are shown, whole, as text",
+          text.count(words + BOMB) >= 4, text[:200])
+    check("and still build no element from the markup beside them",
           page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0)
-    check(f"{view}: no dialog, no page error with them", len(errors) == seen, errors[seen:])
+    check("no dialog, no page error with them", len(errors) == seen, errors[seen:])
     page.close()
 
 
-def chime_pass(browser, view):
+def chime_pass(browser):
+    """The chime reads the roster's `flags`: a row per session on the machine,
+    the ones the columns leave out included."""
     fake = Fake(roster([("alpha", "alpha", [S("c1", "ALPHA", "busy")])]))
     page = new_page(browser, fake)
-    open_at(page, "/?view=blocks" if view == "blocks" else "/")
-    page.wait_for_selector(".block" if view == "blocks" else ".tile")
+    open_at(page)
+    page.wait_for_selector(".tile")
     woke = page.evaluate("""async () => {
       const ctx = speaker();
       await ctx.suspend();
@@ -1974,261 +1976,71 @@ def chime_pass(browser, view):
       ctx.createOscillator = make;
       return { rang, notes, state: ctx.state, button: document.getElementById("sound").textContent };
     }""")
-    check(f"{view}: a suspended speaker wakes and sounds",
+    check("a suspended speaker wakes and sounds",
           woke["rang"] is True and woke["notes"] > 0 and woke["state"] == "running" and woke["button"] == "chime", woke)
     page.evaluate("() => { window.__rings = 0; window.__ticks = 0;"
                   " window.ring = () => { window.__rings++; return true; };"
                   " window.tick = () => { window.__ticks++; return true; }; }")
     rings = lambda: page.evaluate("window.__rings")
     ticks = lambda: page.evaluate("window.__ticks")
-    if view == "overview":
-        # Rendered offline: a graph that connects nothing sounds exactly like one that works.
-        sound = page.evaluate("""async () => {
-          const peaks = async (shape, cuts) => {
-            const off = new OfflineAudioContext(1, 44100 * 3, 44100);
-            shape(off);
-            const data = (await off.startRendering()).getChannelData(0);
-            return cuts.map(([from, to]) => {
-              let peak = 0;
-              for (let i = from * 44100; i < Math.min(to * 44100, data.length); i++)
-                peak = Math.max(peak, Math.abs(data[i]));
-              return peak; });
-          };
-          const [first, second] = await peaks(tone, [[0, 0.4], [0.45, 3]]);
-          const [head, tail] = await peaks(blip, [[0, 0.3], [0.6, 3]]);
-          return { first, second, head, tail };
-        }""")
-        check("the two strokes are there, and not deafening",
-              0.05 < sound["first"] < 0.4 and 0.05 < sound["second"] < 0.4 and sound["second"] < sound["first"], sound)
-        check("the finished tick is audible and over at once",
-              0.05 < sound["head"] < 0.4 and sound["tail"] < 0.005, sound)
-        check("the chime is armed by default", page.locator("#sound").inner_text() == "chime")
+    # Rendered offline: a graph that connects nothing sounds exactly like one that works.
+    sound = page.evaluate("""async () => {
+      const peaks = async (shape, cuts) => {
+        const off = new OfflineAudioContext(1, 44100 * 3, 44100);
+        shape(off);
+        const data = (await off.startRendering()).getChannelData(0);
+        return cuts.map(([from, to]) => {
+          let peak = 0;
+          for (let i = from * 44100; i < Math.min(to * 44100, data.length); i++)
+            peak = Math.max(peak, Math.abs(data[i]));
+          return peak; });
+      };
+      const [first, second] = await peaks(tone, [[0, 0.4], [0.45, 3]]);
+      const [head, tail] = await peaks(blip, [[0, 0.3], [0.6, 3]]);
+      return { first, second, head, tail };
+    }""")
+    check("the two strokes are there, and not deafening",
+          0.05 < sound["first"] < 0.4 and 0.05 < sound["second"] < 0.4 and sound["second"] < sound["first"], sound)
+    check("the finished tick is audible and over at once",
+          0.05 < sound["head"] < 0.4 and sound["tail"] < 0.005, sound)
+    check("the chime is armed by default", page.locator("#sound").inner_text() == "chime")
     fake.body = waiting("c2")
     page.wait_for_timeout(4000)
-    check(f"{view}: rings when someone starts waiting", rings() == 1, rings())
+    check("rings when someone starts waiting", rings() == 1, rings())
     page.wait_for_timeout(4000)
-    check(f"{view}: and not again while it waits", rings() == 1, rings())
-    if view == "overview":
-        page.locator("#sound").click()
-        page.wait_for_timeout(300)
-        check("it can be muted, and the mute is posted",
-              page.locator("#sound").inner_text() == "muted" and fake.of("/api/chime") == [{"chime": False}], fake.posts)
-        fake.body = waiting("c2", "c3") | {"chime": False}
-        page.wait_for_timeout(4000)
-        check("muted stays muted when another arrives", rings() == 1, rings())
-        page.locator("#sound").click()
-        page.wait_for_timeout(300)
-        check("unmuted, it sounds at once", page.locator("#sound").inner_text() == "chime" and rings() == 2, rings())
-        fake.body = waiting("c2", "c3", ready=["c4"])
-        page.wait_for_timeout(4000)
-        check("finishing gets the tick, not the chime", ticks() == 1 and rings() == 2, (rings(), ticks()))
-        page.wait_for_timeout(4000)
-        check("and the tick does not repeat", ticks() == 1, ticks())
-        fake.body = waiting("c2", "c3", "c5", ready=["c4", "c6"])
-        page.wait_for_timeout(4000)
-        check("both at once: you hear the question", rings() == 3 and ticks() == 1, (rings(), ticks()))
-    check(f"{view}: nothing stray reached the routes", not fake.stray, fake.stray)
+    check("and not again while it waits", rings() == 1, rings())
+    page.locator("#sound").click()
+    page.wait_for_timeout(300)
+    check("it can be muted, and the mute is posted",
+          page.locator("#sound").inner_text() == "muted" and fake.of("/api/chime") == [{"chime": False}], fake.posts)
+    fake.body = waiting("c2", "c3") | {"chime": False}
+    page.wait_for_timeout(4000)
+    check("muted stays muted when another arrives", rings() == 1, rings())
+    page.locator("#sound").click()
+    page.wait_for_timeout(300)
+    check("unmuted, it sounds at once", page.locator("#sound").inner_text() == "chime" and rings() == 2, rings())
+    fake.body = waiting("c2", "c3", ready=["c4"])
+    page.wait_for_timeout(4000)
+    check("finishing gets the tick, not the chime", ticks() == 1 and rings() == 2, (rings(), ticks()))
+    page.wait_for_timeout(4000)
+    check("and the tick does not repeat", ticks() == 1, ticks())
+    base = waiting("c2", "c3", "c5", ready=["c4", "c6"])
+    fake.body = base
+    page.wait_for_timeout(4000)
+    check("both at once: you hear the question", rings() == 3 and ticks() == 1, (rings(), ticks()))
+    # The flags carry sessions the columns draw no tile for: a routine that stops to ask is heard.
+    fake.body = base | {"flags": base["flags"] + [flag_row(S("r9", "Zed", "waiting", "waiting", note="input needed"))]}
+    page.wait_for_timeout(4000)
+    check("a routine that stops to ask is heard, though it has no tile",
+          rings() == 4 and ticks() == 1 and page.locator('.tile[data-sid="r9"]').count() == 0, (rings(), ticks()))
+    # A session that wrote down what blocks it rings with the waiting ones, not with the ticks.
+    blocker = flag_row(S("b1", "BLOCKED", "idle", "ready", need="Which table should I drop?"))
+    fake.body = base | {"flags": base["flags"] + [flag_row(S("r9", "Zed", "waiting", "waiting", note="input needed")), blocker]}
+    page.wait_for_timeout(4000)
+    check("a session that says what blocks it rings, and does not tick",
+          rings() == 5 and ticks() == 1, (rings(), ticks()))
+    check("nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()
-
-
-def blocks_pass(browser):
-    """The old view, still reachable at ?view=blocks with all its controls."""
-    # Three projects and two loose sessions, so there is a third to pin and an
-    # orphan to assign.
-    loose = ("", "No project", [S("o1", "Rosalie"), S("o2", "Ines")])
-    base = roster([("alpha", "alpha", [S("a1", "ALEF", "busy")]), ("beta", "beta", [S("b1", "BETA", "busy")]),
-                   ("gamma", "gamma", [S("g1", "GIMEL", "busy")]), loose])
-    base["blocks"][3]["members"][0]["suggestion"] = "alpha"
-    fake = Fake(base)
-    page = new_page(browser, fake)
-    open_at(page, "/?view=blocks")
-    page.wait_for_selector(".block")
-    check("blocks view: it is the old page", page.locator(".ov-col").count() == 0 and page.locator(".block").count() == 4
-          and not page.locator("#hold").is_hidden() and page.locator("#view").get_attribute("href") == "./")
-    page.evaluate("""() => { window.removals = [];
-      const orig = Element.prototype.remove;
-      Element.prototype.remove = function () {
-        if (this.classList?.contains('inline')) window.removals.push('removed');
-        return orig.call(this); }; }""")
-
-    # --- renaming and relabelling
-    target = page.locator(".block:not(.orphan):not(.routines)").first
-    open_editor(page, target.locator('[data-edit="name"]'))
-    page.locator("input.inline").fill("RINOMINATO")
-    page.locator("input.inline").press("Enter")
-    page.wait_for_timeout(600)
-    check("rename di un progetto", fake.of("/api/name") == [{"project": "alpha", "label": "RINOMINATO"}], fake.posts)
-    check("etichetta mostrata", page.locator('.block[data-project="alpha"] [data-edit="name"]')
-          .inner_text().strip() == "RINOMINATO")
-    row = page.locator('.block:not(.orphan):not(.routines) [data-edit="line"]').first
-    open_editor(page, row)
-    page.locator("input.inline").fill("RIGA")
-    page.locator("input.inline").press("Enter")
-    page.wait_for_timeout(600)
-    check("override della riga", fake.of("/api/line") == [{"key": "a1", "text": "RIGA"}], fake.posts)
-    check("modificare non fa il jump", not fake.of("/api/jump"))
-    open_editor(page, page.locator('.block:not(.orphan):not(.routines) [data-edit="line"]').first)
-    page.keyboard.type("mezzo scritto")
-    page.wait_for_timeout(7000)
-    check("il campo regge due poll",
-          page.locator("input.inline").count() == 1
-          and page.evaluate("document.activeElement?.classList.contains('inline')")
-          and page.locator("input.inline").input_value() == "mezzo scritto",
-          page.evaluate("window.removals"))
-    page.keyboard.press("Escape")
-    page.wait_for_timeout(400)
-
-    # --- pinning
-    blocks = page.locator(".block:not(.orphan):not(.routines)")
-    third = blocks.nth(2).get_attribute("data-project")
-    blocks.nth(2).locator(".pin").drag_to(blocks.nth(0))
-    page.wait_for_timeout(900)
-    check("trascinare fissa il blocco", fake.of("/api/order") and third in fake.of("/api/order")[-1]["pinned"], fake.posts)
-    page.wait_for_function("p => document.querySelector(`.block[data-project=\"${p}\"]`)?.classList.contains('pinned')",
-                           arg=third, timeout=5000)
-    page.locator(f'.block[data-project="{third}"] .pin').click()
-    page.wait_for_timeout(600)
-    check("la ✳ lo libera", third not in fake.of("/api/order")[-1]["pinned"], fake.of("/api/order"))
-    shown = page.locator(".block:not(.orphan):not(.routines)").evaluate_all("els => els.map(e => e.dataset.project)")
-    check("the block view says which blocks it shows, on a drag and on an unpin, so a block named by an identity can be unpinned",
-          all(sorted(post.get("shown") or []) == sorted(shown) for post in fake.of("/api/order")),
-          (shown, fake.of("/api/order")))
-
-    # --- assigning
-    chip = page.locator(".guess").first
-    chip.click()
-    page.wait_for_timeout(600)
-    check("accettare il suggerimento", fake.of("/api/assign") == [{"key": "o1", "project": "alpha"}], fake.posts)
-    page.locator('.row[data-sid="o1"] .clear').click()
-    page.wait_for_timeout(600)
-    check("'togli' la riporta indietro", fake.of("/api/assign")[-1] == {"key": "o1", "project": ""}, fake.posts)
-    page.locator('.row.stub[data-sid="o2"]').click()       # the second one is folded until asked for
-    open_editor(page, page.locator('.assign-edit[data-sid="o2"]'))
-    page.locator("input.inline").fill("progetto-scritto")
-    page.locator("input.inline").press("Enter")
-    page.wait_for_timeout(600)
-    check("assegnare scrivendo il nome", fake.of("/api/assign")[-1] == {"key": "o2", "project": "progetto-scritto"})
-    page.locator('section.orphan .row[data-sid="o1"]').drag_to(page.locator(".block:not(.orphan):not(.routines)").first)
-    page.wait_for_timeout(600)
-    check("trascinare assegna la sessione",
-          fake.of("/api/assign")[-1]["key"] == "o1" and fake.of("/api/assign")[-1]["project"], fake.of("/api/assign"))
-    check("blocks view: nothing stray reached the routes", not fake.stray, fake.stray)
-    page.close()
-
-    # --- stuck and waiting, routines, folding, states, a boss and its team
-    def view(body):
-        f = Fake(body)
-        p = new_page(browser, f)
-        open_at(p, "/?view=blocks")
-        p.wait_for_selector(".row")
-        return f, p
-
-    stuck = roster([("maple", "maple", [
-        S("s1", "Vera", "waiting", "waiting", note="input needed"), S("s2", "Mei", "busy", "stuck", note="17m"),
-        S("s3", "Leila", "busy"), S("s4", "Aziz", "busy", "tool", note="34m"),
-        S("s5", "Handoff review", "idle", line="Handoff review", kind="bg")])])
-    f, p = view(stuck)
-    check("la riga in attesa è marcata", p.locator(".row.waiting .flag.waiting").count() == 1)
-    check("la riga ferma è marcata", p.locator(".row.stuck .flag.stuck").count() == 1)
-    check("dice da quanto è ferma", "17m" in p.locator(".flag.stuck").inner_text().lower())
-    check("chi lavora resta pulito", p.locator(".row:not(.stuck):not(.waiting)").count() == 3)
-    check("il badge conta la chiamata, non il silenzio", "34m" in p.locator(".flag.tool").inner_text().lower()
-          and p.locator(".row.tool").count() == 0)
-    check("non ripete il titolo uguale al nome", p.locator('.row[data-sid="s5"] .title').count() == 0)
-    head = p.locator("#count").inner_text()
-    check("la testata avvisa", "waiting" in head and "stuck" in head, head)
-    check("il titolo della scheda conta", p.title().startswith("(2)"), p.title())
-    check("chi è fermo o in attesa non si piega mai", p.locator(".row.stub.stuck, .row.stub.waiting").count() == 0)
-    p.close()
-
-    routines = roster([("maple", "maple", [S("s1", "Vera", "busy")])])
-    routines["blocks"].append(routine_block())
-    f, p = view(routines)
-    check("le routine stanno in un blocco solo, in fondo", p.locator(".block.routines").count() == 1
-          and p.locator(".block.routines .row").count() == 2 and "routines" in p.locator(".block").last.get_attribute("class"))
-    check("non si fissa e non si rinomina", p.locator(".block.routines .pin").count() == 0
-          and p.locator('.block.routines [data-edit="name"]').count() == 0)
-    check("ogni riga dice quale routine è", sorted(x.lower() for x in p.locator(".block.routines .bg-tag").all_inner_texts())
-          == ["disk-check", "nightly-report"])
-    check("le routine non contano come progetto", "1 projects" in p.locator("#count").inner_text(),
-          p.locator("#count").inner_text())
-    p.close()
-
-    four = roster([("maple", "maple", [S("f1", "Vera", "busy"), S("f2", "Mei"), S("f3", "Leila"), S("f4", "Aziz")])])
-    f, p = view(four)
-    check("solo il più attivo è aperto", p.locator(".row:not(.stub)").count() == 1 and p.locator(".row.stub").count() == 3)
-    p.locator('.row.stub[data-sid="f3"]').click()
-    p.wait_for_timeout(300)
-    check("cliccarne una la apre", p.locator('.row[data-sid="f3"]:not(.stub)').count() == 1)
-    p.locator('.row[data-sid="f3"] .fold').click()
-    p.wait_for_timeout(300)
-    check("il chevron la richiude", p.locator('.row.stub[data-sid="f3"]').count() == 1)
-    check("aprire e chiudere non fa il jump", not f.of("/api/jump"))
-    p.locator('.row.stub[data-sid="f4"]').click()
-    p.wait_for_timeout(7000)
-    check("resta aperta attraverso i poll", p.locator('.row[data-sid="f4"]:not(.stub)').count() == 1)
-    p.locator("#q").fill("leila")
-    p.wait_for_timeout(500)
-    check("cercando si apre quello che trova", p.locator(".row.stub").count() == 0 and p.locator(".row").count() == 1)
-    check("mostra da quanto è in piedi", "up " in p.locator(".where").first.inner_text())
-    p.close()
-
-    states = roster([("maple", "maple", [
-        S("p1", "Vera", "waiting", "waiting", note="input needed"), S("p2", "Mei", "busy", "stuck", note="17m"),
-        S("p3", "Nour", "idle", "ready", said="Two had no composer — guess or skip?"),
-        S("p4", "Halima", "busy"), S("p5", "Dmitri", "shell", bg=True)])])
-    f, p = view(states)
-    check("finito e non letto è una spunta blu", p.locator('.row[data-sid="p3"] .tick').count() == 1
-          and p.locator('.row[data-sid="p3"] .dot').count() == 0 and p.locator(".row.ready").count() == 1)
-    check("dice l'ultima cosa che ha detto", "guess or skip" in p.locator('.row[data-sid="p3"] .said').inner_text())
-    check("chi aspetta dice cosa aspetta", p.locator('.row[data-sid="p1"] .wf').inner_text() == "input needed")
-    check("un lavoro in background è marcato bg", p.locator('.row[data-sid="p5"] .bg-tag').inner_text().lower() == "bg")
-    check("si muove solo chi lavora", p.locator(".row.working").count() == 2)
-    check("la testata conta anche i pronti", "1 ready" in p.locator("#count").inner_text())
-    p.close()
-
-    team = roster([
-        ("pmd", "pmd", [S("b1", "Lennart", "idle", boss=True, team=["Rosalie", "Kasper"], reportsTo=""),
-                        S("b2", "Rosalie", "idle", "ready", reportsTo="Lennart", said="Schema migration is green"),
-                        S("b3", "Kasper", "busy", reportsTo="Lennart"),
-                        S("b5", "Nour", "waiting", "waiting", note="input needed", reportsTo="Lennart")]),
-        ("maple", "maple", [S("b4", "Vera", "idle", reportsTo="Lennart")])])
-    f, p = view(team)
-    check("il boss è marcato e guida il blocco", p.locator('.row[data-sid="b1"] .bg-tag.boss').count() == 1
-          and p.locator("#main .row").first.get_attribute("data-sid") == "b1")
-    check("dice chi è la squadra", p.locator('.row[data-sid="b1"] .team').inner_text().strip() == "↳ Rosalie · Kasper")
-    check("la squadra è annidata sotto di lui", p.locator('.row[data-sid="b3"].under').count() == 1
-          and p.locator('.row[data-sid="b1"].under').count() == 0)
-    check("il ready di un worker resta piegato", p.locator('.row.stub[data-sid="b2"] .tick').count() == 1)
-    check("un worker che aspetta si apre lo stesso", p.locator('.row[data-sid="b5"]:not(.stub)').count() == 1)
-    check("chi è in un altro progetto lo dice a parole",
-          p.locator('.row[data-sid="b4"] .reports').inner_text().strip() == "↳ Lennart")
-    p.close()
-
-    # --- holding the order
-    served = roster([("alpha", "alpha", [S("h1", "H1", "busy")]), ("beta", "beta", [S("h2", "H2", "busy")])])
-    f, p = view(served)
-    order = lambda: [b.get_attribute("data-project") for b in p.locator(".block").all()]
-    check("di default si riordina da solo", order() == ["alpha", "beta"], order())
-    p.locator("#hold").click()
-    p.wait_for_timeout(600)
-    check("il pulsante dice che è fermo", p.locator("#hold").inner_text() == "order held"
-          and f.of("/api/hold") == [{"hold": True}], f.posts)
-    f.body["blocks"].reverse()
-    p.wait_for_timeout(4000)
-    check("fermo, le carte non si muovono", order() == ["alpha", "beta"], order())
-    p.locator("#hold").click()
-    p.wait_for_timeout(4000)
-    check("riacceso, si riordina subito", order() == ["beta", "alpha"] and p.locator("#hold").inner_text() == "auto-arrange", order())
-    f.body["hold"] = True
-    f.body["blocks"].reverse()
-    p.reload(wait_until="load")
-    p.wait_for_selector(".block")
-    f.body["blocks"].reverse()
-    p.wait_for_timeout(4000)
-    check("ricaricando resta fermo, e non si muove al poll dopo", order() == ["alpha", "beta"], order())
-    check("blocks view: nothing stray reached the routes", not f.stray, f.stray)
-    p.close()
 
 
 def hand_roster(**names):
@@ -2559,74 +2371,6 @@ def stale_pass(browser):
         shutil.rmtree(root, ignore_errors=True)
 
 
-def block_view_pass(browser):
-    """Hunts 7 and 8: the old block view after a session was moved by hand into a project and
-    that project was merged away. A tab that is up to date must be able to rename, drag and drop
-    on the session's block (the server must not call it behind); a tab that is behind, which
-    clicks the star of the block that was merged away, must be told rather than answered 200
-    with nothing unpinned."""
-    root = pathlib.Path(tempfile.mkdtemp(prefix="blocks-"))
-    cfg = root / "config.json"
-    procs = []
-    stored = lambda: json.loads(cfg.read_text())
-    line = "changed in another tab, refreshed"
-    try:
-        proc, port = start_hand_server(root, procs)
-        refused_a, refused_b = [], []
-        a, b = open_hand_page(browser, port, refused_a), open_hand_page(browser, port, refused_b)
-        post = lambda page, path, body: page.evaluate(
-            "([p, b]) => fetch(p, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Fleet': '1'},"
-            " body: JSON.stringify(b)}).then(r => r.status)", [path, body])
-        check("blocks e2e: a session moved by hand into maple, and maple pinned",
-              (post(a, "/api/assign", {"key": "fake:c", "project": "folder:maple"}),
-               post(a, "/api/pin", {"project": "folder:maple", "action": "pin", "shown": []})) == (200, 200), stored())
-
-        # Tab b is on the block view and behind when maple is merged away; it clicks the star of that block.
-        b.goto(f"http://127.0.0.1:{port}/?view=blocks", wait_until="load")
-        b.wait_for_selector(".block")
-        check("blocks e2e: tab b shows the block named for maple, pinned",
-              b.locator('.block.pinned[data-project="folder:maple"]').count() == 1,
-              b.locator(".block").evaluate_all("els => els.map(e => e.dataset.project + (e.classList.contains('pinned') ? '*' : ''))"))
-        hold_back(b)
-        check("blocks e2e: maple merged into orchard in the other tab",
-              post(a, "/api/merge", {"source": "folder:maple", "target": "folder:orchard", "shown": ["folder:maple"]}) == 200
-              and stored()["pinned"] == ["folder:orchard"], stored())
-        done = stored()
-        forget_note(b)
-        b.locator('.block[data-project="folder:maple"] .pin').click()
-        b.wait_for_function("line => document.getElementById('stamp').textContent === line", arg=line)
-        check("blocks e2e: the star of a block that was merged away is refused, and nothing is written",
-              stored() == done and len(refused_b) == 1, (stored(), refused_b))
-        check("blocks e2e: and the tab reads again: the block is named for orchard, still pinned",
-              b.locator('.block.pinned[data-project="folder:orchard"]').count() == 1
-              and b.locator('.block[data-project="folder:maple"]').count() == 0, b.locator(".block").count())
-        b.close()
-
-        # Tab a is up to date: its blocks are all ones it may rename.
-        a.goto(f"http://127.0.0.1:{port}/?view=blocks", wait_until="load")
-        a.wait_for_selector(".block")
-        names = a.locator(".block").evaluate_all("els => els.map(e => e.dataset.project)")
-        check("blocks e2e: its block is named by where the project went, not by the one merged away",
-              "folder:orchard" in names and "folder:maple" not in names, names)
-        block = a.locator('.block[data-project="folder:orchard"]')
-        open_editor(a, block.locator(".pname"))
-        a.locator("input.inline").fill("Orchard 2")
-        a.keyboard.press("Enter")
-        a.wait_for_function("() => !document.querySelector('input.inline')")
-        a.wait_for_timeout(500)
-        check("blocks e2e: renaming that block is accepted, and the page does not say it is behind",
-              stored().get("names") == {"folder:orchard": "Orchard 2"} and not refused_a
-              and "changed in another tab" not in a.locator("#stamp").inner_text(),
-              (stored(), refused_a))
-        a.close()
-    finally:
-        for proc in procs:
-            if proc.poll() is None:
-                proc.terminate()
-                proc.wait(10)
-        shutil.rmtree(root, ignore_errors=True)
-
-
 def e2e_pass(browser):
     """The same clicks against a real server: fake sessions, a config of its own,
     on a port the system picked. What the page does must be in the config file
@@ -2727,8 +2471,8 @@ def finished_e2e_pass(browser):
     """Ticket 10 against a real server: invented sessions that stopped hours ago on
     a throwaway server, a config of its own. A handover you have not read keeps a
     tile; once read, a pill; a new write brings the tile back; a pin survives
-    polls and a restart and ends with the session; and what the block view
-    marked seen does not count as read."""
+    polls and a restart and ends with the session; and what the chime's marks
+    hold as seen does not count as read."""
     root = pathlib.Path(tempfile.mkdtemp(prefix="finished-"))
     (root / "config.json").write_text("{}")
     procs = []
@@ -2749,7 +2493,7 @@ def finished_e2e_pass(browser):
     state = lambda: json.loads((root / "finished.json").read_text()) if (root / "finished.json").exists() else {}
     config_before = (root / "config.json").read_bytes()
     try:
-        # What the block view left behind: Odile's stop was marked seen there.
+        # What the chime's marks hold: Odile's stop is marked seen in seen.json.
         (root / "seen.json").write_text(json.dumps({"fake:b": sessions[1]["updatedAt"]}))
         write(sessions)
         proc, port = start_hand_server(root, procs)
@@ -2766,7 +2510,7 @@ def finished_e2e_pass(browser):
         check("and each has what it told you on it, in quotes",
               tile("a").locator(".said").inner_text() == "“Ilse rebuilt the search index.”"
               and tile("b").locator(".said").inner_text() == "“Odile drafted the release notes.”")
-        check("R19: Odile, marked seen by the block view, is unread here all the same",
+        check("R19: Odile, marked seen in the chime's marks, is unread here all the same",
               tile("b").locator(".flag.unread").inner_text().lower() == "unread" and not state().get("read", {}).get("fake:b"), state())
 
         tile("a").click()
@@ -2864,14 +2608,12 @@ def main():
         e2e_pass(browser)
         finished_e2e_pass(browser)
         stale_pass(browser)
-        block_view_pass(browser)
         suggestion_pass(browser)
+        wrap_pass(browser)
         jump_pass(browser)
-        for view in ("overview", "blocks"):
-            hostile_pass(browser, view)
-            separator_pass(browser, view)
-            chime_pass(browser, view)
-        blocks_pass(browser)
+        hostile_pass(browser)
+        separator_pass(browser)
+        chime_pass(browser)
         browser.close()
 
     # No routed request may have carried a session the machine really has.

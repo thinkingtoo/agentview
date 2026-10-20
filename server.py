@@ -267,7 +267,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "pin", "merge", "hold", "chime", "restore",
+    ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "merge", "chime", "restore",
               "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep")
 
     def do_POST(self):
@@ -306,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
         and it is enough: the tick goes, the count comes down."""
         key, stop = body.get("key"), body.get("stop")
         # `stop` is the overview's tile saying which stop's handover it showed;
-        # the block view sends none, and reads nothing.
+        # a click without one only looks, and reads nothing.
         if not isinstance(key, str) or (stop is not None and (isinstance(stop, bool) or not isinstance(stop, int))):
             return self.send_error(400, "expected {key, stop?}")
         if not fleet.look(key, stop):
@@ -351,33 +351,17 @@ class Handler(BaseHTTPRequestHandler):
                   name=session.get("name"), **done)
         self._send(json.dumps(done), "application/json")
 
-    def _hold(self, body):
-        """Freeze the order of the cards, or let them sort themselves again.
-
-        Lives in config.json with the pins and the labels: it is a decision
-        about how you want to read the page, and it should still be true
-        tomorrow.
-        """
-        hold = body.get("hold")
-        if not isinstance(hold, bool):
-            return self.send_error(400, "expected {hold: true|false}")
-        fleet.write_config({"hold": hold})
-        self._send(json.dumps({"ok": True, "hold": hold}), "application/json")
-
     def _chime(self, body):
         """Ring, or stay quiet, when a session starts waiting on you.
 
-        Next to `hold` for the same reason: it is how you want the page to
-        behave, and it should still be true tomorrow.
+        Lives in config.json with the pins and the labels: it is how you want
+        the page to behave, and it should still be true tomorrow.
         """
         chime = body.get("chime")
         if not isinstance(chime, bool):
             return self.send_error(400, "expected {chime: true|false}")
         fleet.write_config({"chime": chime})
         self._send(json.dumps({"ok": True, "chime": chime}), "application/json")
-
-    def _order(self, body):
-        self._correct(lambda config: hand.set_order(config, body.get("pinned"), body.get("shown")))
 
     def _name(self, body):
         key, label = body.get("project"), body.get("label")
@@ -515,28 +499,27 @@ class Handler(BaseHTTPRequestHandler):
             with fleet.POLL:
                 with log.timed("roster", 1.5):
                     data = fleet.roster()
-                blocks = data["blocks"]
+                flags = data["flags"]
                 failed = {**providers.broken(), **fleet.ROUND["failed"]}
                 answered = set(fleet.ROUND["answered"])
-            log.note_roster(blocks)
-            live = {m["key"] for b in blocks for m in b["members"]}
+            log.note_roster(flags)
+            live = {f["key"] for f in flags}
             # Only the providers that answered get their dead sessions
             # forgotten: a missed round must not bring back as `ready`
             # everything you had already read.
             seen.forget(live, answered=answered)
             finished.forget(live, answered=answered)
             if not fleet.ROUND["failed"]:
-                lines.forget({m["id"] for b in blocks for m in b["members"]})
+                lines.forget({f["id"] for f in flags})
             status = {name: {"ok": True} for name in answered}
             status.update({name: {"ok": False, "error": why} for name, why in failed.items()})
-            live_ids = {m["key"].partition(":")[2] for b in blocks for m in b["members"]
-                        if m["key"].startswith("claude:")}
+            live_ids = {f["key"].partition(":")[2] for f in flags
+                        if f["key"].startswith("claude:")}
             self._send(json.dumps({**data,
                                    "restore": restorable(live_ids),
                                    "closed": closed_now(live_ids),
                                    "saved": coverage(live_ids),
                                    "providers": status,
-                                   "hold": fleet.config_value("hold", False),
                                    "chime": fleet.config_value("chime", True)}),
                        "application/json")
         elif self.path.startswith("/api/search"):
@@ -562,7 +545,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send(tickets.page(repo, number, tickets.fetch(repo, number), ticket_status(repo, number)),
                        "text/html; charset=utf-8")
         elif urllib.parse.urlsplit(self.path).path in ("/", "/index.html"):
-            # The query is the page's own (`?view=blocks`); the server has none.
             self._send(page(), "text/html; charset=utf-8")
         else:
             self.send_error(404)

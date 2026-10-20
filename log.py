@@ -180,15 +180,14 @@ def _uptime(rec):
 _flags = {}
 
 
-def note_roster(blocks):
+def note_roster(flags):
     """Write down when a session becomes flagged, and when it stops.
 
     The flag is not in the peer files -- it is worked out from the transcript
     while the page is being built -- so this hangs off the poll rather than
     the watcher thread. It says nothing on a poll where nothing changed.
     """
-    after = {m["key"]: (m["flag"], m.get("name"))
-             for b in blocks for m in b["members"]}
+    after = {f["key"]: (f["flag"], f.get("name")) for f in flags}
     for sid, (flag, name) in after.items():
         was = _flags.get(sid, (None, None))[0]
         if sid in _flags and was != flag:

@@ -100,11 +100,15 @@ _Avoid_: dead, forgotten, closed
 A finished session as one line at the foot of its project's column: name and idle time, its working-on line on hover, a click jumps. Counted in nothing. Any sign of life makes it a tile again.
 _Avoid_: badge, chip
 
+**Flags**:
+The roster's list of every session on the machine, routines and finished sessions included, one row each: `{key, id, name, flag, blocked}`. `flag` is the raw one the transcript gave (`waiting`, `ready`, `tool`, `stuck` or none) and `blocked` whether the session wrote down what blocks it. The chime and the server's marks read this list; the tiles may say less than it does. It replaced the roster's `blocks`.
+_Avoid_: blocks
+
 **Pin (a session)**:
 Holding a finished session open as a full tile until it is unpinned or the session closes. Kept in agentview's own state, not in config. Not the pin on a project card, which puts the project first.
 
 **Handover read**:
-The person has seen what the session said when it stopped, as of that stop, in the overview: a jump that reached the terminal, or a click on a tile with none, which reads the stop that tile showed and no later one. Separate from the chime's seen mark, which the block view also wrote and which a failed jump once wrote too; those old marks do not finish a session.
+The person has seen what the session said when it stopped, as of that stop, in the overview: a jump that reached the terminal, or a click on a tile with none, which reads the stop that tile showed and no later one. Separate from the chime's seen mark, which the old block view also wrote and which a failed jump once wrote too; those old marks do not finish a session.
 
 **Movement**:
 Visible evidence that a session is still making progress, including while it waits on CI or tests.

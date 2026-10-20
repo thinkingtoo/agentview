@@ -206,17 +206,17 @@ class Flags(Base):
     """The chime reads the flags, and they do not change. The tile is what
     the person reads, and it no longer shows a flag the sign contradicts."""
 
-    def test_the_tool_flag_is_gone_from_the_tile_and_still_in_the_blocks(self):
+    def test_the_tool_flag_is_gone_from_the_tile_and_still_in_the_flags(self):
         got = self.roster(session("a", status="busy", quietFor=34.0, toolFor=34.0))
         self.assertIsNone(got["columns"][0]["sessions"][0]["flag"])
-        self.assertEqual(got["blocks"][0]["members"][0]["flag"], "tool")
+        self.assertEqual(got["flags"][0]["flag"], "tool")
 
     def test_stuck_is_not_shown_for_a_session_that_is_moving(self):
         # Quiet 7 minutes: today's page said stuck at 5. The new rule says
         # moving until 10.
         got = self.roster(session("a", status="busy", quietFor=7.0))
         self.assertIsNone(got["columns"][0]["sessions"][0]["flag"])
-        self.assertEqual(got["blocks"][0]["members"][0]["flag"], "stuck")
+        self.assertEqual(got["flags"][0]["flag"], "stuck")
 
     def test_stuck_is_shown_as_hung_once_nothing_moves(self):
         tile = self.tile(session("a", status="busy", quietFor=17.2))

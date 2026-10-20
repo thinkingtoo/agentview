@@ -16,7 +16,7 @@ from providers.base import Provider
 # Every field index.html reads off a member, as of 2026-09-22 -- the page
 # indexes them without guards, so a missing one is a blank row or a crash.
 PAGE_FIELDS = {
-    "key", "provider", "id", "flag", "status", "name", "reportsTo", "title",
+    "key", "provider", "id", "flag", "status", "name", "title",
     "suggestion", "routine", "prompt", "pid", "n", "boss", "ask", "waitingFor",
     "updatedAt", "tmux", "team", "startedAt", "said", "quietFor", "overridden",
     "kind", "doing", "did", "cwd", "canJump", "blocked", "toolFor", "branch",
@@ -50,8 +50,8 @@ class Normalization(unittest.TestCase):
 
     def test_a_minimal_session_carries_every_field_the_page_reads(self):
         row = self.rows(minimal())[0]
-        # `reportsTo` and `overridden` are laid on by `roster()`, below.
-        self.assertEqual(PAGE_FIELDS - set(row), {"reportsTo", "overridden"})
+        # `overridden` is laid on by `members()`, below.
+        self.assertEqual(PAGE_FIELDS - set(row), {"overridden"})
         self.assertEqual(row["key"], "fake:s1")
         self.assertEqual(row["provider"], "fake")
         self.assertEqual(row["project"], "maple")
@@ -61,12 +61,13 @@ class Normalization(unittest.TestCase):
         real = fleet.sessions
         fleet.sessions = lambda providers=None: rows
         try:
-            blocks = fleet.roster()["blocks"]
+            members = fleet.members()
+            roster = fleet.roster()
         finally:
             fleet.sessions = real
-        self.assertEqual(blocks[0]["members"][0]["key"], "fake:s1")
-        self.assertIn("overridden", blocks[0]["members"][0])
-        self.assertIn("reportsTo", blocks[0]["members"][0])
+        self.assertEqual(members[0]["key"], "fake:s1")
+        self.assertIn("overridden", members[0])
+        self.assertEqual([t["key"] for c in roster["columns"] for t in c["sessions"]], ["fake:s1"])
 
     def test_defaults_are_the_empty_kind_of_each_field(self):
         row = self.rows(minimal())[0]
@@ -190,7 +191,7 @@ class Shared(unittest.TestCase):
                               updatedAt=junk, startedAt=junk, pid=junk, status="busy",
                               bgTasks=[{"label": "x", "since": junk}])
                 got = fleet.roster(providers=[Fake([row])])
-                self.assertEqual(len(got["blocks"][0]["members"]), 1)
+                self.assertEqual([f["key"] for f in got["flags"]], ["fake:s1"])
 
     def test_the_cut_of_what_an_error_says_has_one_number(self):
         import fleet

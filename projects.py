@@ -395,8 +395,8 @@ def merged_into(assigned):
 def landed(assigned, value):
     """The project identity a session assigned to `value` is in once the moves of
     whole projects are followed -- `assigned` holds those too, keyed by identity.
-    The block view names a session you moved after this, and a project you
-    merged away is no longer one it can be asked to pin, rename or drop on. A
+    The page names a session you moved after this, and a project you
+    merged away is no longer one it can be asked to pin or rename. A
     value that is not a project's identity (a plain name, anything else) is
     returned as it is, and so is one nothing was moved from. It always ends: a
     project is not visited twice."""

@@ -5,7 +5,6 @@ reading what the page would print: the line and where it came from. Names,
 titles and prompts are invented.
 """
 import sys
-import time
 import unittest
 from pathlib import Path
 
@@ -127,6 +126,8 @@ class Finding(Working):
 
 class Cost(Working):
     def test_a_huge_prompt_or_title_costs_a_roster_next_to_nothing(self):
+        import context
+        import working
         # A pasted file as the last prompt is 100 KB of one line of words, and
         # a roster is made every 3 seconds for every session on the machine.
         huge = "word " * 20480
@@ -134,10 +135,17 @@ class Cost(Working):
         # The cost of a card's guessed line is the card's own (ticket 04).
         self.config["project_lines"] = {f"folder:project{i}": "Sells maple syrup online" for i in range(20)}
         self.roster(*sessions)                      # the first one loads the code
-        started = time.perf_counter()
-        got = self.roster(*sessions)
-        took = time.perf_counter() - started
-        self.assertLess(took, 0.25, took)
+        # Counted, not timed: load delays a roster, it does not make it work more. The
+        # work is the characters `squash` is handed (10,240,960 before the start of a
+        # text was cut, 1,200,960 now, about 0.7 s and 0.1 s of CPU).
+        seen, real = [], context.squash
+        context.squash = lambda text: seen.append(len(text)) or real(text)
+        try:
+            got = self.roster(*sessions)
+        finally:
+            context.squash = real
+        self.assertLessEqual(max(seen), working.LOOKED_AT)
+        self.assertLess(sum(seen), 2 * len(sessions) * working.LOOKED_AT)
         tile = got["columns"][0]["sessions"][0]
         self.assertEqual(tile["lineSource"], "title")
         self.assertTrue(tile["line"].endswith("\u2026"))

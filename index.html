@@ -35,9 +35,6 @@
   button { font:inherit; font-size:13px; color:var(--ink); background:var(--card);
            border:1px solid var(--line); border-radius:7px; padding:5px 12px; cursor:pointer; }
   button:hover { border-color:var(--accent); color:var(--accent); }
-  /* Held is a state you are in, not a button you pressed: it stays lit. */
-  button.held { color:var(--claude); border-color:color-mix(in srgb,var(--claude) 55%,transparent);
-                background:color-mix(in srgb,var(--claude) 10%,transparent); }
   /* The chime belongs to the amber state it announces, so it is lit amber
      while it is armed. Blocked is the browser refusing to make any sound
      until you have touched the page -- one click on the button clears it. */
@@ -45,37 +42,11 @@
                  background:color-mix(in srgb,var(--wait) 10%,transparent); }
   button.blocked { color:var(--bad); border-color:color-mix(in srgb,var(--bad) 55%,transparent);
                    background:color-mix(in srgb,var(--bad) 10%,transparent); }
-  /* Neither a grid nor CSS columns. A grid gives every block in a row the
-     height of the tallest one in it; CSS columns balance by their own rules
-     and leave slack a block cannot break into. The columns are filled here
-     instead -- each block goes to whichever one is shortest -- so a new
-     project lands in the gap rather than at the bottom of the last column. */
   main { padding:18px 20px 40px; display:flex; gap:14px; align-items:flex-start; }
-  .col { flex:1 1 0; min-width:0; }
-  .block { background:var(--card); border:1px solid var(--line); border-radius:11px;
-           overflow:hidden; margin-bottom:14px; }
-  .block.pinned { border-color:color-mix(in srgb,var(--claude) 45%,var(--line)); }
-  .block.dragging { opacity:.4; }
-  .block.over { border-color:var(--claude); }
-  .pin { cursor:grab; color:var(--faint); font-size:13px; line-height:1; flex:none;
-         padding:2px 3px; border-radius:5px; }
-  .pin:hover { color:var(--claude); background:color-mix(in srgb,var(--claude) 14%,transparent); }
-  .block.pinned .pin { color:var(--claude); }
   .edit { cursor:text; border-bottom:1px dashed transparent; }
   .edit:hover { border-bottom-color:var(--faint); }
-  .own { color:var(--claude); }
-  /* Three colours, three claims on you: amber wants an answer, red is not
-     moving, blue has something finished waiting to be read. */
-  .row.waiting { background:color-mix(in srgb,var(--wait) 9%,transparent);
-                 box-shadow:inset 3px 0 0 var(--wait); }
-  .row.stuck   { background:color-mix(in srgb,var(--bad) 10%,transparent);
-                 box-shadow:inset 3px 0 0 var(--bad); }
-  .row.ready   { background:color-mix(in srgb,var(--accent) 7%,transparent);
-                 box-shadow:inset 3px 0 0 var(--accent); }
   /* A nudge, not a beat: the colour is the alarm, the movement only says
      the page is live. Anything stronger you learn to stop seeing. */
-  .row.waiting .dot { animation:nudge 2.2s ease-in-out infinite; background:var(--wait); }
-  .row.stuck .dot   { animation:nudge 1.8s ease-in-out infinite; background:var(--bad); }
   @keyframes nudge { 0%,100% { transform:scale(1); opacity:1; }
                      50% { transform:scale(1.12); opacity:.8; } }
   .flag { font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
@@ -86,46 +57,24 @@
   .flag.tool { color:var(--faint); border:1px solid var(--line); }
   .flag.ready { color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 45%,transparent); }
   .flag.unread { color:var(--dim); border:1px solid var(--line); }
-  .alarm.ready { color:var(--accent); }
-  .alarm.asking { color:var(--accent); }
   /* What it is blocked on, in Claude Code's own words. */
   .wf { color:var(--wait); font-size:11.5px; }
   .said { margin-top:3px; color:var(--dim); font-size:13px;
           display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .alarm { color:var(--bad); font-weight:650; }
-  .alarm.wait { color:var(--wait); }
   .assign { margin-top:7px; display:flex; gap:9px; align-items:center; font-size:11.5px; }
-  .guess, .assign-edit, .clear { cursor:pointer; color:var(--faint); }
+  .guess, .clear { cursor:pointer; color:var(--faint); }
   .guess { color:var(--claude); border:1px solid color-mix(in srgb,var(--claude) 40%,transparent);
-           border-radius:999px; padding:1px 9px; }
+           border-radius:999px; padding:1px 9px; overflow-wrap:anywhere; }
   .guess:hover { background:color-mix(in srgb,var(--claude) 16%,transparent); }
-  .assign-edit:hover, .clear:hover { color:var(--accent); }
-  .row.target { background:color-mix(in srgb,var(--claude) 12%,transparent); }
+  .clear:hover { color:var(--accent); }
   input.inline { font:inherit; color:var(--ink); background:var(--bg);
                  border:1px solid var(--claude); border-radius:6px; padding:2px 7px;
                  min-width:220px; }
-  .block.orphan, .block.routines { opacity:.82; }
-  .bhead { display:flex; align-items:baseline; gap:9px; padding:11px 15px;
-           border-bottom:1px solid var(--line); }
-  .pname { font-weight:650; font-size:15px; }
-  .branch { color:var(--faint); font-size:12px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   .who { color:var(--dim); font-size:12px; margin-left:auto; }
-  .row { padding:11px 15px; border-top:1px solid var(--line); }
-  .row.can { cursor:pointer; }
-  .row.can:hover { background:color-mix(in srgb,var(--accent) 9%,transparent); }
-  .row.can:hover .go { opacity:1; }
   .go { opacity:0; transition:opacity .12s; color:var(--accent); font-size:12px; }
-  .row.jumped { animation:flash .7s ease-out; }
   @keyframes flash { from { background:color-mix(in srgb,var(--busy) 26%,transparent); } }
-  .row.failed { animation:flash-bad 1.4s ease-out; }
   @keyframes flash-bad { from { background:color-mix(in srgb,#e5534b 26%,transparent); } }
-  .row:first-of-type { border-top:0; }
-  /* A folded session: who is there, and nothing else. */
-  .row.stub { padding:6px 15px; cursor:pointer; }
-  .row.stub:hover { background:color-mix(in srgb,var(--accent) 8%,transparent); }
-  .row.stub .nm { font-weight:500; color:var(--dim); }
-  .fold { color:var(--faint); font-size:11px; cursor:pointer; padding:0 3px; }
-  .fold:hover { color:var(--accent); }
   .rhead { display:flex; align-items:center; gap:8px; }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--idle); flex:none; }
   /* Slow: a session at work should look alive from across the room, not
@@ -138,33 +87,14 @@
   /* Finished, and you have not read it: a tick, not a light. */
   .tick { color:var(--accent); font-size:12px; line-height:1; flex:none; font-weight:700; }
   .nm { font-weight:600; }
-  /* The same highlight the dot has, travelling through the letters. */
-  .working .nm { color:transparent; background-clip:text; -webkit-background-clip:text;
-    background-image:linear-gradient(100deg, var(--ink) 38%, var(--faint) 50%, var(--ink) 62%);
-    background-size:280% 100%; animation:shimmer 4.5s linear infinite; }
-  @keyframes shimmer { from { background-position:150% 0; } to { background-position:-50% 0; } }
   .bg-tag { font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint);
             border:1px solid var(--line); border-radius:5px; padding:1px 5px; }
   .bg-tag.extra { text-transform:none; letter-spacing:0; white-space:nowrap; }   /* a model name is not a label */
   .bg-tag.boss { color:var(--claude); border-color:color-mix(in srgb,var(--claude) 45%,transparent); }
-  /* The team, under the one who dispatches to it. */
-  .row.under { margin-left:16px; border-left:2px solid var(--line); }
-  .team { margin-top:5px; color:var(--faint); font-size:11.5px; }
-  .reports { color:var(--faint); font-size:11px; }
-  .ago { margin-left:auto; color:var(--faint); font-size:12px; font-variant-numeric:tabular-nums; }
-  .title { margin-top:5px; }
-  .prompt { margin-top:2px; color:var(--dim); font-size:13px;
-            display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   /* What it wants from you. The one line on the card that is an instruction
      rather than a report, so it is the one line that carries weight. */
   .need { margin-top:3px; color:var(--accent); font-weight:600; font-size:13px;
           display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  /* What it is doing this second. Dim: it will be different in a minute. */
-  .doing { margin-top:3px; color:var(--dim); font-size:13px; font-style:italic;
-           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .where { margin-top:6px; color:var(--faint); font-size:11.5px;
-           font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .empty { color:var(--dim); padding:30px 20px; }
   /* The overview: one column per project, side by side. Each column is as
      tall as its own sessions and no taller (`main` aligns to flex-start), and
@@ -196,7 +126,7 @@
   .ov-hits .hit-title { color:var(--ink); font-weight:600; overflow-wrap:anywhere; }
   .ov-hits .hit-snip { overflow-wrap:anywhere; }
   /* By hand: the name edits in place, the tools sit beside it and say nothing
-     until they are needed. A pinned card is lit, as a pinned block is. */
+     until they are needed. A pinned card is lit. */
   .ov-top { display:flex; align-items:baseline; gap:6px; }
   .ov-top .ov-name { flex:1 1 auto; min-width:0; }
   .ov-top input.inline { min-width:0; width:100%; font-weight:400; }
@@ -252,7 +182,7 @@
   .strip i.z { height:1px; opacity:.35; }
   .strip i.u { height:1px; background:none; border-top:1px dotted var(--faint); }
   .mix { margin-top:5px; font-variant-numeric:tabular-nums; }
-  .tile .mv { color:var(--dim); font-size:12px; }
+  .tile .mv { color:var(--dim); font-size:12px; overflow-wrap:anywhere; }
   /* The card's state is its second line: the name first, then one coloured
      word. The card is coloured by it -- top edge, a light tint, the word and
      the strip's bars -- so the page can be scanned by colour. */
@@ -341,7 +271,7 @@
   .tile:hover button.keep, .tile:focus-within button.keep, .pill:hover button.keep,
   .pill:focus-within button.keep, button.keep.on { opacity:1; }
   button.keep:hover { color:var(--accent); }
-  .tile .said { margin-top:0; }
+  .tile .said { margin-top:0; overflow-wrap:anywhere; }
   /* A condition of the whole machine, across the top under the header's row.
      The negative margin cancels the header's own 14px 20px padding, so the band
      runs edge to edge and sits flush with the header's bottom. */
@@ -350,9 +280,7 @@
   .banner { padding:6px 20px; font-size:13px; font-weight:600; overflow-wrap:anywhere;
             color:var(--bad); background:color-mix(in srgb,var(--bad) 12%,var(--bg));
             border-top:1px solid color-mix(in srgb,var(--bad) 40%,transparent); }
-  .viewlink { color:var(--faint); font-size:12px; text-decoration:none; white-space:nowrap; }
-  .viewlink:hover { color:var(--accent); }
-#restore[hidden], #closed[hidden], #closedlist[hidden], #hold[hidden] { display: none; }
+#restore[hidden], #closed[hidden], #closedlist[hidden] { display: none; }
 #save.unsafe { color: var(--wait); }
 /* Conversations this boot had that no longer run. A drop-down under the
    header, so opening it never moves the cards you were reading. */
@@ -431,91 +359,28 @@ header button { white-space: nowrap; }
   <button id="restore" hidden></button>
   <button id="save"></button>
   <button id="sound"></button>
-  <button id="hold" title="stop the cards moving while you read them"></button>
-  <a id="view" class="viewlink"></a>
   <div id="banners" role="status"></div>
 </header>
 <div id="closedlist" hidden></div>
 <div id="found" hidden></div>
-<main id="main"><div class="empty">loading…</div></main>
+<main id="main" class="ov"><div class="empty">loading…</div></main>
 <script>
-// Two views while the overview is built: the columns are the page, and the
-// old block view (every control it ever had) is still here at `?view=blocks`
-// until the ticket that retires it.
-const VIEW = new URLSearchParams(location.search).get("view") === "blocks" ? "blocks" : "overview";
-let PINNED = [];
-let LATEST = [];            // the last roster the server sent, to repaint from
-let COLUMNS = [];           // and its `columns`, which the overview prints as they come
+let COLUMNS = [];           // the roster's `columns`, which the overview prints as they come
 let SHOWN = [];             // the columns painted now: the filter may hide some of them
-let HOLD = false;           // is the order frozen where you last saw it?
 let CHIME = true;           // does a session that starts waiting ring?
 let WAITING = null;         // who was waiting last poll -- null before the first
 let READY = null;           // and who had already finished, for the same reason
 let SPEAKER = null;         // the audio context, built on your first click
 let MUZZLED = false;        // wanted to ring, and the browser would not have it
-let ORDER = { blocks: [], members: {} };   // and where that was
-let PAINTED = [];           // the order you see, which the DOM no longer is
 let PROVIDERS = {};         // who answered the last poll, and who did not
 let COUNTS = {};            // the roster's header counts: needs, stuck, moving
 let BANNERS = [];           // what is wrong with the whole machine, as the roster said
 let LIGHT = "";             // the count you clicked, whose sessions are lit up -- "" for none
-const OPEN = new Set();     // sessions you unfolded by hand
 let query = "";
 let editing = false;
-let dragging = false;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const home = "{{HOME}}";        // substituted by the server, like the zoom
 const ZOOM = parseFloat("{{ZOOM}}") || 1;
-
-function since(ms) {
-  // How long this session has been up. A background worker two days old reads
-  // very differently from a tab you opened a minute ago.
-  if (!ms) return "";
-  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d ${h % 24}h`;
-}
-
-function ago(ms) {
-  if (!ms) return "";
-  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (s < 60) return s + "s";
-  if (s < 3600) return Math.round(s / 60) + "m";
-  if (s < 86400) return Math.round(s / 3600) + "h";
-  return Math.round(s / 86400) + "d";
-}
-
-function where(m) {
-  // How to go find this person, most actionable first: the path is the part
-  // that may be ellipsised, because the project name already said it.
-  const bits = [];
-  if (m.tmux) bits.push("tmux " + esc(String(m.tmux).split(".").pop()));
-  if (m.pid) bits.push("pid " + esc(m.pid));
-  if (m.startedAt) bits.push(`up ${since(m.startedAt)}`);
-  // The path goes last because it is the part that may be ellipsised: the
-  // project name above already said where this is.
-  bits.push(esc((m.cwd || "").replace(home, "~")));
-  return bits.join("  ·  ");
-}
-
-function stub(m) {
-  // Folded: the mark, the name, and any flag -- an alarm must be visible
-  // whether or not you have opened the row it belongs to.
-  const alarm = ["waiting", "stuck", "ready"].includes(m.flag) ? m.flag : "";
-  return `<div class="row stub ${alarm} ${m.status === "busy" ? "working" : ""}
-        ${m.nested ? "under" : ""}"
-        data-sid="${esc(m.key)}"
-        draggable="true" title="click to open">
-    <div class="rhead">
-      <span class="fold">▸</span>
-      ${mark(m)}
-      <span class="nm">${esc(m.name || named(m))}</span>${badge(m)}${flagOf(m)}
-      <span class="ago">${says(m)} · ${ago(m.updatedAt)}</span>
-    </div>
-  </div>`;
-}
 
 function mark(m) {
   // A tick reads as done in a way no colour of dot does.
@@ -528,190 +393,6 @@ function named(m) {
   // its own name where one would go; the title underneath says the rest.
   const p = String(m.provider || "");
   return p ? p[0].toUpperCase() + p.slice(1) : "(unnamed)";
-}
-
-function says(m) {
-  // `idle` is Claude Code's word, and it covers both "your move" and
-  // "abandoned on Tuesday". Say which one this is.
-  if (m.flag === "ready") return "ready";
-  if (m.status === "shell") return "idle";     // idle with a background job
-  return esc(m.status);
-}
-
-function badge(m) {
-  // The badge on a routine row names the routine; `Routines` above already
-  // said what kind of thing it is. `bg` marks a session whose model has
-  // stopped while a job it started keeps running -- Claude Code calls that
-  // status `shell`, which sounds like something else entirely.
-  const job = m.bg ? `<span class="bg-tag" title="a background job is still running">bg</span>` : "";
-  // A boss coordinates the others and does no implementation work itself,
-  // which is worth knowing before you read anything else on the row.
-  const boss = m.boss ? `<span class="bg-tag boss" title="running the boss skill">boss</span>` : "";
-  // A worker nested under its boss is already placed; one whose boss is in
-  // another block has to say so in words.
-  const to = m.reportsTo && !m.nested
-    ? `<span class="reports">↳ ${esc(m.reportsTo)}</span>` : "";
-  // A provider may attach facts of its own -- a model, a cost -- that the
-  // page shows as badges without knowing what they mean.
-  const extras = Object.entries(m.extras || {}).map(([k, v]) =>
-    `<span class="bg-tag extra" title="${esc(k)}">${esc(v)}</span>`).join("");
-  return (m.routine ? `<span class="bg-tag">${esc(m.routine)}</span>`
-    : m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "")
-    + boss + job + to + extras;
-}
-
-function flagOf(m) {
-  // Four different things, and only two of them are alarms. A waiting row
-  // prints what Claude Code says it is blocked on, rather than the word
-  // `waiting`, which you already knew from the colour.
-  return m.flag === "waiting"
-    ? `<span class="flag waiting">waiting</span>` +
-      (m.waitingFor ? `<span class="wf">${esc(m.waitingFor)}</span>` : "")
-    : m.flag === "stuck"
-      ? `<span class="flag stuck">stuck ${Math.round(m.quietFor)}m</span>`
-      : m.flag === "ready"
-        ? `<span class="flag ready">ready</span>`
-        : m.flag === "tool"
-          ? `<span class="flag tool">tool ${Math.round(m.toolFor ?? m.quietFor)}m</span>` : "";
-}
-
-function row(m) {
-  const tag = badge(m);
-  const go = m.canJump ? `<span class="go">open ↗</span>` : "";
-  // Your own words first, then the session's, then Claude Code's title.
-  // `did` is rewritten at every stop; `ai-title` is written once and rarely
-  // revisited, which is how a card comes to describe last week's work.
-  const subject = m.overridden ? m.title : (m.did || m.title);
-  const flag = flagOf(m);
-  // Only a row you opened yourself offers to fold again: the liveliest one
-  // is the answer to "what is happening here" and always stays open.
-  const fold = m.foldable ? `<span class="fold" title="fold">▾</span>` : "";
-  // The three that claim you tint their row; a long tool call gets a badge
-  // and no more, because it is news rather than a claim.
-  const alarm = ["waiting", "stuck", "ready"].includes(m.flag) ? m.flag : "";
-  // The second line answers "where is this now", and what that means
-  // depends on what the session is doing.
-  //
-  //   working  -- the call it is inside. Printing your own last prompt back
-  //               at you told you something you wrote and already knew.
-  //   wanting  -- the thing it needs from you. One ask carries its own
-  //               words; four of them are a count, because quoting the first
-  //               of four misrepresents the size of the job.
-  //   finished -- the last thing it said to you, which is the handover.
-  //   otherwise-- your last prompt, as before.
-  const need = m.n > 0
-    ? (m.n === 1 && m.ask ? esc(m.ask) : `${m.n} answers needed`) : "";
-  const line = m.doing
-    ? `<div class="doing">${esc(m.doing)}</div>`
-    : need ? `<div class="need">${need}</div>`
-    : m.flag === "ready" && m.said
-      ? `<div class="said">“${esc(m.said)}”</div>`
-      : m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : "";
-  return `<div class="row ${m.canJump ? "can" : ""} ${alarm}
-        ${m.status === "busy" ? "working" : ""} ${m.nested ? "under" : ""}"
-        data-sid="${esc(m.key)}" draggable="true">
-    <div class="rhead">
-      ${mark(m)}
-      ${fold}<span class="nm">${esc(m.name || named(m))}</span>${tag}${flag}${go}
-      <span class="ago">${says(m)} · ${ago(m.updatedAt)}</span>
-    </div>
-    ${subject && subject.trim() === (m.name || "").trim() ? "" : `
-    <div class="title edit ${m.overridden ? "own" : ""}" data-edit="line"
-         data-sid="${esc(m.key)}">${esc(subject) || "<span style='color:var(--faint)'>—</span>"}</div>`}
-    ${line}
-    ${m.boss && m.team?.length
-      ? `<div class="team">↳ ${m.team.map(esc).join(" · ")}</div>` : ""}
-    <div class="where">${where(m)}</div>
-    ${assignBar(m)}
-  </div>`;
-}
-
-function assignBar(m) {
-  if (m.assigned) {
-    return `<div class="assign"><span class="own">assigned</span>
-      <span class="clear" data-sid="${esc(m.key)}">clear</span></div>`;
-  }
-  if (!m.orphan) return "";
-  const guess = m.suggestion
-    ? `<span class="guess" data-sid="${esc(m.key)}" data-project="${esc(m.suggestion)}">
-         ${esc(m.suggestion)}?</span>` : "";
-  return `<div class="assign">${guess}
-    <span class="edit assign-edit" data-edit="assign" data-sid="${esc(m.key)}">assign…</span>
-  </div>`;
-}
-
-function unfolded(b, m) {
-  // Several sessions on one project is the normal case, and printing them
-  // all in full turns the page into a wall you have to scroll. The liveliest
-  // -- busy first, then most recent, as the server sorted them -- is the one
-  // you came to read.
-  //
-  // Three things override that, and all three are the same rule: never fold
-  // away something you are looking for. An alarm is never folded, whatever
-  // you clicked; a search shows every row it matched; and a row you opened
-  // stays open until you fold it again.
-  if (b.members.length < 2) return true;
-  if (m.key === b.members[0].key) return true;
-  if (["waiting", "stuck"].includes(m.flag)) return true;
-  // A worker's `ready` is its boss's business, not yours: it keeps the tick
-  // so he can see it at a glance, and stays folded so it does not cost you
-  // a card you were never going to act on. `waiting` and `stuck` still open
-  // -- a permission prompt on a worker is answered by you, not by him.
-  if (m.flag === "ready" && !m.reportsTo) return true;
-  if (query.trim().length >= 3) return true;
-  return OPEN.has(m.key);
-}
-
-function block(b) {
-  // Who leads here: a worker is nested only under a boss in its own block.
-  const leads = new Set(b.members.filter(m => m.boss).map(m => m.name));
-  // Routines have no branch to show and nothing you can open: they run
-  // unattended on a timer, which is what the header says instead.
-  const br = b.routines
-    ? `<span class="branch">unattended · on a timer</span>`
-    : b.branches.length ? `<span class="branch">${esc(b.branches.join(" · "))}</span>` : "";
-  const n = b.members.length;
-  const pinned = PINNED.includes(b.project);
-  // Neither pinnable nor renamable: it is not a project you chose, it is
-  // whichever routines happen to be mid-run.
-  // A name you typed is just the name: it does not need a colour saying so.
-  // The tooltip keeps the fact for when you wonder where a label came from.
-  const name = b.routines
-    ? `<span class="pname">${esc(b.label)}</span>`
-    : `<span class="pname edit" data-edit="name"
-             ${b.renamed ? `title="your name for ${esc(b.project)}"` : ""}>${esc(b.label)}</span>`;
-  return `<section class="block ${b.orphan ? "orphan" : ""} ${b.routines ? "routines" : ""} ${pinned ? "pinned" : ""}"
-           data-project="${esc(b.project)}">
-    <div class="bhead">
-      ${b.orphan || b.routines ? "" : `<span class="pin" draggable="true"
-             title="${pinned ? "pinned — drag to move, click to release" : "drag to pin at the top"}">✳</span>`}
-      ${name}${br}
-      <span class="who">${n} ${n === 1 ? "session" : "sessions"}${b.busy ? ` · ${b.busy} busy` : ""}</span>
-    </div>
-    ${b.members.map(m => {
-      const nested = leads.has(m.reportsTo);
-      return unfolded(b, m)
-        ? row({ ...m, nested, orphan: b.orphan,
-                foldable: m.key !== b.members[0].key })
-        : stub({ ...m, nested });
-    }).join("")}
-  </section>`;
-}
-
-function filtered(blocks) {
-  // Below three characters nearly everything matches, so filtering would just
-  // make the page flicker while you type the first letters.
-  const q = query.trim().toLowerCase();
-  if (q.length < 3) return blocks;
-  const hit = s => String(s || "").toLowerCase().includes(q);
-  return blocks.map(b => {
-    if (hit(b.label) || hit(b.project)) return b;   // the whole project matched
-    const members = b.members.filter(m =>
-      hit(m.name) || hit(m.title) || hit(m.did) || hit(m.ask)
-      || hit(m.prompt) || hit(m.cwd) || hit(m.branch)
-      || hit(m.routine));
-    return members.length ? { ...b, members } : null;
-  }).filter(Boolean);
 }
 
 // A JavaScript error used to be invisible: the poll stops, the page quietly
@@ -733,66 +414,6 @@ function report(where, message, stack) {
 window.addEventListener("error", e => report("window", e.message, e.error?.stack));
 window.addEventListener("unhandledrejection",
   e => report("promise", e.reason?.message ?? e.reason, e.reason?.stack));
-
-function ordered(blocks) {
-  // The page re-sorts itself every three seconds, which is right until you
-  // are reading one card and it moves because something else woke up. Held,
-  // the content still updates -- status, titles, flags -- and only the
-  // positions stop. Anything arriving while held goes to the end in the order
-  // the server sent it, rather than pushing into the middle of what you read.
-  // Held is remembered in config.json; the order it froze was only ever in
-  // this page's memory. So a reload came back held with nothing to hold on
-  // to, every card tied for last place, and the server's order won -- the
-  // button said held while the cards moved. The first painted order after a
-  // reload is what held now means.
-  if (!HOLD || !ORDER.blocks.length) {
-    ORDER = {
-      blocks: blocks.map(b => b.project),
-      members: Object.fromEntries(
-        blocks.map(b => [b.project, b.members.map(m => m.key)])),
-    };
-    return blocks;
-  }
-  const rank = (list, key) => {
-    const i = (list || []).indexOf(key);
-    return i < 0 ? 1e9 : i;      // a number, not Infinity: two ties must not
-  };                             // subtract to NaN and unsort the whole list
-  return [...blocks]
-    .sort((a, b) => rank(ORDER.blocks, a.project) - rank(ORDER.blocks, b.project))
-    .map(b => ({ ...b, members: [...b.members].sort((x, y) =>
-      rank(ORDER.members[b.project], x.key)
-      - rank(ORDER.members[b.project], y.key)) }));
-}
-
-const GAP = 14;
-const MIN_COL = 360;
-
-function place(html) {
-  // Greedy packing: measure every block at the width it will really have,
-  // then give each one to the column that is currently shortest. That is
-  // what keeps the bottom edges level and puts a new project in the hole
-  // instead of after the last card.
-  const main = document.getElementById("main");
-  const n = Math.max(1, Math.floor((main.clientWidth + GAP) / (MIN_COL + GAP)));
-  main.innerHTML = "";
-  const cols = [];
-  for (let i = 0; i < n; i++) {
-    const col = document.createElement("div");
-    col.className = "col";
-    main.appendChild(col);
-    cols.push(col);
-  }
-  cols[0].innerHTML = html;            // staged at the real column width
-  const items = [...cols[0].children];
-  const heights = items.map(el => el.offsetHeight);   // one reflow, then no more
-  const filled = new Array(n).fill(0);
-  items.forEach((el, i) => {
-    let shortest = 0;
-    for (let j = 1; j < n; j++) if (filled[j] < filled[shortest]) shortest = j;
-    cols[shortest].appendChild(el);
-    filled[shortest] += heights[i] + GAP;
-  });
-}
 
 function speaker() {
   // A browser makes no sound until you have interacted with the page, and a
@@ -884,19 +505,18 @@ function arrived(now, before) {
 // Sound once per poll, for whoever *started* waiting or finishing. Five
 // sessions landing together is one chime, not five -- and a session goes on
 // waiting without ever ringing twice.
-function announce(blocks) {
+function announce(flags) {
   const waiting = new Set(), ready = new Set();
-  for (const b of blocks)
-    for (const m of b.members) {
-      // `blocked` rings with `waiting`, exactly as the header counts it: a
-      // session that wrote down what it is blocked on is asking, and its turn
-      // being over does not make it ready. Without this a session that reports
-      // a blocker through `team-line --n 1` plays the tick -- the sound that
-      // means nothing is wanted from you (2026-09-22: a real blocker went
-      // unheard that way).
-      if (m.flag === "waiting" || m.blocked) waiting.add(m.key);
-      else if (m.flag === "ready") ready.add(m.key);
-    }
+  for (const f of flags) {
+    // `blocked` rings with `waiting`, exactly as the header counts it: a
+    // session that wrote down what it is blocked on is asking, and its turn
+    // being over does not make it ready. Without this a session that reports
+    // a blocker through `team-line --n 1` plays the tick -- the sound that
+    // means nothing is wanted from you (2026-09-22: a real blocker went
+    // unheard that way).
+    if (f.flag === "waiting" || f.blocked) waiting.add(f.key);
+    else if (f.flag === "ready") ready.add(f.key);
+  }
   const asks = arrived(waiting, WAITING);
   const done = arrived(ready, READY);
   WAITING = waiting;
@@ -919,14 +539,8 @@ function drawSound() {
             : "silent whether a session starts waiting or finishes";
 }
 
-function drawHold() {
-  const button = document.getElementById("hold");
-  button.textContent = HOLD ? "order held" : "auto-arrange";
-  button.classList.toggle("held", HOLD);
-}
-
 function busyWithUser() {
-  return editing || dragging || !!document.querySelector("input.inline, select.pick");
+  return editing || !!document.querySelector("input.inline, select.pick");
 }
 
 async function load() {
@@ -940,19 +554,16 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { blocks: all, columns, counts, banners, hold, chime, providers, restore, saved, closed } = await r.json();
+    const { flags, columns, counts, banners, chime, providers, restore, saved, closed } = await r.json();
     drawRestore(restore);
     drawClosed(closed);
     drawSave(saved);
     PROVIDERS = providers || {};
     if (busyWithUser()) return;
     // Read back on every poll, so editing config.json by hand still works.
-    HOLD = !!hold;
-    drawHold();
     CHIME = chime !== false;
     drawSound();
-    announce(all);
-    LATEST = all;
+    announce(flags || []);
     COLUMNS = columns || [];
     COUNTS = counts || {};
     BANNERS = Array.isArray(banners) ? banners : [];
@@ -963,61 +574,24 @@ async function load() {
   }
 }
 
-// Folding repaints from the roster already in hand: waiting for the next
-// poll would make the click feel like it missed.
+// A click that only changes how the roster in hand is drawn (a lit count, the
+// notes link) repaints from it: waiting for the next poll would make the click
+// feel like it missed.
 function paint() {
-  // The count, the alarms and the tab title below are the chime's numbers and
-  // read `blocks` in either view; only what is drawn depends on the view.
-  const all = VIEW === "blocks" ? ordered(LATEST) : LATEST;
-  const blocks = filtered(all);
-  const total = blocks.reduce((a, b) => a + b.members.length, 0);
-  const everyone = all.reduce((a, b) => a + b.members.length, 0);
-  const busy = blocks.reduce((a, b) => a + b.busy, 0);
-  const waiting = all.reduce((a, b) =>
-    a + b.members.filter(m => m.flag === "waiting").length, 0);
-  const stuck = all.reduce((a, b) =>
-    a + b.members.filter(m => m.flag === "stuck").length, 0);
-  // A session that wrote down what it is blocked on is asking, whether or
-  // not you have looked at it since it stopped -- so it is counted apart
-  // from `ready` rather than inside it, and never in both.
-  const asking = all.reduce((a, b) => a + b.members.filter(m => m.blocked).length, 0);
-  const ready = all.reduce((a, b) =>
-    a + b.members.filter(m => m.flag === "ready" && !m.blocked).length, 0);
-  // The tab title deliberately leaves `ready` out: that count is an alarm,
-  // and a finished session is not one -- it would read (5) all evening. A
-  // session that says it is blocked is a different animal: it stays stopped
-  // until you speak, so it belongs with waiting and stuck.
-  const alarms = [
-    waiting ? `<span class="alarm wait">${waiting} waiting</span>` : "",
-    stuck ? `<span class="alarm">${stuck} stuck</span>` : "",
-    asking ? `<span class="alarm asking">${asking} asking</span>` : "",
-    ready ? `<span class="alarm ready">${ready} ready</span>` : "",
-  ].filter(Boolean).join(" · ");
   // One provider down is that provider's badge, not a blank page.
   const down = Object.entries(PROVIDERS).filter(([, p]) => !p.ok).map(([name, p]) =>
         ` &nbsp;·&nbsp; <span class="alarm" title="${esc(p.error)}">${esc(name)} down</span>`).join("");
-  const shown = VIEW === "overview" ? filteredColumns(COLUMNS) : [];
+  const shown = filteredColumns(COLUMNS);
   // A lit count that has emptied since (the question was answered) has nothing
   // left to light: it clears, rather than hide every session.
   if (LIGHT && !countOf(LIGHT)) LIGHT = "";
   drawBanners();
-  if (VIEW === "overview") drawHead(shown, down);
-  else document.getElementById("count").innerHTML =
-    `${total} sessions · ${busy} busy · ${blocks.filter(b => !b.routines).length} projects`
-    + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
-    + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "")
-    + down;
-  const wants = waiting + stuck + asking;
+  drawHead(shown, down);
+  // The tab title is the header's "need you" count, read from the same place,
+  // so the two cannot differ.
+  const wants = countOf("needs");
   document.title = wants ? `(${wants}) agentview` : "agentview";
-  if (VIEW === "blocks") {
-    PINNED = all.filter(b => b.pinned).map(b => b.project);
-    // Kept for the drag handlers: the DOM is now packed by height, so its
-    // order is a layout detail and no longer the order you see.
-    PAINTED = blocks.filter(b => !b.orphan && !b.routines).map(b => b.project);
-    place(blocks.length ? blocks.map(block).join("") : nothing());
-  } else {
-    overview(shown);
-  }
+  overview(shown);
   document.getElementById("stamp").textContent = stampText();
 }
 
@@ -1038,8 +612,7 @@ function nothing() {
 // going into text positions through esc() -- a name or a line is whatever a
 // session called itself, and never markup.
 function filteredColumns(cols) {
-  // The same rule as the block filter: from three characters, and a project
-  // that matches keeps all its sessions.
+  // From three characters, and a project that matches keeps all its sessions.
   const q = query.trim().toLowerCase();
   if (q.length < 3) return cols;
   const hit = s => String(s || "").toLowerCase().includes(q);
@@ -1469,8 +1042,13 @@ function tileFlag(t) {
         : t.unread ? `<span class="flag unread">unread</span>` : "";
 }
 
-// A tile is a session you can go to, the way a row is. The click is
-// acknowledged first for the reason given on the row's handler below.
+// A tile is a session you can go to: click it and its terminal comes to the
+// front. The page never guesses how: the server works out whether that means
+// WezTerm, tmux or Konsole. A control inside a tile that picks something (move,
+// keep, the forms) is a click on that control, never a jump: see the guard.
+// The click is acknowledged *now*, before the answer: raising the terminal
+// takes the focus off this page, and a browser throttles a page it is not
+// showing -- feedback that waits for the response is feedback you never see.
 document.getElementById("main").addEventListener("click", async ev => {
   const el = ev.target.closest(".tile, .pill");
   if (!el || ev.target.closest(".hand, .move, .keep, .ov-form")) return;   // these pick; none of them jumps
@@ -1524,58 +1102,6 @@ function say(key, text, bad) {
   }
 }
 
-// Click a row and its terminal comes to the front. The page never guesses
-// how: the server works out whether that means WezTerm, tmux or Konsole.
-document.getElementById("main").addEventListener("click", async ev => {
-  // Every control inside a row -- edit, guess, clear, pin -- is a click on
-  // that control, never a jump. They share this element, so stopPropagation
-  // on their own handlers cannot help: the guard has to live here.
-  if (ev.target.closest(".edit, .guess, .clear, .pin")) return;
-  // Folding comes first: a folded row is a control, not a session you are
-  // trying to reach, and the chevron on an open row is not a jump either.
-  const folded = ev.target.closest(".row.stub");
-  if (folded) { OPEN.add(folded.dataset.sid); return paint(); }
-  const chevron = ev.target.closest(".fold");
-  if (chevron) {
-    OPEN.delete(chevron.closest(".row").dataset.sid);
-    return paint();
-  }
-  const row = ev.target.closest(".row");
-  if (!row) return;
-  // Looking is looking. A row with no terminal to raise -- a routine, a
-  // provider that cannot say where its session runs -- is still marked
-  // read by the click, so the tick goes and the count comes down.
-  if (!row.classList.contains("can")) {
-    fetch("/api/seen", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-      body: JSON.stringify({ key: row.dataset.sid }),
-    }).then(load).catch(() => {});
-    return;
-  }
-  // Acknowledge the click *now*. Raising the terminal takes the focus off
-  // this page, and a browser throttles a page it is not showing -- feedback
-  // that waits for the response is feedback you never see.
-  row.classList.remove("jumped", "failed");
-  void row.offsetWidth;
-  row.classList.add("jumped");
-  try {
-    const r = await fetch("/api/jump", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-      body: JSON.stringify({ key: row.dataset.sid }),
-    });
-    const out = await r.json();
-    if (!out.ok) {
-      row.classList.remove("jumped");
-      row.classList.add("failed");
-      document.getElementById("stamp").textContent = out.reason || "jump failed";
-    }
-  } catch (e) {
-    row.classList.add("failed");
-  }
-});
-
 // Inline editing. The poll is paused while a field is open, otherwise a
 // refresh would tear the input out from under the cursor.
 document.getElementById("main").addEventListener("click", ev => {
@@ -1590,7 +1116,6 @@ document.getElementById("main").addEventListener("click", ev => {
   // Read everything off the cell now: the field replaces it, and by the time
   // the edit is committed neither is still in the document.
   const project = cell.closest("section")?.dataset.project;
-  const sid = cell.dataset.sid;
   const before = cell.dataset.value !== undefined ? cell.dataset.value
     : cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
   const input = document.createElement("input");
@@ -1608,15 +1133,10 @@ document.getElementById("main").addEventListener("click", ev => {
     // and this one is the reason it was asked to redraw.
     input.remove();
     if (commit && input.value.trim() !== before) {
-      const endpoint = { name: "/api/name", line: "/api/line", assign: "/api/assign",
-                         context: "/api/context" }[kind];
+      const endpoint = { name: "/api/name", context: "/api/context" }[kind];
       const body = kind === "name"
         ? { project, label: input.value }
-        : kind === "context"
-          ? { project, text: input.value }
-          : kind === "assign"
-            ? { key: sid, project: input.value }
-            : { key: sid, text: input.value };
+        : { project, text: input.value };
       const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Fleet": "1" },
@@ -1665,116 +1185,15 @@ document.getElementById("main").addEventListener("click", async ev => {
   if (NOTES.has(project)) { NOTES.set(project, found); show(); }      // not if you clicked it away meanwhile
 });
 
-// Drag a block to pin it; the order you drop them in is the order they keep.
-let dragged = null;
-const main = document.getElementById("main");
-let draggedRow = null;
-main.addEventListener("dragstart", ev => {
-  const r = ev.target.closest(".row");
-  if (r) {
-    // A re-render mid-drag detaches what you are holding and the drag dies
-    // without a word, so the poll waits until you have dropped it.
-    dragging = true;
-    draggedRow = r;
-    ev.dataTransfer.effectAllowed = "move";
-    ev.stopPropagation();
-    return;
-  }
-  const handle = ev.target.closest(".pin");
-  if (!handle) return;
-  const b = handle.closest(".block");
-  if (!b) return;
-  dragging = true;
-  dragged = b;
-  b.classList.add("dragging");
-  ev.dataTransfer.effectAllowed = "move";
-});
-main.addEventListener("dragend", () => {
-  dragging = false;
-  if (dragged) dragged.classList.remove("dragging");
-  dragged = null;
-  draggedRow = null;
-  [...main.querySelectorAll(".over")].forEach(e => e.classList.remove("over"));
-});
-// Neither of these takes a drop: `No project` is where an unassigned session
-// already is, and Routines is not a project you can put anyone in.
-const sealed = el => el.classList.contains("orphan") || el.classList.contains("routines");
-
-main.addEventListener("dragover", ev => {
-  const over = ev.target.closest(".block");
-  if (!over) return;
-  if (draggedRow) {                       // a session looking for a project
-    if (over.contains(draggedRow) || sealed(over)) return;
-    ev.preventDefault();
-    over.classList.add("over");
-    return;
-  }
-  if (!dragged || over === dragged || sealed(over)) return;
-  ev.preventDefault();
-  over.classList.add("over");
-});
-main.addEventListener("dragleave", ev => {
-  const over = ev.target.closest(".block");
-  if (over) over.classList.remove("over");
-});
-main.addEventListener("drop", async ev => {
-  const over = ev.target.closest(".block");
-  if (!over) return;
-  if (draggedRow) {
-    ev.preventDefault();
-    over.classList.remove("over");
-    const sid = draggedRow.dataset.sid;
-    draggedRow = null;
-    return assign(sid, over.dataset.project);
-  }
-  if (!dragged || over === dragged) return;
-  ev.preventDefault();
-  over.classList.remove("over");
-  const order = [...PAINTED];
-  const from = order.indexOf(dragged.dataset.project);
-  const to = order.indexOf(over.dataset.project);
-  if (from < 0 || to < 0) return;
-  order.splice(to, 0, order.splice(from, 1)[0]);
-  // Dropping pins everything above and including the drop point: the ones
-  // you have deliberately placed are exactly the ones that should stop moving.
-  const pinned = order.slice(0, Math.max(to, from) + 1);
-  const r = await fetch("/api/order", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ pinned, shown: order }),
-  });
-  if (await changedElsewhere(r)) return;
-  load();
-});
-
 function assign(sid, project) {
   return correct("/api/assign", { key: sid, project });
 }
 
-main.addEventListener("click", ev => {
+document.getElementById("main").addEventListener("click", ev => {
   const guess = ev.target.closest(".guess");
   if (guess) { ev.stopPropagation(); return assign(guess.dataset.sid, guess.dataset.project); }
   const clear = ev.target.closest(".clear");
   if (clear) { ev.stopPropagation(); return assign(clear.dataset.sid, ""); }
-});
-
-// Unpin: click the mark.
-main.addEventListener("click", async ev => {
-  const pin = ev.target.closest(".pin");
-  if (!pin) return;
-  ev.stopPropagation();
-  const holder = pin.closest(".block");
-  if (!holder.classList.contains("pinned")) return;
-  // Read the pinned set off the page rather than off a variable the last
-  // refresh happened to fill: clicking straight after a drop must still work.
-  const current = [...main.querySelectorAll(".block.pinned")].map(b => b.dataset.project);
-  const r = await fetch("/api/order", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ pinned: current.filter(p => p !== holder.dataset.project), shown: PAINTED }),
-  });
-  if (await changedElsewhere(r)) return;
-  load();
 });
 
 // By hand. Every click is one correction, made by the server on its own, so
@@ -2174,16 +1593,6 @@ document.getElementById("save").addEventListener("click", async () => {
   b.textContent = SAVED_NOTE;
 });
 
-document.getElementById("hold").addEventListener("click", async () => {
-  HOLD = !HOLD;
-  drawHold();
-  paint();               // freeze what is on screen now, not what lands next
-  await fetch("/api/hold", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ hold: HOLD }),
-  }).catch(() => {});
-});
 document.getElementById("sound").addEventListener("click", async () => {
   // This click is also the gesture the browser was waiting for, so a chime
   // it had blocked is unblocked by the same press that arms it again.
@@ -2218,17 +1627,9 @@ const unmuzzle = async () => {
 };
 addEventListener("pointerdown", unmuzzle);
 
-// Which view this is, and the way to the other. Holding the order means
-// nothing in the overview: the order is the server's.
-if (VIEW === "overview") document.getElementById("main").classList.add("ov");
-document.getElementById("hold").hidden = VIEW !== "blocks";
-const viewLink = document.getElementById("view");
-viewLink.href = VIEW === "blocks" ? "./" : "?view=blocks";
-viewLink.textContent = VIEW === "blocks" ? "overview" : "blocks view";
 drawSound();
-drawHold();
 load();
-setInterval(() => { if (!editing && !dragging) load(); }, 3000);
+setInterval(() => { if (!editing) load(); }, 3000);
 let resizing;
 addEventListener("resize", () => {
   clearTimeout(resizing);

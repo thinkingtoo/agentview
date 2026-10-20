@@ -374,8 +374,8 @@ class OldMarks(Finished):
         self.assertEqual((tile["unread"], tile["handover"]), (True, "Release notes drafted."))
 
     def test_the_chime_still_reads_the_old_mark_as_seen(self):
-        got = self.roster(self.legacy("a"))
-        self.assertIsNone(got["blocks"][0]["members"][0]["flag"])
+        (row,) = self.roster(self.legacy("a"))["flags"]
+        self.assertIsNone(row["flag"])
 
     def test_the_first_look_in_the_overview_finishes_it(self):
         s = self.legacy("a", name="Femi")

@@ -399,9 +399,9 @@ def look(key, shown=None):
     terminal comes to the front -- or exists: the chime hears of it.
 
     The handover is read only when the overview's tile put it in front of you,
-    and then only the stop that tile showed (`shown`): the block view says no
-    stop, and a session that stopped again since the page's last poll has a
-    handover nobody has shown you.
+    and then only the stop that tile showed (`shown`): a look with no stop
+    reads nothing, and a session that stopped again since the page's last poll
+    has a handover nobody has shown you.
     """
     hit = find(key)
     if not hit:
@@ -666,18 +666,23 @@ def sessions_in(groups):
     return [s for members in groups.values() for s in members]
 
 
-def roster(providers=None):
-    """The page's data: `blocks` (sessions grouped into project blocks,
-    liveliest project first) and `columns` (the overview, made from them).
+def members(providers=None):
+    """Every session on the machine, routines and finished ones included, in
+    the order the overview is made from. Each is the raw row the round made:
+    its flag, its silence, the paths it touched.
 
     Project-first: the question is what is happening, and who is on it.
 
     Routines are the exception: they are grouped by being routines rather
     than by where they run. A routine runs from `~`, which is no project, so
     it used to land in `No project` -- the pile that means "assign me", which
-    is the one thing a routine never needs. They get their own block, keyed
-    apart from the projects so a real project of the same name cannot be
-    swallowed into it.
+    is the one thing a routine never needs. They are kept apart from the
+    projects, so a real project of the same name cannot be swallowed into
+    them, and they come last.
+
+    The order is the one the old blocks gave: projects with something wanting
+    you first, then the finished, then the busy, then the latest. A tie
+    between two sessions in one column is settled by it, so it is kept.
     """
     groups = {}
     listed = {}
@@ -705,63 +710,77 @@ def roster(providers=None):
     bosses = {name: s["name"]
               for s in everyone if s["boss"]
               for name in s["team"]}
-    blocks = []
-    for (routines, project), members in groups.items():
-        order_members(members)
-        # A boss leads its own block whatever the activity, and the team it
-        # dispatches to follows underneath: the block then has the shape of
-        # the team rather than being a flat list of eight equals.
-        for s in members:
-            s["reportsTo"] = bosses.get(s["name"], "")
-        leads = {s["name"] for s in members if s["boss"]}
-        members.sort(key=lambda s: (not s["boss"],
-                                    s["reportsTo"] not in leads))
-        branches = sorted({s["branch"] for s in members if s["branch"]})
-        blocks.append({
-            "alarms": sum(1 for s in members
-                          if s["flag"] in ("waiting", "stuck") or s["blocked"]),
-            "blocked": sum(1 for s in members if s["blocked"]),
-            "ready": sum(1 for s in members if s["flag"] == "ready"),
-            "project": project or "No project",
-            "orphan": not project,
-            "routines": routines,
-            "branches": branches,
-            "busy": sum(1 for s in members if s["status"] == "busy"),
-            "updatedAt": max(s["updatedAt"] for s in members),
-            "members": members,
-        })
-    names = config_value("names", {})
-    lines = config_value("lines", {})
-    blocks = [apply_overrides(b, names, lines) for b in blocks]
+    for group in groups.values():
+        order_members(group)
+        # A boss leads its own project whatever the activity, and the team it
+        # dispatches to follows underneath.
+        leads = {s["name"] for s in group if s["boss"]}
+        group.sort(key=lambda s: (not s["boss"],
+                                  bosses.get(s["name"], "") not in leads))
+    own = config_value("lines", {})
+    for s in everyone:
+        lay_own_line(s, own)
     pinned = config_value("pinned", [])
-    for b in blocks:
-        b["pinned"] = b["project"] in pinned
-    blocks = order_blocks(blocks, pinned)
-    columns = columns_of(blocks)
+    rank = {name: i for i, name in enumerate(pinned)}
+    ordered = sorted(groups.items(), key=lambda item: _project_order(item[0], item[1], rank))
+    return [s for _, group in ordered for s in group]
+
+
+def _project_order(key, group, rank):
+    """Where a project's sessions sit in `members`: the routines last, then
+    `No project`, then your pins in your order, then whatever wants you most."""
+    routines, project = key
+    return (routines,
+            not project,
+            rank.get(project or "No project", len(rank)),
+            -sum(1 for s in group if s["flag"] in ("waiting", "stuck") or s["blocked"]),
+            -sum(1 for s in group if s["flag"] == "ready"),
+            -sum(1 for s in group if s["status"] == "busy"),
+            -max(s["updatedAt"] for s in group))
+
+
+def roster(providers=None):
+    """The page's data: `columns` (the overview, one per project), the
+    header's `counts`, the `banners`, and `flags`.
+
+    `flags` is for what rings and what is forgotten: one row per session on
+    the machine, routines and finished sessions too, with the raw flag the
+    chime has always read. A tile may say less than its flag does; the chime
+    does not.
+    """
+    everyone = members(providers)
+    columns = columns_of(everyone)
     for s in everyone:
         s.pop("paths", None)
-    return {"blocks": blocks, "columns": columns, "counts": counts_of(columns),
-            "banners": banners_of(providers)}
+    return {"columns": columns, "counts": counts_of(columns),
+            "banners": banners_of(providers), "flags": flags_of(everyone)}
+
+
+def flags_of(everyone):
+    """What the chime and the server read of each session: who it is, the
+    flag the transcript gave it, and whether it wrote down what blocks it."""
+    return [{"key": s["key"], "id": s["id"], "name": s["name"],
+             "flag": s["flag"], "blocked": s["blocked"]}
+            for s in everyone]
 
 
 # A session idle this long, with nothing pending, is finished.
 FINISHED_AFTER = 120
 
 
-def columns_of(blocks):
+def columns_of(everyone):
     """What the overview page draws: one column per project, in display order.
 
-    The sessions come from the blocks, but the grouping is the overview's own
-    (`projects.place`): a project is what the person thinks of, not the
-    folder a block was keyed by. The page reads these and decides nothing of
-    its own. Routines are not on the page; their sessions stay in `blocks`,
-    which the chime reads.
+    The grouping is the overview's own (`projects.place`): a project is what
+    the person thinks of, not the folder a session runs in. The page reads
+    these and decides nothing of its own. Routines are not on the page; their
+    sessions stay in `flags`, which the chime reads.
     """
     folder_rule = functools.partial(resolve_project, shelves=config())
     names = config_value("names", {})
     own_lines = config_value("project_lines", {})
     pinned = config_value("pinned", [])
-    members = [m for b in blocks if not b["routines"] for m in b["members"]]
+    members = [m for m in everyone if not m["routine"]]
     by_key, follow = projects.place(members, folder_rule, config_value("assign", {}))
     grouped = {}
     for m in members:
@@ -897,7 +916,7 @@ def _column_name(project, names):
 
 def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines, finished_after):
     # A boss leads its column, whatever the activity: who leads before who
-    # works. The rest are in the order the blocks have always used.
+    # works. The rest go by `order_members`; a tie keeps the order `members` gave.
     rows = order_members(list(rows))
     rows.sort(key=lambda s: not s["boss"])
     name = _column_name(project, names)
@@ -1509,44 +1528,15 @@ def classify(status, quiet, after, in_flight=None, tool_after=20,
     return None
 
 
-def apply_overrides(block, names, lines):
-    """Lay your own labels over the generated ones.
+def lay_own_line(m, own):
+    """Lay your own line over the generated one, where you wrote one.
 
-    `project` stays the key everything else is stored against -- pins, names,
-    the lot -- so renaming a project never orphans its own pin. `label` is the
-    only thing the page reads.
+    `own` is `lines` in config.json: session key to words.
     """
-    block["label"] = names.get(block["project"], block["project"])
-    block["renamed"] = block["project"] in names
-    for m in block["members"]:
-        own = lines.get(m.get("key"))
-        # Only words are a line: a hand-edited number or blank is not one.
-        own = own if isinstance(own, str) and own.strip() else ""
-        m["overridden"] = bool(own)
-        m["own"], m["generated"] = own, m["title"]
-        if own:
-            m["title"] = own
-    return block
-
-
-def order_blocks(blocks, pinned):
-    """Pinned projects in the order you put them; the rest sort themselves.
-
-    A pin is muscle memory -- the two or three projects you look at every day
-    should not move because something else woke up. Everything unpinned still
-    floats liveliest-first underneath, and `No project` stays at the bottom
-    whatever happens.
-
-    Routines sit below even that. `No project` is asking you for something;
-    routines are asking for nothing and will be gone in a few minutes.
-    """
-    rank = {name: i for i, name in enumerate(pinned)}
-    return sorted(blocks, key=lambda b: (
-        b.get("routines", False),
-        b["orphan"],
-        rank.get(b["project"], len(rank)),
-        -b.get("alarms", 0),     # something needing you outranks something busy
-        -b.get("ready", 0),      # and something finished outranks something running
-        -b["busy"],
-        -b["updatedAt"],
-    ))
+    mine = own.get(m.get("key"))
+    # Only words are a line: a hand-edited number or blank is not one.
+    mine = mine if isinstance(mine, str) and mine.strip() else ""
+    m["overridden"] = bool(mine)
+    m["own"], m["generated"] = mine, m["title"]
+    if mine:
+        m["title"] = mine

@@ -42,6 +42,22 @@ class Base(unittest.TestCase):
         fleet.CONFIG.write_text(json.dumps(self.config))
         return fleet.roster(providers=[provider or Fake(sessions)])
 
+    def members(self, *sessions, provider=None):
+        """Every session as the round made it, in the order the overview is made from."""
+        fleet.CONFIG.write_text(json.dumps(self.config))
+        return fleet.members(providers=[provider or Fake(sessions)])
+
+    READ = ("key", "status", "flag", "blocked", "waitingFor", "n", "ask")
+
+    def heard(self, *sessions):
+        """What the chime reads of each session: its row in `flags`, whether
+        that rings (the raw flag is waiting or stuck, or it wrote down what
+        blocks it), and the fields the flag comes from."""
+        rows = self.members(*sessions)
+        return [{**f, "rings": f["flag"] in ("waiting", "stuck") or f["blocked"],
+                 **{k: m[k] for k in self.READ}}
+                for m, f in zip(rows, fleet.flags_of(rows))]
+
     def tile(self, *sessions, **kw):
         """The first tile of the first column."""
         return self.roster(*sessions, **kw)["columns"][0]["sessions"][0]
@@ -53,25 +69,22 @@ class Base(unittest.TestCase):
 
 
 class Columns(Base):
-    def test_the_roster_has_columns_beside_the_unchanged_blocks(self):
+    def test_the_roster_has_a_column_for_each_project_and_no_blocks(self):
         got = self.roster(session("a", "maple"), session("b", "orchard"))
-        self.assertEqual(sorted(b["project"] for b in got["blocks"]), ["maple", "orchard"])
+        self.assertNotIn("blocks", got)
         self.assertEqual(sorted(c["name"] for c in got["columns"]), ["Maple", "Orchard"])
 
-    def test_columns_come_in_the_order_of_the_blocks_with_no_project_last(self):
+    def test_columns_come_pinned_first_with_no_project_last(self):
         self.config = {"pinned": ["orchard", "maple"]}
         got = self.roster(session("a", "maple"), session("b", None),
                           session("c", "orchard"))
         self.assertEqual([c["name"] for c in got["columns"]],
                          ["Orchard", "Maple", "No project"])
-        self.assertEqual([b["project"] for b in got["blocks"]],
-                         ["orchard", "maple", "No project"])
 
-    def test_routines_are_in_blocks_for_the_chime_and_not_in_columns(self):
-        got = self.roster(session("a", "maple"),
-                          session("r", None, routine="nightly-report"))
-        self.assertEqual([b["project"] for b in got["blocks"]], ["maple", "Routines"])
-        self.assertEqual([c["name"] for c in got["columns"]], ["Maple"])
+    def test_routines_are_in_the_members_for_the_chime_and_not_in_columns(self):
+        sessions = (session("a", "maple"), session("r", None, routine="nightly-report"))
+        self.assertEqual([m["id"] for m in self.members(*sessions)], ["a", "r"])
+        self.assertEqual([c["name"] for c in self.roster(*sessions)["columns"]], ["Maple"])
 
     def test_a_column_names_its_project_and_keeps_the_raw_name(self):
         got = self.roster(session("a", "maple"))
@@ -140,14 +153,14 @@ class Tiles(Base):
                          ("waiting", "input needed"))
 
     def test_a_busy_session_gone_quiet_is_hung_on_the_tile_not_a_stuck_flag(self):
-        # The chime keeps the `stuck` flag (the blocks); the tile says Hung and for how long.
+        # The chime keeps the `stuck` flag (in `flags`); the tile says Hung and for how long.
         tile = self.tile(session("a", status="busy", quietFor=17.2))
         self.assertEqual((tile["flag"], tile["flagNote"]), (None, ""))
         self.assertEqual((tile["stuck"]["kind"], tile["stuck"]["reason"]), ("hung", "Not moving for 17 min"))
 
     def test_a_long_tool_call_is_no_flag_on_the_tile_but_a_sign(self):
         # The `tool` flag is replaced by the movement sign ("waiting on: ...,
-        # 34 min"); the chime still reads the flag from the blocks.
+        # 34 min"); the chime still reads the flag from `flags`.
         tile = self.tile(session("a", status="busy", quietFor=34.0, toolFor=34.0))
         self.assertEqual((tile["flag"], tile["flagNote"]), (None, ""))
         self.assertEqual(tile["movement"]["text"], "waiting on: a command, 34 min")
@@ -179,13 +192,13 @@ class Tiles(Base):
         self.assertFalse(tile["blocked"])
         self.assertEqual(tile["need"], "")
 
-    def test_making_the_columns_leaves_the_blocks_as_they_were(self):
+    def test_making_the_columns_leaves_the_members_as_they_were(self):
         self.asked("a", "Which database should I use?", 1)
-        blocks = self.roster(session("a", "maple"), session("b", None),
-                             session("r", None, routine="nightly-report"))["blocks"]
-        before = json.dumps(blocks, sort_keys=True)
-        fleet.columns_of(blocks)
-        self.assertEqual(json.dumps(blocks, sort_keys=True), before)
+        members = self.members(session("a", "maple"), session("b", None),
+                               session("r", None, routine="nightly-report"))
+        before = json.dumps(members, sort_keys=True)
+        fleet.columns_of(members)
+        self.assertEqual(json.dumps(members, sort_keys=True), before)
 
     def test_the_boss_leads_its_column_whatever_the_activity(self):
         got = self.roster(session("w", name="Mateo", status="busy", updatedAt=1790000900000),
