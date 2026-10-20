@@ -509,9 +509,9 @@ def overview_pass(browser):
     check("sessions in the order the server sent",
           page.locator('.ov-col[data-project="maple"] .tile').evaluate_all("els => els.map(e => e.dataset.sid)")
           == ["m1", "m2", "m3", "m4", "m5"])
-    check("the project card is its name, its state, then its movement strip and mix",
+    check("the project card is its name, its state row, then its movement strip and mix",
           page.locator('.ov-col[data-project="maple"] .ov-head > *')
-          .evaluate_all("els => els.map(e => e.className)") == ["ov-top", "ov-state", "ov-mv"])
+          .evaluate_all("els => els.map(e => e.className)") == ["ov-top", "ov-row", "ov-mv"])
     check("one tile per session", page.locator(".tile").count() == 8, page.locator(".tile").count())
 
     t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
@@ -1042,7 +1042,8 @@ def card_pass(browser):
                    (BOMB, BOMB, [S("b1", "Quill", "idle")]),
                    ("", "No project", [S("n1", "Rosalie", "idle")])])
     column(body, "checkout", kind="track", raw="checkout",
-           track={"status": "OPEN", "progress": {"done": 3, "total": 7, "text": "3 of 7", "met": False}},
+           track={"status": "OPEN", "progress": {"done": 3, "total": 7, "text": "3 of 7", "met": False,
+                                                 "eta": {"text": "ETA Thu 23", "why": "2 boxes in 3 days"}}},
            context=ctx("goal", "Customers pay with a saved card.",
                        "Customers pay with a saved card. Nothing else changes."),
            notes={"query": "Checkout rework Customers pay with a saved card."})
@@ -1091,17 +1092,24 @@ def card_pass(browser):
           col("checkout").locator(".ov-prog").inner_text().startswith("3 of 7")
           and "%" not in col("checkout").locator(".ov-prog").inner_text()
           and col("checkout").locator(".ov-bar i").evaluate("e => Math.round(e.offsetWidth / e.parentElement.offsetWidth * 100)") == 43)
+    check("an open track says when it will be done, and on what pace",
+          col("checkout").locator(".ov-eta").inner_text() == "ETA Thu 23"
+          and col("checkout").locator(".ov-eta").get_attribute("title") == "2 boxes in 3 days"
+          and col("shipped").locator(".ov-eta").count() == 0)
+    check("the name has the first row to itself; status, pin and merge share the second",
+          col("checkout").locator(".ov-top > *").count() == 1
+          and col("checkout").locator(".ov-row > .ov-state + .ov-tag + .ov-tools .ov-pin").count() == 1)
     check("a met track says done and its bar is full",
           col("shipped").locator(".ov-prog").inner_text().startswith("done")
           and col("shipped").locator(".ov-bar i").evaluate("e => e.offsetWidth === e.parentElement.offsetWidth"))
     check("a repository has no progress bar", col("repo:example.com/alice/loom").locator(".ov-bar").count() == 0)
-    check("the context line sits under the name, whole on hover",
-          col("checkout").locator(".ov-ctx").inner_text() == "Customers pay with a saved card."
+    check("the context line sits under the name, whole",
+          col("checkout").locator(".ov-ctx").inner_text() == "Customers pay with a saved card. Nothing else changes."
           and col("checkout").locator(".ov-ctx").get_attribute("title")
           == "Customers pay with a saved card. Nothing else changes.")
-    check("the card is the name, its state, the line, the progress, then the strip",
+    check("the card is the name, its state row, the line, the progress, then the strip",
           col("checkout").locator(".ov-head > *").evaluate_all("els => els.map(e => e.className.split(' ')[0])")
-          == ["ov-top", "ov-state", "ov-ctx", "ov-prog", "ov-mv"])
+          == ["ov-top", "ov-row", "ov-ctx", "ov-prog", "ov-mv"])
     check("a guess is greyed and offers to add a line; a source does not",
           "add a line" in col("folder:orchard").locator(".ov-ctx.maybe").inner_text()
           and col("checkout").locator(".ov-ctx.maybe").count() == 0

@@ -252,6 +252,7 @@ class Tracks(Cards):
                         f"# Objective\n_Status: OPEN_\n\n**Outcome:** Customers pay.\n\n{opening}\n"
                         f"- [x] one\n- [ ] two\n- [x] three\n\n{after}")
                     got = self.track(nogoal=True)["track"]
+                    got["progress"].pop("eta")
                     self.assertEqual(got["progress"],
                                      {"done": 2, "total": 3, "text": "2 of 3", "met": False})
 
@@ -354,6 +355,8 @@ class Tracks(Cards):
 
     def test_a_track_shows_its_status_word_and_how_many_boxes_are_ticked(self):
         got = self.track(status="PAUSED \u2014 waiting on the owner")["track"]
+        # First sight: no box ticked while watched, so no pace (tests/test_pace.py has the rest).
+        self.assertEqual(got["progress"].pop("eta")["text"], "ETA after the next box")
         self.assertEqual(got, {"status": "PAUSED",
                                "progress": {"done": 1, "total": 3, "text": "1 of 3", "met": False}})
 
