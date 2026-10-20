@@ -629,6 +629,16 @@ def overview_pass(browser):
     page.wait_for_timeout(300)
     check("a tile with nowhere to go is marked seen, not jumped",
           fake.of("/api/seen") == [{"key": "m5"}] and len(fake.of("/api/jump")) == n, fake.posts)
+    opener = lambda project: page.locator(f'.ov-col[data-project="{project}"] .ov-head .ov-open')
+    check("the card's open button is the boss's, or the first session's when there is no boss",
+          [opener(p).get_attribute("data-sid") for p in ("maple", "pmd", "")] == ["m1", "p1", "o1"]
+          and opener("maple").locator("xpath=..").get_attribute("class") == "ov-row")
+    fake.answer["/api/jump"] = {"ok": True}
+    n = len(fake.of("/api/jump"))
+    opener("pmd").click()
+    page.wait_for_timeout(300)
+    check("the card's open button posts the boss's jump and nothing else",
+          fake.of("/api/jump")[n:] == [{"key": "p1"}] and fake.of("/api/seen") == [{"key": "m5"}], fake.posts)
 
     # Closed and reopen (the closed list revives; a search result reopens).
     fake.body = overview_fixture() | {"closed": CLOSED}

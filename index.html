@@ -129,6 +129,10 @@
   /* By hand: the name edits in place, the tools sit beside it and say nothing
      until they are needed. A pinned card is lit. */
   .ov-top input.inline { min-width:0; width:100%; font-weight:400; }
+  .ov-open { margin-left:auto; padding:0 6px; font-size:12px; font-weight:400; line-height:20px;
+             color:var(--accent); background:none; border-color:transparent; }
+  .ov-open:hover { border-color:var(--accent); }
+  .ov-open.none { color:var(--faint); }
   .ov-row { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; margin-top:2px; }
   .ov-tools { display:flex; align-items:center; gap:2px; flex:none; font-weight:400; }
   .ov-tools button, .ov-form button, .ov-merged button { padding:0 6px; font-size:12px; line-height:20px;
@@ -771,7 +775,7 @@ function mergedOf(c) {
 // and the tools share the second.
 function headOf(c, word) {
   const state = word ? `<span class="ov-state">${esc(word)}</span>` : "";
-  if (c.kind === "none") return `<div class="ov-top"><span class="ov-name">${esc(c.name)}</span></div><div class="ov-row">${state}</div>`;
+  if (c.kind === "none") return `<div class="ov-top"><span class="ov-name">${esc(c.name)}</span></div><div class="ov-row">${state}${openOf(c)}</div>`;
   // The neighbours are the cards on the page, not those a filter has hidden.
   const pins = SHOWN.filter(x => x.pinned);
   const at = pins.findIndex(x => x.project === c.project);
@@ -793,8 +797,21 @@ function headOf(c, word) {
         aria-pressed="${c.pinned ? "true" : "false"}">${c.pinned ? "★" : "☆"}</button>
       <button class="ov-merge" data-act="merge-form"
         title="merge all of it into another project; holds for sessions that start later">merge…</button>
-    </span>
+    </span>${openOf(c)}
   </div>`;
+}
+
+// The card opens the boss's terminal, or the first session's when the project
+// has no boss: the same jump as a click on that tile, answered on that tile.
+function openOf(c) {
+  const t = (c.sessions || []).find(x => (x.tags || []).includes("boss")) || (c.sessions || [])[0];
+  if (!t) return "";
+  const via = t.jump?.via;
+  const who = (t.tags || []).includes("boss") ? "the boss" : "the first session";
+  if (via !== "pane" && via !== "attach")
+    return `<span class="ov-open none" title="${esc(who)}: ${esc(t.jump?.reason || "no terminal")}">no terminal</span>`;
+  return `<button class="ov-open can" data-sid="${esc(t.key)}" title="open ${esc(who)}, ${esc(t.name || named(t))}">${
+    via === "pane" ? "open" : "attach"} ↗</button>`;
 }
 
 // The card's movement: the strip the server summed over the project's
@@ -1057,7 +1074,7 @@ function tileFlag(t) {
 // takes the focus off this page, and a browser throttles a page it is not
 // showing -- feedback that waits for the response is feedback you never see.
 document.getElementById("main").addEventListener("click", async ev => {
-  const el = ev.target.closest(".tile, .pill");
+  const el = ev.target.closest(".tile, .pill, .ov-open.can");
   if (!el || ev.target.closest(".hand, .move, .keep, .ov-form")) return;   // these pick; none of them jumps
   const post = (path, body) => fetch(path, {
     method: "POST",
