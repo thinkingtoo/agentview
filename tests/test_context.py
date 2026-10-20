@@ -513,25 +513,25 @@ class Repositories(Cards):
     def test_a_readme_of_thirty_thousand_one_character_paragraphs_costs_a_card_nothing(self):
         for name in ("README.md", "AGENTS.md", "CLAUDE.md"):
             self.put(name, ",\n\n" * 33_334)
-        started = time.monotonic()
+        started = time.process_time()      # CPU seconds, here and below: load delays a test, it does not make it work more
         self.assertEqual(self.line()["source"], "guess")
-        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertLess(time.process_time() - started, 1.0)
 
     def test_a_run_of_opening_angle_brackets_is_no_words_and_costs_nothing(self):
         # A tag pattern that reads past every `<` to the end for the `>` it never finds
         # costs the square of the run; a paragraph is cut at 1500 before it, a hundred
         # thousand here is the whole text to make the difference plain.
-        started = time.monotonic()
+        started = time.process_time()
         self.assertTrue(context.wordless("<" * 100_000))
-        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertLess(time.process_time() - started, 1.0)
 
     def test_a_badge_followed_by_a_great_many_blanks_costs_nothing(self):
         # The break between items costs the square of a run of blanks, so blanks go first;
         # a paragraph is cut at 1500 before this, twenty thousand make the difference plain.
         badge = "[![build](https://ci.example/badge.svg)](https://ci.example)"
-        started = time.monotonic()
+        started = time.process_time()
         self.assertTrue(context.wordless(badge + " " * 20_000))
-        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertLess(time.process_time() - started, 1.0)
 
     def test_files_a_worktree_repeats_are_read_into_a_line_once_per_card(self):
         # A repository with worktrees holds the same README, AGENTS.md and CLAUDE.md in each
@@ -613,10 +613,20 @@ class Repositories(Cards):
     def test_a_link_with_a_long_chain_of_targets_is_followed_in_the_kernel(self):
         (self.loom / "CLAUDE.md").write_text("Prints reports.\n")
         (self.loom / "README.md").symlink_to(self.chain(self.loom, "../CLAUDE.md"))
-        started = time.monotonic()
-        for _ in range(40):
-            self.assertEqual(self.line()["line"], "Prints reports.")
-        self.assertLess(time.monotonic() - started, 1.0)           # a walk in Python: 40 x 50 ms and more
+        # Counted, not timed: the kernel follows the chain in the one open, a walk in Python
+        # reads the chain's thousands of path components one call at a time (about 30,000 a
+        # lookup, 1,200,000 over these forty; the lookup itself makes about 25).
+        calls = []
+        def counted(real):
+            def call(*args, **kwargs):
+                calls.append(1)
+                return real(*args, **kwargs)
+            return call
+        with mock.patch.multiple(os, **{name: counted(getattr(os, name))
+                                        for name in ("lstat", "stat", "readlink", "open")}):
+            for _ in range(40):
+                self.assertEqual(self.line()["line"], "Prints reports.")
+        self.assertLess(len(calls), 40 * 200)
 
     def test_a_folder_of_case_variants_of_a_wanted_name_that_are_links_out_costs_a_bounded_number_of_looks(self):
         (self.disk / "outside.txt").write_text(self.KEY)
@@ -1117,10 +1127,10 @@ class Repositories(Cards):
 
     def test_a_text_that_opens_with_dashes_and_forty_thousand_blank_lines_costs_nothing(self):
         # Past the 20,000 a file is read for; the text itself, as the first_prose of any text.
-        started = time.monotonic()
+        started = time.process_time()
         self.assertEqual(context.first_prose("---\n" + "\n" * 40_000 + "Loom prints reports.\n"),
                          "Loom prints reports.")
-        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertLess(time.process_time() - started, 1.0)
 
     def test_front_matter_is_still_taken_out(self):
         self.put("README.md", "---\ntitle: Loom\ntags: [a]\n---\nPrints reports.\n")
