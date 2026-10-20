@@ -63,7 +63,9 @@ and a repository that share a name stay two projects; `pinned`, `names` and
 ## What a project is about
 
 The name has the card's first row to itself; the state word, a track's status,
-the pin and merge share the second. Under them the card says what the project
+the pin and merge share the second, with "open ↗" at its end: the boss's
+terminal, or the first session's when the project has no boss (the same jump as
+a click on that tile, and its answer shows on that tile). Under them the card says what the project
 is about, the whole text (up to 1,500 characters). The first of these that exists:
 
 1. **Your own line**, written in place on the card (click the line) and kept in
