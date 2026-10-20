@@ -340,6 +340,139 @@ pinned). A pinned idle session is an ordinary idle tile. The pin is in
 provider answered no longer lists the session (so a missed poll does not unpin
 anything).
 
+A command a session leaves for you in its line gets a **copy** button. The
+session-line hook asks for plain text (single quotes, no backticks) and says
+where a command goes: inside double quotes, or after `$ ` at the end of the ask,
+and how a single quote in either field is written (`'\''`, since the `did` and
+the ask both sit inside the hook's own single quotes).
+That is a request, not a rule, so `ask` is still free text and `ask_commands.py`
+still guesses: text in quotes (straight, curly, « » or backticks), or after a
+`$ `, that reads as a command. Two tiers keep prose out: tools with fixed
+subcommands (`git`, `docker`, `npm`, `make`, `brew` ...) need one of theirs,
+so "git status" gets a button and "git history" does not; every other known
+program (`ls`, `rm`, `psql`, `find`, `cd`, `echo`, `ssh`, `python`, `claude`)
+needs a sign no plain sentence has after it: a flag, a path, a dot between
+letters, a bare number, a string, an `@` or `=`. `sudo` and its kind are
+judged by the command after them. A path starts a command only when it names a
+script (`./deploy.sh`) or a flag follows, because a path with spaces in it
+(`~/Google Drive/My Drive`) is a name. `VAR=1 cmd` counts when a command follows it ("N=12 users" does not). After a
+`$` the same evidence is needed, because `$` is also money and maths in a
+sentence ("the $ diff or the % diff", "in $ per-seat"); a path is a program by
+itself, and a program of the project's own (`maple-sync`) needs a script name or
+a flag, path or other sign after it.
+
+A `$` command is offered only when it is the whole of its line: nothing but
+the sentence's own full stop, `?` or `!` stands after it. Where it ends is read
+from a comma, a spaced em or en dash, a bracket opened after a space, a closing
+» or ”, a full stop after a word, a run of dots before a capital letter, or a
+`?` or `!`; none of those counts inside a quoted
+argument, after a flag with a quote or another flag behind it (`-F, '{print}'`),
+in `find ! -name x`, or as the `.` or `..` of a command. When words stand after
+the end, nothing is offered, because the end cannot be told from a comma that
+belongs to the command. A command that ends in a dot the session may have meant
+as its full stop (`rm -rf ~/.cache/maple/*.`, `cd ~.`, `pip install -e ..`) is
+not offered either; `-e .` and Go's `./...` are. Only the last `$` command of a
+line can be offered, because the words between two prompts ("make build and $
+make test") could be an argument of the first. Whatever stands after a `$`, or
+between quotes, claims every quote inside it, so a command the lists do not
+know (`fly ssh console -C "rm -rf /data"`) never has its argument offered as a
+command of its own.
+
+A quote opens after a space, a bracket, a colon or a comma and closes before a
+space or punctuation: one glued to a word or an `=` (`--title="x"`) is part of
+an argument. When a quote mark stands somewhere that no pair claims (a quote
+never closed, a line cut inside one), which marks open and which close is not
+known, and no quoted command is offered on the line; an apostrophe at the end
+of a word (`users'`, `po'`) only doubts the single quotes. A quote after a
+program that runs what it is given (`ssh`, `watch`, `timeout`, `docker`,
+`tmux` ...) in the same clause is that program's argument, meant for another
+shell, and so is one right after a flag; neither is a command of its own.
+Between `« »` a space each side is how French sets it.
+
+What always holds, on any text: what a button copies is a piece of the ask,
+stripped, as the store holds it (the hook folds every run of whitespace into
+one space, so two spaces inside a quoted argument are copied as one), markup in
+it is shown as text and never run, the guesser does not raise, and its time
+stays bounded (a text longer than any line can be, 400 characters, offers
+nothing). A wrong guess is a different
+thing: where a command ends and which words are one cannot always be told, so
+the shapes below are named and accepted. A wrong guess on a line a session
+really wrote is a bug; on a shape listed here it is a known limit.
+
+Known limits, accepted:
+
+- A command named bare, with no quote and no `$` (`run git status and tell
+  me`), gets no button: a sentence that holds a command cannot be told from one
+  that does not, and the hook asks for the quotes or the `$ ` to say which it is.
+  On one day of real asks, before the hook asked for them, 76 of 1,747 distinct
+  asks named a command that way.
+- A single quote in the ask or in the `did` reaches the store whole only if the
+  session writes it as the hook says (`'\''`); that is the session's doing, and
+  nothing in the page can see it done wrong. Written correctly, a command with paired single
+  quotes (`find . -name '*.md'`, `git commit -m 'fix the build'`, a `curl -H '...'`
+  with `$(...)` inside) is stored byte for byte, nothing in it expanded or run,
+  and is offered; a command with a lone apostrophe (`echo don't panic`) gets no
+  button, as before (to a shell, `it's` opens a quote). Written bare, in either field, a single
+  quote ends the hook's own quoting, and bash takes the quote marks out
+  (`find . -name *.md`), runs what a `$(...)` inside holds or what follows a `;`
+  in the session's own shell (a bare apostrophe in the `did`, "the parser's bug",
+  shifts the quotes of the ask behind it), or makes `team-line` refuse the line.
+- A program the lists do not know (`tiroir-work next` in quotes) gets no
+  button, and neither does a known tool with a subcommand its list lacks
+  (`"npm login"`, `"git lfs pull"`) or Claude Code's `!` prefix
+  (`"! ssh-add ~/.ssh/id_maple"`). A title that starts with a tool's name and a
+  sign (`"python 3.12"`), or with a tool and one of its own subcommands
+  (`"git rebase workflow"`, `"pip install problems"`), gets one.
+- A `$` command with no sentence end after it runs on into the words that
+  close the sentence (`Run $ git push origin dev now?` offers `git push origin
+  dev now`; a colon or a semicolon after it does the same, and languages that
+  put the verb last, Dutch above all, always do: `Kun je $ git push origin dev
+  draaien?` offers `git push origin dev draaien`; a program that takes one word,
+  `make test now`, is offered nothing). A word that is both a program and a word of a sentence after a
+  `$` (`$ diff` as in "$ diff or % diff") is judged like a quoted one: it
+  needs a sign, and money prose with a hyphenated word and a number after it
+  (`$ per-seat price be 12 or 15`) passes.
+- A quoted argument is told from a command only after the programs listed
+  above, and only within the six words before it, the program among them:
+  `ssh` with six or more words of options before the quote, a program that runs a string but is not
+  listed (`pm2 start "npm run start"`, `npx concurrently "..."`,
+  `git submodule foreach '...'`, `hyperfine`, `trap`, `screen`), and a quoted
+  argument of a program that runs nothing (`echo '...' >> ~/.bashrc`,
+  `ps aux | grep "node server.js"`, `git config core.sshCommand "..."`) are
+  offered as commands.
+- Sentence punctuation written inside the closing quote, the American way
+  (`"git push origin dev."`), stays on the command. `"pip install -e ."` and
+  `"git add ."` are right as they are.
+- A mark that closes a `$` command without being a sentence end stays on it:
+  `*`, `_`, `’` and ` |`; and a Python dunder at the end of one
+  (`$ rm -rf tests/__pycache__`) is read as a markdown closer and cut to
+  `tests/__pycache`.
+- The hook folds a command's lines into one, so a heredoc (`<<EOF`) or a `\`
+  continuation is offered as a one-line command that is not the one written.
+- A session's line file, its turn file or its kept `did` (the three files the
+  hook keeps for it) behind a filesystem that has stopped answering (a link
+  into a network mount that went away) is waited on for half a second, once, and
+  reads as no line until the mount answers. The read stays out on a thread of its
+  own and cannot be given up on, so a process that ends while it is out ends when
+  the mount answers or is cut loose (`fusermount3 -u -z`). The other files the
+  page reads (`config.json`, `seen.json`, a repository's `.git/config`) are not
+  bounded this way.
+
+What is not offered, so that half a command is never one click away: a command
+cut by the line's length, one with a quote left open, a bracket that closes
+something outside it, an apostrophe (to a shell, `it's` opens a quote), a backtick (pasted, it would run what it holds), a quote
+that holds an escaped quote or a quote of its own kind, a quote with a space
+inside against its marks (two phrases mispaired), a quoted command that ends in
+a comma, a quote right after a flag (`sh -c "rm -rf x"`: the argument of that
+flag, meant for another shell), and the quotes inside any of these. `20 $` is an amount and `$5` is
+money, never a prompt. Only the session's own line is guessed on, the one it
+wrote as its one thing left. Words read out of its last message are shown as
+before and get no button: reading them takes out `*`, `_`, backticks and `#`,
+so a command in them is not the command the session wrote. The tile carries
+the list as `guessedCommands`, and the page prints one row per command with its
+own button. Copying puts the text on the clipboard and sends nothing to the
+server; approving stays in the session's pane.
+
 ## After a reboot
 
 tmux-resurrect brings tmux back, but every pane that ran Claude comes back as
