@@ -16,7 +16,7 @@ from providers.base import Provider
 # Every field index.html reads off a member, as of 2026-09-22 -- the page
 # indexes them without guards, so a missing one is a blank row or a crash.
 PAGE_FIELDS = {
-    "key", "provider", "id", "flag", "status", "name", "reportsTo", "title",
+    "key", "provider", "id", "flag", "status", "name", "title",
     "suggestion", "routine", "prompt", "pid", "n", "boss", "ask", "waitingFor",
     "updatedAt", "tmux", "team", "startedAt", "said", "quietFor", "overridden",
     "kind", "doing", "did", "cwd", "canJump", "blocked", "toolFor", "branch",
@@ -50,8 +50,8 @@ class Normalization(unittest.TestCase):
 
     def test_a_minimal_session_carries_every_field_the_page_reads(self):
         row = self.rows(minimal())[0]
-        # `reportsTo` and `overridden` are laid on by `roster()`, below.
-        self.assertEqual(PAGE_FIELDS - set(row), {"reportsTo", "overridden"})
+        # `overridden` is laid on by `members()`, below.
+        self.assertEqual(PAGE_FIELDS - set(row), {"overridden"})
         self.assertEqual(row["key"], "fake:s1")
         self.assertEqual(row["provider"], "fake")
         self.assertEqual(row["project"], "maple")
@@ -61,12 +61,13 @@ class Normalization(unittest.TestCase):
         real = fleet.sessions
         fleet.sessions = lambda providers=None: rows
         try:
-            blocks = fleet.roster()
+            members = fleet.members()
+            roster = fleet.roster()
         finally:
             fleet.sessions = real
-        self.assertEqual(blocks[0]["members"][0]["key"], "fake:s1")
-        self.assertIn("overridden", blocks[0]["members"][0])
-        self.assertIn("reportsTo", blocks[0]["members"][0])
+        self.assertEqual(members[0]["key"], "fake:s1")
+        self.assertIn("overridden", members[0])
+        self.assertEqual([t["key"] for c in roster["columns"] for t in c["sessions"]], ["fake:s1"])
 
     def test_defaults_are_the_empty_kind_of_each_field(self):
         row = self.rows(minimal())[0]
@@ -139,6 +140,64 @@ class Capabilities(unittest.TestCase):
                                 updatedAt=int(time.time() * 1000) - 600000),
                         caps={"waiting"})[0]
         self.assertEqual(row["flag"], "waiting")
+
+
+class Shared(unittest.TestCase):
+    """The two small checks every provider field goes through: a time, and a
+    whole number. One copy each, used by the reader and by the core."""
+
+    def test_a_whole_number_is_one_and_a_bool_is_not(self):
+        from providers import base
+        for good in (0, 5, -3, 10 ** 30):
+            self.assertEqual(base.whole_number(good), good)
+        for junk in (True, False, 1.5, 2.0, "5", None, [5], float("nan")):
+            with self.subTest(junk=junk):
+                self.assertIsNone(base.whole_number(junk))
+
+    def test_a_time_in_milliseconds_is_a_positive_number_below_the_year_5000(self):
+        from providers import base
+        self.assertEqual(base.milliseconds(1792263600000), 1792263600000)
+        self.assertEqual(base.milliseconds(1792263600000.9), 1792263600000)
+        for junk in (True, "tomorrow", None, [1], {"a": 1}, 0, -5, float("nan"), float("inf"),
+                     base.MAX_MS, 10 ** 30, 10 ** 400):
+            with self.subTest(junk=junk):
+                self.assertIsNone(base.milliseconds(junk))
+
+    def test_a_time_in_seconds_comes_back_in_milliseconds(self):
+        from providers import base
+        self.assertEqual(base.milliseconds(1792263600, seconds=True), 1792263600000)
+        self.assertEqual(base.milliseconds(1792263600.5, seconds=True), 1792263600500)
+        for junk in (True, "x", 0, -1, float("inf"), 10 ** 12, 10 ** 400):
+            with self.subTest(junk=junk):
+                self.assertIsNone(base.milliseconds(junk, seconds=True))
+
+    def test_a_number_a_provider_cannot_mean_is_none_and_never_an_exception(self):
+        # One bad value from one provider must not break the round for all of them.
+        for junk in (float("nan"), float("inf"), float("-inf"), 10 ** 400, -(10 ** 400)):
+            with self.subTest(junk=junk):
+                self.assertIsNone(fleet._minutes(junk))
+                self.assertIsNone(fleet._age(junk))
+                self.assertEqual(fleet._int(junk), 0)
+        self.assertEqual(fleet._minutes(3), 3.0)
+        self.assertEqual(fleet._minutes(-3.5), -3.5)
+        self.assertEqual(fleet._int(7.9), 7)
+        self.assertEqual(fleet._int(2 ** 53), 2 ** 53)
+        self.assertEqual(fleet._int(2 ** 53 + 1), 0)         # more than a float holds exactly
+
+    def test_a_roster_survives_every_number_field_holding_one(self):
+        for junk in (float("nan"), float("inf"), 10 ** 400):
+            with self.subTest(junk=junk):
+                row = minimal(quietFor=junk, subQuiet=junk, toolFor=junk, shellCpuAgo=junk,
+                              updatedAt=junk, startedAt=junk, pid=junk, status="busy",
+                              bgTasks=[{"label": "x", "since": junk}])
+                got = fleet.roster(providers=[Fake([row])])
+                self.assertEqual([f["key"] for f in got["flags"]], ["fake:s1"])
+
+    def test_the_cut_of_what_an_error_says_has_one_number(self):
+        import fleet
+        from providers import base, claude
+        self.assertEqual(fleet.FAILURE_LEN, base.FAILURE_LEN)
+        self.assertFalse(hasattr(claude, "FAILURE_LEN"))
 
 
 if __name__ == "__main__":

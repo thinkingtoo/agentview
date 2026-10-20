@@ -5,6 +5,7 @@ are made up (test_archive.py's kettle), never real ones.
 """
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -403,6 +404,7 @@ class Asking(unittest.TestCase):
             {"result": "About it.\nDone.", "total_cost_usd": 0.004, "is_error": False})
         done = subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
         home = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, home, True)
         with mock.patch.object(archive.subprocess, "run", return_value=done) as run, \
                 mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(home), "TMUX": "x", "TMUX_PANE": "%1",
                                               "CLAUDE_CODE_CHILD_SESSION": "1",
@@ -460,7 +462,8 @@ class Asking(unittest.TestCase):
                     ("not json", secret), ("", "")):
                 done = subprocess.CompletedProcess([], 1, stdout=stdout, stderr=stderr)
                 with mock.patch.object(archive.subprocess, "run", return_value=done), \
-                        mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tempfile.mkdtemp()}):
+                        tempfile.TemporaryDirectory() as config, \
+                        mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": config}):
                     with self.assertRaises(archive.Failed) as ctx:
                         archive.ask_model(prompt)
                 message = str(ctx.exception)
@@ -477,14 +480,16 @@ class Asking(unittest.TestCase):
             done = subprocess.CompletedProcess([], 1, stdout=json.dumps(
                 {"is_error": True, "result": said_by_claude}), stderr="")
             with mock.patch.object(archive.subprocess, "run", return_value=done), \
-                    mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tempfile.mkdtemp()}):
+                    tempfile.TemporaryDirectory() as config, \
+                    mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": config}):
                 with self.assertRaisesRegex(archive.Failed, label):
                     archive.ask_model("some excerpt of a conversation about kettles")
 
     def test_a_timeout_and_a_missing_binary_are_failures_too(self):
         for exc in (subprocess.TimeoutExpired("claude", 1), FileNotFoundError("claude")):
             with mock.patch.object(archive.subprocess, "run", side_effect=exc), \
-                    mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": tempfile.mkdtemp()}):
+                    tempfile.TemporaryDirectory() as config, \
+                    mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": config}):
                 with self.assertRaises(archive.Failed):
                     archive.ask_model("x")
 
@@ -568,6 +573,7 @@ class OffThePage(unittest.TestCase):
 
     def setUp(self):
         base = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, base, True)
         self.cfg, self.proc = base / "claude", base / "proc"
         (self.cfg / "sessions").mkdir(parents=True)
         self.proc.mkdir()

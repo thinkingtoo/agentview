@@ -6,6 +6,7 @@ reads the same file, so the badge means what the hooks mean: a registered
 boss. A session that only typed `/boss` and never registered is not one.
 """
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -17,9 +18,10 @@ from providers import claude
 SID = "11111111-1111-1111-1111-111111111111"
 
 
-class Marker(unittest.TestCase):
+class Fixture(unittest.TestCase):
     def setUp(self):
         self.cfg = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.cfg, True)
         self.markers = self.cfg / "pm" / ".boss-sessions"
         self.cwd = "/work/demo"
         self.transcripts = self.cfg / "projects" / "-work-demo"
@@ -32,6 +34,8 @@ class Marker(unittest.TestCase):
     def transcript(self, *lines, sid=SID):
         (self.transcripts / f"{sid}.jsonl").write_text("\n".join(lines) + "\n")
 
+
+class Marker(Fixture):
     def test_a_session_with_a_marker_is_a_boss(self):
         self.markers.mkdir(parents=True)
         (self.markers / SID).write_text("lead-engine\n")
@@ -64,6 +68,41 @@ class Marker(unittest.TestCase):
                         '"id":"t1","name":"SendMessage","input":{"to":"Rosalie",'
                         '"message":"go"}}]}}')
         self.assertEqual(claude.session(self.rec(), self.cfg)["team"], ["Rosalie"])
+
+
+class Track(Fixture):
+    """The marker's content is the boss's track: the name of its tracker."""
+
+    def test_a_boss_hands_over_the_track_its_marker_names(self):
+        self.markers.mkdir(parents=True)
+        (self.markers / SID).write_text("lead-engine\n")
+        self.assertEqual(claude.session(self.rec(), self.cfg)["track"], "lead-engine")
+
+    def test_a_session_that_is_no_boss_has_no_track(self):
+        self.assertEqual(claude.session(self.rec(), self.cfg)["track"], "")
+
+    def test_a_marker_left_by_a_session_that_is_gone_gives_another_session_no_track(self):
+        self.markers.mkdir(parents=True)
+        (self.markers / "99999999-9999-9999-9999-999999999999").write_text("old-track\n")
+        got = claude.session(self.rec(), self.cfg)
+        self.assertEqual((got["boss"], got["track"]), (False, ""))
+
+    def test_a_marker_that_names_nothing_is_a_boss_with_no_track(self):
+        self.markers.mkdir(parents=True)
+        (self.markers / SID).write_text("")
+        got = claude.session(self.rec(), self.cfg)
+        self.assertEqual((got["boss"], got["track"]), (True, ""))
+
+    def test_only_the_first_line_of_a_long_marker_is_read(self):
+        self.markers.mkdir(parents=True)
+        (self.markers / SID).write_text("lead-engine\n" + "x" * 100_000)
+        self.assertEqual(claude.session(self.rec(), self.cfg)["track"], "lead-engine")
+
+    def test_a_symlinked_marker_names_no_track(self):
+        self.markers.mkdir(parents=True)
+        (self.cfg / "elsewhere").write_text("lead-engine\n")
+        (self.markers / SID).symlink_to(self.cfg / "elsewhere")
+        self.assertEqual(claude.session(self.rec(), self.cfg)["track"], "")
 
 
 if __name__ == "__main__":

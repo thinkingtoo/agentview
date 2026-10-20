@@ -12,11 +12,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import archive
+import context
 import embedder
+import finished
 import fleet
+import hand
 import jump
 import lines
 import log
+import notes
+import projects
 import providers
 import seen
 import snapshot
@@ -149,13 +154,17 @@ def reopen(sid):
 
 def _reopen(sid):
     key = f"claude:{sid}"
-    hit = fleet.look(key)
+    hit = fleet.find(key)
     if hit:
         provider, session = hit
         done = fleet.jump_to(provider, session)
+        if done.get("ok") and done.get("did") != "opening":
+            fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"), name=session.get("name"),
                   source="search", **done)
-        return {**done, "did": "jumped"}
+        # Attaching a background session may answer "opening": a tab is on its
+        # way and nothing is reached yet, which "jumped" would claim.
+        return {"did": "jumped", **done}
     if snapshot.starting(sid) or time.time() - _OPENING.get(sid, 0) < OPENING_GRACE:
         return {"ok": True, "did": "opening"}
     _snapshots()
@@ -258,8 +267,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "seen", "order", "name", "line", "assign", "hold", "chime", "restore", "snapshot", "revive",
-              "dismiss", "reopen", "ticket")
+    ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "merge", "chime", "restore",
+              "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep")
 
     def do_POST(self):
         if not self._local():
@@ -295,12 +304,31 @@ class Handler(BaseHTTPRequestHandler):
     def _seen(self, body):
         """You looked. That is all a click on a row without a terminal means,
         and it is enough: the tick goes, the count comes down."""
-        key = body.get("key")
-        if not isinstance(key, str):
-            return self.send_error(400, "expected {key}")
-        if not fleet.look(key):
+        key, stop = body.get("key"), body.get("stop")
+        # `stop` is the overview's tile saying which stop's handover it showed;
+        # a click without one only looks, and reads nothing.
+        if not isinstance(key, str) or (stop is not None and (isinstance(stop, bool) or not isinstance(stop, int))):
+            return self.send_error(400, "expected {key, stop?}")
+        if not fleet.look(key, stop):
             return self.send_error(404, "no such live session")
         self._send(json.dumps({"ok": True}), "application/json")
+
+    def _keep(self, body):
+        """Pin a finished session open as a full tile, or let it shrink again.
+        (`keep`, because `/api/pin` is the project's pin: this is the glossary's
+        "Pin (a session)".)
+
+        Kept with the seen marks, not in config.json: it is a click, and it
+        ends with the session (`finished.forget`, on every poll). Only a
+        session that is alive can be pinned, the way only one can be jumped to.
+        """
+        key, pinned = body.get("key"), body.get("pinned")
+        if not isinstance(key, str) or not isinstance(pinned, bool):
+            return self.send_error(400, "expected {key, pinned: true|false}")
+        if not fleet.find(key):
+            return self.send_error(404, "no such live session")
+        finished.pin(key, pinned)
+        self._send(json.dumps({"ok": True, "pinned": pinned}), "application/json")
 
     def _jump(self, body):
         key = body.get("key")
@@ -308,33 +336,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400, "expected {key}")
         # The key names a provider and a session; the provider says whether
         # it is still alive. Only ever act on one that is.
-        hit = fleet.look(key)          # looking is looking, whatever comes next
+        hit = fleet.find(key)
         if not hit:
             return self.send_error(404, "no such live session")
         provider, session = hit
         done = fleet.jump_to(provider, session)
+        # Seen once the terminal was reached, not when the click arrived: a
+        # jump that failed leaves what the session said unread, with the
+        # reason on its tile, until the next poll. `did: opening` is a click
+        # that found a tab opened moments ago and reached nothing itself.
+        if done.get("ok") and done.get("did") != "opening":
+            fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"),
                   name=session.get("name"), **done)
         self._send(json.dumps(done), "application/json")
 
-    def _hold(self, body):
-        """Freeze the order of the cards, or let them sort themselves again.
-
-        Lives in config.json with the pins and the labels: it is a decision
-        about how you want to read the page, and it should still be true
-        tomorrow.
-        """
-        hold = body.get("hold")
-        if not isinstance(hold, bool):
-            return self.send_error(400, "expected {hold: true|false}")
-        fleet.write_config({"hold": hold})
-        self._send(json.dumps({"ok": True, "hold": hold}), "application/json")
-
     def _chime(self, body):
         """Ring, or stay quiet, when a session starts waiting on you.
 
-        Next to `hold` for the same reason: it is how you want the page to
-        behave, and it should still be true tomorrow.
+        Lives in config.json with the pins and the labels: it is how you want
+        the page to behave, and it should still be true tomorrow.
         """
         chime = body.get("chime")
         if not isinstance(chime, bool):
@@ -342,42 +363,65 @@ class Handler(BaseHTTPRequestHandler):
         fleet.write_config({"chime": chime})
         self._send(json.dumps({"ok": True, "chime": chime}), "application/json")
 
-    def _order(self, body):
-        pinned = body.get("pinned")
-        if not isinstance(pinned, list) or not all(isinstance(p, str) for p in pinned):
-            return self.send_error(400, "expected {pinned: [project, ...]}")
-        fleet.write_config({"pinned": pinned})
-        self._send(json.dumps({"ok": True, "pinned": pinned}), "application/json")
-
     def _name(self, body):
         key, label = body.get("project"), body.get("label")
         if not isinstance(key, str) or not isinstance(label, str):
             return self.send_error(400, "expected {project, label}")
-        names = fleet.config_value("names", {})
         # An empty label is how you take a rename back.
-        names.pop(key, None) if not label.strip() else names.update({key: label.strip()})
-        fleet.write_config({"names": names})
-        self._send(json.dumps({"ok": True}), "application/json")
+        self._correct(lambda config: hand.rename(config, key, label))
 
     def _assign(self, body):
         key, project = body.get("key"), body.get("project")
         if not isinstance(key, str) or not isinstance(project, str):
             return self.send_error(400, "expected {key, project}")
-        project = project.strip()
-        assign = fleet.config_value("assign", {})
-        # Empty puts the session back where its directory says it belongs.
-        assign.pop(key, None) if not project else assign.update({key: project})
-        fleet.write_config({"assign": assign})
-        self._send(json.dumps({"ok": True, "project": project}), "application/json")
+        # Empty puts it back where its directory says it belongs. A key that
+        # names a project (`track:x`, `repo:…`) moves the whole project.
+        self._correct(lambda config: hand.move(config, key, project, body.get("was")), project=project.strip())
+
+    def _pin(self, body):
+        self._correct(lambda config: hand.pin(config, body.get("project"), body.get("action"),
+                                              body.get("with"), body.get("shown"), body.get("side")))
+
+    def _merge(self, body):
+        self._correct(lambda config: hand.merge(config, body.get("source"), body.get("target"), body.get("shown")))
+
+    def _correct(self, change, **answer):
+        """Make one correction to config.json -- alone, whatever else is being
+        written -- or say why it makes no sense and change nothing. A request
+        about a card another tab has changed since the page was drawn is 409:
+        the page reads the roster again."""
+        try:
+            fleet.update_config(change)
+        except hand.Stale as why:
+            return self.send_error(409, str(why))
+        except hand.Refused as why:
+            return self.send_error(400, str(why))
+        self._send(json.dumps({"ok": True, **answer}), "application/json")
+
+    def _context(self, body):
+        """Your own line for a project, kept under its identity. An empty one
+        takes it back, and the source the roster finds takes its place."""
+        project, text = body.get("project"), body.get("text")
+        if not isinstance(project, str) or not isinstance(text, str):
+            return self.send_error(400, "expected {project, text}")
+        if projects.from_identity(project) is None:
+            return self.send_error(400, "expected a project identity, like repo:host/owner/name")
+        text = context.squash(text)[:context.PARAGRAPH_MAX]
+        self._correct(lambda config: hand.line(config, project, text))
+
+    def _notes(self, body):
+        """A click on a card's notes link: one search of your notes."""
+        query = body.get("query")
+        if not isinstance(query, str):
+            return self.send_error(400, "expected {query}")
+        self._send(json.dumps(notes.search(query)), "application/json")
 
     def _line(self, body):
         key, text = body.get("key"), body.get("text")
         if not isinstance(key, str) or not isinstance(text, str):
             return self.send_error(400, "expected {key, text}")
         text = text.strip()
-        own = fleet.config_value("lines", {})
-        own.pop(key, None) if not text else own.update({key: text})
-        fleet.write_config({"lines": own})
+        fleet.update_config(lambda config: hand.put(config, "lines", key, text))
 
         # The tab in the terminal has to say the same thing, or you end up
         # hunting for a session whose tab still carries the old title. A
@@ -454,27 +498,28 @@ class Handler(BaseHTTPRequestHandler):
             # clicking feel broken would have written a line every time.
             with fleet.POLL:
                 with log.timed("roster", 1.5):
-                    blocks = fleet.roster()
+                    data = fleet.roster()
+                flags = data["flags"]
                 failed = {**providers.broken(), **fleet.ROUND["failed"]}
                 answered = set(fleet.ROUND["answered"])
-            log.note_roster(blocks)
-            live = {m["key"] for b in blocks for m in b["members"]}
+            log.note_roster(flags)
+            live = {f["key"] for f in flags}
             # Only the providers that answered get their dead sessions
             # forgotten: a missed round must not bring back as `ready`
             # everything you had already read.
             seen.forget(live, answered=answered)
+            finished.forget(live, answered=answered)
             if not fleet.ROUND["failed"]:
-                lines.forget({m["id"] for b in blocks for m in b["members"]})
+                lines.forget({f["id"] for f in flags})
             status = {name: {"ok": True} for name in answered}
             status.update({name: {"ok": False, "error": why} for name, why in failed.items()})
-            live_ids = {m["key"].partition(":")[2] for b in blocks for m in b["members"]
-                        if m["key"].startswith("claude:")}
-            self._send(json.dumps({"blocks": blocks,
+            live_ids = {f["key"].partition(":")[2] for f in flags
+                        if f["key"].startswith("claude:")}
+            self._send(json.dumps({**data,
                                    "restore": restorable(live_ids),
                                    "closed": closed_now(live_ids),
                                    "saved": coverage(live_ids),
                                    "providers": status,
-                                   "hold": fleet.config_value("hold", False),
                                    "chime": fleet.config_value("chime", True)}),
                        "application/json")
         elif self.path.startswith("/api/search"):
@@ -499,7 +544,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_error(404, f"{repo} is not under ticket_repos in config.json")
             self._send(tickets.page(repo, number, tickets.fetch(repo, number), ticket_status(repo, number)),
                        "text/html; charset=utf-8")
-        elif self.path in ("/", "/index.html"):
+        elif urllib.parse.urlsplit(self.path).path in ("/", "/index.html"):
             self._send(page(), "text/html; charset=utf-8")
         else:
             self.send_error(404)

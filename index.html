@@ -8,12 +8,12 @@
   :root {
     --bg:#0e1013; --card:#171a1f; --line:#262b33; --ink:#e7eaee; --dim:#9aa3ae;
     --faint:#6b7480; --busy:#3ddc84; --wait:#f5c451; --idle:#5c6570; --accent:#7aa2f7;
-    --claude:#d97757; --bad:#e5534b;
+    --claude:#d97757; --bad:#e5534b; --limit:#b794f6;
   }
   @media (prefers-color-scheme: light) {
     :root { --bg:#f6f7f9; --card:#fff; --line:#e2e5ea; --ink:#14171c; --dim:#5b6472;
             --faint:#8a929e; --busy:#1a9e5c; --wait:#b8860b; --idle:#a2aab5; --accent:#3b5bdb;
-            --claude:#c2410c; --bad:#c0392b; }
+            --claude:#c2410c; --bad:#c0392b; --limit:#7a4fc7; }
   }
   html { zoom: {{ZOOM}}; }
   * { box-sizing:border-box; }
@@ -35,9 +35,6 @@
   button { font:inherit; font-size:13px; color:var(--ink); background:var(--card);
            border:1px solid var(--line); border-radius:7px; padding:5px 12px; cursor:pointer; }
   button:hover { border-color:var(--accent); color:var(--accent); }
-  /* Held is a state you are in, not a button you pressed: it stays lit. */
-  button.held { color:var(--claude); border-color:color-mix(in srgb,var(--claude) 55%,transparent);
-                background:color-mix(in srgb,var(--claude) 10%,transparent); }
   /* The chime belongs to the amber state it announces, so it is lit amber
      while it is armed. Blocked is the browser refusing to make any sound
      until you have touched the page -- one click on the button clears it. */
@@ -45,37 +42,11 @@
                  background:color-mix(in srgb,var(--wait) 10%,transparent); }
   button.blocked { color:var(--bad); border-color:color-mix(in srgb,var(--bad) 55%,transparent);
                    background:color-mix(in srgb,var(--bad) 10%,transparent); }
-  /* Neither a grid nor CSS columns. A grid gives every block in a row the
-     height of the tallest one in it; CSS columns balance by their own rules
-     and leave slack a block cannot break into. The columns are filled here
-     instead -- each block goes to whichever one is shortest -- so a new
-     project lands in the gap rather than at the bottom of the last column. */
   main { padding:18px 20px 40px; display:flex; gap:14px; align-items:flex-start; }
-  .col { flex:1 1 0; min-width:0; }
-  .block { background:var(--card); border:1px solid var(--line); border-radius:11px;
-           overflow:hidden; margin-bottom:14px; }
-  .block.pinned { border-color:color-mix(in srgb,var(--claude) 45%,var(--line)); }
-  .block.dragging { opacity:.4; }
-  .block.over { border-color:var(--claude); }
-  .pin { cursor:grab; color:var(--faint); font-size:13px; line-height:1; flex:none;
-         padding:2px 3px; border-radius:5px; }
-  .pin:hover { color:var(--claude); background:color-mix(in srgb,var(--claude) 14%,transparent); }
-  .block.pinned .pin { color:var(--claude); }
   .edit { cursor:text; border-bottom:1px dashed transparent; }
   .edit:hover { border-bottom-color:var(--faint); }
-  .own { color:var(--claude); }
-  /* Three colours, three claims on you: amber wants an answer, red is not
-     moving, blue has something finished waiting to be read. */
-  .row.waiting { background:color-mix(in srgb,var(--wait) 9%,transparent);
-                 box-shadow:inset 3px 0 0 var(--wait); }
-  .row.stuck   { background:color-mix(in srgb,var(--bad) 10%,transparent);
-                 box-shadow:inset 3px 0 0 var(--bad); }
-  .row.ready   { background:color-mix(in srgb,var(--accent) 7%,transparent);
-                 box-shadow:inset 3px 0 0 var(--accent); }
   /* A nudge, not a beat: the colour is the alarm, the movement only says
      the page is live. Anything stronger you learn to stop seeing. */
-  .row.waiting .dot { animation:nudge 2.2s ease-in-out infinite; background:var(--wait); }
-  .row.stuck .dot   { animation:nudge 1.8s ease-in-out infinite; background:var(--bad); }
   @keyframes nudge { 0%,100% { transform:scale(1); opacity:1; }
                      50% { transform:scale(1.12); opacity:.8; } }
   .flag { font-size:10.5px; letter-spacing:.05em; text-transform:uppercase;
@@ -85,46 +56,25 @@
   /* A long tool call is news, not an alarm: no tint, no beat. */
   .flag.tool { color:var(--faint); border:1px solid var(--line); }
   .flag.ready { color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 45%,transparent); }
-  .alarm.ready { color:var(--accent); }
-  .alarm.asking { color:var(--accent); }
+  .flag.unread { color:var(--dim); border:1px solid var(--line); }
   /* What it is blocked on, in Claude Code's own words. */
   .wf { color:var(--wait); font-size:11.5px; }
   .said { margin-top:3px; color:var(--dim); font-size:13px;
           display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .alarm { color:var(--bad); font-weight:650; }
-  .alarm.wait { color:var(--wait); }
   .assign { margin-top:7px; display:flex; gap:9px; align-items:center; font-size:11.5px; }
-  .guess, .assign-edit, .clear { cursor:pointer; color:var(--faint); }
+  .guess, .clear { cursor:pointer; color:var(--faint); }
   .guess { color:var(--claude); border:1px solid color-mix(in srgb,var(--claude) 40%,transparent);
-           border-radius:999px; padding:1px 9px; }
+           border-radius:999px; padding:1px 9px; overflow-wrap:anywhere; }
   .guess:hover { background:color-mix(in srgb,var(--claude) 16%,transparent); }
-  .assign-edit:hover, .clear:hover { color:var(--accent); }
-  .row.target { background:color-mix(in srgb,var(--claude) 12%,transparent); }
+  .clear:hover { color:var(--accent); }
   input.inline { font:inherit; color:var(--ink); background:var(--bg);
                  border:1px solid var(--claude); border-radius:6px; padding:2px 7px;
                  min-width:220px; }
-  .block.orphan, .block.routines { opacity:.82; }
-  .bhead { display:flex; align-items:baseline; gap:9px; padding:11px 15px;
-           border-bottom:1px solid var(--line); }
-  .pname { font-weight:650; font-size:15px; }
-  .branch { color:var(--faint); font-size:12px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
   .who { color:var(--dim); font-size:12px; margin-left:auto; }
-  .row { padding:11px 15px; border-top:1px solid var(--line); }
-  .row.can { cursor:pointer; }
-  .row.can:hover { background:color-mix(in srgb,var(--accent) 9%,transparent); }
-  .row.can:hover .go { opacity:1; }
   .go { opacity:0; transition:opacity .12s; color:var(--accent); font-size:12px; }
-  .row.jumped { animation:flash .7s ease-out; }
   @keyframes flash { from { background:color-mix(in srgb,var(--busy) 26%,transparent); } }
-  .row.failed { animation:flash-bad 1.4s ease-out; }
   @keyframes flash-bad { from { background:color-mix(in srgb,#e5534b 26%,transparent); } }
-  .row:first-of-type { border-top:0; }
-  /* A folded session: who is there, and nothing else. */
-  .row.stub { padding:6px 15px; cursor:pointer; }
-  .row.stub:hover { background:color-mix(in srgb,var(--accent) 8%,transparent); }
-  .row.stub .nm { font-weight:500; color:var(--dim); }
-  .fold { color:var(--faint); font-size:11px; cursor:pointer; padding:0 3px; }
-  .fold:hover { color:var(--accent); }
   .rhead { display:flex; align-items:center; gap:8px; }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--idle); flex:none; }
   /* Slow: a session at work should look alive from across the room, not
@@ -137,34 +87,199 @@
   /* Finished, and you have not read it: a tick, not a light. */
   .tick { color:var(--accent); font-size:12px; line-height:1; flex:none; font-weight:700; }
   .nm { font-weight:600; }
-  /* The same highlight the dot has, travelling through the letters. */
-  .working .nm { color:transparent; background-clip:text; -webkit-background-clip:text;
-    background-image:linear-gradient(100deg, var(--ink) 38%, var(--faint) 50%, var(--ink) 62%);
-    background-size:280% 100%; animation:shimmer 4.5s linear infinite; }
-  @keyframes shimmer { from { background-position:150% 0; } to { background-position:-50% 0; } }
   .bg-tag { font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--faint);
             border:1px solid var(--line); border-radius:5px; padding:1px 5px; }
   .bg-tag.extra { text-transform:none; letter-spacing:0; white-space:nowrap; }   /* a model name is not a label */
   .bg-tag.boss { color:var(--claude); border-color:color-mix(in srgb,var(--claude) 45%,transparent); }
-  /* The team, under the one who dispatches to it. */
-  .row.under { margin-left:16px; border-left:2px solid var(--line); }
-  .team { margin-top:5px; color:var(--faint); font-size:11.5px; }
-  .reports { color:var(--faint); font-size:11px; }
-  .ago { margin-left:auto; color:var(--faint); font-size:12px; font-variant-numeric:tabular-nums; }
-  .title { margin-top:5px; }
-  .prompt { margin-top:2px; color:var(--dim); font-size:13px;
-            display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   /* What it wants from you. The one line on the card that is an instruction
      rather than a report, so it is the one line that carries weight. */
   .need { margin-top:3px; color:var(--accent); font-weight:600; font-size:13px;
           display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  /* What it is doing this second. Dim: it will be different in a minute. */
-  .doing { margin-top:3px; color:var(--dim); font-size:13px; font-style:italic;
-           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .where { margin-top:6px; color:var(--faint); font-size:11.5px;
-           font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-           white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .empty { color:var(--dim); padding:30px 20px; }
+  /* The overview: one column per project, side by side. Each column is as
+     tall as its own sessions and no taller (`main` aligns to flex-start), and
+     when there are more projects than fit the row scrolls, not the page. */
+  main.ov { overflow-x:auto; gap:12px; }
+  /* min-width:0: what a tile says never widens its column (a line that does not wrap would). */
+  .ov-col { flex:1 0 230px; min-width:0; max-width:330px; display:flex; flex-direction:column; gap:8px; }
+  .ov-head { background:var(--card); border:1px solid var(--line); border-top:3px solid var(--line);
+             border-radius:10px; padding:10px 12px; font-weight:650; font-size:15px; overflow-wrap:anywhere; }
+  /* The card's own text: the name and its status word, what the project is about, how far a
+     track has come. Nothing here is markup: it is all printed through esc(). */
+  .ov-name[data-raw]:hover::after { content:attr(data-raw); margin-left:7px; font-size:11px;
+                                    font-weight:400; color:var(--faint); }
+  .ov-tag { font-size:10.5px; font-weight:650; letter-spacing:.06em; padding:0 6px; border-radius:8px;
+            color:var(--dim); border:1px solid var(--line); }
+  .ov-tag.met { color:var(--busy); border-color:color-mix(in srgb,var(--busy) 45%,transparent); }
+  .ov-tag.paused { color:var(--wait); border-color:color-mix(in srgb,var(--wait) 45%,transparent); }
+  .ov-ctx { margin-top:5px; font-weight:400; font-size:13px; line-height:1.4; color:var(--dim); cursor:text;
+            overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .ov-ctx.maybe { color:var(--faint); font-style:italic; }
+  .ov-ctx .add { font-style:normal; font-size:12px; color:var(--faint); }
+  .ov-ctx:hover .add { color:var(--accent); }
+  .ov-prog { display:flex; align-items:center; gap:7px; margin-top:6px; font-weight:400; font-size:12px; color:var(--dim); }
+  .ov-bar { flex:1 1 0; max-width:90px; height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
+  .ov-bar i { display:block; height:100%; background:var(--busy); }
+  .ov-notes { margin-left:auto; color:var(--faint); text-decoration:none; }
+  .ov-notes:hover, .ov-notes.on { color:var(--accent); }
+  .ov-hits { margin-top:6px; font-weight:400; font-size:12px; color:var(--dim); display:flex; flex-direction:column; gap:5px; }
+  .ov-hits .hit-title { color:var(--ink); font-weight:600; overflow-wrap:anywhere; }
+  .ov-hits .hit-snip { overflow-wrap:anywhere; }
+  /* By hand: the name edits in place, the tools sit beside it and say nothing
+     until they are needed. A pinned card is lit. */
+  .ov-top { display:flex; align-items:baseline; gap:6px; }
+  .ov-top .ov-name { flex:1 1 auto; min-width:0; }
+  .ov-top input.inline { min-width:0; width:100%; font-weight:400; }
+  .ov-tools { display:flex; align-items:center; gap:2px; flex:none; font-weight:400; }
+  .ov-tools button, .ov-form button, .ov-merged button { padding:0 6px; font-size:12px; line-height:20px;
+                                      border-color:transparent; background:none; color:var(--faint); }
+  .ov-tools button:hover, .ov-form button:hover, .ov-merged button:hover { color:var(--accent); border-color:transparent; }
+  .ov-merged { margin-top:6px; display:flex; flex-wrap:wrap; gap:0 10px; font-weight:400; font-size:12px;
+               color:var(--dim); overflow-wrap:anywhere; }
+  .ov-tools .ov-pin { font-size:13px; }
+  .ov-tools .ov-pin.on { color:var(--claude); }
+  .ov-tools .ov-merge { opacity:0; }
+  .ov-head:hover .ov-merge, .ov-head:focus-within .ov-merge { opacity:1; }
+  .ov-form { margin-top:6px; display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px;
+             font-weight:400; font-size:12px; color:var(--dim); }
+  select.pick { font:inherit; font-size:12px; color:var(--ink); background:var(--bg); max-width:100%;
+                border:1px solid var(--claude); border-radius:6px; padding:2px 5px; }
+  /* Nothing moves when the pointer arrives: the control is there, only unlit,
+     so a click meant to open the session never lands on something that
+     appeared under it. */
+  .tile button.move { margin-left:auto; padding:0 5px; font-size:13px; line-height:18px; border-color:transparent;
+                      background:none; color:var(--faint); opacity:0; }
+  .tile button.move + .go { margin-left:0; }
+  .tile:hover button.move, .tile:focus-within button.move { opacity:1; }
+  .tile button.move:hover { color:var(--accent); }
+  .tile .ov-form { margin-top:4px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 11px;
+          display:flex; flex-direction:column; gap:3px; }
+  .tile.can { cursor:pointer; }
+  .tile.can:hover { border-color:var(--accent); }
+  .tile.can:hover .go { opacity:1; }
+  .tile .rhead { flex-wrap:wrap; gap:6px 8px; }
+  .tile .nm { overflow-wrap:anywhere; }
+  .tile .go { margin-left:auto; }
+  .tile .go.none { opacity:1; color:var(--faint); }
+  .tile .why { color:var(--bad); font-size:12px; overflow-wrap:anywhere; }
+  .tile .why.note { color:var(--dim); }
+  /* The working-on line is one line; the hover has all of it. A stand-in (the
+     last prompt, the branch or the folder) is said more quietly. */
+  .tile .tline { color:var(--dim); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tile .tline.stand-in { color:var(--faint); }
+  .tile.waiting { border-color:var(--wait); }
+  .tile.stuck { border-color:var(--bad); }
+  .tile.ready { border-color:color-mix(in srgb,var(--accent) 55%,var(--line)); }
+  .tile.waiting .dot { animation:nudge 2.2s ease-in-out infinite; background:var(--wait); }
+  .tile.stuck .dot { animation:nudge 1.8s ease-in-out infinite; background:var(--bad); }
+  /* Movement. The strip is the project's only graph: one bar per minute for
+     the last 30, oldest first. A minute the server could not see is a dotted
+     stub, never an empty bar, because empty would say "wrote nothing". */
+  .ov-mv { margin-top:8px; font-weight:400; font-size:12px; color:var(--dim); }
+  .strip { display:flex; align-items:flex-end; gap:1px; height:28px; }
+  .strip i { flex:1 1 0; min-width:2px; background:var(--busy); border-radius:1px 1px 0 0; }
+  .strip i.z { height:1px; opacity:.35; }
+  .strip i.u { height:1px; background:none; border-top:1px dotted var(--faint); }
+  .mix { margin-top:5px; font-variant-numeric:tabular-nums; }
+  .tile .mv { color:var(--dim); font-size:12px; overflow-wrap:anywhere; }
+  /* The card's state is its second line: the name first, then one coloured
+     word. The card is coloured by it -- top edge, a light tint, the word and
+     the strip's bars -- so the page can be scanned by colour. */
+  .ov-name, .ov-state { display:block; }
+  .ov-state { margin-top:1px; font-size:10.5px; font-weight:700; letter-spacing:.09em; color:var(--faint); }
+  .ov-head.st-needs { border-top-color:var(--wait); background:color-mix(in srgb,var(--wait) 9%,var(--card)); }
+  .ov-head.st-needs .ov-state { color:var(--wait); }
+  .ov-head.st-needs .strip i:not(.u) { background:var(--wait); }
+  /* Error and Hung are red, Limit is purple: a wait for a reset is not a fault. */
+  .ov-head.st-error, .ov-head.st-hung { border-top-color:var(--bad); background:color-mix(in srgb,var(--bad) 8%,var(--card)); }
+  .ov-head.st-error .ov-state, .ov-head.st-hung .ov-state { color:var(--bad); }
+  .ov-head.st-error .strip i:not(.u), .ov-head.st-hung .strip i:not(.u) { background:var(--bad); }
+  .ov-head.st-limit { border-top-color:var(--limit); background:color-mix(in srgb,var(--limit) 8%,var(--card)); }
+  .ov-head.st-limit .ov-state { color:var(--limit); }
+  .ov-head.st-limit .strip i:not(.u) { background:var(--limit); }
+  .ov-head.st-moving { border-top-color:var(--busy); background:color-mix(in srgb,var(--busy) 7%,var(--card)); }
+  .ov-head.st-moving .ov-state { color:var(--busy); }
+  .ov-head.st-idle { border-top-color:var(--idle); background:color-mix(in srgb,var(--idle) 7%,var(--card)); }
+  .ov-head.st-idle .ov-state { color:var(--idle); }
+  .ov-head.st-idle .strip i:not(.u) { background:var(--idle); }
+  /* Needs you. The reason, then what the person needs to decide before they
+     jump: the question with its options, the tool and its command, or what
+     the session left. All of it is text a session wrote. */
+  .tile.needs { border-color:var(--wait); }
+  .flag.needs { color:var(--wait); border:1px solid color-mix(in srgb,var(--wait) 45%,transparent); }
+  /* Error, Hung and Limit: the kind is the tag, the border and the dot. */
+  .tile.error, .tile.hung { border-color:var(--bad); }
+  .tile.limit { border-color:var(--limit); }
+  .tile.error .dot, .tile.hung .dot { animation:nudge 1.8s ease-in-out infinite; background:var(--bad); }
+  .tile.limit .dot { animation:none; background:var(--limit); }
+  .flag.error, .flag.hung { color:var(--bad); border:1px solid color-mix(in srgb,var(--bad) 45%,transparent); }
+  .flag.limit { color:var(--limit); border:1px solid color-mix(in srgb,var(--limit) 45%,transparent); }
+  .stuck-box.error .reason, .stuck-box.hung .reason { color:var(--bad); }
+  .stuck-box.limit .reason { color:var(--limit); }
+  .stuck-box { margin-top:3px; display:flex; flex-direction:column; gap:4px; font-size:13px; }
+  .stuck-box .reason { color:var(--wait); font-weight:600; font-size:12px; overflow-wrap:anywhere; }
+  .stuck-box .late { color:var(--dim); font-size:12px; }
+  .stuck-box .qh { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.05em; margin-right:6px; }
+  .stuck-box .qtext { overflow-wrap:anywhere; white-space:pre-wrap;
+                      display:-webkit-box; -webkit-line-clamp:5; -webkit-box-orient:vertical; overflow:hidden; }
+  .stuck-box ul { margin:2px 0 0; padding-left:16px; color:var(--dim); }
+  .stuck-box li { overflow-wrap:anywhere; }
+  .stuck-box .ol { color:var(--ink); }
+  .stuck-box .od { color:var(--dim); }
+  .stuck-box .say { overflow-wrap:anywhere; }
+  .stuck-box .cmd { display:flex; flex-wrap:wrap; align-items:flex-start; gap:4px 8px; }
+  .stuck-box .tool { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.05em; padding-top:2px; }
+  .stuck-box code { flex:1 1 100%; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap;
+                    overflow-wrap:anywhere; max-height:5.6em; overflow:hidden; background:var(--bg);
+                    border:1px solid var(--line); border-radius:6px; padding:3px 6px; }
+  .stuck-box button.copy { margin-left:auto; font-size:12px; padding:2px 9px; }
+  .tile.jumped { animation:flash .7s ease-out; }
+  .tile.failed { animation:flash-bad 1.4s ease-out; }
+  /* The header's counts: each is a button that lights up its sessions. */
+  .hc { padding:1px 9px; font-size:12.5px; font-weight:650; font-variant-numeric:tabular-nums; }
+  .hc.needs { color:var(--wait); }
+  .hc.otherStuck { color:var(--bad); }
+  .hc.moving { color:var(--busy); }
+  .hc[aria-pressed="true"] { border-color:currentColor; background:color-mix(in srgb,currentColor 14%,transparent); }
+  .hc:disabled { color:var(--faint); cursor:default; border-color:var(--line); }
+  .hc:disabled:hover { color:var(--faint); border-color:var(--line); }
+  /* Lit: the sessions in the count that was clicked. The rest fade, and a
+     column with none is only its card. Columns keep their width. */
+  .tile.dim { opacity:.3; }
+  .tile.lit { box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 55%,transparent); }
+  .ov-col.shrunk .tile, .ov-col.shrunk .pills { display:none; }
+  /* Finished sessions: one line each at the foot of their column, name and how
+     long idle; the working-on line is the hover. Quiet on purpose, never hidden. */
+  .pills { display:flex; flex-direction:column; gap:4px; }
+  .pill { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; padding:3px 10px;
+          font-size:12.5px; color:var(--dim); border:1px solid var(--line); border-radius:999px; }
+  .pill.can { cursor:pointer; }
+  .pill.can:hover { border-color:var(--accent); color:var(--ink); }
+  .pill.can:hover .go { opacity:1; }
+  .pill .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pill .for { margin-left:auto; color:var(--faint); white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .pill .go.none { opacity:1; color:var(--faint); }
+  .pill .why { flex:1 0 100%; color:var(--bad); font-size:12px; overflow-wrap:anywhere; }
+  .pill .why.note { color:var(--dim); }
+  .pill.jumped { animation:flash .7s ease-out; }
+  .pill.failed { animation:flash-bad 1.4s ease-out; }
+  .pill.dim { opacity:.3; }
+  /* Pin: nothing moves when the pointer arrives, the control is only unlit. */
+  button.keep { padding:0 6px; font-size:12px; line-height:18px; border-color:transparent; background:none;
+                color:var(--faint); opacity:0; }
+  .tile:hover button.keep, .tile:focus-within button.keep, .pill:hover button.keep,
+  .pill:focus-within button.keep, button.keep.on { opacity:1; }
+  button.keep:hover { color:var(--accent); }
+  .tile .said { margin-top:0; overflow-wrap:anywhere; }
+  /* A condition of the whole machine, across the top under the header's row.
+     The negative margin cancels the header's own 14px 20px padding, so the band
+     runs edge to edge and sits flush with the header's bottom. */
+  #banners { flex:1 0 100%; margin:0 -20px -14px; }
+  #banners:empty { display:none; }
+  .banner { padding:6px 20px; font-size:13px; font-weight:600; overflow-wrap:anywhere;
+            color:var(--bad); background:color-mix(in srgb,var(--bad) 12%,var(--bg));
+            border-top:1px solid color-mix(in srgb,var(--bad) 40%,transparent); }
 #restore[hidden], #closed[hidden], #closedlist[hidden] { display: none; }
 #save.unsafe { color: var(--wait); }
 /* Conversations this boot had that no longer run. A drop-down under the
@@ -244,80 +359,28 @@ header button { white-space: nowrap; }
   <button id="restore" hidden></button>
   <button id="save"></button>
   <button id="sound"></button>
-  <button id="hold" title="stop the cards moving while you read them"></button>
+  <div id="banners" role="status"></div>
 </header>
 <div id="closedlist" hidden></div>
 <div id="found" hidden></div>
-<main id="main"><div class="empty">loading…</div></main>
+<main id="main" class="ov"><div class="empty">loading…</div></main>
 <script>
-let PINNED = [];
-let LATEST = [];            // the last roster the server sent, to repaint from
-let HOLD = false;           // is the order frozen where you last saw it?
+let COLUMNS = [];           // the roster's `columns`, which the overview prints as they come
+let SHOWN = [];             // the columns painted now: the filter may hide some of them
 let CHIME = true;           // does a session that starts waiting ring?
 let WAITING = null;         // who was waiting last poll -- null before the first
 let READY = null;           // and who had already finished, for the same reason
 let SPEAKER = null;         // the audio context, built on your first click
 let MUZZLED = false;        // wanted to ring, and the browser would not have it
-let ORDER = { blocks: [], members: {} };   // and where that was
-let PAINTED = [];           // the order you see, which the DOM no longer is
 let PROVIDERS = {};         // who answered the last poll, and who did not
-const OPEN = new Set();     // sessions you unfolded by hand
+let COUNTS = {};            // the roster's header counts: needs, stuck, moving
+let BANNERS = [];           // what is wrong with the whole machine, as the roster said
+let LIGHT = "";             // the count you clicked, whose sessions are lit up -- "" for none
 let query = "";
 let editing = false;
-let dragging = false;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const home = "{{HOME}}";        // substituted by the server, like the zoom
 const ZOOM = parseFloat("{{ZOOM}}") || 1;
-
-function since(ms) {
-  // How long this session has been up. A background worker two days old reads
-  // very differently from a tab you opened a minute ago.
-  if (!ms) return "";
-  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d ${h % 24}h`;
-}
-
-function ago(ms) {
-  if (!ms) return "";
-  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
-  if (s < 60) return s + "s";
-  if (s < 3600) return Math.round(s / 60) + "m";
-  if (s < 86400) return Math.round(s / 3600) + "h";
-  return Math.round(s / 86400) + "d";
-}
-
-function where(m) {
-  // How to go find this person, most actionable first: the path is the part
-  // that may be ellipsised, because the project name already said it.
-  const bits = [];
-  if (m.tmux) bits.push("tmux " + esc(String(m.tmux).split(".").pop()));
-  if (m.pid) bits.push("pid " + esc(m.pid));
-  if (m.startedAt) bits.push(`up ${since(m.startedAt)}`);
-  // The path goes last because it is the part that may be ellipsised: the
-  // project name above already said where this is.
-  bits.push(esc((m.cwd || "").replace(home, "~")));
-  return bits.join("  ·  ");
-}
-
-function stub(m) {
-  // Folded: the mark, the name, and any flag -- an alarm must be visible
-  // whether or not you have opened the row it belongs to.
-  const alarm = ["waiting", "stuck", "ready"].includes(m.flag) ? m.flag : "";
-  return `<div class="row stub ${alarm} ${m.status === "busy" ? "working" : ""}
-        ${m.nested ? "under" : ""}"
-        data-sid="${esc(m.key)}"
-        draggable="true" title="click to open">
-    <div class="rhead">
-      <span class="fold">▸</span>
-      ${mark(m)}
-      <span class="nm">${esc(m.name || named(m))}</span>${badge(m)}${flagOf(m)}
-      <span class="ago">${says(m)} · ${ago(m.updatedAt)}</span>
-    </div>
-  </div>`;
-}
 
 function mark(m) {
   // A tick reads as done in a way no colour of dot does.
@@ -330,190 +393,6 @@ function named(m) {
   // its own name where one would go; the title underneath says the rest.
   const p = String(m.provider || "");
   return p ? p[0].toUpperCase() + p.slice(1) : "(unnamed)";
-}
-
-function says(m) {
-  // `idle` is Claude Code's word, and it covers both "your move" and
-  // "abandoned on Tuesday". Say which one this is.
-  if (m.flag === "ready") return "ready";
-  if (m.status === "shell") return "idle";     // idle with a background job
-  return esc(m.status);
-}
-
-function badge(m) {
-  // The badge on a routine row names the routine; `Routines` above already
-  // said what kind of thing it is. `bg` marks a session whose model has
-  // stopped while a job it started keeps running -- Claude Code calls that
-  // status `shell`, which sounds like something else entirely.
-  const job = m.bg ? `<span class="bg-tag" title="a background job is still running">bg</span>` : "";
-  // A boss coordinates the others and does no implementation work itself,
-  // which is worth knowing before you read anything else on the row.
-  const boss = m.boss ? `<span class="bg-tag boss" title="running the boss skill">boss</span>` : "";
-  // A worker nested under its boss is already placed; one whose boss is in
-  // another block has to say so in words.
-  const to = m.reportsTo && !m.nested
-    ? `<span class="reports">↳ ${esc(m.reportsTo)}</span>` : "";
-  // A provider may attach facts of its own -- a model, a cost -- that the
-  // page shows as badges without knowing what they mean.
-  const extras = Object.entries(m.extras || {}).map(([k, v]) =>
-    `<span class="bg-tag extra" title="${esc(k)}">${esc(v)}</span>`).join("");
-  return (m.routine ? `<span class="bg-tag">${esc(m.routine)}</span>`
-    : m.kind !== "interactive" ? `<span class="bg-tag">${esc(m.kind)}</span>` : "")
-    + boss + job + to + extras;
-}
-
-function flagOf(m) {
-  // Four different things, and only two of them are alarms. A waiting row
-  // prints what Claude Code says it is blocked on, rather than the word
-  // `waiting`, which you already knew from the colour.
-  return m.flag === "waiting"
-    ? `<span class="flag waiting">waiting</span>` +
-      (m.waitingFor ? `<span class="wf">${esc(m.waitingFor)}</span>` : "")
-    : m.flag === "stuck"
-      ? `<span class="flag stuck">stuck ${Math.round(m.quietFor)}m</span>`
-      : m.flag === "ready"
-        ? `<span class="flag ready">ready</span>`
-        : m.flag === "tool"
-          ? `<span class="flag tool">tool ${Math.round(m.toolFor ?? m.quietFor)}m</span>` : "";
-}
-
-function row(m) {
-  const tag = badge(m);
-  const go = m.canJump ? `<span class="go">open ↗</span>` : "";
-  // Your own words first, then the session's, then Claude Code's title.
-  // `did` is rewritten at every stop; `ai-title` is written once and rarely
-  // revisited, which is how a card comes to describe last week's work.
-  const subject = m.overridden ? m.title : (m.did || m.title);
-  const flag = flagOf(m);
-  // Only a row you opened yourself offers to fold again: the liveliest one
-  // is the answer to "what is happening here" and always stays open.
-  const fold = m.foldable ? `<span class="fold" title="fold">▾</span>` : "";
-  // The three that claim you tint their row; a long tool call gets a badge
-  // and no more, because it is news rather than a claim.
-  const alarm = ["waiting", "stuck", "ready"].includes(m.flag) ? m.flag : "";
-  // The second line answers "where is this now", and what that means
-  // depends on what the session is doing.
-  //
-  //   working  -- the call it is inside. Printing your own last prompt back
-  //               at you told you something you wrote and already knew.
-  //   wanting  -- the thing it needs from you. One ask carries its own
-  //               words; four of them are a count, because quoting the first
-  //               of four misrepresents the size of the job.
-  //   finished -- the last thing it said to you, which is the handover.
-  //   otherwise-- your last prompt, as before.
-  const need = m.n > 0
-    ? (m.n === 1 && m.ask ? esc(m.ask) : `${m.n} answers needed`) : "";
-  const line = m.doing
-    ? `<div class="doing">${esc(m.doing)}</div>`
-    : need ? `<div class="need">${need}</div>`
-    : m.flag === "ready" && m.said
-      ? `<div class="said">“${esc(m.said)}”</div>`
-      : m.prompt ? `<div class="prompt">${esc(m.prompt)}</div>` : "";
-  return `<div class="row ${m.canJump ? "can" : ""} ${alarm}
-        ${m.status === "busy" ? "working" : ""} ${m.nested ? "under" : ""}"
-        data-sid="${esc(m.key)}" draggable="true">
-    <div class="rhead">
-      ${mark(m)}
-      ${fold}<span class="nm">${esc(m.name || named(m))}</span>${tag}${flag}${go}
-      <span class="ago">${says(m)} · ${ago(m.updatedAt)}</span>
-    </div>
-    ${subject && subject.trim() === (m.name || "").trim() ? "" : `
-    <div class="title edit ${m.overridden ? "own" : ""}" data-edit="line"
-         data-sid="${esc(m.key)}">${esc(subject) || "<span style='color:var(--faint)'>—</span>"}</div>`}
-    ${line}
-    ${m.boss && m.team?.length
-      ? `<div class="team">↳ ${m.team.map(esc).join(" · ")}</div>` : ""}
-    <div class="where">${where(m)}</div>
-    ${assignBar(m)}
-  </div>`;
-}
-
-function assignBar(m) {
-  if (m.assigned) {
-    return `<div class="assign"><span class="own">assigned</span>
-      <span class="clear" data-sid="${esc(m.key)}">clear</span></div>`;
-  }
-  if (!m.orphan) return "";
-  const guess = m.suggestion
-    ? `<span class="guess" data-sid="${esc(m.key)}" data-project="${esc(m.suggestion)}">
-         ${esc(m.suggestion)}?</span>` : "";
-  return `<div class="assign">${guess}
-    <span class="edit assign-edit" data-edit="assign" data-sid="${esc(m.key)}">assign…</span>
-  </div>`;
-}
-
-function unfolded(b, m) {
-  // Several sessions on one project is the normal case, and printing them
-  // all in full turns the page into a wall you have to scroll. The liveliest
-  // -- busy first, then most recent, as the server sorted them -- is the one
-  // you came to read.
-  //
-  // Three things override that, and all three are the same rule: never fold
-  // away something you are looking for. An alarm is never folded, whatever
-  // you clicked; a search shows every row it matched; and a row you opened
-  // stays open until you fold it again.
-  if (b.members.length < 2) return true;
-  if (m.key === b.members[0].key) return true;
-  if (["waiting", "stuck"].includes(m.flag)) return true;
-  // A worker's `ready` is its boss's business, not yours: it keeps the tick
-  // so he can see it at a glance, and stays folded so it does not cost you
-  // a card you were never going to act on. `waiting` and `stuck` still open
-  // -- a permission prompt on a worker is answered by you, not by him.
-  if (m.flag === "ready" && !m.reportsTo) return true;
-  if (query.trim().length >= 3) return true;
-  return OPEN.has(m.key);
-}
-
-function block(b) {
-  // Who leads here: a worker is nested only under a boss in its own block.
-  const leads = new Set(b.members.filter(m => m.boss).map(m => m.name));
-  // Routines have no branch to show and nothing you can open: they run
-  // unattended on a timer, which is what the header says instead.
-  const br = b.routines
-    ? `<span class="branch">unattended · on a timer</span>`
-    : b.branches.length ? `<span class="branch">${esc(b.branches.join(" · "))}</span>` : "";
-  const n = b.members.length;
-  const pinned = PINNED.includes(b.project);
-  // Neither pinnable nor renamable: it is not a project you chose, it is
-  // whichever routines happen to be mid-run.
-  // A name you typed is just the name: it does not need a colour saying so.
-  // The tooltip keeps the fact for when you wonder where a label came from.
-  const name = b.routines
-    ? `<span class="pname">${esc(b.label)}</span>`
-    : `<span class="pname edit" data-edit="name"
-             ${b.renamed ? `title="your name for ${esc(b.project)}"` : ""}>${esc(b.label)}</span>`;
-  return `<section class="block ${b.orphan ? "orphan" : ""} ${b.routines ? "routines" : ""} ${pinned ? "pinned" : ""}"
-           data-project="${esc(b.project)}">
-    <div class="bhead">
-      ${b.orphan || b.routines ? "" : `<span class="pin" draggable="true"
-             title="${pinned ? "pinned — drag to move, click to release" : "drag to pin at the top"}">✳</span>`}
-      ${name}${br}
-      <span class="who">${n} ${n === 1 ? "session" : "sessions"}${b.busy ? ` · ${b.busy} busy` : ""}</span>
-    </div>
-    ${b.members.map(m => {
-      const nested = leads.has(m.reportsTo);
-      return unfolded(b, m)
-        ? row({ ...m, nested, orphan: b.orphan,
-                foldable: m.key !== b.members[0].key })
-        : stub({ ...m, nested });
-    }).join("")}
-  </section>`;
-}
-
-function filtered(blocks) {
-  // Below three characters nearly everything matches, so filtering would just
-  // make the page flicker while you type the first letters.
-  const q = query.trim().toLowerCase();
-  if (q.length < 3) return blocks;
-  const hit = s => String(s || "").toLowerCase().includes(q);
-  return blocks.map(b => {
-    if (hit(b.label) || hit(b.project)) return b;   // the whole project matched
-    const members = b.members.filter(m =>
-      hit(m.name) || hit(m.title) || hit(m.did) || hit(m.ask)
-      || hit(m.prompt) || hit(m.cwd) || hit(m.branch)
-      || hit(m.routine));
-    return members.length ? { ...b, members } : null;
-  }).filter(Boolean);
 }
 
 // A JavaScript error used to be invisible: the poll stops, the page quietly
@@ -535,66 +414,6 @@ function report(where, message, stack) {
 window.addEventListener("error", e => report("window", e.message, e.error?.stack));
 window.addEventListener("unhandledrejection",
   e => report("promise", e.reason?.message ?? e.reason, e.reason?.stack));
-
-function ordered(blocks) {
-  // The page re-sorts itself every three seconds, which is right until you
-  // are reading one card and it moves because something else woke up. Held,
-  // the content still updates -- status, titles, flags -- and only the
-  // positions stop. Anything arriving while held goes to the end in the order
-  // the server sent it, rather than pushing into the middle of what you read.
-  // Held is remembered in config.json; the order it froze was only ever in
-  // this page's memory. So a reload came back held with nothing to hold on
-  // to, every card tied for last place, and the server's order won -- the
-  // button said held while the cards moved. The first painted order after a
-  // reload is what held now means.
-  if (!HOLD || !ORDER.blocks.length) {
-    ORDER = {
-      blocks: blocks.map(b => b.project),
-      members: Object.fromEntries(
-        blocks.map(b => [b.project, b.members.map(m => m.key)])),
-    };
-    return blocks;
-  }
-  const rank = (list, key) => {
-    const i = (list || []).indexOf(key);
-    return i < 0 ? 1e9 : i;      // a number, not Infinity: two ties must not
-  };                             // subtract to NaN and unsort the whole list
-  return [...blocks]
-    .sort((a, b) => rank(ORDER.blocks, a.project) - rank(ORDER.blocks, b.project))
-    .map(b => ({ ...b, members: [...b.members].sort((x, y) =>
-      rank(ORDER.members[b.project], x.key)
-      - rank(ORDER.members[b.project], y.key)) }));
-}
-
-const GAP = 14;
-const MIN_COL = 360;
-
-function place(html) {
-  // Greedy packing: measure every block at the width it will really have,
-  // then give each one to the column that is currently shortest. That is
-  // what keeps the bottom edges level and puts a new project in the hole
-  // instead of after the last card.
-  const main = document.getElementById("main");
-  const n = Math.max(1, Math.floor((main.clientWidth + GAP) / (MIN_COL + GAP)));
-  main.innerHTML = "";
-  const cols = [];
-  for (let i = 0; i < n; i++) {
-    const col = document.createElement("div");
-    col.className = "col";
-    main.appendChild(col);
-    cols.push(col);
-  }
-  cols[0].innerHTML = html;            // staged at the real column width
-  const items = [...cols[0].children];
-  const heights = items.map(el => el.offsetHeight);   // one reflow, then no more
-  const filled = new Array(n).fill(0);
-  items.forEach((el, i) => {
-    let shortest = 0;
-    for (let j = 1; j < n; j++) if (filled[j] < filled[shortest]) shortest = j;
-    cols[shortest].appendChild(el);
-    filled[shortest] += heights[i] + GAP;
-  });
-}
 
 function speaker() {
   // A browser makes no sound until you have interacted with the page, and a
@@ -686,19 +505,18 @@ function arrived(now, before) {
 // Sound once per poll, for whoever *started* waiting or finishing. Five
 // sessions landing together is one chime, not five -- and a session goes on
 // waiting without ever ringing twice.
-function announce(blocks) {
+function announce(flags) {
   const waiting = new Set(), ready = new Set();
-  for (const b of blocks)
-    for (const m of b.members) {
-      // `blocked` rings with `waiting`, exactly as the header counts it: a
-      // session that wrote down what it is blocked on is asking, and its turn
-      // being over does not make it ready. Without this a session that reports
-      // a blocker through `team-line --n 1` plays the tick -- the sound that
-      // means nothing is wanted from you (2026-09-22: a real blocker went
-      // unheard that way).
-      if (m.flag === "waiting" || m.blocked) waiting.add(m.key);
-      else if (m.flag === "ready") ready.add(m.key);
-    }
+  for (const f of flags) {
+    // `blocked` rings with `waiting`, exactly as the header counts it: a
+    // session that wrote down what it is blocked on is asking, and its turn
+    // being over does not make it ready. Without this a session that reports
+    // a blocker through `team-line --n 1` plays the tick -- the sound that
+    // means nothing is wanted from you (2026-09-22: a real blocker went
+    // unheard that way).
+    if (f.flag === "waiting" || f.blocked) waiting.add(f.key);
+    else if (f.flag === "ready") ready.add(f.key);
+  }
   const asks = arrived(waiting, WAITING);
   const done = arrived(ready, READY);
   WAITING = waiting;
@@ -721,14 +539,8 @@ function drawSound() {
             : "silent whether a session starts waiting or finishes";
 }
 
-function drawHold() {
-  const button = document.getElementById("hold");
-  button.textContent = HOLD ? "order held" : "auto-arrange";
-  button.classList.toggle("held", HOLD);
-}
-
 function busyWithUser() {
-  return editing || dragging || !!document.querySelector("input.inline");
+  return editing || !!document.querySelector("input.inline, select.pick");
 }
 
 async function load() {
@@ -742,19 +554,19 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { blocks: all, hold, chime, providers, restore, saved, closed } = await r.json();
+    const { flags, columns, counts, banners, chime, providers, restore, saved, closed } = await r.json();
     drawRestore(restore);
     drawClosed(closed);
     drawSave(saved);
     PROVIDERS = providers || {};
     if (busyWithUser()) return;
     // Read back on every poll, so editing config.json by hand still works.
-    HOLD = !!hold;
-    drawHold();
     CHIME = chime !== false;
     drawSound();
-    announce(all);
-    LATEST = all;
+    announce(flags || []);
+    COLUMNS = columns || [];
+    COUNTS = counts || {};
+    BANNERS = Array.isArray(banners) ? banners : [];
     paint();
   } catch (e) {
     document.getElementById("stamp").textContent = "server unreachable";
@@ -762,105 +574,533 @@ async function load() {
   }
 }
 
-// Folding repaints from the roster already in hand: waiting for the next
-// poll would make the click feel like it missed.
+// A click that only changes how the roster in hand is drawn (a lit count, the
+// notes link) repaints from it: waiting for the next poll would make the click
+// feel like it missed.
 function paint() {
-  const all = ordered(LATEST);
-  PINNED = all.filter(b => b.pinned).map(b => b.project);
-  const blocks = filtered(all);
-  const total = blocks.reduce((a, b) => a + b.members.length, 0);
-  const everyone = all.reduce((a, b) => a + b.members.length, 0);
-  const busy = blocks.reduce((a, b) => a + b.busy, 0);
-  const waiting = all.reduce((a, b) =>
-    a + b.members.filter(m => m.flag === "waiting").length, 0);
-  const stuck = all.reduce((a, b) =>
-    a + b.members.filter(m => m.flag === "stuck").length, 0);
-  // A session that wrote down what it is blocked on is asking, whether or
-  // not you have looked at it since it stopped -- so it is counted apart
-  // from `ready` rather than inside it, and never in both.
-  const asking = all.reduce((a, b) => a + b.members.filter(m => m.blocked).length, 0);
-  const ready = all.reduce((a, b) =>
-    a + b.members.filter(m => m.flag === "ready" && !m.blocked).length, 0);
-  // The tab title deliberately leaves `ready` out: that count is an alarm,
-  // and a finished session is not one -- it would read (5) all evening. A
-  // session that says it is blocked is a different animal: it stays stopped
-  // until you speak, so it belongs with waiting and stuck.
-  const alarms = [
-    waiting ? `<span class="alarm wait">${waiting} waiting</span>` : "",
-    stuck ? `<span class="alarm">${stuck} stuck</span>` : "",
-    asking ? `<span class="alarm asking">${asking} asking</span>` : "",
-    ready ? `<span class="alarm ready">${ready} ready</span>` : "",
-  ].filter(Boolean).join(" · ");
-  document.getElementById("count").innerHTML =
-    `${total} sessions · ${busy} busy · ${blocks.filter(b => !b.routines).length} projects`
-    + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
-    + (alarms ? ` &nbsp;·&nbsp; ${alarms}` : "")
-    // One provider down is that provider's badge, not a blank page.
-    + Object.entries(PROVIDERS).filter(([, p]) => !p.ok).map(([name, p]) =>
+  // One provider down is that provider's badge, not a blank page.
+  const down = Object.entries(PROVIDERS).filter(([, p]) => !p.ok).map(([name, p]) =>
         ` &nbsp;·&nbsp; <span class="alarm" title="${esc(p.error)}">${esc(name)} down</span>`).join("");
-  const wants = waiting + stuck + asking;
+  const shown = filteredColumns(COLUMNS);
+  // A lit count that has emptied since (the question was answered) has nothing
+  // left to light: it clears, rather than hide every session.
+  if (LIGHT && !countOf(LIGHT)) LIGHT = "";
+  drawBanners();
+  drawHead(shown, down);
+  // The tab title is the header's "need you" count, read from the same place,
+  // so the two cannot differ.
+  const wants = countOf("needs");
   document.title = wants ? `(${wants}) agentview` : "agentview";
-  // Kept for the drag handlers: the DOM is now packed by height, so its
-  // order is a layout detail and no longer the order you see.
-  PAINTED = blocks.filter(b => !b.orphan && !b.routines).map(b => b.project);
-  place(blocks.length ? blocks.map(block).join("")
-    : `<div class="empty">${query.trim().length >= 3
-         ? `Nothing matches “${esc(query.trim())}”.` : "No sessions running."}</div>`);
-  document.getElementById("stamp").textContent =
-    "updated " + new Date().toLocaleTimeString();
+  overview(shown);
+  document.getElementById("stamp").textContent = stampText();
 }
 
-// Click a row and its terminal comes to the front. The page never guesses
-// how: the server works out whether that means WezTerm, tmux or Konsole.
-document.getElementById("main").addEventListener("click", async ev => {
-  // Every control inside a row -- edit, guess, clear, pin -- is a click on
-  // that control, never a jump. They share this element, so stopPropagation
-  // on their own handlers cannot help: the guard has to live here.
-  if (ev.target.closest(".edit, .guess, .clear, .pin")) return;
-  // Folding comes first: a folded row is a control, not a session you are
-  // trying to reach, and the chevron on an open row is not a jump either.
-  const folded = ev.target.closest(".row.stub");
-  if (folded) { OPEN.add(folded.dataset.sid); return paint(); }
-  const chevron = ev.target.closest(".fold");
-  if (chevron) {
-    OPEN.delete(chevron.closest(".row").dataset.sid);
-    return paint();
+// The line over the header: when the roster was read, or -- for a few seconds
+// after a refusal -- what happened, so that the next poll does not wipe it.
+let NOTE = null;
+function stampText() {
+  return NOTE && Date.now() < NOTE.until ? NOTE.text : "updated " + new Date().toLocaleTimeString();
+}
+
+function nothing() {
+  return `<div class="empty">${query.trim().length >= 3
+    ? `Nothing matches “${esc(query.trim())}”.` : "No sessions running."}</div>`;
+}
+
+// The overview prints `columns` as the server sent them: which sessions share
+// a column, and in what order, was decided there. Everything below is text
+// going into text positions through esc() -- a name or a line is whatever a
+// session called itself, and never markup.
+function filteredColumns(cols) {
+  // From three characters, and a project that matches keeps all its sessions.
+  const q = query.trim().toLowerCase();
+  if (q.length < 3) return cols;
+  const hit = s => String(s || "").toLowerCase().includes(q);
+  return cols.map(c => {
+    if (hit(c.name) || hit(c.raw)) return c;
+    const sessions = c.sessions.filter(t => hit(t.find));
+    const pills = (c.pills || []).filter(p => hit(p.find));
+    return sessions.length || pills.length ? { ...c, sessions, pills } : null;
+  }).filter(Boolean);
+}
+
+function overview(cols) {
+  SHOWN = cols;
+  const main = document.getElementById("main");
+  const x = main.scrollLeft;          // a repaint every poll must not send you back to the first column
+  main.innerHTML = cols.length ? cols.map(column).join("") : nothing();
+  main.scrollLeft = x;
+}
+
+// The words of the header's three counts. The roster counts; this is only how
+// each is said, and what a click on it lights up (`counted` on a tile).
+const COUNT_WORD = { needs: n => n === 1 ? "needs you" : "need you",
+                     otherStuck: () => "other stuck", moving: () => "moving" };
+
+// The count the page shows for a key: the roster's number when it is a whole
+// number above nothing, and 0 for anything else. The header and the clear-on-
+// empty both read it, so a count that prints as 0 is never one that is lit.
+const countOf = k => Number.isInteger(COUNTS[k]) && COUNTS[k] > 0 ? COUNTS[k] : 0;
+
+// The overview's header: what is on the page, then the roster's three counts,
+// each a button that lights up its sessions. A count of nothing has nothing to
+// light, so its button is off. Written again only when it changed, so that a
+// click is never lost to a repaint between its press and its release.
+let HEAD_SHOWN = "";
+function drawHead(cols, down) {
+  const all = list => list.reduce((a, c) => a + c.sessions.length, 0);
+  const total = all(cols), everyone = all(COLUMNS);
+  const buttons = Object.keys(COUNT_WORD).map(k => {
+    const n = countOf(k);
+    return `<button class="hc ${k}" data-count="${k}" aria-pressed="${LIGHT === k}" ${n ? "" : "disabled"}
+      title="${n ? "light up these sessions; click again to clear" : "none"}">${n} ${COUNT_WORD[k](n)}</button>`;
+  }).join(" &nbsp;·&nbsp; ");
+  const html = `${total} ${total === 1 ? "session" : "sessions"} · ${cols.length} ${cols.length === 1 ? "project" : "projects"}`
+    + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
+    + ` &nbsp;·&nbsp; ${buttons}${down}`;
+  if (html === HEAD_SHOWN) return;
+  HEAD_SHOWN = html;
+  // Rebuilding the buttons drops the focus from the one that has it, so a
+  // keyboard press (Enter to light, Enter again to clear) would stop at the
+  // first. Put it back on the button of the same count.
+  const held = document.activeElement?.closest("button.hc")?.dataset.count;
+  document.getElementById("count").innerHTML = html;
+  if (held && known(COUNT_WORD, held)) document.querySelector(`#count button.hc[data-count="${held}"]`)?.focus();
+}
+
+// What is wrong with the whole machine: one band each, as the roster named it.
+// The roster is the only place this comes from, and its words are text. Written
+// again only when the list changed, like the header.
+let BANNERS_SHOWN = "";
+function drawBanners() {
+  const list = BANNERS.filter(b => b && typeof b.text === "string" && b.text);
+  const key = JSON.stringify(list);
+  if (key === BANNERS_SHOWN) return;
+  BANNERS_SHOWN = key;
+  document.getElementById("banners").replaceChildren(...list.map(b => {
+    const el = document.createElement("div");
+    el.className = "banner";
+    el.textContent = b.text;
+    return el;
+  }));
+}
+
+// What a table says about a key, and nothing a plain object inherits: a kind
+// the server calls "constructor" is not on the list.
+const known = (table, key) => Object.prototype.hasOwnProperty.call(table, key) ? table[key] : "";
+
+// The card's state word. The server decides the state (the most urgent of its
+// sessions); this is only how each is said.
+const STATE_WORD = { needs: "NEEDS YOU", error: "ERROR", hung: "HUNG", limit: "LIMIT",
+                     moving: "MOVING", idle: "ALL IDLE" };
+
+function column(c) {
+  // The state is always the card's second line, never above the name.
+  const said = known(STATE_WORD, c.state);
+  const word = said || (c.state ? String(c.state).toUpperCase() : "");
+  const st = said ? c.state : "other";
+  // Lit up: a column with none of those sessions is only its card.
+  const shrunk = LIGHT && !c.sessions.some(t => t.counted === LIGHT);
+  return `<section class="ov-col ${shrunk ? "shrunk" : ""}" data-project="${esc(c.project)}">
+    <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${contextOf(c)}${footOf(c)}${movementOf(c)}${mergedOf(c)}</div>
+    ${c.sessions.map(tile).join("")}
+    ${pillsOf(c)}
+  </section>`;
+}
+
+// What the project is about, as the server chose it. A line of your own is
+// edited where it stands; a guess is greyed and invites a line of your own.
+function contextOf(c) {
+  const x = c.context;
+  if (!x) return "";
+  const mine = x.source === "own" ? x.full : "";
+  const add = x.guess ? `${x.line ? " " : ""}<span class="add">add a line</span>` : "";
+  return `<div class="ov-ctx edit ${x.guess ? "maybe" : ""}" data-edit="context" data-value="${esc(mine)}"
+    title="${esc(x.full)}">${esc(x.line)}${add}</div>`;
+}
+
+// A track's progress, as the server counted it.
+function progressOf(c) {
+  const p = c.track?.progress;
+  return p ? `<span class="ov-bar" aria-hidden="true"><i style="width:${
+    p.total ? Math.round(Math.min(p.done, p.total) / p.total * 100) : 100}%"></i></span><span>${esc(p.text)}</span>` : "";
+}
+
+function notesLinkOf(c) {
+  return c.notes ? `<a class="ov-notes ${NOTES.has(c.project) ? "on" : ""}" href="#"
+    data-query="${esc(c.notes.query)}">notes</a>` : "";
+}
+
+// The row under the context line: progress, the notes link, and whatever the
+// last click on that link found.
+function footOf(c) {
+  const bar = progressOf(c), note = notesLinkOf(c);
+  return bar || note ? `<div class="ov-prog">${bar}${note}</div>${hitsOf(c)}` : "";
+}
+
+// Notes are looked up when the link is clicked, and only then.
+const NOTES = new Map();      // project -> what its last click found, until clicked away
+function hitsOf(c) {
+  const n = NOTES.get(c.project);
+  if (!n) return "";
+  const hits = Array.isArray(n.hits) ? n.hits : [];
+  const body = n.wait ? "searching…"
+    : !n.ok ? esc(n.reason || "notes search failed")
+    : hits.length ? hits.map(h => `<div><div class="hit-title" title="${esc(h.path)}">${esc(h.title || h.path)}</div>
+        <div class="hit-snip">${esc(h.snippet)}</div></div>`).join("")
+    : "nothing found";
+  return `<div class="ov-hits">${body}</div>`;
+}
+
+// What you moved into this project, each with the way back. Undoing puts the
+// project back as its own; its pin, name and line were carried and stay here.
+function mergedOf(c) {
+  if (!(c.merged || []).length) return "";
+  return `<div class="ov-merged">${c.merged.map(m => `<span>includes ${esc(m.name)}
+    <button data-act="unmerge" data-from="${esc(m.project)}"
+      title="make ${esc(m.name)} its own project again (its pin, name and line are not given back)">undo</button></span>`).join("")}</div>`;
+}
+
+// The name, and what you can do to the project: pin it, move a pinned one
+// along the row, merge it into another. A project is what you correct, so
+// "No project" -- the pile of sessions waiting for one -- has none of it.
+// The raw name stays on hover: renaming never hides what it is.
+function headOf(c) {
+  if (c.kind === "none") return `<div class="ov-top"><span class="ov-name">${esc(c.name)}</span></div>`;
+  // The neighbours are the cards on the page, not those a filter has hidden.
+  const pins = SHOWN.filter(x => x.pinned);
+  const at = pins.findIndex(x => x.project === c.project);
+  const arrow = (to, glyph, word) => to ? `<button class="ov-arrow" data-act="swap" data-with="${esc(to.project)}" data-side="${word}"
+      title="${word} of ${esc(to.name)}" aria-label="${word} of ${esc(to.name)}">${glyph}</button>` : "";
+  // A track's status word sits beside its name; a name that is not the raw one carries the raw
+  // for the hover, in grey after it.
+  const tag = c.track?.status
+    ? `<span class="ov-tag ${esc(c.track.status.toLowerCase())}">${esc(c.track.status)}</span>` : "";
+  const raw = c.raw && c.raw !== c.name ? ` data-raw="${esc(c.raw)}"` : "";
+  return `<div class="ov-top">
+    <span class="ov-name edit" data-edit="name"${raw} title="${esc(c.raw)}: click to rename">${esc(c.name)}</span>${tag}
+    <span class="ov-tools">
+      ${c.pinned ? arrow(pins[at - 1], "‹", "before") + arrow(pins[at + 1], "›", "after") : ""}
+      <button class="ov-pin ${c.pinned ? "on" : ""}" data-act="${c.pinned ? "unpin" : "pin"}"
+        title="${c.pinned ? "pinned: click to unpin" : "pin to the front"}"
+        aria-pressed="${c.pinned ? "true" : "false"}">${c.pinned ? "★" : "☆"}</button>
+      <button class="ov-merge" data-act="merge-form"
+        title="merge all of it into another project; holds for sessions that start later">merge…</button>
+    </span>
+  </div>`;
+}
+
+// The card's movement: the strip the server summed over the project's
+// sessions, and the mix under it. Heights are scaled to the busiest minute
+// shown; the counts themselves are the server's.
+function movementOf(c) {
+  const bars = (c.strip || []).map(v => v === null ? null : Number(v) || 0);
+  const top = Math.max(1, ...bars.filter(v => v !== null));
+  const bar = v => v === null ? `<i class="u" title="not seen"></i>`
+    : v === 0 ? `<i class="z" title="0 writes"></i>`
+    : `<i style="height:${Math.max(2, Math.round(v / top * 28))}px" title="${v} writes"></i>`;
+  const m = Object.fromEntries(["moving", "stuck", "idle"].map(k => [k, Number(c.summary?.[k]) || 0]));
+  return `<div class="ov-mv">
+    <div class="strip" role="img" aria-label="Writes per minute, last 30 minutes">${bars.map(bar).join("")}</div>
+    <div class="mix">${m.moving} moving · ${m.stuck} stuck · ${m.idle} idle</div>
+  </div>`;
+}
+
+// The kinds of stuck a tile can carry, and the word on its tag. The class on
+// the tile comes from this list, never from the server's text.
+const KIND_TAG = { needs: "needs you", error: "error", hung: "hung", limit: "limit" };
+
+// Where a tile's working-on line came from, and how it is said: the last
+// prompt, the branch and the folder stand in for a line, so they are greyed.
+// The class comes from this list too.
+const LINE_CLASS = { own: "", did: "", title: "", prompt: "stand-in", place: "stand-in" };
+
+function tile(t) {
+  const kind = known(KIND_TAG, t.stuck?.kind) ? t.stuck.kind : "";
+  const needs = kind === "needs" ? " needs" : "";
+  // Error, Hung and Limit are told by their kind alone: the dot is theirs, not
+  // a tick for a finished turn, and no flag of the old pages is added to it.
+  const notNeeds = kind && kind !== "needs";
+  const alarm = notNeeds ? kind : (["waiting", "stuck", "ready"].includes(t.flag) ? t.flag : "") + needs;
+  const via = t.jump?.via;
+  const can = via === "pane" || via === "attach";
+  const tags = (t.tags || []).map(g =>
+    `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
+  const light = lightOf(t);
+  return `<div class="tile ${can ? "can" : ""} ${alarm}${light}" data-sid="${esc(t.key)}">
+    <div class="rhead">
+      ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${unpinButton(t)}${moveButton(t)}${jumpLabel(t, via)}
+    </div>
+    ${t.line ? `<div class="tline ${known(LINE_CLASS, t.lineSource)}" title="${esc(t.line)}">${esc(t.line)}</div>` : ""}
+    ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
+    ${t.handover ? `<div class="said">“${esc(t.handover)}”</div>` : ""}
+    ${stuckBox(t)}
+    ${guessedBox(t)}
+    ${handRow(t)}
+  </div>`;
+}
+
+// Finished sessions, as the server chose them: one line each, name and idle
+// time, the working-on line as the hover, a click to jump. A pill that has
+// nowhere to go says so before the click and does nothing when clicked: it was
+// read already, and a click that reaches nothing has shown you nothing.
+function pillsOf(c) {
+  const list = (c.pills || []).filter(p => p && typeof p.key === "string");
+  return list.length ? `<div class="pills">${list.map(pill).join("")}</div>` : "";
+}
+
+function pill(p) {
+  const via = p.jump?.via;
+  const can = via === "pane" || via === "attach";
+  const tags = (p.tags || []).map(g => `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
+  return `<div class="pill ${can ? "can" : ""}${lightOf(p)}" data-sid="${esc(p.key)}" title="${esc(p.line)}">
+    <span class="dot"></span><span class="nm">${esc(p.name || named(p))}</span>${tags}<span class="for">${esc(p.idle?.text)}</span>${pinButton(p)}${jumpLabel(p, via)}
+  </div>`;
+}
+
+// Lit or faded while a header count is lit up: by the count the roster says the
+// tile or pill is in (a pill is in none).
+function lightOf(t) {
+  return !LIGHT ? "" : t.counted === LIGHT ? " lit" : " dim";
+}
+
+// Pin a pill open as a tile, or let a pinned tile shrink again. The server
+// keeps the pin until it is undone or the session closes.
+function pinButton(p) {
+  return `<button class="keep" data-sid="${esc(p.key)}" aria-pressed="false"
+    title="keep it open as a full tile until you unpin it or it closes">pin</button>`;
+}
+
+function unpinButton(t) {
+  return t.pinned ? `<button class="keep on" data-sid="${esc(t.key)}" data-pinned="1" aria-pressed="true"
+    title="pinned open: click to let it shrink to a pill again when it is finished">unpin</button>` : "";
+}
+
+// A span of minutes the way the server says it ("<1 min", "14 min", "3 h").
+function minutesText(min) {
+  const m = Number(min);
+  if (!(m >= 0)) return "";
+  if (m < 1) return "<1 min";
+  if (m < 60) return `${Math.floor(m)} min`;
+  if (m < 48 * 60) return `${Math.floor(m / 60)} h`;
+  return `${Math.floor(m / 1440)} d`;
+}
+
+// A moment the way it is read on a clock: the time today, the day and the
+// time on any other day.
+function clock(ms) {
+  const d = new Date(ms);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? time
+    : `${d.toLocaleDateString([], { weekday: "short" })} ${time}`;
+}
+
+// What you can do to one session. The button puts it in any project, for as
+// long as the session lasts; the chip (in No project) is where the roster
+// thinks it belongs, and once you have moved it the way back is always there.
+function moveButton(t) {
+  return `<button class="move" data-sid="${esc(t.key)}" aria-label="move this session to another project"
+    title="move this session to another project (for this session only)">⋯</button>`;
+}
+
+function handRow(t) {
+  const back = t.assigned ? `<span class="clear" data-sid="${esc(t.key)}"
+    title="back to the project it belongs to">moved by you · back</span>` : "";
+  return t.suggestion || back ? `<div class="assign hand">${t.suggestion ? suggestionChip(t) : ""}${back}</div>` : "";
+}
+
+// Why a session is stopped, and what you need to know before you go to it.
+// Every word here was written by a session or a person: it goes into the page
+// as text, through esc(), and nowhere else.
+function stuckBox(t) {
+  const s = t.stuck;
+  // No kind: a session that only asked something in its last words still
+  // shows it, the way the tile always has.
+  if (!s) return t.need ? `<div class="need">${esc(t.need)}</div>` : "";
+  const c = s.context || {};
+  let body = "";
+  if (s.source === "question" && !(c.questions || []).length) {
+    // The dialog is open; Claude Code has not written its question down yet.
+    body = `<div class="late">Its question is not in the transcript yet.</div>`;
+  } else if (s.source === "question") {
+    body = (c.questions || []).map(q => `<div>
+      <div class="qtext">${q.header ? `<span class="qh">${esc(q.header)}${q.multi ? " · several" : ""}</span>` : ""}${esc(q.question)}</div>
+      <ul>${(q.options || []).map(o => `<li><span class="ol">${esc(o.label)}</span>${o.description ? `<span class="od"> — ${esc(o.description)}</span>` : ""}</li>`).join("")}</ul>
+    </div>`).join("");
+  } else if (s.source === "permission") {
+    const what = c.command || c.target;
+    body = `<div class="cmd"><span class="tool">${esc(c.tool || "a tool")}</span>${c.copy ? copyButton(t.key) : ""}${what ? `<code>${esc(what)}</code>` : ""}</div>`;
+  } else if (s.kind === "limit") {
+    // Where the reset is, and how long it has been held. A reset already past
+    // still says so: the session has not picked up again.
+    const reset = Number(c.resetsAt) > 0 ? `${c.resetsAt > Date.now() ? "resets" : "reset"} ${clock(c.resetsAt)}` : "";
+    const held = c.held == null ? "" : `held ${minutesText(c.held)}`;
+    const line = [reset, held].filter(Boolean).join(" · ");
+    body = line ? `<div class="late">${esc(line)}</div>` : (c.text ? `<div class="say">${esc(c.text)}</div>` : "");
+  } else if (s.kind === "error") {
+    body = (c.text ? `<div class="say">${esc(c.text)}</div>` : "")
+         + (c.ago == null ? "" : `<div class="late">${esc(minutesText(c.ago))} ago</div>`);
+  } else if (s.kind === "hung") {
+    body = c.tool
+      ? `<div class="late">last tool: ${esc(c.tool)}${c.ago == null ? "" : ` · ${esc(minutesText(c.ago))} ago`}</div>`
+      : `<div class="late">no tool called yet</div>`;
+  } else if (c.text) {
+    body = `<div class="say">${esc(c.text)}</div>`;
   }
-  const row = ev.target.closest(".row");
-  if (!row) return;
-  // Looking is looking. A row with no terminal to raise -- a routine, a
-  // provider that cannot say where its session runs -- is still marked
-  // read by the click, so the tick goes and the count comes down.
-  if (!row.classList.contains("can")) {
-    fetch("/api/seen", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-      body: JSON.stringify({ key: row.dataset.sid }),
-    }).then(load).catch(() => {});
+  // Its own class, not `.why`: a jump clears the tile's `.why` (the note a
+  // failed jump leaves) and must not clear the reason with it.
+  return `<div class="stuck-box ${esc(s.kind)}"><div class="reason">${esc(s.reason)}</div>${body}</div>`;
+}
+
+// The copy button is on a command and nowhere else. It puts the command on
+// the clipboard and does nothing to the session: answering stays in its pane.
+let COPIED = { key: "", i: "", until: 0, ok: true };
+
+// `i` is which of a tile's guessed commands the button is for; the command of
+// a permission prompt has none.
+const COPY_TITLE = "Copy the command. This does not answer the session.";
+function copyButton(key, i = "", title = COPY_TITLE) {
+  const now = COPIED.key === key && COPIED.i === String(i) && Date.now() < COPIED.until;
+  return `<button type="button" class="copy" data-sid="${esc(key)}"${i === "" ? "" : ` data-i="${esc(i)}"`} title="${esc(title)}">${now ? (COPIED.ok ? "copied" : "not copied") : "copy"}</button>`;
+}
+
+// Commands the roster guessed in what a session said it needs from you, one
+// row each with its own button. The row repeats the command so it is plain
+// which one the button copies. Every word here is text a session wrote.
+function guessedBox(t) {
+  const found = t.guessedCommands || [];
+  if (!found.length) return "";
+  const title = `${COPY_TITLE} It is a guess from the session's words.`;
+  // Not a stuck state: the box only borrows the layout of the one above it.
+  return `<div class="stuck-box guessed">${found.map((command, i) =>
+    `<div class="cmd"><span class="tool">command</span>${copyButton(t.key, i, title)}<code>${esc(command)}</code></div>`).join("")}</div>`;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* no clipboard API here */ }
+  try {
+    const box = document.createElement("textarea");
+    box.value = text;
+    box.style.cssText = "position:fixed;opacity:0;top:0;left:0";
+    document.body.appendChild(box);
+    box.select();
+    const ok = document.execCommand("copy");
+    box.remove();
+    return ok;
+  } catch (e) { return false; }
+}
+
+// Registered before the tile's own click below, and it stops there: a click on
+// copy is not a click on the tile, so it neither jumps nor marks it seen.
+document.getElementById("main").addEventListener("click", async ev => {
+  const button = ev.target.closest("button.copy");
+  if (!button) return;
+  ev.stopImmediatePropagation();
+  ev.preventDefault();
+  // The command comes from the roster, not from the page's text: what is
+  // copied is what the server sent, character for character.
+  const sent = COLUMNS.flatMap(c => c.sessions).find(x => x.key === button.dataset.sid);
+  const i = button.dataset.i || "";
+  const command = i !== "" ? (sent?.guessedCommands || [])[Number(i)]
+                           : (sent?.stuck?.context?.copy ? sent.stuck.context.command : "");
+  if (typeof command !== "string" || !command) return;
+  const ok = await copyText(command);
+  COPIED = { key: sent.key, i, until: Date.now() + 1500, ok };
+  button.textContent = ok ? "copied" : "not copied";
+  setTimeout(() => { if (button.isConnected) button.textContent = "copy"; }, 1500);
+});
+
+// In No project: where the roster thinks this session belongs, one click away.
+// The click is the page's existing `.guess` handler, which assigns it.
+function suggestionChip(t) {
+  return `<span class="guess" data-sid="${esc(t.key)}"
+    data-project="${esc(t.suggestion.project)}">→ ${esc(t.suggestion.name)}</span>`;
+}
+
+// The jump is worked out by the server before anyone clicks: a pane to raise,
+// a new tab that attaches, or none -- and then it says so, greyed, instead of
+// leaving you to click for nothing.
+function jumpLabel(t, via) {
+  if (via === "pane") return `<span class="go">open ↗</span>`;
+  if (via === "attach") return `<span class="go">attach ↗</span>`;
+  return `<span class="go none" title="${esc(t.jump?.reason || "no terminal")}">no terminal</span>`;
+}
+
+function tileFlag(t) {
+  // A kind says what the flag would, and says it once.
+  const kind = t.stuck?.kind;
+  const tag = known(KIND_TAG, kind);
+  if (tag) return `<span class="flag ${esc(kind)}">${esc(tag)}</span>`;
+  // `flagNote` is finished by the server: what a waiting session is blocked
+  // on, or the minutes a stuck session has been quiet and a tool call has run.
+  return t.flag === "waiting"
+    ? `<span class="flag waiting">waiting</span>` + (t.flagNote ? `<span class="wf">${esc(t.flagNote)}</span>` : "")
+    : t.flag === "stuck"
+      ? `<span class="flag stuck">stuck ${esc(t.flagNote)}</span>`
+      : t.flag === "ready" ? `<span class="flag ready">ready</span>`
+        // Seen by the chime's marks, not yet read here: it stays a tile.
+        : t.unread ? `<span class="flag unread">unread</span>` : "";
+}
+
+// A tile is a session you can go to: click it and its terminal comes to the
+// front. The page never guesses how: the server works out whether that means
+// WezTerm, tmux or Konsole. A control inside a tile that picks something (move,
+// keep, the forms) is a click on that control, never a jump: see the guard.
+// The click is acknowledged *now*, before the answer: raising the terminal
+// takes the focus off this page, and a browser throttles a page it is not
+// showing -- feedback that waits for the response is feedback you never see.
+document.getElementById("main").addEventListener("click", async ev => {
+  const el = ev.target.closest(".tile, .pill");
+  if (!el || ev.target.closest(".hand, .move, .keep, .ov-form")) return;   // these pick; none of them jumps
+  const post = (path, body) => fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+    body: JSON.stringify(body),
+  });
+  if (!el.classList.contains("can")) {
+    // A tile with no terminal is looked at, and that is all a click means. A
+    // pill was read already and has nothing new on its face: its click only
+    // says why it cannot open, and marks nothing.
+    if (el.classList.contains("pill")) {
+      const p = COLUMNS.flatMap(c => c.pills || []).find(x => x.key === el.dataset.sid);
+      return say(el.dataset.sid, p?.jump?.reason || "no terminal", false);
+    }
+    // With the stop whose handover the tile showed: only that one is read.
+    const tile = COLUMNS.flatMap(c => c.sessions || []).find(x => x.key === el.dataset.sid);
+    post("/api/seen", { key: el.dataset.sid, stop: tile?.stop }).then(load).catch(() => {});
     return;
   }
-  // Acknowledge the click *now*. Raising the terminal takes the focus off
-  // this page, and a browser throttles a page it is not showing -- feedback
-  // that waits for the response is feedback you never see.
-  row.classList.remove("jumped", "failed");
-  void row.offsetWidth;
-  row.classList.add("jumped");
+  el.classList.remove("jumped", "failed");
+  el.querySelector(".why")?.remove();
+  void el.offsetWidth;
+  el.classList.add("jumped");
+  const key = el.dataset.sid;
   try {
-    const r = await fetch("/api/jump", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-      body: JSON.stringify({ key: row.dataset.sid }),
-    });
-    const out = await r.json();
-    if (!out.ok) {
-      row.classList.remove("jumped");
-      row.classList.add("failed");
-      document.getElementById("stamp").textContent = out.reason || "jump failed";
-    }
+    const out = await (await post("/api/jump", { key })).json();
+    if (!out.ok) say(key, out.reason || "jump failed", true);
+    else if (out.did === "opening") say(key, "opening a tab for it…", false);
   } catch (e) {
-    row.classList.add("failed");
+    say(key, "jump failed", true);
   }
 });
+
+// What a jump has to say sits on the tile itself until the next poll repaints
+// the page. The tile is found again by its key: a slow jump is answered after
+// a poll has replaced every node, and the one that was clicked is gone.
+function say(key, text, bad) {
+  const el = [...document.querySelectorAll(".tile, .pill")].find(t => t.dataset.sid === key);
+  if (!el) return;
+  el.classList.remove("jumped");
+  el.querySelector(".why")?.remove();
+  const why = document.createElement("div");
+  why.className = bad ? "why" : "why note";
+  why.textContent = text;
+  el.append(why);
+  if (bad) {
+    el.classList.add("failed");
+    document.getElementById("stamp").textContent = text;
+  }
+}
 
 // Inline editing. The poll is paused while a field is open, otherwise a
 // refresh would tear the input out from under the cursor.
@@ -876,8 +1116,8 @@ document.getElementById("main").addEventListener("click", ev => {
   // Read everything off the cell now: the field replaces it, and by the time
   // the edit is committed neither is still in the document.
   const project = cell.closest("section")?.dataset.project;
-  const sid = cell.dataset.sid;
-  const before = cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
+  const before = cell.dataset.value !== undefined ? cell.dataset.value
+    : cell.textContent.trim() === "—" ? "" : cell.textContent.trim();
   const input = document.createElement("input");
   input.className = "inline";
   input.value = before;
@@ -893,17 +1133,16 @@ document.getElementById("main").addEventListener("click", ev => {
     // and this one is the reason it was asked to redraw.
     input.remove();
     if (commit && input.value.trim() !== before) {
-      const endpoint = { name: "/api/name", line: "/api/line", assign: "/api/assign" }[kind];
+      const endpoint = { name: "/api/name", context: "/api/context" }[kind];
       const body = kind === "name"
         ? { project, label: input.value }
-        : kind === "assign"
-          ? { key: sid, project: input.value }
-          : { key: sid, text: input.value };
-      await fetch(endpoint, {
+        : { project, text: input.value };
+      const r = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Fleet": "1" },
         body: JSON.stringify(body),
       });
+      if (await changedElsewhere(r)) return;
     }
     load();
   };
@@ -920,119 +1159,157 @@ document.getElementById("main").addEventListener("click", ev => {
   });
 });
 
-// Drag a block to pin it; the order you drop them in is the order they keep.
-let dragged = null;
-const main = document.getElementById("main");
-let draggedRow = null;
-main.addEventListener("dragstart", ev => {
-  const r = ev.target.closest(".row");
-  if (r) {
-    // A re-render mid-drag detaches what you are holding and the drag dies
-    // without a word, so the poll waits until you have dropped it.
-    dragging = true;
-    draggedRow = r;
-    ev.dataTransfer.effectAllowed = "move";
-    ev.stopPropagation();
-    return;
-  }
-  const handle = ev.target.closest(".pin");
-  if (!handle) return;
-  const b = handle.closest(".block");
-  if (!b) return;
-  dragging = true;
-  dragged = b;
-  b.classList.add("dragging");
-  ev.dataTransfer.effectAllowed = "move";
-});
-main.addEventListener("dragend", () => {
-  dragging = false;
-  if (dragged) dragged.classList.remove("dragging");
-  dragged = null;
-  draggedRow = null;
-  [...main.querySelectorAll(".over")].forEach(e => e.classList.remove("over"));
-});
-// Neither of these takes a drop: `No project` is where an unassigned session
-// already is, and Routines is not a project you can put anyone in.
-const sealed = el => el.classList.contains("orphan") || el.classList.contains("routines");
-
-main.addEventListener("dragover", ev => {
-  const over = ev.target.closest(".block");
-  if (!over) return;
-  if (draggedRow) {                       // a session looking for a project
-    if (over.contains(draggedRow) || sealed(over)) return;
-    ev.preventDefault();
-    over.classList.add("over");
-    return;
-  }
-  if (!dragged || over === dragged || sealed(over)) return;
+// The notes link on a card: one search of your notes, when it is clicked and
+// not before. Clicking again puts the answer away.
+document.getElementById("main").addEventListener("click", async ev => {
+  const link = ev.target.closest(".ov-notes");
+  if (!link) return;
   ev.preventDefault();
-  over.classList.add("over");
-});
-main.addEventListener("dragleave", ev => {
-  const over = ev.target.closest(".block");
-  if (over) over.classList.remove("over");
-});
-main.addEventListener("drop", async ev => {
-  const over = ev.target.closest(".block");
-  if (!over) return;
-  if (draggedRow) {
-    ev.preventDefault();
-    over.classList.remove("over");
-    const sid = draggedRow.dataset.sid;
-    draggedRow = null;
-    return assign(sid, over.dataset.project);
-  }
-  if (!dragged || over === dragged) return;
-  ev.preventDefault();
-  over.classList.remove("over");
-  const order = [...PAINTED];
-  const from = order.indexOf(dragged.dataset.project);
-  const to = order.indexOf(over.dataset.project);
-  if (from < 0 || to < 0) return;
-  order.splice(to, 0, order.splice(from, 1)[0]);
-  // Dropping pins everything above and including the drop point: the ones
-  // you have deliberately placed are exactly the ones that should stop moving.
-  const pinned = order.slice(0, Math.max(to, from) + 1);
-  await fetch("/api/order", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ pinned }),
-  });
-  load();
+  const project = link.closest("section")?.dataset.project;
+  const query = link.dataset.query;
+  // Repainting while a field is open would take it away from you; the next poll
+  // draws what is waiting, as soon as the field is closed.
+  const show = () => { if (!busyWithUser()) paint(); };
+  if (NOTES.has(project)) { NOTES.delete(project); show(); return; }
+  NOTES.set(project, { wait: true });
+  show();
+  let found = { ok: false, reason: "notes search failed" };
+  try {
+    const r = await fetch("/api/notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+      body: JSON.stringify({ query }),
+    });
+    if (r.ok) found = await r.json();
+  } catch (e) { /* the card says it failed */ }
+  if (NOTES.has(project)) { NOTES.set(project, found); show(); }      // not if you clicked it away meanwhile
 });
 
-async function assign(sid, project) {
-  await fetch("/api/assign", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ key: sid, project }),
-  });
-  load();
+function assign(sid, project) {
+  return correct("/api/assign", { key: sid, project });
 }
 
-main.addEventListener("click", ev => {
+document.getElementById("main").addEventListener("click", ev => {
   const guess = ev.target.closest(".guess");
   if (guess) { ev.stopPropagation(); return assign(guess.dataset.sid, guess.dataset.project); }
   const clear = ev.target.closest(".clear");
   if (clear) { ev.stopPropagation(); return assign(clear.dataset.sid, ""); }
 });
 
-// Unpin: click the mark.
-main.addEventListener("click", async ev => {
-  const pin = ev.target.closest(".pin");
-  if (!pin) return;
-  ev.stopPropagation();
-  const holder = pin.closest(".block");
-  if (!holder.classList.contains("pinned")) return;
-  // Read the pinned set off the page rather than off a variable the last
-  // refresh happened to fill: clicking straight after a drop must still work.
-  const current = [...main.querySelectorAll(".block.pinned")].map(b => b.dataset.project);
-  await fetch("/api/order", {
+// By hand. Every click is one correction, made by the server on its own, so
+// two in quick succession (or from two tabs) both hold. A picker keeps the
+// poll from repainting while it is open, as an inline field does, and goes
+// when you press Escape or click away.
+async function correct(path, body) {
+  const r = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ pinned: current.filter(p => p !== holder.dataset.project) }),
+    body: JSON.stringify(body),
   });
+  if (await changedElsewhere(r)) return;
+  if (!r.ok) document.getElementById("stamp").textContent = "not done: " + (r.statusText || r.status);
   load();
+}
+
+// 409: another tab changed the card this page drew, so nothing was written.
+// Read the roster again and say so, calmly: the line holds for a few seconds.
+async function changedElsewhere(r) {
+  if (r.status !== 409) return false;
+  NOTE = { text: "changed in another tab, refreshed", until: Date.now() + 6000 };
+  await load();
+  document.getElementById("stamp").textContent = stampText();
+  return true;
+}
+
+// Other projects you can put something in, named so two with one name differ:
+// by kind, then (a client folder and a folder are both folders) by what the
+// identity starts with, then -- two repositories called alike -- by the identity.
+function projectOptions(except) {
+  const open = COLUMNS.filter(c => c.kind !== "none" && c.project !== except);
+  const prefix = c => c.project.split(":", 1)[0];
+  const tag = c => {
+    const same = open.filter(o => o.name === c.name);
+    if (same.length < 2) return "";
+    if (same.filter(o => o.kind === c.kind).length < 2) return ` (${c.kind})`;
+    if (same.filter(o => prefix(o) === prefix(c)).length < 2) return ` (${prefix(c)})`;
+    return ` (${c.project})`;
+  };
+  return open.map(c => `<option value="${esc(c.project)}">${esc(c.name)}${esc(tag(c))}</option>`).join("");
+}
+
+// Closed once: taking out the button you pressed fires its focusout, and that
+// would close the picker a second time from inside the first.
+function closePicker(form, then = load) {
+  if (form.dataset.closed) return;
+  form.dataset.closed = "1";
+  form.remove();
+  then();
+}
+
+function picker(host, html, onChoose) {
+  if (document.querySelector("select.pick") || editing) return null;
+  const form = document.createElement("div");
+  form.className = "ov-form";
+  form.innerHTML = html;
+  host.append(form);
+  const sel = form.querySelector("select.pick");
+  sel.focus();
+  form.addEventListener("keydown", e => { if (e.key === "Escape") closePicker(form); });
+  form.addEventListener("focusout", e => {
+    // Leaving the page for another window must not drop what you were choosing.
+    if (!form.contains(e.relatedTarget) && document.hasFocus()) closePicker(form);
+  });
+  form.addEventListener("click", e => {
+    const go = e.target.closest("[data-act]")?.dataset.act;
+    if (go === "cancel") closePicker(form);
+    if (go === "go" && sel.value) closePicker(form, () => onChoose(sel.value));
+  });
+  return form;
+}
+
+document.getElementById("main").addEventListener("click", async ev => {
+  const col = ev.target.closest(".ov-col");
+  if (!col) return;
+  const project = col.dataset.project;
+  const keep = ev.target.closest(".keep");
+  if (keep) {
+    ev.stopPropagation();
+    fetch("/api/keep", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+      body: JSON.stringify({ key: keep.dataset.sid, pinned: keep.dataset.pinned !== "1" }),
+    }).then(load).catch(() => {});
+    return;
+  }
+  const move = ev.target.closest(".move");
+  if (move) {
+    ev.stopPropagation();
+    const sid = move.dataset.sid;
+    picker(move.closest(".tile"), `<select class="pick" aria-label="move this session to">
+        <option value="" disabled selected>move this session to…</option>${projectOptions(project)}</select>
+        <button data-act="go">move</button><button data-act="cancel">cancel</button>`,
+      to => correct("/api/assign", { key: sid, project: to }));
+    return;
+  }
+  const act = ev.target.closest("[data-act]");
+  if (!act || act.closest(".ov-form")) return;
+  ev.stopPropagation();
+  const what = act.dataset.act;
+  // The server is told which cards are pinned as you see them: a pin written
+  // by plain name can hold two cards, and only the page knows which is which.
+  const shown = COLUMNS.filter(c => c.pinned).map(c => c.project);
+  if (what === "pin" || what === "unpin") return correct("/api/pin", { project, action: what, shown });
+  // The arrow says which way it goes and the undo says where it saw the project,
+  // so that the same click from a tab that is behind is refused, not repeated.
+  if (what === "swap") return correct("/api/pin", { project, action: "swap", with: act.dataset.with, side: act.dataset.side, shown });
+  if (what === "unmerge") return correct("/api/assign", { key: act.dataset.from, project: "", was: project });
+  if (what === "merge-form") {
+    picker(col.querySelector(".ov-head"), `merge all of it into
+        <select class="pick" aria-label="merge into">
+        <option value="" disabled selected>choose…</option>${projectOptions(project)}</select>
+        <button data-act="go">merge</button><button data-act="cancel">cancel</button>`,
+      into => correct("/api/merge", { source: project, target: into, shown }));
+  }
 });
 
 const box = document.getElementById("q");
@@ -1316,16 +1593,6 @@ document.getElementById("save").addEventListener("click", async () => {
   b.textContent = SAVED_NOTE;
 });
 
-document.getElementById("hold").addEventListener("click", async () => {
-  HOLD = !HOLD;
-  drawHold();
-  paint();               // freeze what is on screen now, not what lands next
-  await fetch("/api/hold", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Fleet": "1" },
-    body: JSON.stringify({ hold: HOLD }),
-  }).catch(() => {});
-});
 document.getElementById("sound").addEventListener("click", async () => {
   // This click is also the gesture the browser was waiting for, so a chime
   // it had blocked is unblocked by the same press that arms it again.
@@ -1337,6 +1604,15 @@ document.getElementById("sound").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: JSON.stringify({ chime: CHIME }),
   }).catch(() => {});
+});
+
+// A click on a count lights up its sessions; a second click on the same one
+// clears it, and a click on another moves the light.
+document.getElementById("count").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-count]");
+  if (!b || b.disabled || !known(COUNT_WORD, b.dataset.count)) return;
+  LIGHT = LIGHT === b.dataset.count ? "" : b.dataset.count;
+  paint();
 });
 
 // Any click at all counts as that gesture, so the first one anywhere on the
@@ -1352,9 +1628,8 @@ const unmuzzle = async () => {
 addEventListener("pointerdown", unmuzzle);
 
 drawSound();
-drawHold();
 load();
-setInterval(() => { if (!editing && !dragging) load(); }, 3000);
+setInterval(() => { if (!editing) load(); }, 3000);
 let resizing;
 addEventListener("resize", () => {
   clearTimeout(resizing);

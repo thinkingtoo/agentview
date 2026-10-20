@@ -21,6 +21,458 @@ Names come from [cc-agent-names](https://github.com/sweatshop-ai/cc-agent-names)
 but nothing here requires it — an unnamed session shows whatever Claude Code
 called it.
 
+## The overview
+
+The main page is the **overview**: one column per project, each with a project
+card (its name) and one tile per session — name, flag, the line it works from,
+and a click that raises its terminal. The server decides which sessions share a
+column and in what order (`columns` in `/api/roster`); the page prints what it
+is sent and decides nothing. Columns keep at least 230 px and the row scrolls
+sideways when there are more projects than fit. Systemd routines are not on the
+overview.
+
+The overview is the only view. The old block view (`/?view=blocks`, with its
+fold, hold, drag and unpin) is gone, and so is `blocks` in the roster: an old
+address with that query opens the overview. What the chime, the server's marks
+and the log read is `flags`, one row per session on the machine, routines and
+finished sessions included: `{key, id, name, flag, blocked}`, with the raw flag
+the transcript gave it (`waiting`, `ready`, `tool`, `stuck` or none) and whether
+the session wrote down what blocks it. A tile may say less than its flag does
+(a long tool call is a sign, `stuck` is Hung); the chime does not, so it rings
+exactly as it did.
+
+**Which project a session is in** is decided in this order, first match wins:
+your own setting (`assign` in `config.json`); the boss's track (a boss by its
+marker in `~/.claude/pm/.boss-sessions`, a worker by its `boss-<track>` tmux
+session, then the boss that messaged it, then the one tracker that lists it --
+a track is one project across repositories, and exists only while its boss
+runs); the repository, keyed by its remote, with worktrees folded onto their
+parent and every `clients/<client>/` folder a project of its own; the folder
+rule (`shelves`); otherwise *No project*, last, with a one-click suggestion
+taken from the files the session touched. The folder a session was launched in
+decides, so a session that `cd`s elsewhere keeps its column. A boss shows once,
+first in its column. Columns go pinned first, in your order, then tracks,
+repositories and folders, each by name, so a column never moves because a
+session woke up. A column's `project` is its identity, namespaced by
+kind (`track:x`, `repo:host/owner/name`, `client:…`, `folder:x`), so a track
+and a repository that share a name stay two projects; `pinned`, `names` and
+`assign` take an identity, or a plain name as they did before.
+
+## What a project is about
+
+Under a project's name the card says what it is about, in one line cut at about
+140 characters (the whole text is the hover). The first of these that exists:
+
+1. **Your own line**, written in place on the card (click the line) and kept in
+   `config.json` as `project_lines`, keyed by the project's identity, so a track
+   and a repository with one name never share a line. An empty line takes it back.
+2. **A track's goal**: the first sentence of `## Outcome` (or a bold
+   `**Outcome:**` label) in `~/.claude/pm/<track>.goal.md`. Beside the name, the
+   `_Status:` word (OPEN, PAUSED, MET) and "N of M" from the boxes under
+   `## Done when` (or `**Done when:**`); a MET track says "done" whatever its
+   boxes say.
+3. **A repository's own words**: the first prose paragraph of its README, else of
+   `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, which
+   includes a language switcher with its current language in plain text,
+   tables, lists, code, a paragraph of only code or only `&nbsp;`, HTML blocks,
+   link definitions and `@` includes skipped; a table or a list directly under
+   a line ends it). A quote under the title counts as the description, its
+   marks and GitHub's `[!NOTE]` marker taken off. Read from the main checkout, so every
+   worktree says the same (a card looks at the main checkout and three more at
+   most, reads each distinct text once, and no more than the first 20,000
+   characters of a file). A link counts as the file only while it stays inside
+   the checkout: `AGENTS.md -> CLAUDE.md` is read, `README.md -> ~/.ssh/id_ed25519`
+   is not, a cloned repository chooses where its links point. The line is a reminder, not a rendering of the page:
+   links give their label, images say nothing, formatting tags go, and code
+   stays as written.
+4. **A guess**: the two latest session titles, greyed, with "add a line".
+
+The default name is the slug made readable (`overview-build` is "Overview
+build"; the brand stays lowercase) with the raw name on hover; a name you give
+in `names` is shown exactly as you wrote it. The No project column has no line.
+
+The **notes** link on a card searches your own notes for the project's name and
+line, on a click and never before, and shows the top three hits. It needs a local
+file, like meaning search does: `~/.config/tiroir/agentview-brain.env` (or the
+path in `$AGENTVIEW_BRAIN_ENV`), mode 0600, with `BRAIN_URL` (the notes
+service's MCP address) and `BRAIN_AUTH` (the whole Authorization header value).
+A file others can read is refused. Without it the link says "notes search is
+not set up here". The notes are never where a context line comes from.
+
+**By hand**, on the overview: click a project's name to rename it (its raw name
+stays on hover); the ☆ on its card pins it, and the ‹ › on a pinned card move
+it along the pinned ones, the ★ again unpins; **merge…** puts all of the
+project into another and carries its pin and its context line with it; the ⋯
+on a tile moves that one session, which lasts as long as the session does.
+Merge and move of a whole project are `assign` keyed by the project's identity
+(`"track:x": "repo:host/o/n"`), so they hold for sessions that start later; a
+project you moved away is gone, and what is put into it follows. Each click is
+one change to `config.json`, made under a lock, so clicks made at once all
+hold (`/api/pin`, `/api/merge`, and `/api/name` and `/api/assign` as before).
+A merge is taken back from the card of the project that took it (`includes X ·
+undo`); a session you had moved into the absorbed project goes back there, its
+pin, name and line do not. The page tells `/api/pin` and `/api/merge` which
+cards it shows (`shown`), because a pin written by plain name can hold two
+cards, and only the page knows which is which. A click is about
+the cards as the page drew them, and another tab may have changed them since.
+A request that names a project which has been moved away since (merged into
+another: its card is gone) is refused with 409 and
+nothing is written, whichever it is: a pin, an unpin, an arrow, a rename, a
+move or the guess chip, a merge, and whether the name is in the request's
+project or in the list of what the page shows (`shown`). The page reads the
+roster again and says "changed in another tab, refreshed". An arrow also says
+which way it goes (`side`, before or after the neighbour it names) and is
+refused unless the two are still in that order with no card the page showed
+between them; the undo of a merge says which card it was shown in (`was`).
+So the page never writes a ring of moves, stale tabs included. A ring written
+into `config.json` by hand is not supported: it neither crashes nor loops, and
+every session still has a card, but the cards swap places and a click aimed at
+one card can land in another.
+
+`/api/order` and `/api/hold` went with the block view, whose drag, unpin and
+hold button were their only callers. `config.json` keeps whatever it has under
+`hold`; nothing reads it. `/api/line` stays (see *Arranging it yourself*).
+
+## Movement: what shows a session is working
+
+A tile says whether its session is alive, in its own words: `writing · 8s ago`,
+`waiting on: Run the unit tests, 12 min`, `idle 14 min`, or nothing. A session
+is **moving** when any of these holds, and the evidence is read from what Claude
+Code already writes, never from a model:
+
+- it, or one of its subagents, wrote a transcript record recently (a busy
+  session counts as moving for `hung_after_minutes`, default 10, after its last
+  write);
+- a command it is waiting on has a shell of its own under its pid using CPU
+  (two looks of `/proc` a few seconds apart; the shells are the direct children
+  whose command line names `shell-snapshots`, so MCP servers and their helpers
+  never count);
+- it started a background command (a background Bash or a Monitor) and has not
+  been told it ended (a `task-notification`, or its own `TaskStop`), and the
+  shell writing to that task's own output file is still alive. A shell that
+  belongs to something else does not stand in for it, which is why a resumed
+  session's tasks from the process that died are not running.
+
+The peer `status` is never evidence: it is written when it changes and has no
+heartbeat. For a provider that reports no writes at all, the moment the status
+changed to busy counts like a write, for `hung_after_minutes` and no longer.
+An idle session is idle whatever its subagents wrote before it stopped, and a
+session waiting on a dialog is not "writing". CPU with no call in flight is a
+shell left behind and proves nothing.
+Any command or job counts for at most six hours (`WAIT_MAX_MINUTES` in
+`fleet.py`); past that the tile still says what it waits on, and the session
+stops counting as moving once `hung_after_minutes` more have passed (the
+ten minutes are counted from the moment the six hours ended, not from the last
+write). The same count runs from the last time CPU was seen moving under a
+command it waits on: a command that burned CPU two minutes ago is a session
+that was moving two minutes ago. That time is kept per session, not per
+command, and in memory only: after a restart, CPU from before it is unknown.
+
+Each project card draws a **strip**: one bar per minute for the last 30,
+oldest first, the records written by all of the project's sessions and their
+subagents (a record without a timestamp, such as a title, is not a write). The
+counters ride on the incremental tail the reader already keeps; they add no
+read. After a restart a transcript is read from its last 2 MB, so the minutes
+before that window are **unknown**, not empty: the strip leaves them as dotted
+stubs, and a minute any session in the project could not see is unknown for the
+project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session is
+stuck when its tile carries a kind (below), even while a job runs. A menu the
+person opened (`dialog open`) is not stuck, and neither is a busy session whose
+processes could not be read.
+
+## Stuck: Needs you, Error, Hung, Limit
+
+A tile that is stopped says so with a **kind**: a tag, a border and a dot in the
+kind's colour, a reason, and what the person needs to decide before they jump.
+A session has the most urgent kind that holds, in this order, and the card's
+state word (under its name) is the most urgent of its sessions':
+**NEEDS YOU** (amber), **ERROR** and **HUNG** (red), **LIMIT** (purple), then
+MOVING (green) and ALL IDLE (grey).
+
+| kind | when | reason | context |
+|---|---|---|---|
+| Needs you | an open question, an open permission prompt, another request that waits on the person (below), a dialog that says what it waits on (below), or a session line with things left | Question, Permission prompt, Sandbox request, Worker request, Goal proposal, the dialog's own words, "3 things left for you" | the question and its options; the tool and its command; the request's name and nothing more; the line's ask |
+| Error | an API or auth error is the session's last word | Overloaded, Auth error, Server error, or the error's own name | the error's words and how long ago |
+| Hung | busy, and nothing shows it moving for `hung_after_minutes` (default 10) | "Not moving for 14 min" | the last tool it called and how long ago |
+| Limit | the usage limit is the session's last word, or a "Session paused" dialog is open on usage credits | Rate limit, Session paused | when it resets (the error carries it) and how long it has been held; for the dialog, its own words |
+
+A `waiting` session says what it waits on (`waitingFor`, Claude Code's own
+word). `input needed` is a question and `permission prompt` a permission
+prompt; `sandbox request` (a sandboxed command wants the network), `worker
+request` (a teammate's worker asks) and `goal proposal` (Claude proposes a
+session goal) each wait on an approval, and read Needs you under their own
+name. `dialog open` is a menu or panel the person opened themselves: not
+stuck. A word this page has not met reads Needs you too, since Claude Code only
+says `waiting` when it waits on someone. The chime rings for every one of them,
+as before.
+
+A dialog Claude Code raises itself, and that waits on a choice, also says
+`dialog open`, but beside it the registry may carry a `needs` text (the
+classifier billing notice, the ultraplan choice, the auto-mode default, a
+refused turn's "retry on a fallback model or edit the prompt"). Such a dialog
+reads Needs you, and its own words are the reason. The one that is open on
+usage credits ("continue on usage credits or switch models") reads Limit,
+"Session paused", or "Rate limit" with the reset time when the transcript already
+holds the limit's error; things left for you (a session line) read Needs you
+before either. A menu
+with no `needs` text stays not stuck. Only a `waiting` session's `needs` is
+read, and only beside `dialog open`: the same field is written for other
+sessions by Claude Code's classifier, and means something else there. The event
+log notes when a `needs` text arrives or goes, as a kind (`usage`, `fallback`,
+`billing`, `ultraplan`, `auto mode`, `other`) and never as the words.
+
+Known limits (Claude Code 2.1.295, checked 2026-10-19): an interactive session's
+status writer leaves `needs` out, so none of the 24 live registry rows had one
+and these dialogs still read as a menu until a Claude Code writes it; the managed
+settings review has no `needs` text in Claude Code's own table, so it cannot be
+told from a menu the person opened; and a refused turn has no marker in the
+transcript that has been seen next to the dialog, so it is not detected from
+the transcript either.
+
+A failure (a Limit or an Error) is **the last word** until the model answers or
+you type: a reply of the model's own, a prompt you typed, a compaction. What
+nobody typed does not end it, because it does not call the model: a task
+notification, a message from another session, a tool's result, the prompt a
+skill expands. Neither do the records Claude Code writes on its own after an
+error (a turn duration, a title, a queued line, a snapshot, the "No response
+requested." it writes when it resumes a session and no model was called), nor a
+slash command run locally or a `!` shell line. A subagent's records are not the
+session's. Until then the tile stays Error or Limit and is not turned into Hung.
+
+Hung is `moving` turned round (see Movement), so a session waiting on a
+subagent, a background job or a command using CPU is never Hung, for the six
+hours such evidence counts and `hung_after_minutes` after. It is also not
+said when `/proc` could not answer: the first look at a command after a restart
+has nothing to compare its CPU with, and a folder that will not be read, or a
+command that exits mid-walk, is no evidence of absence. The same goes for a
+transcript that cannot be read: with no writes to see, silence is not known.
+
+The flags the chime reads (`stuck`, `waiting`, `ready`, `tool`) are computed as
+before and travel in the roster's `flags`; the kinds are on the tiles. Hung
+replaces `stuck` on the overview.
+
+## The header: counts and banners
+
+The header counts what the person is wanted for, from the roster's `counts`:
+**3 need you** (a tile that says Needs you), **3 other stuck** (Error, Hung or
+Limit) and **5 moving**. A session is in one count: stuck wins over moving, so
+a session that needs you while a job runs is counted as needing you, and an
+idle session is in none. Routines are not on the overview, so they are in none.
+Each tile carries the count it is in (`counted`), so the page counts nothing and
+decides nothing.
+
+The browser tab's title is that same "need you" count, read from the same place:
+`(3) agentview` while three need you, plain `agentview` at none. It no longer
+counts the chime's `waiting`, `stuck` and `blocked`, so the title and the header
+cannot say different numbers.
+
+A click on a count lights up those sessions, fades the rest and shrinks every
+column with none to its card (the column keeps its width). A second click on the
+same count clears it; a click on another count moves the light. A count of
+nothing is not a button, and a lit count that falls to nothing clears itself.
+
+A condition of the whole machine is one **banner** across the top of the page,
+from the roster's `banners`, never a kind on a tile: every session is held by it
+alike. A full disk is free space under `disk_full_mb` (default 500, in
+megabytes) on the disk that holds Claude Code's own folder (`CLAUDE_CONFIG_DIR`,
+default `~/.claude`), where transcripts are written. It says "Disk full: 212 MB
+left where sessions write". A disk that cannot be read is no banner. The page
+prints a banner's words as text and looks for nothing of its own.
+
+A provider may say the whole account is held (`Provider.limit()`: `name`, when
+the refusal came, when it lifts): a Codex usage limit is the banner "Codex usage
+limit reached, resets at 14:20" (with the day when it is not today), until that
+time. A limit that names no time is believed for five hours after the refusal.
+The banner follows the provider only while it answers; a tile of a session that
+was itself refused is still Limit.
+
+## Finished sessions: pills
+
+A session that has been **idle for `finished_after_minutes`** (default 120, a
+number of minutes more than nothing, else 120) leaves its column's tiles for a
+**pill** at the foot of the column, in the roster's `pills`: its name, how long
+it has been idle, the working-on line as the hover, and a click that jumps the
+way a tile's does. A pill with nowhere to go says "no terminal" before the click,
+and a click on it says why and does nothing: it posts nothing and marks nothing
+seen. Pills are never hidden.
+
+It is finished only when **all** of these hold, and any one failing keeps the
+full tile however old it is:
+
+- idle, and nothing shows a sign of life: the registry's stop and the newest write
+  to its transcript are both `finished_after_minutes` old, a provider's strip of
+  writes has none in the last half hour, and no background job runs under it;
+- **its handover read**, in the overview (below);
+- nothing left for the person: no open question or prompt, no `n` above nothing,
+  no Error, Hung or Limit;
+- not pinned.
+
+Pills are counted in nothing: not the card's state (a project of pills alone is
+ALL IDLE), not its mix, not its strip (unless the project has nothing but pills,
+which then has the strip they have), not the header's counts (the page's
+"N sessions" counts tiles). Any sign of life -- a prompt, a write, a stuck kind -- makes it a tile
+again, and it shrinks again after the next two hours idle.
+
+**Reading a handover.** A tile that has stopped and has not been read shows what
+the session said, in quotes, and an "unread" tag (a session that said nothing has
+the tag and no quote: "no words" may be a transcript that could not be read, so it
+too wants a look before it is forgotten). A jump that reached the
+terminal, or a click on a tile that has none, reads it -- the click names the stop
+the tile showed (`POST /api/seen {key, stop}`), and only that stop is read: a
+session that stopped again since the page's last poll has a handover the page never
+showed. What is remembered is not
+"you saw this session" but *the stop you read*, so a session that works and stops
+again has a handover nobody has read. This is `finished.json` in the state folder,
+beside `seen.json`, and it is a separate fact from the chime's seen mark. **The
+chime's seen marks that predate the overview do not count as having read a
+handover here**: they say a row was clicked (a jump that failed used to write one
+too), and the old row did not put what the session said in front of you. They
+keep driving the chime and the `ready` flag exactly as before; a session whose
+only mark is one of those stays a full tile, with its handover shown, until it
+is looked at once in the overview. A click with no stop (`/api/seen {key}`)
+tells the chime and reads nothing. `fleet.mark_seen` writes both for a jump that
+reached the terminal.
+
+**Pin.** The pin button on a pill keeps it open as a full tile until you unpin it
+or the session closes (`POST /api/keep {key, pinned}`; only a live session can be
+pinned). A pinned idle session is an ordinary idle tile. The pin is in
+`finished.json`, not in `config.json`, and is dropped when a poll in which its
+provider answered no longer lists the session (so a missed poll does not unpin
+anything).
+
+A command a session leaves for you in its line gets a **copy** button. The
+session-line hook asks for plain text (single quotes, no backticks) and says
+where a command goes: inside double quotes, or after `$ ` at the end of the ask,
+and how a single quote in either field is written (`'\''`, since the `did` and
+the ask both sit inside the hook's own single quotes).
+That is a request, not a rule, so `ask` is still free text and `ask_commands.py`
+still guesses: text in quotes (straight, curly, « » or backticks), or after a
+`$ `, that reads as a command. Two tiers keep prose out: tools with fixed
+subcommands (`git`, `docker`, `npm`, `make`, `brew` ...) need one of theirs,
+so "git status" gets a button and "git history" does not; every other known
+program (`ls`, `rm`, `psql`, `find`, `cd`, `echo`, `ssh`, `python`, `claude`)
+needs a sign no plain sentence has after it: a flag, a path, a dot between
+letters, a bare number, a string, an `@` or `=`. `sudo` and its kind are
+judged by the command after them. A path starts a command only when it names a
+script (`./deploy.sh`) or a flag follows, because a path with spaces in it
+(`~/Google Drive/My Drive`) is a name. `VAR=1 cmd` counts when a command follows it ("N=12 users" does not). After a
+`$` the same evidence is needed, because `$` is also money and maths in a
+sentence ("the $ diff or the % diff", "in $ per-seat"); a path is a program by
+itself, and a program of the project's own (`maple-sync`) needs a script name or
+a flag, path or other sign after it.
+
+A `$` command is offered only when it is the whole of its line: nothing but
+the sentence's own full stop, `?` or `!` stands after it. Where it ends is read
+from a comma, a spaced em or en dash, a bracket opened after a space, a closing
+» or ”, a full stop after a word, a run of dots before a capital letter, or a
+`?` or `!`; none of those counts inside a quoted
+argument, after a flag with a quote or another flag behind it (`-F, '{print}'`),
+in `find ! -name x`, or as the `.` or `..` of a command. When words stand after
+the end, nothing is offered, because the end cannot be told from a comma that
+belongs to the command. A command that ends in a dot the session may have meant
+as its full stop (`rm -rf ~/.cache/maple/*.`, `cd ~.`, `pip install -e ..`) is
+not offered either; `-e .` and Go's `./...` are. Only the last `$` command of a
+line can be offered, because the words between two prompts ("make build and $
+make test") could be an argument of the first. Whatever stands after a `$`, or
+between quotes, claims every quote inside it, so a command the lists do not
+know (`fly ssh console -C "rm -rf /data"`) never has its argument offered as a
+command of its own.
+
+A quote opens after a space, a bracket, a colon or a comma and closes before a
+space or punctuation: one glued to a word or an `=` (`--title="x"`) is part of
+an argument. When a quote mark stands somewhere that no pair claims (a quote
+never closed, a line cut inside one), which marks open and which close is not
+known, and no quoted command is offered on the line; an apostrophe at the end
+of a word (`users'`, `po'`) only doubts the single quotes. A quote after a
+program that runs what it is given (`ssh`, `watch`, `timeout`, `docker`,
+`tmux` ...) in the same clause is that program's argument, meant for another
+shell, and so is one right after a flag; neither is a command of its own.
+Between `« »` a space each side is how French sets it.
+
+What always holds, on any text: what a button copies is a piece of the ask,
+stripped, as the store holds it (the hook folds every run of whitespace into
+one space, so two spaces inside a quoted argument are copied as one), markup in
+it is shown as text and never run, the guesser does not raise, and its time
+stays bounded (a text longer than any line can be, 400 characters, offers
+nothing). A wrong guess is a different
+thing: where a command ends and which words are one cannot always be told, so
+the shapes below are named and accepted. A wrong guess on a line a session
+really wrote is a bug; on a shape listed here it is a known limit.
+
+Known limits, accepted:
+
+- A command named bare, with no quote and no `$` (`run git status and tell
+  me`), gets no button: a sentence that holds a command cannot be told from one
+  that does not, and the hook asks for the quotes or the `$ ` to say which it is.
+  On one day of real asks, before the hook asked for them, 76 of 1,747 distinct
+  asks named a command that way.
+- A single quote in the ask or in the `did` reaches the store whole only if the
+  session writes it as the hook says (`'\''`); that is the session's doing, and
+  nothing in the page can see it done wrong. Written correctly, a command with paired single
+  quotes (`find . -name '*.md'`, `git commit -m 'fix the build'`, a `curl -H '...'`
+  with `$(...)` inside) is stored byte for byte, nothing in it expanded or run,
+  and is offered; a command with a lone apostrophe (`echo don't panic`) gets no
+  button, as before (to a shell, `it's` opens a quote). Written bare, in either field, a single
+  quote ends the hook's own quoting, and bash takes the quote marks out
+  (`find . -name *.md`), runs what a `$(...)` inside holds or what follows a `;`
+  in the session's own shell (a bare apostrophe in the `did`, "the parser's bug",
+  shifts the quotes of the ask behind it), or makes `team-line` refuse the line.
+- A program the lists do not know (`tiroir-work next` in quotes) gets no
+  button, and neither does a known tool with a subcommand its list lacks
+  (`"npm login"`, `"git lfs pull"`) or Claude Code's `!` prefix
+  (`"! ssh-add ~/.ssh/id_maple"`). A title that starts with a tool's name and a
+  sign (`"python 3.12"`), or with a tool and one of its own subcommands
+  (`"git rebase workflow"`, `"pip install problems"`), gets one.
+- A `$` command with no sentence end after it runs on into the words that
+  close the sentence (`Run $ git push origin dev now?` offers `git push origin
+  dev now`; a colon or a semicolon after it does the same, and languages that
+  put the verb last, Dutch above all, always do: `Kun je $ git push origin dev
+  draaien?` offers `git push origin dev draaien`; a program that takes one word,
+  `make test now`, is offered nothing). A word that is both a program and a word of a sentence after a
+  `$` (`$ diff` as in "$ diff or % diff") is judged like a quoted one: it
+  needs a sign, and money prose with a hyphenated word and a number after it
+  (`$ per-seat price be 12 or 15`) passes.
+- A quoted argument is told from a command only after the programs listed
+  above, and only within the six words before it, the program among them:
+  `ssh` with six or more words of options before the quote, a program that runs a string but is not
+  listed (`pm2 start "npm run start"`, `npx concurrently "..."`,
+  `git submodule foreach '...'`, `hyperfine`, `trap`, `screen`), and a quoted
+  argument of a program that runs nothing (`echo '...' >> ~/.bashrc`,
+  `ps aux | grep "node server.js"`, `git config core.sshCommand "..."`) are
+  offered as commands.
+- Sentence punctuation written inside the closing quote, the American way
+  (`"git push origin dev."`), stays on the command. `"pip install -e ."` and
+  `"git add ."` are right as they are.
+- A mark that closes a `$` command without being a sentence end stays on it:
+  `*`, `_`, `’` and ` |`; and a Python dunder at the end of one
+  (`$ rm -rf tests/__pycache__`) is read as a markdown closer and cut to
+  `tests/__pycache`.
+- The hook folds a command's lines into one, so a heredoc (`<<EOF`) or a `\`
+  continuation is offered as a one-line command that is not the one written.
+- A session's line file, its turn file or its kept `did` (the three files the
+  hook keeps for it) behind a filesystem that has stopped answering (a link
+  into a network mount that went away) is waited on for half a second, once, and
+  reads as no line until the mount answers. The read stays out on a thread of its
+  own and cannot be given up on, so a process that ends while it is out ends when
+  the mount answers or is cut loose (`fusermount3 -u -z`). The other files the
+  page reads (`config.json`, `seen.json`, a repository's `.git/config`) are not
+  bounded this way.
+
+What is not offered, so that half a command is never one click away: a command
+cut by the line's length, one with a quote left open, a bracket that closes
+something outside it, an apostrophe (to a shell, `it's` opens a quote), a backtick (pasted, it would run what it holds), a quote
+that holds an escaped quote or a quote of its own kind, a quote with a space
+inside against its marks (two phrases mispaired), a quoted command that ends in
+a comma, a quote right after a flag (`sh -c "rm -rf x"`: the argument of that
+flag, meant for another shell), and the quotes inside any of these. `20 $` is an amount and `$5` is
+money, never a prompt. Only the session's own line is guessed on, the one it
+wrote as its one thing left. Words read out of its last message are shown as
+before and get no button: reading them takes out `*`, `_`, backticks and `#`,
+so a command in them is not the command the session wrote. The tile carries
+the list as `guessedCommands`, and the page prints one row per command with its
+own button. Copying puts the text on the clipboard and sends nothing to the
+server; approving stays in the session's pane.
+
 ## After a reboot
 
 tmux-resurrect brings tmux back, but every pane that ran Claude comes back as
@@ -272,6 +724,7 @@ class Provider:
 
     def live(self) -> list[dict]: ...     # the sessions alive now
     def jump(self, session): ...          # optional; None = use the pid
+    def limit(self) -> dict | None: ...   # optional; the whole account is held
 ```
 
 A session needs five things: `id` (stable within the provider), `cwd`,
@@ -324,6 +777,56 @@ Codex knows busy from idle and nothing about waiting, so it declares neither
 `waiting` nor `status`, and a Codex row never rings. It has no hook either,
 so its two lines come from the last thing it said — the fallback that fills
 the words and never raises the count.
+
+What the overview reads from the rollout, with the same words as for Claude:
+
+- **Writes per minute**: every record is stamped, and the file is flushed on
+  each append, so the project's strip counts the records (the counting is shared
+  with Claude, `providers/minutes.py`).
+- **Limit and Error**: a turn ends with `task_complete`, and when it failed
+  `error` holds `message` and `codex_error_info`. `usage_limit_exceeded` is
+  Limit, every other value is Error with its own name. The time the limit lifts
+  is not a field: it is the end of the message ("try again at 2:35 PM", or with
+  its day), in the machine's own time zone, and is read from there (all 294 on
+  this machine parse). The next turn clears it.
+- **Needs you, inferred**: Codex never writes a request for approval, but the
+  call it is about is there: an `exec_command` with `sandbox_permissions:
+  "require_escalated"` and no output yet, in a turn of a session that can ask
+  (`approval_policy` is not `never`). The call is written two ways, both read:
+  a `function_call` with JSON `arguments` (until August 2026), and a
+  `custom_tool_call` named `exec` whose `input` is a script calling
+  `tools.exec_command({...})` (since). The script is read as far as JavaScript
+  is: a text is one thing whatever it says and a comment is nothing, so a
+  command that only mentions the words is not a request. It reads as a permission prompt with the
+  command (and a copy button), the status is `waiting`, and Hung never gets to
+  say anything about it. An escalated command the person allowed and that is
+  still running reads the same until its output arrives; the rollout cannot
+  tell them apart.
+- **Hung is not said for Codex.** Codex writes nothing while a command runs (a
+  busy stretch of 60 minutes ends in the command's output on this machine) and
+  nothing here looks at the processes under it, so silence is not known to be
+  silence.
+- **`codex exec` runs** (1,567 of 1,813 rollouts here) are not tiles: a run
+  says what it is (`codex exec`, or `codex review` when its rollout entered
+  review mode) and the processes above it, nearest first (`providers/procs.py`
+  `ancestors`: up the parents, ending at the first thing it cannot vouch for, a
+  parent that is gone or not readable, one that started after its child because
+  its number was reused, or a child whose parent changed while it was read). The
+  roster looks for a session of any provider among them (`runs.py`): the run is
+  then a job of that session ("waiting on: codex review, 2 min"), the session
+  counts as moving, and the run's writes are added to the session's own, once.
+  When the run sits under one of that session's background tasks (its shell
+  writes to `tasks/<id>.output`; `procs.task_above`), the run says which
+  (`task`) and is that job, not a second one. While a session is in the middle
+  of a call of its own, the call names what it waits on first.
+  A run with no such session (not found, not running, a routine) is a tile of
+  its own tagged `exec`, placed by the folder it was launched in. Two rollouts
+  held by one process (`codex exec review` writes one for the run and one for
+  its review thread, whose `source` is an object, not a word) are one run.
+- **The usage limit** is the account's and outlives the run that hit it, so it
+  is looked for on disk, every ten seconds, not in the live sessions: the newest
+  finished turn of the rollouts in the last eight day folders, when it is a
+  refusal. It is one banner until the time it lifts.
 
 ## Run it
 
@@ -379,6 +882,14 @@ what is in there.
   when this version arrives stay in the service's cgroup, sessions included,
   until they are shut down and started again: the login restore does that after
   a reboot.
+- **Reload the page once** in every tab that was open before the restart that
+  brings the overview as the only view. Such a tab keeps the page it was
+  served, and that page reads `blocks`, which the roster no longer has: every
+  poll throws, the stamp says "server unreachable" while the server answers,
+  the cards freeze and the chime is silent. A tab reloaded before the restart
+  draws an older server's roster without trouble but has no chime until the
+  restart, because that roster has no `flags`. A tab opened after the restart
+  needs nothing.
 - Without a user manager (no `systemd-run`, no bus) it starts them as before and
   writes `scope.unavailable` to the event log. `AGENTVIEW_SCOPE=off` turns it off.
   The check for a user manager and the launch are two calls; if the manager goes
@@ -403,6 +914,14 @@ appended since. A partial final line is left for next time; a file that shrank
 or whose opening bytes changed is read again from scratch. Cold **14.4s →
 0.84s**, warm **0.28s → 0.03s**.
 
+A record ends at `\n` and nowhere else, as JSON Lines says. Python's
+`str.splitlines()` also cuts at U+2028, U+2029 and U+0085, which a session
+writes raw inside a JSON string, and the two halves of the cut record parse as
+nothing: its title, its tool call, its words and its write in the strip were
+thrown away. Every reader of a transcript or a rollout now cuts at `\n` only:
+the readers of bytes on `b"\n"`, the readers of text with
+`providers.base.jsonl_lines`.
+
 A jump asks WezTerm and tmux first and only enumerates Konsole over D-Bus if
 neither claimed the session, and validates the pid from the peer files alone
 rather than building the whole page. The click is also acknowledged before the
@@ -423,17 +942,28 @@ a working session printed **your own last prompt back at you**.
 
 So the session is asked. Two hooks, and neither of them interrupts anything.
 
-**`UserPromptSubmit` starts the turn** (`hooks/turn_line.py`). It forgets the
-previous line — the prompt you just typed is the answer to whatever the session
-was blocked on — and injects one short paragraph asking for the next one. The
-session then writes its line as an ordinary action inside the turn it was
-already having.
+**`UserPromptSubmit` starts the turn** (`hooks/turn_line.py`). It forgets what
+the previous line was blocked on — the prompt you just typed is the answer to
+it — and injects one short paragraph asking for the next line. The session then
+writes its line as an ordinary action inside the turn it was already having.
+What it forgets is `ask` and `n`. The `did` stays (`lines.kept_did`, a file of
+its own beside the line) until the session writes another, because the job does
+not change at a prompt; it is what a tile says it is working on.
 
 | Field | What it is |
 |---|---|
-| `did` | Where the work stands. One sentence, in the language of the conversation. It **replaces** the `ai-title` line, which becomes its fallback. |
+| `did` | Where the work stands. One sentence, in the language of the conversation. It **replaces** the `ai-title` line, which becomes its fallback. It is kept across prompts, until a newer one is written. |
 | `ask` | The one thing it is blocked on, in its own words. |
 | `n` | How many things are left for you when its turn ends: a decision, a command to run, a mail to send, a sign-in. Counted even when it has other work, since nothing moves on them once it stops. An offer is not one. |
+
+**The line a tile says it is working on** (`working.py`) is the first of these
+that says something new: your own line (the one you click to write), the `did`,
+Claude Code's title; and with none of those, greyed, the last prompt, then the
+branch, then the folder. A line that only repeats the project's name, the
+card's context line or the session's own name is skipped for the next source,
+and a tile with nothing left has no line. It is one line, clipped by the page,
+with all of it on hover. The roster says which source it was (`lineSource`:
+`own`, `did`, `title`, `prompt`, `place`).
 
 **Words when there is one, a count when there are more.** A single blocked
 question is short enough to answer from the page. Four of them are a trip to the
@@ -473,8 +1003,9 @@ identity settles what an age could only estimate.
 **A read ask fills the words and does not raise the count.** Extraction can see
 a question. It cannot tell one that stops the session from one that offers to do
 more, and a tab that says `(6)` has to mean six. Every line records who wrote
-it; only a session speaking for itself joins `waiting` and `stuck` in the header
-and the tab title, and leads its block.
+it; only a session speaking for itself joins `waiting` and `stuck` in the header's
+**need you** count and the tab title, which is the same number, and carries
+`blocked` in its `flags` row.
 
 **While it works, the line is the call in flight** — *Editing fleet.py*,
 *Reading 3 files*, or, for a Bash call, the description the caller already
@@ -521,10 +1052,39 @@ Then `wmctrl` raises the window. A session inside tmux inside WezTerm needs two
 of these in the right order — selecting the tmux pane achieves nothing while the
 WezTerm tab stays hidden.
 
-Sessions Claude Code spawned itself have a pty but no window, and are not
-clickable. They are also the ones that **survive closing their view** — a
-background worker belongs to the daemon, not to a terminal, so exiting detaches
-you without stopping it. The uptime is what gives that away.
+A background session (`claude --bg`) belongs to the daemon, not to a terminal,
+so exiting its view detaches you without stopping it; the uptime is what gives
+that away. It has no window of its own, but one click still reaches it, and the
+tile says which way before you click:
+
+| The tile says | When | The click |
+|---|---|---|
+| `open ↗` | the session is at a terminal, or a `claude attach` already shows it in one | raises that window |
+| `attach ↗` | a background session nobody is attached to | opens a new WezTerm tab running `claude attach <job id>` |
+| `no terminal` (greyed, the reason on hover) | nothing could be raised: a headless session, an attach in a window no route reaches, or an attach on a name two background sessions share | nothing; the click only marks it read |
+
+The page never opens a second copy of a running session. `claude attach` is
+found by its command line, whether it was given the job id, the session id or
+part of the name, and a click after the first one, or a second click while the
+new tab has not yet become a process, waits instead of opening another (five
+seconds when WezTerm was running, thirty when its window had to start first).
+A `claude attach` inside a tmux pane is followed through tmux to the window
+that shows the pane. What
+reaches the command line is the job id from the peer file, and only if it is
+eight hex digits; nothing in the request does. It is the same guard as every
+other action (a local page, the `X-Fleet` header).
+
+Two things the page cannot see. A name that fits two background sessions
+(`claude attach harbor` while "Harbor review" and "Harbor build" both run)
+could mean either, so both tiles say `no terminal` instead of guessing; give
+`claude attach` the job id and the page knows. And a session renamed with
+`/rename` after it was attached by name cannot be told from one that is not
+attached: its tile offers `attach ↗` while the old name is the only thing the
+viewer's command line holds.
+
+A jump marks the session read only once its terminal was reached. When it
+fails, the reason shows on the tile until the next poll and what the session
+said stays unread.
 
 **Requires X11.** Window raising uses `wmctrl`; under Wayland a client cannot
 raise another client's window, and the in-emulator half would still work while
@@ -533,35 +1093,24 @@ the window stayed where it was. Also needs whichever of `wezterm`, `tmux` and
 
 ## Arranging it yourself
 
-The order is recomputed every few seconds: whichever project has someone
-**busy** leads, ties broken by most recent activity, and `No project` always
-sits at the bottom.
+The columns hold still. Your pins lead, in your order; then the tracks, the
+repositories and the folders; `No project` is always last. Inside a kind they go
+by name, so a column never jumps sideways because a session woke up.
 
-That is right until it isn't — the two or three projects you check every day
-should be where you left them, not where today's activity puts them. So:
+The controls are in *The overview*, under **By hand**: the ☆ and ★ pin and
+unpin a project, the ‹ › move a pinned card, **merge…** puts one project into
+another, the ⋯ on a tile moves that one session. Two more facts belong here:
 
-- **`auto-arrange`** in the header stops the shuffling altogether. Held, the
-  content still updates — status, titles, flags — and only the positions
-  freeze, so a card cannot walk out from under the sentence you are reading.
-  Anything that arrives while it is held joins the end rather than pushing into
-  the middle. It replaced a Refresh button, which solved nothing: the page
-  polls anyway. *Held* is remembered in `config.json`, but the order it froze
-  is not — so a reload adopts whatever it paints first and holds **that**.
-- **Drag a block** to place it. Everything down to where you dropped it becomes
-  **pinned** and stops moving; the rest keeps sorting itself underneath.
-- **Click the ✳** on a pinned block to let it go again.
-- **Click a project name** to rename it. The name you type is a label —
-  the real key underneath does not change, so a rename never orphans its pin.
-- **Click the line under a session** to write your own. It replaces
-  Claude's generated title *and retitles that terminal tab*, so the page and
-  the tab never disagree.
-
-Clicking anywhere *else* in a session still raises its terminal — the two
-never overlap, because a terminal arriving in front steals the focus and would
-close the field you are typing in.
+- **Click a project name** to rename it. The name you type is a label — the
+  real key underneath does not change, so a rename never orphans its pin.
+- **Your own line for a session** is `/api/line`: it replaces Claude's
+  generated title *and retitles that terminal tab*, so the page and the tab
+  never disagree. The overview has no control for it yet, so nothing in the
+  page calls it; the server side is intact and tested.
 
 All of it lands in `config.json`, so it survives restarts and you can edit it
-by hand.
+by hand. (`hold`, from the days of the block view, may still be in yours;
+nothing reads it.)
 
 **An override on a session dies with the session.** It is keyed by `sessionId`,
 which is gone once you close that Claude. A project rename is keyed by the
@@ -570,25 +1119,19 @@ project and lives forever.
 ## A boss and its team
 
 A session registered as a boss by the claude-boss plugin coordinates other
-sessions and does no implementation work itself. On the page it **leads its
-project block** whatever the activity, carries a `boss` badge, and names the
-team it dispatches to; that team renders indented beneath it, so the block has
-the shape of the team instead of being a flat list of eight equals. A worker
-whose boss sits in another block cannot be nested there, so it says `↳ Lennart`
-in words instead.
-
-**A worker's `ready` stays folded.** It keeps the blue tick, so the boss's
-block shows at a glance which of his team have reported back, but it does not
-open a card: that ✓ is his to act on, not yours. `waiting` and `stuck` still
-open on a worker — a permission prompt is answered by you, whoever dispatched
-the work.
+sessions and does no implementation work itself. On the overview it **leads its
+column** whatever the activity and carries a `boss` tag. The team it dispatches
+to is worked out too (below) but not drawn: a tile belongs to the column of its
+own project, the boss first and the rest by what wants you, then what is ready,
+then what is working, newest first. The team only settles the order of two
+sessions that tie.
 
 Neither fact is a guess:
 
 - **Boss**: the marker claude-boss writes when a boss registers,
   `pm/.boss-sessions/<session id>` under the Claude config dir — a regular
   file of yours, never a symlink or a directory. Every claude-boss hook acts on
-  that file alone, so the badge means what the hooks mean. A session that
+  that file alone, so the tag means what the hooks mean. A session that
   typed `/boss` but never registered is not marked; neither is one that only
   reads the skill's files.
 - **Team**, from the transcript: the `to` of every `SendMessage` that session
@@ -604,13 +1147,13 @@ marker says who is running the team.
 A systemd timer firing `claude -p` is a session like any other, and there are
 six of them here — `nightly-report` every 20 minutes, `gpu-watch`
 every 10, and the daily ones. They run from `~`, which is no project, so they
-used to land in **No project**: the pile that means *assign me*, which is the
+would land in **No project**: the pile that means *assign me*, which is the
 one thing a routine never needs.
 
-So they get a block of their own, at the very bottom — below `No project`,
-because that pile is asking you for something and a routine is asking for
-nothing. Each row is badged with the routine that started it, and the block
-takes no pin, no rename and no drop.
+So they are on no column at all. They stay in `flags`, the list the chime and
+the server's marks read, so a routine that stops to ask still rings; it has no
+tile, because it asks nothing a person answers from this page. Each is named
+for the routine that started it.
 
 Two signals are needed to call one, and both must agree. The peer file says
 `entrypoint: sdk-cli` where a terminal says `cli` — that only proves it is
@@ -620,7 +1163,7 @@ hand is headless too, and calling that a routine would be a guess.
 
 **Nothing has to clean them up.** A run lasts three or four minutes — twenty
 when a transcription is in flight — and the page lists a session only while
-its pid answers, so the card goes on its own the moment the run ends.
+its pid answers, so it goes on its own the moment the run ends.
 
 ## Which transcripts are kept
 
@@ -733,7 +1276,8 @@ Tuesday* with the same grey dot. So the page works out one flag per session:
 | **green, breathing** | Working | `busy` |
 
 **Ready is keyed to the moment it stopped**, not to the session
-(`~/.local/state/agentview/seen.json`). A session that works again and stops
+(`~/.local/state/agentview/seen.json`; `finished.json` beside it holds the
+handovers read in the overview and the pins). A session that works again and stops
 again carries a new `statusUpdatedAt`, so it comes back as ready by itself —
 nothing has to be cleared and nothing can go stale. Clicking a card marks it
 seen, whether or not the jump lands. A ready row prints **the last thing the
@@ -819,7 +1363,7 @@ at the wrong size first and then jumps.
 The hard part is that a working directory is not a project name.
 
 `~/Projects/clients/harbor` is the **harbor** project, but its git root is
-`clients` — which would collapse every client into one block. Its basename
+`clients` — which would collapse every client into one project. Its basename
 works, until `~/Projects/clients/acme/site` shows up as `site` and collides
 with the unrelated site project.
 
@@ -830,24 +1374,11 @@ projects without being one.
 { "shelves": ["~", "~/Projects", "~/Projects/clients"] }
 ```
 
-## Filling the columns
-
-Blocks are packed, not flowed: each one is measured at the width it will have
-and handed to whichever column is currently shortest. A CSS grid gave every
-block in a row the height of the tallest one in it; CSS columns balanced by
-their own rules and left slack that a block could not break into. Packing
-keeps the bottom edges roughly level, and a project that appears while you are
-watching lands in the gap rather than at the foot of the last column.
-
-The DOM order is therefore a layout detail, not the order you read — so
-dragging a block to pin it works off the painted order the page kept, never
-off `querySelectorAll`.
-
 A project is the first directory below the deepest shelf containing the cwd.
 Anything deeper becomes a breadcrumb, which is exactly the client/project
 distinction: **acme › site**. A session sitting *on* a shelf has no project
-and lands in the `No project` block near the bottom — ad-hoc work, and it is
-not hidden. Routines sit lower still, in a block of their own.
+and lands in the `No project` column at the far right — ad-hoc work, and it is
+not hidden. Routines are on no column at all.
 
 Add a shelf whenever a directory starts holding projects instead of being one.
 
@@ -870,7 +1401,7 @@ go looking for:
 
 | Kind | Why it is kept |
 |---|---|
-| `session.seen` / `session.gone` / `status` / `waitingFor` | Sampled from the peer files every two seconds by a thread of its own, so the history exists whether or not a browser was open. A routine that ran for four minutes at 03:00 left no trace at all before this. |
+| `session.seen` / `session.gone` / `status` / `waitingFor` / `needs` | Sampled from the peer files every two seconds by a thread of its own, so the history exists whether or not a browser was open. A routine that ran for four minutes at 03:00 left no trace at all before this. `needs` is the kind of the `needs` text a dialog carries beside `dialog open` (`usage`, `fallback`, `billing`, `ultraplan`, `auto mode`, `other`), when it arrives or goes: a label, never the words, so that openings can be counted per kind. |
 | `action` / `retitle` / `jumped` | Every POST, with what it asked for and what actually ran on the terminal. A tab that ends up called something surprising can be traced to the click that did it — which is how two tabs came to be called `RIGA`. |
 | `error` / `page.error` | Exceptions, including JavaScript ones, which used to be invisible: the poll stops, the page goes quietly stale, and nothing anywhere says why. Repeats are collapsed — the first one is the news, the next four hundred are noise. |
 | `slow` | An operation over its budget, and **no line at all** when it was fast. The 9-second poll that made clicking feel broken would have written a line a round. |
@@ -883,11 +1414,30 @@ Silence is the normal state of the file.
 python3 -m unittest discover -s tests
 ```
 
-`tests/ui_smoke.py` is separate: it drives the real page with Playwright
-against a running server — rename, line override, drag-to-pin, unpin, folding,
-the routines block — and is not part of `unittest discover`. Run it with
-`python3 tests/ui_smoke.py`. It puts back everything it touched, **including
-the tab titles it renamed**: an override does not only live in `config.json`.
+`tests/ui_smoke.py` is separate: it drives the page with Playwright (the
+overview's columns and the by-hand controls, the chime, the filter, search and
+the closed list) and is not part of `unittest discover`. Run it by hand against a throwaway server, never
+the one on 8765:
+
+```bash
+python3 tests/ui_smoke.py http://127.0.0.1:PORT/ /path/to/that/server/config.json SERVER_PID
+```
+
+All three arguments are required. Most passes are routed: the page, the roster
+and every POST are answered from fixtures by `page.route`, so no jump, reopen,
+revive or rename can reach a terminal. One unrouted pass loads the test server's
+own roster read-only (no clicks, any non-GET request aborted, no screenshot) and
+asserts that columns render. One more starts a server of its own, on invented
+sessions with a config in a temp dir, and drives the by-hand controls (pin,
+arrows, rename, merge, move) against it, reading the config back and restarting
+the server; the config you give is only read.
+
+The movement tests (`tests/test_movement_*.py`) run on invented transcripts, a
+fake `/proc` and fake providers, never on a real session: writes per minute and
+the cold-start window, subagents counted once under their parent, background
+tasks opened and closed, which shells and CPU count (and which never do), a
+process vanishing mid-walk, the sign on each tile and the strip and mix on each
+card.
 
 The unit tests cover the things worth covering: route selection for each
 terminal (including tmux-inside-WezTerm and a headless session with nowhere to

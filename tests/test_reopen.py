@@ -22,6 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import seen  # noqa: E402
 import snapshot  # noqa: E402
 
 SID = "00000000-0000-4000-8000-0000000000c1"
@@ -68,6 +69,7 @@ class FromTranscript(unittest.TestCase):
                           said("/home/alice/Projects/maple", "plan"),
                           {"type": "permission-mode", "permissionMode": "default", "sessionId": SID},
                           said("/home/alice/Projects/maple/src", "acceptEdits"))
+        self.addCleanup(shutil.rmtree, path.parent.parent, True)
         rec = snapshot.revive_record(SID, [snap(100, "boot-a", session("X", sid="another"))],
                                      transcript=path, name="Nimbus")
         self.assertEqual(rec, {"sessionId": SID, "name": "Nimbus", "cwd": "/home/alice/Projects/maple",
@@ -79,6 +81,7 @@ class FromTranscript(unittest.TestCase):
         path = transcript("-home-alice-Projects-maple",
                           said("/home/alice/Projects/maple/src"),
                           said("/home/alice/Projects/maple"))
+        self.addCleanup(shutil.rmtree, path.parent.parent, True)
         self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["cwd"],
                          "/home/alice/Projects/maple")
 
@@ -88,6 +91,7 @@ class FromTranscript(unittest.TestCase):
         path = transcript("-home-alice-Projects-maple",
                           said("/home/alice/Projects/maple", "auto"),
                           {"type": "permission-mode", "permissionMode": "default", "sessionId": SID})
+        self.addCleanup(shutil.rmtree, path.parent.parent, True)
         self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["flags"],
                          "--permission-mode default")
 
@@ -98,12 +102,14 @@ class FromTranscript(unittest.TestCase):
                                ("bypassPermissions", "bypassPermissions"), ("default", "default"),
                                ("manual", "default"), ("dontAsk", "dontAsk"), ("plan", "plan")):
             path = transcript("-home-alice-Projects-maple", said("/home/alice/Projects/maple", written))
+            self.addCleanup(shutil.rmtree, path.parent.parent, True)
             self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["flags"],
                              f"--permission-mode {asked}", written)
 
     def test_no_mode_or_one_claude_does_not_know_adds_no_flag(self):
         for mode in (None, "sideways"):
             path = transcript("-home-alice-Projects-maple", said("/home/alice/Projects/maple", mode))
+            self.addCleanup(shutil.rmtree, path.parent.parent, True)
             self.assertEqual(snapshot.revive_record(SID, [], transcript=path)["flags"], "")
 
     def test_with_neither_there_is_nothing_to_reopen(self):
@@ -162,6 +168,7 @@ class Endpoint(unittest.TestCase):
         server._OPENING.clear()
         self.opened, self.jumped, self.delay = [], [], 0
         for target, new in (
+                ("seen.store", lambda: self.root / "seen.json"),
                 ("jump.open_tab", self.open_tab),
                 ("snapshot.starting", lambda sid: []),
                 ("snapshot.seed_name", lambda sid, name: self.seeded.append((sid, name))),
@@ -211,6 +218,7 @@ class Endpoint(unittest.TestCase):
         (self.root / "sessions" / f"{os.getpid()}.json").write_text(json.dumps({
             "pid": os.getpid(), "sessionId": SID, "name": "Nimbus", "cwd": str(self.work),
             "kind": "interactive", "entrypoint": "sdk-cli", "status": "idle",
+            "statusUpdatedAt": 1790000000000,
             "procStart": stat[stat.rindex(")") + 2:].split()[19]}))
 
     def snapshotted(self, *sessions):
@@ -235,6 +243,31 @@ class Endpoint(unittest.TestCase):
         self.assertEqual((got["ok"], got["did"]), (True, "jumped"))
         self.assertEqual((self.jumped, self.opened, self.seeded), ([SID], [], []))
         self.assertEqual(self.events("jumped")[0]["key"], f"claude:{SID}")
+
+    def test_a_jump_that_reached_the_terminal_marks_the_conversation_seen(self):
+        self.conversation()
+        self.running()
+        self.reopen()
+        self.assertFalse(seen.ready(f"claude:{SID}", 1790000000000, seen.load()))
+
+    def test_a_jump_that_failed_leaves_it_unread(self):
+        self.conversation()
+        self.running()
+        with mock.patch("fleet.jump_to", return_value={"ok": False, "reason": "wezterm cli spawn failed"}):
+            self.assertFalse(self.reopen()["ok"])
+        self.assertTrue(seen.ready(f"claude:{SID}", 1790000000000, seen.load()))
+
+    def test_a_click_that_only_waited_for_a_tab_does_not_claim_it_jumped(self):
+        # A background session being attached answers "opening": a tab was
+        # opened a moment ago and nothing has been reached yet.
+        self.conversation()
+        self.running()
+        with mock.patch("fleet.jump_to", return_value={"ok": True, "did": "opening"}):
+            got = self.reopen()
+        self.assertEqual((got["ok"], got["did"]), (True, "opening"))
+        self.assertEqual(self.events("jumped")[0]["did"], "opening")
+        # Nothing was reached, so what the session said is still unread.
+        self.assertTrue(seen.ready(f"claude:{SID}", 1790000000000, seen.load()))
 
     def test_a_closed_one_older_than_every_snapshot_opens_from_its_transcript_under_its_name(self):
         self.conversation()

@@ -12,6 +12,8 @@ never raises the count: extraction can see a question, but it cannot tell one
 that stops a session from one that offers to do more, and a tab that says (6)
 has to mean six.
 """
+import os
+import signal
 import sys
 import tempfile
 import unittest
@@ -80,7 +82,7 @@ class WhoIsBelieved(Base):
 class WhichTurn(Base):
     """Freshness is decided, not guessed."""
 
-    def test_a_line_from_a_previous_turn_is_not_shown(self):
+    def test_what_a_session_was_stopped_on_in_a_previous_turn_is_not_shown(self):
         # The case timestamps could not catch: a session that went idle,
         # busy and idle again between two polls kept the earlier line.
         lines.begin_turn("s1", self.root)
@@ -89,8 +91,21 @@ class WhichTurn(Base):
         lines.begin_turn("s1", self.root)
         lines.write("s1", did="", ask="", n=0, root=self.root)
         got = fleet.own_line("s1", "idle", ("", 0), root=self.root)
-        self.assertEqual(got["did"], "")
-        self.assertFalse(got["blocked"])
+        self.assertEqual((got["ask"], got["n"], got["blocked"]), ("", 0, False))
+
+    def test_where_the_work_stood_is_kept_until_a_session_says_otherwise(self):
+        # The job does not change at a prompt, so the tile does not either.
+        lines.begin_turn("s1", self.root)
+        lines.write("s1", did="from the turn before", ask="stale", n=1,
+                    root=self.root)
+        lines.begin_turn("s1", self.root)
+        got = fleet.own_line("s1", "busy", ("", 0), root=self.root)
+        self.assertEqual(got["did"], "from the turn before")
+        lines.write("s1", did="", ask="", n=0, root=self.root)     # a line with no did
+        got = fleet.own_line("s1", "idle", ("", 0), root=self.root)
+        self.assertEqual(got["did"], "from the turn before")
+        lines.write("s1", did="a newer one", root=self.root)
+        self.assertEqual(fleet.own_line("s1", "idle", ("", 0), root=self.root)["did"], "a newer one")
 
     def test_a_line_written_while_still_working_is_this_turn_s(self):
         # The session writes its line as the last thing it does, before the
@@ -101,6 +116,31 @@ class WhichTurn(Base):
                              doing="Editing fleet.py")
         self.assertEqual(got["did"], "Two files patched, tests green.")
         self.assertEqual(got["doing"], "Editing fleet.py")
+
+
+class WhenTheKeptDidIsNotAFile(Base):
+    """The folder is anyone's to write in, and every poll reads the kept did of every session
+    while it holds the lock the whole page waits on: a pipe there must be no did, not a wait."""
+
+    def setUp(self):
+        super().setUp()
+
+        def hung(*_):
+            raise AssertionError("still reading after 5 s")
+        self.addCleanup(signal.signal, signal.SIGALRM, signal.signal(signal.SIGALRM, hung))
+        self.addCleanup(signal.alarm, 0)
+        signal.alarm(5)
+        os.mkfifo(self.root / "s1.did")
+
+    def test_a_card_with_no_line_of_its_own_is_shown_without_a_did(self):
+        got = fleet.own_line("s1", "idle", fleet.ask_from("What do you want to do in it?"),
+                             root=self.root)
+        self.assertEqual((got["did"], got["ask"], got["n"]), ("", "What do you want to do in it?", 1))
+
+    def test_a_card_with_a_line_of_its_own_is_shown_whole_but_for_the_did(self):
+        lines.write("s1", did="", ask='Run "make test".', n=1, root=self.root)
+        got = fleet.own_line("s1", "idle", ("", 0), root=self.root)
+        self.assertEqual((got["did"], got["ask"], got["n"], got["blocked"]), ("", 'Run "make test".', 1, True))
 
 
 class WhileWorking(Base):
