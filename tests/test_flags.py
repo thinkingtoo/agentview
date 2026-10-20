@@ -135,6 +135,10 @@ class CodexRings(Base):
         got = self.flag(self.CODEX, session("c", status="waiting", asking={"kind": "question", "questions": []}))
         self.assertEqual(got["c"], "waiting")
 
+    def test_a_pause_is_a_limit_on_the_tile_and_does_not_ring(self):
+        got = self.flag(self.CODEX, session("c", status="waiting", asking={"kind": "pause", "what": "Usage credits"}))
+        self.assertIsNone(got["c"])
+
     def test_a_claude_row_rings_as_before(self):
         # Within the first seconds an unnamed wait is still not an alarm, even
         # with a permission prompt open: the new path is not for providers that

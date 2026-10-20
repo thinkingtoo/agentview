@@ -621,8 +621,10 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
         "pinned": key in remembered["pinned"],
         "asking": asking,
         # The chime's reading of a provider that cannot say `waiting` (Codex):
-        # an open request with no answer rings, as it is Needs you on the tile.
-        "rings": status == "waiting" and "waiting" not in caps and bool(asking),
+        # an open request with no answer rings, as it is Needs you on the tile (a
+        # pause is a Limit there, and does not).
+        "rings": status == "waiting" and "waiting" not in caps and bool(asking)
+                 and asking["kind"] != "pause",
         # How it stopped, if an API error is its last word; and the last call
         # it made (what a hung session was doing).
         "failure": failure_of(raw.get("failure"), now),
