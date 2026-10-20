@@ -18,6 +18,7 @@ import threading
 import time
 from pathlib import Path
 
+import ask_commands
 import context
 import finished
 import jump
@@ -1011,6 +1012,9 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         # The header count the tile is in, for the page to light it up when
         # that count is clicked.
         "counted": counted_in(stuck, m["moving"]),
+        # Named for what it is: a guess, unlike the exact command of a
+        # permission prompt in `stuck.context`.
+        "guessedCommands": guessed_commands_of(m, stuck),
         # The chime rings for a blocked session whatever its flag says, so the
         # tile carries what it is asking, the way the old row did.
         "blocked": m["blocked"], "need": need_of(m),
@@ -1119,6 +1123,20 @@ def needs_of(m):
                 "reason": f"{n} {'thing' if n == 1 else 'things'} left for you",
                 "context": {"text": m["ask"] if n == 1 else ""}}
     return None
+
+
+def guessed_commands_of(m, stuck):
+    """The commands guessed in the ask the session wrote for the tile, or none.
+
+    Only the session's own line, which is the ask verbatim and shown as its
+    one thing left: an open dialog is shown over it, several things left are
+    only counted, and words read out of the transcript have had their `*`,
+    `_`, backticks and `#` taken out (`ask_from`), so a command in them is
+    not the command the session wrote.
+    """
+    if m["n"] != 1 or not (stuck and stuck["source"] == "line"):
+        return []
+    return ask_commands.guess(m["ask"])
 
 
 def jump_of(m):

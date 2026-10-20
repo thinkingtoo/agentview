@@ -83,6 +83,9 @@ _Avoid_: alarms, busy
 **Banner**:
 A band across the top of the page for a condition of the whole machine, such as a full disk, or of a provider's whole account, such as its usage limit until it lifts, rather than of one session. It comes from the roster's `banners` and nowhere else: a session or an error that talks about a full disk is not one.
 
+**Guessed command**:
+A command found in the free text of a session's line for the person, quoted or after a `$`, that the person can copy with one click. It is a guess and is sometimes wrong, and a copy never answers the session.
+
 **Jump**:
 One click that puts the terminal showing a session in front of the person. A session at a terminal has its own pane; a background session has none, so the click opens a new tab attached to it.
 

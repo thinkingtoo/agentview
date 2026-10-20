@@ -1262,6 +1262,7 @@ function tile(t) {
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
     ${t.handover ? `<div class="said">“${esc(t.handover)}”</div>` : ""}
     ${stuckBox(t)}
+    ${guessedBox(t)}
     ${handRow(t)}
   </div>`;
 }
@@ -1380,11 +1381,26 @@ function stuckBox(t) {
 
 // The copy button is on a command and nowhere else. It puts the command on
 // the clipboard and does nothing to the session: answering stays in its pane.
-let COPIED = { key: "", until: 0, ok: true };
+let COPIED = { key: "", i: "", until: 0, ok: true };
 
-function copyButton(key) {
-  const now = COPIED.key === key && Date.now() < COPIED.until;
-  return `<button type="button" class="copy" data-sid="${esc(key)}" title="Copy the command. This does not answer the session.">${now ? (COPIED.ok ? "copied" : "not copied") : "copy"}</button>`;
+// `i` is which of a tile's guessed commands the button is for; the command of
+// a permission prompt has none.
+const COPY_TITLE = "Copy the command. This does not answer the session.";
+function copyButton(key, i = "", title = COPY_TITLE) {
+  const now = COPIED.key === key && COPIED.i === String(i) && Date.now() < COPIED.until;
+  return `<button type="button" class="copy" data-sid="${esc(key)}"${i === "" ? "" : ` data-i="${esc(i)}"`} title="${esc(title)}">${now ? (COPIED.ok ? "copied" : "not copied") : "copy"}</button>`;
+}
+
+// Commands the roster guessed in what a session said it needs from you, one
+// row each with its own button. The row repeats the command so it is plain
+// which one the button copies. Every word here is text a session wrote.
+function guessedBox(t) {
+  const found = t.guessedCommands || [];
+  if (!found.length) return "";
+  const title = `${COPY_TITLE} It is a guess from the session's words.`;
+  // Not a stuck state: the box only borrows the layout of the one above it.
+  return `<div class="stuck-box guessed">${found.map((command, i) =>
+    `<div class="cmd"><span class="tool">command</span>${copyButton(t.key, i, title)}<code>${esc(command)}</code></div>`).join("")}</div>`;
 }
 
 async function copyText(text) {
@@ -1411,10 +1427,12 @@ document.getElementById("main").addEventListener("click", async ev => {
   // The command comes from the roster, not from the page's text: what is
   // copied is what the server sent, character for character.
   const sent = COLUMNS.flatMap(c => c.sessions).find(x => x.key === button.dataset.sid);
-  const command = sent?.stuck?.context?.copy ? sent.stuck.context.command : "";
-  if (!command) return;
+  const i = button.dataset.i || "";
+  const command = i !== "" ? (sent?.guessedCommands || [])[Number(i)]
+                           : (sent?.stuck?.context?.copy ? sent.stuck.context.command : "");
+  if (typeof command !== "string" || !command) return;
   const ok = await copyText(command);
-  COPIED = { key: sent.key, until: Date.now() + 1500, ok };
+  COPIED = { key: sent.key, i, until: Date.now() + 1500, ok };
   button.textContent = ok ? "copied" : "not copied";
   setTimeout(() => { if (button.isConnected) button.textContent = "copy"; }, 1500);
 });

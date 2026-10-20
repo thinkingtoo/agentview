@@ -86,7 +86,7 @@ def head_counts(page):
 # (`columns`), so the two never disagree about who is waiting.
 
 def S(key, name, status="idle", flag=None, *, note="", line="", source="did", tags=(), can=True,
-      need="", mv=None, moving=None, stuck=None, via=None, why="", **extra):
+      need="", mv=None, moving=None, stuck=None, via=None, why="", commands=(), **extra):
     """`mv` is the movement sign's text, `moving` whether the server counts the
     session as moving (by default: busy and not stuck). `stuck` is the kind the
     server gives the tile; a session with a line that wants something gets the
@@ -99,7 +99,8 @@ def S(key, name, status="idle", flag=None, *, note="", line="", source="did", ta
         stuck = hung_kind(int(note.rstrip("m")))
     return {"key": key, "name": name, "status": status, "flag": flag, "note": note,
             "line": line, "source": source, "tags": list(tags), "can": can, "need": need, "mv": mv,
-            "moving": moving, "stuck": stuck, "extra": extra, "via": via, "why": why}
+            "moving": moving, "stuck": stuck, "extra": extra, "via": via, "why": why,
+            "commands": list(commands)}
 
 
 def needs(source, reason, context):
@@ -195,7 +196,7 @@ def tile(s):
             "flagNote": "" if flag is None else s["note"],
             "movement": sign and {"kind": "waiting", "text": sign}, "moving": s["moving"],
             "blocked": bool(s["need"]), "need": s["need"], "stuck": s["stuck"],
-            "counted": counted(s), "jump": jump_field(s),
+            "counted": counted(s), "guessedCommands": s["commands"], "jump": jump_field(s),
             "find": f"{s['name']}\n{s['line']}".lower()}
 
 
@@ -1380,6 +1381,92 @@ def needs_pass(browser):
     page.wait_for_timeout(200)
     check("without a clipboard API, copy falls back to the selection and copies the command",
           page.evaluate("window.__copied") == cmd, page.evaluate("window.__copied"))
+    page.close()
+
+
+def guessed_pass(browser):
+    """Ticket 14: a copy button for each command the roster guessed in a tile's
+    ask. Copying puts the literal text on the clipboard and sends nothing. The
+    fixtures are the tiles the server builds for invented asks."""
+    ask = "Run `make test` and then `git push origin main`?"
+    cmd = "git push origin feature/maple-notes"
+    hostile_cmd = f"echo {BOMB} && ls 'a b' \"c\""
+    maple = ("maple", "maple", [
+        S("g1", "Vera", "idle", line="Notes drafted", need=ask, commands=["make test", "git push origin main"]),
+        S("g2", "Mei", "idle", line="Tests green", need='Should it be called "release notes"?'),
+        S("g3", "Nour", "idle", line="Plan ready"),
+        S("g4", "Aziz", "waiting", "waiting", note="permission prompt", line="Ship the notes",
+          stuck=prompts("Bash", cmd)),
+        S("g5", "Elin", "idle", line="Cleanup", need=f"Run $ {hostile_cmd}.", commands=[hostile_cmd])])
+    body = roster([maple])
+    # Words read out of the transcript are not the session's own line: the tile shows them
+    # under the name (`need`, no stuck box) and the roster offers no command in them.
+    next(x for x in body["columns"][0]["sessions"] if x["key"] == "g3").update(
+        need="Is `make test` enough?")
+    fake = Fake(body)
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".ov-col")
+    t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
+
+    check("a copy button for each guessed command, none for prose with quotes",
+          t("g1").locator("button.copy").count() == 2 and t("g2").locator("button.copy").count() == 0
+          and t("g3").locator("button.copy").count() == 0 and t("g5").locator("button.copy").count() == 1,
+          [t(k).locator("button.copy").count() for k in ("g1", "g2", "g3", "g5")])
+    check("each button sits with the command it copies, in the order written",
+          t("g1").locator(".guessed code").all_inner_texts() == ["make test", "git push origin main"]
+          and t("g1").locator(".guessed .cmd").nth(1).locator("button.copy").count() == 1)
+    check("the ask itself is still shown, and so are the words read from the transcript, with no button",
+          t("g1").locator(".say").inner_text() == ask and t("g3").locator(".need").inner_text() == "Is `make test` enough?")
+    check("the permission-prompt button of ticket 07 is the one it was: one, no index",
+          t("g4").locator("button.copy").count() == 1 and t("g4").locator("button.copy").get_attribute("data-i") is None
+          and t("g4").locator("code").inner_text() == cmd)
+
+    posts = len(fake.posts)
+    t("g1").locator("button.copy").nth(1).click()
+    page.wait_for_timeout(200)
+    check("clicking copy sends nothing to the server: no jump, no seen mark, no answer",
+          len(fake.posts) == posts, fake.posts[posts:])
+    check("and the tile does not flash as jumped", "jumped" not in t("g1").get_attribute("class"))
+    check("only the button clicked says copied",
+          t("g1").locator("button.copy").all_inner_texts() == ["copy", "copied"],
+          t("g1").locator("button.copy").all_inner_texts())
+    page.wait_for_timeout(1700)
+    check("and it goes back to copy", t("g1").locator("button.copy").all_inner_texts() == ["copy", "copy"])
+    page.close()
+
+    # The clipboard holds the command, character for character.
+    page = new_page(browser, fake, clipboard=True)
+    seen = len(errors)
+    page.goto("http://localhost/", wait_until="load")
+    page.wait_for_selector(".tile")
+    t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
+    for label, loc, want in (("first", t("g1").locator("button.copy").nth(0), "make test"),
+                             ("second", t("g1").locator("button.copy").nth(1), "git push origin main"),
+                             ("permission prompt", t("g4").locator("button.copy"), cmd),
+                             ("markup, quotes and spaces", t("g5").locator("button.copy"), hostile_cmd)):
+        loc.click()
+        page.wait_for_timeout(200)
+        got = page.evaluate("navigator.clipboard.readText()")
+        check(f"the clipboard holds the {label} command", got == want, got)
+    text = page.locator("#main").inner_text()
+    check("R7: markup in a guessed command is shown as text, in the ask and in its row",
+          text.lower().count(BOMB.lower()) == 2, text.lower().count(BOMB.lower()))
+    check("R7: and builds no element from it",
+          page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0)
+    check("R7: no dialog, no page error", len(errors) == seen, errors[seen:])
+    page.context.close()
+
+    # Where the page has no clipboard API, copy falls back to the selection.
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".tile")
+    page.evaluate("""() => { window.__copied = null;
+      document.addEventListener('copy', () => { window.__copied = document.getSelection().toString(); }); }""")
+    page.locator('.tile[data-sid="g1"] button.copy').nth(1).click()
+    page.wait_for_timeout(200)
+    check("without a clipboard API, a guessed command is copied through the selection",
+          page.evaluate("window.__copied") == "git push origin main", page.evaluate("window.__copied"))
     page.close()
 
 
@@ -2769,6 +2856,7 @@ def main():
         finished_pass(browser)
         card_pass(browser)
         needs_pass(browser)
+        guessed_pass(browser)
         kinds_pass(browser)
         codex_pass(browser)
         hand_pass(browser)
