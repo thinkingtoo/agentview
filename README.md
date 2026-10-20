@@ -39,7 +39,9 @@ finished sessions included: `{key, id, name, flag, blocked}`, with the raw flag
 the transcript gave it (`waiting`, `ready`, `tool`, `stuck` or none) and whether
 the session wrote down what blocks it. A tile may say less than its flag does
 (a long tool call is a sign, `stuck` is Hung); the chime does not, so it rings
-exactly as it did.
+exactly as it did. The one row whose flag is not the transcript's is a Codex
+row that asks: its provider cannot say `waiting`, so `flags` sends it as
+`waiting` and the chime rings (see the Codex section).
 
 **Which project a session is in** is decided in this order, first match wins:
 your own setting (`assign` in `config.json`); the boss's track (a boss by its
@@ -736,7 +738,9 @@ make the page throw. `extras` is a small dict of strings the page shows as
 badges without knowing what they mean — a model, a cost.
 
 Two capabilities change what the core does. Without `waiting` the chime never
-rings for that provider, because it cannot tell a question from work. Without
+rings for that provider's `status`, because it cannot tell a question from work;
+the one exception is a waiting row carrying an open request in `asking`
+(Codex's escalated command), which rings. Without
 `jump` no row of its can raise a terminal. The others say whether a missing
 field is absent or will never exist: a Claude row without a branch is a
 session outside a repo, a Codex row without a name is a provider that has no
@@ -774,9 +778,14 @@ new lock, not once per poll: a holder is remembered and re-checked with one
 `readlink`, and an orphaned lock is remembered too.
 
 Codex knows busy from idle and nothing about waiting, so it declares neither
-`waiting` nor `status`, and a Codex row never rings. It has no hook either,
-so its two lines come from the last thing it said — the fallback that fills
-the words and never raises the count.
+`waiting` nor `status`, and no Codex row is ever `waiting` on its own. One
+thing rings all the same: a Codex row that turns Needs you, an escalated
+command with no answer yet, plays the same two-stroke chime as a waiting Claude
+session, once per new wait. `flags` carries that row as `waiting` for the
+chime (the tile's own `flag` stays as it was), so the same wait on later polls
+is silent and a new wait after it ends rings again. A Codex row that is busy or
+idle stays silent. It has no hook either, so its two lines come from the last
+thing it said — the fallback that fills the words and never raises the count.
 
 What the overview reads from the rollout, with the same words as for Claude:
 

@@ -156,9 +156,15 @@ def state_of(sessions):
 
 def flag_row(s):
     """What the roster says of a session for the chime and the marks: the raw
-    flag the transcript gave it, and whether it wrote down what blocks it. The
+    flag the transcript gave it (`waiting` for a Codex row that asks), and whether it wrote down what blocks it. The
     tile may say less; the chime does not."""
-    return {"key": s["key"], "id": s["key"], "name": s["name"], "flag": s["flag"],
+    flag = s["flag"]
+    # A Codex row has no `waiting` flag of its own; the server sends the chime
+    # its escalated command as one (`fleet.flags_of`).
+    if (flag is None and "codex" in s["tags"] and s["status"] == "waiting"
+            and (s["stuck"] or {}).get("source") == "permission"):
+        flag = "waiting"
+    return {"key": s["key"], "id": s["key"], "name": s["name"], "flag": flag,
             "blocked": bool(s["need"])}
 
 
@@ -1892,6 +1898,29 @@ def codex_pass(browser):
     check("the usage limit is one banner across the top, with its reset time",
           page.locator("#banners .banner").all_inner_texts() == ["Codex usage limit reached, resets at 14:20"])
     check("and none of the tiles repeats it", page.locator(".tile", has_text="usage limit reached").count() == 0)
+    page.close()
+
+    # A Codex row that turns Needs you rings the chime once, as a waiting Claude does.
+    def codex(status, **kw):
+        return roster([("maple", "maple", [S("c2", "Mei", status, tags=["codex"], line="Ship the notes", **kw)])])
+    fake = Fake(codex("busy"))
+    page = new_page(browser, fake)
+    open_at(page)
+    page.wait_for_selector(".tile")
+    page.evaluate("() => { window.__rings = 0; window.__ticks = 0;"
+                  " window.ring = () => { window.__rings++; return true; };"
+                  " window.tick = () => { window.__ticks++; return true; }; }")
+    rings = lambda: page.evaluate("window.__rings")
+    page.wait_for_timeout(3500)
+    check("a busy Codex row does not ring", rings() == 0, rings())
+    fake.body = codex("waiting", stuck=prompts("Shell", cmd))
+    check("the fixture sends the chime that row as waiting, the tile stays Needs you",
+          fake.body["flags"][0]["flag"] == "waiting" and fake.body["columns"][0]["sessions"][0]["flag"] is None)
+    page.wait_for_timeout(4000)
+    check("a Codex row that turns Needs you rings the chime once",
+          rings() == 1 and page.locator('.tile[data-sid="c2"] .stuck-box .reason').inner_text() == "Permission prompt", rings())
+    page.wait_for_timeout(4000)
+    check("and not again on the next poll of the same wait", rings() == 1, rings())
     page.close()
 
     # R7: the words of a rollout, a command and an error are text.

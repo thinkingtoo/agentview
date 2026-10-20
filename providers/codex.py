@@ -20,8 +20,9 @@ cannot be read (hidepid, a container, another user's process) the provider
 degrades: the session shows without a jump. It never invents a pid.
 
 Codex knows busy from idle and nothing about waiting, so it declares
-neither `waiting` nor `status`; the chime never rings for it. What the rollout
-does say, the overview reads: writes per minute, the error a turn ended in
+neither `waiting` nor `status`, so its `status` alone never rings the chime;
+an escalated command with no answer does (the core reads the row's `asking`).
+What the rollout does say, the overview reads: writes per minute, the error a turn ended in
 (Limit or Error), an escalated command with no output yet (Needs you, inferred;
 the session is then `waiting`), and for a `codex exec` run the processes above
 it, which is how the roster finds the session that started it. It cannot say

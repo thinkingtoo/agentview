@@ -577,6 +577,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
              # so is believed: Hung is a claim, and it waits for a look that can tell.
              "silentFor": None if silent is None else round(silent, 1),
              "procsUnknown": raw.get("procsUnknown") is True}
+    asking = asking_of(raw.get("asking"))
     row = {}
     for k, default in DEFAULTS.items():
         got = raw.get(k)
@@ -618,7 +619,12 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
         "unread": status == "idle" and bool(updated) and not finished.is_read(key, updated, remembered),
         # Held open by you (a session pin: `finished.py`). `pinned` on a column is the project's.
         "pinned": key in remembered["pinned"],
-        "asking": asking_of(raw.get("asking")),
+        "asking": asking,
+        # The chime's reading of a provider that cannot say `waiting` (Codex):
+        # an open request with no answer rings, as it is Needs you on the tile (a
+        # pause is a Limit there, and does not).
+        "rings": status == "waiting" and "waiting" not in caps and bool(asking)
+                 and asking["kind"] != "pause",
         # How it stopped, if an API error is its last word; and the last call
         # it made (what a hung session was doing).
         "failure": failure_of(raw.get("failure"), now),
@@ -758,9 +764,10 @@ def roster(providers=None):
 
 def flags_of(everyone):
     """What the chime and the server read of each session: who it is, the
-    flag the transcript gave it, and whether it wrote down what blocks it."""
+    flag the transcript gave it (`waiting` for a row that asks and whose
+    provider cannot say it), and whether it wrote down what blocks it."""
     return [{"key": s["key"], "id": s["id"], "name": s["name"],
-             "flag": s["flag"], "blocked": s["blocked"]}
+             "flag": "waiting" if s.get("rings") else s["flag"], "blocked": s["blocked"]}
             for s in everyone]
 
 
