@@ -736,7 +736,9 @@ make the page throw. `extras` is a small dict of strings the page shows as
 badges without knowing what they mean — a model, a cost.
 
 Two capabilities change what the core does. Without `waiting` the chime never
-rings for that provider, because it cannot tell a question from work. Without
+rings for that provider's `status`, because it cannot tell a question from work;
+the one exception is a row carrying a permission request in `asking` (Codex's
+escalated command), which rings. Without
 `jump` no row of its can raise a terminal. The others say whether a missing
 field is absent or will never exist: a Claude row without a branch is a
 session outside a repo, a Codex row without a name is a provider that has no
@@ -774,9 +776,14 @@ new lock, not once per poll: a holder is remembered and re-checked with one
 `readlink`, and an orphaned lock is remembered too.
 
 Codex knows busy from idle and nothing about waiting, so it declares neither
-`waiting` nor `status`, and a Codex row never rings. It has no hook either,
-so its two lines come from the last thing it said — the fallback that fills
-the words and never raises the count.
+`waiting` nor `status`, and no Codex row is ever `waiting` on its own. One
+thing rings all the same: a Codex row that turns Needs you, an escalated
+command with no answer yet, plays the same two-stroke chime as a waiting Claude
+session, once per new wait. `flags` carries that row as `waiting` for the
+chime (the tile's own `flag` stays as it was), so the same wait on later polls
+is silent and a new wait after it ends rings again. A Codex row that is busy or
+idle stays silent. It has no hook either, so its two lines come from the last
+thing it said — the fallback that fills the words and never raises the count.
 
 What the overview reads from the rollout, with the same words as for Claude:
 
