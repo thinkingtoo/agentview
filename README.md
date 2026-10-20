@@ -62,17 +62,23 @@ and a repository that share a name stay two projects; `pinned`, `names` and
 
 ## What a project is about
 
-Under a project's name the card says what it is about, in one line cut at about
-140 characters (the whole text is the hover). The first of these that exists:
+The name has the card's first row to itself; the state word, a track's status,
+the pin and merge share the second. Under them the card says what the project
+is about, the whole text (up to 1,500 characters). The first of these that exists:
 
 1. **Your own line**, written in place on the card (click the line) and kept in
    `config.json` as `project_lines`, keyed by the project's identity, so a track
    and a repository with one name never share a line. An empty line takes it back.
-2. **A track's goal**: the first sentence of `## Outcome` (or a bold
-   `**Outcome:**` label) in `~/.claude/pm/<track>.goal.md`. Beside the name, the
-   `_Status:` word (OPEN, PAUSED, MET) and "N of M" from the boxes under
+2. **A track's goal**: the `## Outcome` paragraph (or a bold
+   `**Outcome:**` label) in `~/.claude/pm/<track>.goal.md`. Under the name, the
+   `_Status:` word (OPEN, PAUSED, MET), and under the line "N of M" from the boxes under
    `## Done when` (or `**Done when:**`); a MET track says "done" whatever its
-   boxes say.
+   boxes say. An open track also says its ETA: the boxes ticked since agentview
+   first saw the track, over the time since, carried to the boxes left (`pace.py`,
+   kept in `~/.claude/agentview/pace.json`). The goal file never says when a box
+   was ticked, so until one is ticked while agentview watches it says "ETA after
+   the next box"; a box unticked starts the count again. The hover says what the
+   estimate rests on.
 3. **A repository's own words**: the first prose paragraph of its README, else of
    `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, which
    includes a language switcher with its current language in plain text,

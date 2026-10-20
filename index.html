@@ -113,13 +113,14 @@
   .ov-tag.met { color:var(--busy); border-color:color-mix(in srgb,var(--busy) 45%,transparent); }
   .ov-tag.paused { color:var(--wait); border-color:color-mix(in srgb,var(--wait) 45%,transparent); }
   .ov-ctx { margin-top:5px; font-weight:400; font-size:13px; line-height:1.4; color:var(--dim); cursor:text;
-            overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+            overflow-wrap:anywhere; }
   .ov-ctx.maybe { color:var(--faint); font-style:italic; }
   .ov-ctx .add { font-style:normal; font-size:12px; color:var(--faint); }
   .ov-ctx:hover .add { color:var(--accent); }
-  .ov-prog { display:flex; align-items:center; gap:7px; margin-top:6px; font-weight:400; font-size:12px; color:var(--dim); }
+  .ov-prog { display:flex; flex-wrap:wrap; align-items:center; gap:2px 7px; margin-top:6px; font-weight:400; font-size:12px; color:var(--dim); }
   .ov-bar { flex:1 1 0; max-width:90px; height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
   .ov-bar i { display:block; height:100%; background:var(--busy); }
+  .ov-eta { white-space:nowrap; }
   .ov-notes { margin-left:auto; color:var(--faint); text-decoration:none; }
   .ov-notes:hover, .ov-notes.on { color:var(--accent); }
   .ov-hits { margin-top:6px; font-weight:400; font-size:12px; color:var(--dim); display:flex; flex-direction:column; gap:5px; }
@@ -127,9 +128,8 @@
   .ov-hits .hit-snip { overflow-wrap:anywhere; }
   /* By hand: the name edits in place, the tools sit beside it and say nothing
      until they are needed. A pinned card is lit. */
-  .ov-top { display:flex; align-items:baseline; gap:6px; }
-  .ov-top .ov-name { flex:1 1 auto; min-width:0; }
   .ov-top input.inline { min-width:0; width:100%; font-weight:400; }
+  .ov-row { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; margin-top:2px; }
   .ov-tools { display:flex; align-items:center; gap:2px; flex:none; font-weight:400; }
   .ov-tools button, .ov-form button, .ov-merged button { padding:0 6px; font-size:12px; line-height:20px;
                                       border-color:transparent; background:none; color:var(--faint); }
@@ -183,11 +183,11 @@
   .strip i.u { height:1px; background:none; border-top:1px dotted var(--faint); }
   .mix { margin-top:5px; font-variant-numeric:tabular-nums; }
   .tile .mv { color:var(--dim); font-size:12px; overflow-wrap:anywhere; }
-  /* The card's state is its second line: the name first, then one coloured
+  /* The card's state leads its second line: the name first, then one coloured
      word. The card is coloured by it -- top edge, a light tint, the word and
      the strip's bars -- so the page can be scanned by colour. */
-  .ov-name, .ov-state { display:block; }
-  .ov-state { margin-top:1px; font-size:10.5px; font-weight:700; letter-spacing:.09em; color:var(--faint); }
+  .ov-name { display:block; }
+  .ov-state { font-size:10.5px; font-weight:700; letter-spacing:.09em; color:var(--faint); }
   .ov-head.st-needs { border-top-color:var(--wait); background:color-mix(in srgb,var(--wait) 9%,var(--card)); }
   .ov-head.st-needs .ov-state { color:var(--wait); }
   .ov-head.st-needs .strip i:not(.u) { background:var(--wait); }
@@ -702,28 +702,30 @@ function column(c) {
   // Lit up: a column with none of those sessions is only its card.
   const shrunk = LIGHT && !c.sessions.some(t => t.counted === LIGHT);
   return `<section class="ov-col ${shrunk ? "shrunk" : ""}" data-project="${esc(c.project)}">
-    <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c)}${word ? `<span class="ov-state">${esc(word)}</span>` : ""}${contextOf(c)}${footOf(c)}${movementOf(c)}${mergedOf(c)}</div>
+    <div class="ov-head st-${st} ${c.pinned ? "pinned" : ""}">${headOf(c, word)}${contextOf(c)}${footOf(c)}${movementOf(c)}${mergedOf(c)}</div>
     ${c.sessions.map(tile).join("")}
     ${pillsOf(c)}
   </section>`;
 }
 
-// What the project is about, as the server chose it. A line of your own is
+// What the project is about, as the server chose it, whole. A line of your own is
 // edited where it stands; a guess is greyed and invites a line of your own.
 function contextOf(c) {
   const x = c.context;
   if (!x) return "";
   const mine = x.source === "own" ? x.full : "";
-  const add = x.guess ? `${x.line ? " " : ""}<span class="add">add a line</span>` : "";
+  const add = x.guess ? `${x.full ? " " : ""}<span class="add">add a line</span>` : "";
   return `<div class="ov-ctx edit ${x.guess ? "maybe" : ""}" data-edit="context" data-value="${esc(mine)}"
-    title="${esc(x.full)}">${esc(x.line)}${add}</div>`;
+    title="${esc(x.full)}">${esc(x.full)}${add}</div>`;
 }
 
-// A track's progress, as the server counted it.
+// A track's progress, as the server counted it, and when it will be done at
+// the pace the server measured; the hover says what that pace rests on.
 function progressOf(c) {
   const p = c.track?.progress;
   return p ? `<span class="ov-bar" aria-hidden="true"><i style="width:${
-    p.total ? Math.round(Math.min(p.done, p.total) / p.total * 100) : 100}%"></i></span><span>${esc(p.text)}</span>` : "";
+    p.total ? Math.round(Math.min(p.done, p.total) / p.total * 100) : 100}%"></i></span><span>${esc(p.text)}</span>${
+    p.eta ? `<span class="ov-eta" title="${esc(p.eta.why)}">${esc(p.eta.text)}</span>` : ""}` : "";
 }
 
 function notesLinkOf(c) {
@@ -765,8 +767,11 @@ function mergedOf(c) {
 // along the row, merge it into another. A project is what you correct, so
 // "No project" -- the pile of sessions waiting for one -- has none of it.
 // The raw name stays on hover: renaming never hides what it is.
-function headOf(c) {
-  if (c.kind === "none") return `<div class="ov-top"><span class="ov-name">${esc(c.name)}</span></div>`;
+// The name has the first row to itself; the state word, the track's status
+// and the tools share the second.
+function headOf(c, word) {
+  const state = word ? `<span class="ov-state">${esc(word)}</span>` : "";
+  if (c.kind === "none") return `<div class="ov-top"><span class="ov-name">${esc(c.name)}</span></div><div class="ov-row">${state}</div>`;
   // The neighbours are the cards on the page, not those a filter has hidden.
   const pins = SHOWN.filter(x => x.pinned);
   const at = pins.findIndex(x => x.project === c.project);
@@ -778,7 +783,9 @@ function headOf(c) {
     ? `<span class="ov-tag ${esc(c.track.status.toLowerCase())}">${esc(c.track.status)}</span>` : "";
   const raw = c.raw && c.raw !== c.name ? ` data-raw="${esc(c.raw)}"` : "";
   return `<div class="ov-top">
-    <span class="ov-name edit" data-edit="name"${raw} title="${esc(c.raw)}: click to rename">${esc(c.name)}</span>${tag}
+    <span class="ov-name edit" data-edit="name"${raw} title="${esc(c.raw)}: click to rename">${esc(c.name)}</span>
+  </div>
+  <div class="ov-row">${state}${tag}
     <span class="ov-tools">
       ${c.pinned ? arrow(pins[at - 1], "‹", "before") + arrow(pins[at + 1], "›", "after") : ""}
       <button class="ov-pin ${c.pinned ? "on" : ""}" data-act="${c.pinned ? "unpin" : "pin"}"

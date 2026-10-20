@@ -23,6 +23,7 @@ import context
 import finished
 import jump
 import lines
+import pace
 import projects
 import providers
 import runs
@@ -928,6 +929,9 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
     rows.sort(key=lambda s: not s["boss"])
     name = _column_name(project, names)
     about, track = context.card(project, rows, own_lines)
+    progress = (track or {}).get("progress")
+    if progress and not progress["met"]:
+        progress["eta"] = pace.eta(project["raw"], progress["done"], progress["total"], time.time())
     # The column of no project has no name to repeat.
     column_says = working.repeats(None if project is NO_PROJECT else name, about)
     made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says))
