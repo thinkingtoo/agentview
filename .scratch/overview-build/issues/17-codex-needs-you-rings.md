@@ -6,7 +6,9 @@
 
 **Claimed by:** Joaquin 2026-10-20
 
-**Status:** ready-for-agent (gated, waiting for the merge on the boss's order)
+**Status:** done
+
+**Merged to origin/dev as** `4043566a8dc5daa65d99e6bb28f479d089ff7308` ("Merge ticket 17: a Codex session that waits on you rings the chime", 2026-10-20, parents `d3682c7` and `f2c213a`); the owner ran the push himself after the auto-mode classifier denied mine. R23: `git diff f2c213a 4043566` is 0 bytes. Suite on the merge tree: 2091 OK (skipped=4) on t-compute, 0 entries left in its TMPDIR. History check exit 0 (4 commits). `branch_deploys.py dev`: exit 1. The branch was never pushed to the remote; the local branch `overview/17-codex-rings` is deleted. `~/agentview-17` on t-compute is removed.
 
 - [x] Tests: a Codex row that turns Needs you rings once; the same wait on later polls does not ring again; a new wait after it ends rings again; a Codex row that is busy or idle never rings; Claude rows ring as before
 - [x] The smoke covers a Codex row turning Needs you and the chime firing once, against a test server
@@ -15,7 +17,7 @@
 
 **Owner's 3-hunt gate: opus-hunt-17-a..b (a: `HUNT: BUGS 1` on `2706332`, fixed test-first in `f2c213a`; b: `HUNT: CLEAN` on `f2c213a`), blocking classes none open on `f2c213a`; follow-ups: 0**
 
-**Evidence (Joaquin, 2026-10-20; branch `overview/17-codex-rings`, final head `f2c213a`, 3 commits on origin/dev `d3682c7`. Not merged yet.)**
+**Evidence (Joaquin, 2026-10-20; branch `overview/17-codex-rings`, final head `f2c213a`, 3 commits on origin/dev `d3682c7`. Merged, see above.)**
 
 1. The change. `fleet.normalize` sets a member field `rings` (status `waiting`, the provider does not declare `waiting`, an open request in `asking` that is not a `pause`); `fleet.flags_of` sends `flag: "waiting"` for it. The tile's own `flag` is untouched and `index.html announce()` is unchanged: a new `waiting` key rings once, stays silent on later polls, and rings again after it left the set. Files: `fleet.py`, `README.md`, `GLOSSARY.md`, `providers/base.py`, `providers/codex.py` (comments), tests in `tests/test_flags.py`, `tests/test_announce_sound.py`, `tests/ui_smoke.py`.
 2. Box 1. `tests/test_flags.py` `CodexRings` (7 tests: a Codex row that asks is `waiting` to the chime and its tile is still Needs you with flag None; busy or idle never; a waiting row with nothing to approve does not; any open request rings, as it is Needs you on the tile; a `pause` is a Limit and does not ring; a Claude row as before) and `tests/test_announce_sound.py` `CodexWaitRings` (the flags the real roster sends, through the real `announce()` in node: busy, busy, wait -> ring, wait, wait -> silent, approved, new wait -> ring; and busy/idle only -> never a ring). `CodexWaitRings` failed on the code before the change (checked with `fleet.py` stashed), and the pause test failed before its fix.
