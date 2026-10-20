@@ -131,11 +131,9 @@ class CodexRings(Base):
     def test_a_codex_row_that_waits_with_nothing_to_approve_does_not_ring(self):
         self.assertIsNone(self.flag(self.CODEX, session("c", status="waiting"))["c"])
 
-    def test_a_row_that_asks_for_something_other_than_a_command_does_not_ring_either(self):
-        # Only the escalated command is a Codex wait; nothing else in the
-        # contract is let through on this path.
+    def test_any_open_request_rings_as_it_is_needs_you_on_the_tile(self):
         got = self.flag(self.CODEX, session("c", status="waiting", asking={"kind": "question", "questions": []}))
-        self.assertIsNone(got["c"])
+        self.assertEqual(got["c"], "waiting")
 
     def test_a_claude_row_rings_as_before(self):
         # Within the first seconds an unnamed wait is still not an alarm, even

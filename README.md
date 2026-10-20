@@ -39,7 +39,9 @@ finished sessions included: `{key, id, name, flag, blocked}`, with the raw flag
 the transcript gave it (`waiting`, `ready`, `tool`, `stuck` or none) and whether
 the session wrote down what blocks it. A tile may say less than its flag does
 (a long tool call is a sign, `stuck` is Hung); the chime does not, so it rings
-exactly as it did.
+exactly as it did. The one row whose flag is not the transcript's is a Codex
+row that asks: its provider cannot say `waiting`, so `flags` sends it as
+`waiting` and the chime rings (see the Codex section).
 
 **Which project a session is in** is decided in this order, first match wins:
 your own setting (`assign` in `config.json`); the boss's track (a boss by its
@@ -737,8 +739,8 @@ badges without knowing what they mean — a model, a cost.
 
 Two capabilities change what the core does. Without `waiting` the chime never
 rings for that provider's `status`, because it cannot tell a question from work;
-the one exception is a row carrying a permission request in `asking` (Codex's
-escalated command), which rings. Without
+the one exception is a waiting row carrying an open request in `asking`
+(Codex's escalated command), which rings. Without
 `jump` no row of its can raise a terminal. The others say whether a missing
 field is absent or will never exist: a Claude row without a branch is a
 session outside a repo, a Codex row without a name is a provider that has no

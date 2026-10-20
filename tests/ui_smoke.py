@@ -156,7 +156,7 @@ def state_of(sessions):
 
 def flag_row(s):
     """What the roster says of a session for the chime and the marks: the raw
-    flag the transcript gave it, and whether it wrote down what blocks it. The
+    flag the transcript gave it (`waiting` for a Codex row that asks), and whether it wrote down what blocks it. The
     tile may say less; the chime does not."""
     flag = s["flag"]
     # A Codex row has no `waiting` flag of its own; the server sends the chime

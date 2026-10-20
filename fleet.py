@@ -621,9 +621,8 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
         "pinned": key in remembered["pinned"],
         "asking": asking,
         # The chime's reading of a provider that cannot say `waiting` (Codex):
-        # an escalated command with no answer is a wait, once it is asked.
-        "rings": status == "waiting" and "waiting" not in caps
-                 and (asking or {}).get("kind") == "permission",
+        # an open request with no answer rings, as it is Needs you on the tile.
+        "rings": status == "waiting" and "waiting" not in caps and bool(asking),
         # How it stopped, if an API error is its last word; and the last call
         # it made (what a hung session was doing).
         "failure": failure_of(raw.get("failure"), now),
@@ -763,7 +762,8 @@ def roster(providers=None):
 
 def flags_of(everyone):
     """What the chime and the server read of each session: who it is, the
-    flag the transcript gave it, and whether it wrote down what blocks it."""
+    flag the transcript gave it (`waiting` for a row that asks and whose
+    provider cannot say it), and whether it wrote down what blocks it."""
     return [{"key": s["key"], "id": s["id"], "name": s["name"],
              "flag": "waiting" if s.get("rings") else s["flag"], "blocked": s["blocked"]}
             for s in everyone]
