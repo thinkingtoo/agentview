@@ -4,7 +4,9 @@
 
 **Blocked by:** 01 (One Paste end to end).
 
-**Status:** ready-for-agent
+**Claimed by:** Ines 2026-10-21 23:27
+
+**Status:** in-progress
 
 - [ ] Pruning finished or closed sessions never removes their Pastes; only done or withdrawn ones go
 - [ ] A Paste of a closed session still shows, with copy and done working

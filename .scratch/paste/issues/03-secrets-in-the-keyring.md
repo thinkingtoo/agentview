@@ -4,7 +4,9 @@
 
 **Blocked by:** 01 (One Paste end to end).
 
-**Status:** ready-for-agent
+**Claimed by:** Habib 2026-10-21 23:27
+
+**Status:** in-progress
 
 - [ ] A Paste marked secret lands in the keyring and nowhere in the store directory (checked by scanning the directory's bytes)
 - [ ] An unmarked text containing a token is detected and handled as secret
