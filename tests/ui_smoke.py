@@ -1594,7 +1594,7 @@ def paste_pass(browser):
 
 def paste_stay_pass(browser):
     """Spec Paste, ticket 02: a Paste stays on a finished session's pill and on
-    the card of a closed session, copy and done work there, and the header says
+    the card of a gone session, copy and done work there, and the header says
     how many wait and takes you to the first."""
     def paste(pid, title, text):
         return {"id": pid, "title": title, "first": text.splitlines()[0], "secret": False, "copied": False}
@@ -1614,7 +1614,7 @@ def paste_stay_pass(browser):
     check("a finished session's pill shows its Pastes, each with copy and done",
           pill().locator(".ptitle").all_inner_texts() == ["Mail for Sven", "Second"]
           and pill().locator("button.pcopy").count() == 2 and pill().locator("button.pdone").count() == 2)
-    check("a closed session has a card of its own with its Paste, named as text",
+    check("a gone session has a card of its own with its Paste, named as text",
           page.locator(".kept-card .ptitle").all_inner_texts() == [f"Kept {BOMB}"]
           and page.locator(".kept-card .nm").inner_text() == "zz" and page.locator("img").count() == 0)
 
@@ -1627,12 +1627,12 @@ def paste_stay_pass(browser):
           and pill().locator(".ptitle").count() == 2)
     page.locator(".kept-card button.pcopy").click()
     page.wait_for_timeout(400)
-    check("copy works on the card of a closed session",
+    check("copy works on the card of a gone session",
           page.evaluate("navigator.clipboard.readText()") == "kept text" and fake.of("/api/paste_copied")[-1] == {"id": "k1"})
 
     page.locator(".kept-card button.pdone").click()
     page.wait_for_function("document.querySelectorAll('.kept-card').length === 0")
-    check("done on a closed session's Paste removes it and its card, and the count drops",
+    check("done on a gone session's Paste removes it and its card, and the count drops",
           fake.of("/api/paste_done") == [{"id": "k1"}] and "3 Pastes waiting" in head_line(page), head_line(page))
     pill().locator("button.pdone").nth(1).click()
     page.wait_for_function("document.querySelectorAll('.pill .paste').length === 1")
@@ -1647,6 +1647,13 @@ def paste_stay_pass(browser):
           and 0 <= box["y"] <= page.viewport_size["height"], box)
     check("it lights nothing up and rings nothing", page.locator("#count button[aria-pressed=true]").count() == 0
           and fake.of("/api/jump") == [] and fake.of("/api/seen") == [])
+    # The filter box hides the cards the Pastes are on: the count still goes there.
+    page.fill("#q", "zzzzzz")
+    page.wait_for_function("document.querySelectorAll('#main .paste').length === 0")
+    page.locator("#count button[data-paste-count]").click()
+    page.wait_for_function("document.querySelector('#main .paste.first-hit')")
+    check("with the filter hiding every Paste, the count clears the filter and goes to the first",
+          page.input_value("#q") == "" and page.locator("#main .paste").count() > 0, page.input_value("#q"))
     check("no stray request", not fake.stray, fake.stray)
     page.context.close()
 
@@ -1656,7 +1663,7 @@ def paste_stay_pass(browser):
     page = new_page(browser, PasteFake(old, {}))
     page.goto("http://localhost/", wait_until="load")
     page.wait_for_selector(".tile")
-    check("with no Paste there is no Paste count and no closed-sessions card",
+    check("with no Paste there is no Paste count and no card for gone sessions",
           "Paste" not in head_line(page) and page.locator(".kept-card").count() == 0, head_line(page))
     page.close()
 

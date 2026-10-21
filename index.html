@@ -668,9 +668,9 @@ function overview(cols) {
 // id and provider, so that is its name.
 function keptColumn() {
   if (!KEPT.length) return "";
-  return `<section class="ov-col kept"><div class="kept-head">Closed sessions</div>${KEPT.map(k =>
+  return `<section class="ov-col kept"><div class="kept-head">Gone from this machine</div>${KEPT.map(k =>
     `<div class="kept-card" data-kept="${esc(k.key)}"><span class="nm">${esc(k.session)}</span>`
-    + `<span class="for">${k.provider ? esc(k.provider) + " · " : ""}closed</span>${pastesBox(k)}</div>`).join("")}</section>`;
+    + `<span class="for">${k.provider ? esc(k.provider) + " · " : ""}gone</span>${pastesBox(k)}</div>`).join("")}</section>`;
 }
 
 // The words of the header's three counts. The roster counts; this is only how
@@ -1751,7 +1751,14 @@ document.getElementById("sound").addEventListener("click", async () => {
 // The Paste count takes you to the first Paste on the page, in the order it is drawn.
 document.getElementById("count").addEventListener("click", ev => {
   if (!ev.target.closest("button[data-paste-count]")) return;
-  const first = document.querySelector("#main .paste");
+  let first = document.querySelector("#main .paste");
+  if (!first && query) {
+    // The filter box hides the card it is on: the count is the whole roster's, so the filter gives way.
+    query = "";
+    document.getElementById("q").value = "";
+    paint();
+    first = document.querySelector("#main .paste");
+  }
   if (!first) return;
   first.scrollIntoView({ block: "center", inline: "center" });
   first.classList.remove("first-hit");

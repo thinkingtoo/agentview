@@ -794,7 +794,7 @@ def place_pastes(everyone, found):
     kept, count = {}, 0
     for session, provider, shown in found:
         count += 1
-        owners = [s for s in by_id.get(session, []) if provider in (None, s["provider"])]
+        owners = [s for s in by_id.get(session, []) if paste.belongs_to(provider, s["provider"])]
         for s in owners:
             s["pastes"].append(shown)
         if not owners:

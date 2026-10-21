@@ -157,6 +157,13 @@ def _shown(got):
             "secret": got.get("secret") is True, "copied": got.get("copied") is True}
 
 
+def belongs_to(made_for, provider):
+    """A Paste made for no provider belongs to every session with its id; one
+    made for a provider, to that provider's session alone. A caller that names
+    no provider is every provider."""
+    return provider is None or not isinstance(made_for, str) or made_for == provider
+
+
 def waiting(root=None):
     """Every Paste not yet done, as `(session id, provider or None, what the page
     shows)`, in the order they were made."""
@@ -229,7 +236,7 @@ def done(pid, root=None, session_id=None, provider=None):
             got = _record(pid, root)
             if got is None or (session_id is not None and got["session"] != session_id):
                 return False
-            if provider is not None and isinstance(got.get("provider"), str) and got["provider"] != provider:
+            if not belongs_to(got.get("provider"), provider):
                 return False
             # The text first. Whatever fails after that leaves a Paste on the card,
             # which can be ticked again; the other way round leaves a text nobody sees.
