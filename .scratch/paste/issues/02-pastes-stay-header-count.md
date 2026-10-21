@@ -9,8 +9,8 @@
 
 **Status:** in-progress
 
-- [ ] Pruning finished or closed sessions never removes their Pastes; only done or withdrawn ones go
-- [ ] A Paste of a closed session still shows, with copy and done working
-- [ ] The header shows how many Pastes are waiting, and a click takes you to the first one
-- [ ] The announce/chime logic is unchanged (existing sound tests stay green)
-- [ ] Tests: through the roster seam (a session goes from live to finished, its Paste is still listed) and the UI smoke test (header count)
+- [x] Pruning finished or closed sessions never removes their Pastes; only done or withdrawn ones go
+- [x] A Paste of a closed session still shows, with copy and done working
+- [x] The header shows how many Pastes are waiting, and a click takes you to the first one
+- [x] The announce/chime logic is unchanged (existing sound tests stay green)
+- [x] Tests: through the roster seam (a session goes from live to finished, its Paste is still listed) and the UI smoke test (header count)
