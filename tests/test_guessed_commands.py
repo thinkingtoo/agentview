@@ -710,15 +710,16 @@ class RealShapes(unittest.TestCase):
     a command the session marked that got no button (ticket 18). The lines are
     invented in the shape of the real ones."""
 
-    def test_a_command_with_claude_codes_shell_prefix_after_a_dollar_keeps_the_prefix(self):
-        # The `!` says the command goes into a Claude prompt, so it is copied too.
+    def test_a_command_with_claude_codes_shell_prefix_after_a_dollar_is_copied_without_it(self):
+        # The owner's rule (2026-10-21): the `!` is never copied, he adds it himself
+        # when the command goes into a Claude prompt.
         self.assertEqual(ask_commands.guess("Run the id check: $ ! bash /home/maple/bin/ids.sh"),
-                         ["! bash /home/maple/bin/ids.sh"])
+                         ["bash /home/maple/bin/ids.sh"])
 
-    def test_a_quoted_command_with_the_shell_prefix_keeps_it(self):
+    def test_a_quoted_command_with_the_shell_prefix_is_copied_without_it(self):
         # Ticket 14 left these without a button; sessions wrote them often.
         self.assertEqual(ask_commands.guess('Run "! ssh-add ~/.ssh/id_maple" in this pane?'),
-                         ["! ssh-add ~/.ssh/id_maple"])
+                         ["ssh-add ~/.ssh/id_maple"])
 
     def test_a_dollar_the_session_escaped_still_marks_the_command(self):
         # Inside the hook's single quotes the backslash stays in the text.
