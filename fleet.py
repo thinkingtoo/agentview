@@ -573,7 +573,13 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
     moves = {"writes": writes_of(raw.get("writes")), "subQuiet": sub_quiet,
              "bgTasks": tasks, "shellCpu": bool(raw.get("shellCpu")),
              "movement": sign, "moving": moving,
-             "waits": waits_on_a_job(status, tasks),
+             "waits": waits_on_a_job(status, tasks, raw.get("turnOver") is True),
+             # Who wrote last, for the one word: a subagent fresher than the
+             # session (delegating), or the session itself this minute (thinking).
+             "subFresh": (status != "idle" and sub_quiet is not None
+                          and sub_quiet < thresholds.get("hung_after", 10)
+                          and (quiet is None or sub_quiet < quiet)),
+             "justWrote": status == "busy" and quiet is not None and quiet * 60 <= WRITING_SECS,
              # The call in flight, for the one word next to the name (ticket 21).
              "call": {"tool": _text(raw.get("doingTool")), "doing": _text(raw.get("doing"))}
                      if in_flight is not None else None,
@@ -1398,15 +1404,18 @@ TOOL_WORDS = {"Edit": "editing", "Write": "editing", "NotebookEdit": "editing",
               "WebFetch": "researching", "WebSearch": "researching",
               "SendMessage": "messaging", "Agent": "delegating", "Task": "delegating"}
 READ_FOR_WORK = frozenset({"Bash", "Skill", ""})
+# A description is free text ("Check the build log", "Show test output"), so
+# a kind of work counts as the description's own verb, or as the program that
+# does it; a word further in is what the command looks at, not what it does.
 WORK_WORDS = tuple((re.compile(pattern, re.I), word) for pattern, word in (
-    (r"review", "reviewing"),
-    (r"\b(?:tests?|pytest|unittest|suite)\b", "testing"),
-    (r"\b(?:build|compile)", "building"),
-    (r"\bdeploy", "deploying"),
-    (r"\bpush", "pushing"),
-    (r"\b(?:merge|rebase)", "merging"),
-    (r"\bcommit", "committing"),
-    (r"\binstall", "installing"),
+    (r"(?<![\w-])(?:code-)?review|\bcodex review\b", "reviewing"),
+    (r"\b(?:pytest|unittest)\b|^(?:run|running|rerun)\b.*\b(?:tests?|suite)\b|^test\b", "testing"),
+    (r"^(?:build|building|compile|rebuild)\b|\b(?:cargo|go) build\b|\bnpm run build\b", "building"),
+    (r"^(?:deploy|deploying)\b", "deploying"),
+    (r"^(?:push|pushing)\b|\bgit push\b", "pushing"),
+    (r"^(?:merge|merging|rebase)\b|\bgit (?:merge|rebase)\b", "merging"),
+    (r"^(?:commit|committing)\b|\bgit commit\b", "committing"),
+    (r"^(?:install|installing)\b|\b(?:pip3?|npm|apt|apt-get|uv|brew) install\b", "installing"),
 ))
 
 
@@ -1433,18 +1442,24 @@ def activity_of(m, stuck):
             if word:
                 return word
         return TOOL_WORDS.get(call["tool"], "running")
-    if m["subQuiet"] is not None and m["status"] != "idle":
+    if m["subFresh"]:
         return "delegating"
+    if m["justWrote"]:
+        return "thinking"
+    runs = [t["label"] for t in jobs if t["run"]]
+    if runs:
+        return work_word(" ".join(runs)) or "running"
     if jobs:
         return work_word(" ".join(t["label"] for t in jobs)) or "waiting"
     return "thinking"
 
 
-def waits_on_a_job(status, tasks):
+def waits_on_a_job(status, tasks, turn_over=False):
     """Its turn is over and a background job it started runs on: a watch, a
     long poll, a wait on someone else. That is waiting, not working, for as
-    long as the job is open (ticket 20)."""
-    return status == "idle" and any(not t["run"] for t in tasks)
+    long as the job is open (ticket 20). A busy status whose last word ended
+    the turn is the same."""
+    return (status == "idle" or turn_over) and any(not t["run"] for t in tasks)
 
 
 def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after,
@@ -1490,7 +1505,8 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     # A job counts only while the turn that started it is still on. An idle
     # session whose job runs on is waiting on it, not working (`waits_on_a_job`).
     evidence = ((call and cpu and in_flight <= WAIT_MAX_MINUTES)
-                or any(t["since"] <= WAIT_MAX_MINUTES and (status != "idle" or t["run"]) for t in jobs)
+                or any(t["since"] <= WAIT_MAX_MINUTES and (t["run"] or (status != "idle" and not turn_over))
+                       for t in jobs)
                 or subagent)
     # A provider that says nothing about a busy session has only the moment
     # the status changed to go on: that counts for `hung_after` minutes, like

@@ -74,6 +74,35 @@ class Word(Base):
                                    bgTasks=[{"label": "Watch for the port forward", "since": 30.0}]),
                          "waiting")
 
+    def test_a_session_writing_with_a_job_open_is_thinking_not_waiting(self):
+        # Hunt 20-1: started something in the background and carried on.
+        for label in ("Watch CI", "Run the unit tests"):
+            with self.subTest(label=label):
+                self.assertEqual(self.word(status="busy", quietFor=0.1,
+                                           bgTasks=[{"label": label, "since": 3.0}]), "thinking")
+
+    def test_a_subagent_that_wrote_long_ago_does_not_make_it_delegating(self):
+        # Hunt 20-1: the provider reports the newest subagent file however old.
+        self.assertEqual(self.word(status="busy", quietFor=0.1, subQuiet=50.0), "thinking")
+
+    def test_a_codex_run_sets_the_word_over_a_plain_job(self):
+        self.assertEqual(self.word(status="idle", updatedAt=ago(30), quietFor=29.0,
+                                   bgTasks=[{"label": "Run the unit tests", "since": 3.0},
+                                            {"label": "codex review", "since": 2.0, "run": True}]),
+                         "reviewing")
+
+    def test_a_word_inside_a_description_is_not_the_work_it_names(self):
+        for doing in ("Start the preview server", "Check the build log", "Show test output",
+                      "List test files", "Show commit history", "Check CI for the pushed commit",
+                      "pushd into dir"):
+            with self.subTest(doing=doing):
+                self.assertEqual(self.word(**calling("Bash", doing)), "running")
+
+    def test_a_busy_session_whose_turn_is_over_with_a_job_open_is_waiting(self):
+        tile = self.tile(session("a", status="busy", turnOver=True, quietFor=40.0,
+                                 bgTasks=[{"label": "watch", "since": 3.0}]))
+        self.assertEqual((tile["moving"], tile["waiting"], tile["activity"]), (False, True, "waiting"))
+
     def test_a_session_at_rest_or_stuck_has_no_word(self):
         self.assertEqual(self.word(status="idle", updatedAt=ago(50)), "")
         self.assertEqual(self.word(status="busy", quietFor=40.0), "")       # Hung says it
