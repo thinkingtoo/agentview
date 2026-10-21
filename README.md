@@ -391,17 +391,25 @@ command of its own.
 Three more shapes, from what sessions really wrote (ticket 18). Claude Code's
 `!` prefix stays on the command and is copied with it (`$ ! bash x.sh`,
 `"! ssh-add ~/.ssh/id_maple"`), since it says the command goes into a Claude
-prompt. A `$` the session escaped (`\$ make test`) is still a prompt. A slash
-command to type in a Claude pane (`$ /plugin:skill`, `"/autocompact 450k"`)
-counts when Claude Code has it built in or its name reads as a skill (a
-`plugin:skill` or hyphenated words), so `"/tmp"` stays a folder. When the
-session marked nothing and wrote no `$`, a command written bare is offered
-where its edges show it whole: everything after a colon to the end of the ask
-(less a remark in brackets at the very end), or the whole inside of a pair of
-brackets. A bare command needs more than a quoted one: a known program with a
-sign after it and at most one plain word among its arguments, so `Note: rm
-stale notes from ~/notes` stays a sentence and `(ssh-add ~/.ssh/id_maple)` is a
-command. A `+` standing alone before a program's name (`git commit + git push`)
+prompt; it counts once (`! ! rm` is not offered). A `$` the session escaped
+(`\$ make test`) is still a prompt. A slash command to type in a Claude pane
+shares its shape with a web route (`/login`, `/status`, `/add-user`), so after a
+`$` it counts when Claude Code has it built in or its name reads as a skill (a
+`plugin:skill` or hyphenated words), and in quotes only a `plugin:skill`, or a
+built-in with arguments that are no words of a sentence (`"/autocompact
+450k"`, `"/compact --keep-tools"`); `"/login"` and `"/review the PR"` stay
+words. When the session marked nothing and wrote no `$`, a command written bare
+is offered where its edges show it whole: everything after a colon to the end
+of the ask (less a full stop and a remark in brackets at the very end), or the
+whole inside of a pair of brackets other than `$(...)`. A bare command needs
+more than a quoted one: a known program with a sign after it, at most one plain
+word among its arguments and never as the last, no `?` or `!` and no comma with
+words after it, since with no quote round it those belong to the sentence (and
+pasted, a `?` is a glob). So `Note: rm stale notes from ~/notes`, `Lancia: rm
+-rf ~/maple adesso` and `Can you run: ssh-add ~/.ssh/id?` stay sentences, and
+`(ssh-add ~/.ssh/id_maple)` is a command. A colon after a word that reports what
+was done (`Done:`, `Tried:`, `Fatto:`, `Klaar:` ...) offers nothing. A `+`
+standing alone before a program's name (`git commit + git push`)
 is the sentence's "and": two commands in prose, and nothing is offered.
 
 A quote opens after a space, a bracket, a colon or a comma and closes before a
@@ -445,7 +453,10 @@ Known limits, accepted:
 - A program the lists do not know (`tiroir-work next` in quotes) gets no
   button, and neither does a known tool with a subcommand its list lacks
   (`"npm login"`, `"git lfs pull"`), or a slash command that is neither built
-  in nor named like a skill (`"/boss"`). A title that starts with a tool's name and a
+  in nor named like a skill (`"/boss"`), or one in quotes that is not a
+  `plugin:skill` and has no arguments (`"/mattpocock-wayfinder"`). A bare
+  command offered as a choice in brackets (`Push it (git push --force)? Or
+  wait`) gets a button: the text is whole, the session only asked. A title that starts with a tool's name and a
   sign (`"python 3.12"`), or with a tool and one of its own subcommands
   (`"git rebase workflow"`, `"pip install problems"`), gets one.
 - A `$` command with no sentence end after it runs on into the words that

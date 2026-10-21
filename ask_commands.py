@@ -146,15 +146,30 @@ SLASH_BUILTINS = frozenset("""
 compact autocompact clear mcp model config login logout resume init review help status cost
 memory permissions hooks agents doctor plugin context rewind exit add-dir bug export
 """.split())
+SLASH_ARGUMENT = re.compile(ARGUMENT_SIGN.pattern + r"|\d")
 SLASH_COMMAND = re.compile(r"/(?:[a-z][a-z0-9-]*:)?[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 
 
 def slash_command(word):
-    """Whether `word` names a Claude Code slash command."""
+    """Whether `word` may name a Claude Code slash command."""
     if not SLASH_COMMAND.fullmatch(word):
         return False
     name = word[1:]
     return name in SLASH_BUILTINS or ":" in name or "-" in name
+
+
+def reads_as_slash_command(words, prompted):
+    """A slash command, judged by where it stands. A web route has the same
+    shape ("/login", "/status", "/add-user"), so in quotes only a plugin's
+    `plugin:skill` counts alone, and a built-in needs arguments that are no
+    words of a sentence (`/compact --keep-tools`, `/autocompact 450k`). After a
+    `$` the prompt already says it is something to type."""
+    first, rest = words[0], words[1:]
+    if not slash_command(first) or not all(SLASH_ARGUMENT.search(w) for w in rest):
+        return False
+    if prompted or ":" in first:
+        return True
+    return first[1:] in SLASH_BUILTINS and bool(rest)
 
 
 class Hit(NamedTuple):
@@ -177,11 +192,11 @@ def reads_as_command(text):
     if not words:
         return False
     first, rest = words[0], words[1:]
-    if first == "!" and rest:
-        # Claude Code's shell prefix: the command is what follows it.
-        return reads_as_command(" ".join(rest))
-    if slash_command(first):
-        return True
+    if first == "!":
+        # Claude Code's shell prefix, once: the command is what follows it.
+        return bool(rest) and rest[0] != "!" and reads_as_command(" ".join(rest))
+    if first.startswith("/") and first.count("/") == 1:
+        return reads_as_slash_command(words, prompted=False)
     pathlike = first.startswith(PATHS) or (first.startswith("/") and first.count("/") > 1)
     if not rest:
         return pathlike and bool(SCRIPT.search(first))
@@ -213,9 +228,11 @@ def reads_as_prompted(text):
         return False
     if words[0] == "!":
         words = words[1:]
-        if not words:
+        if not words or words[0] == "!":
             return False
     first, rest = words[0], words[1:]
+    if first.startswith("/") and first.count("/") == 1:
+        return reads_as_slash_command(words, prompted=True)
     if first.startswith(PATHS) or (first.startswith("/") and first.count("/") > 1
                                    and re.search(r"[A-Za-z]", first) is not None):
         return True
@@ -283,21 +300,29 @@ def argument_of_a_runner(before):
 # whole inside of a pair of brackets. Only an edge on both sides tells where it
 # starts and ends; in the middle of a sentence nothing is offered.
 BARE_START = re.compile(r"^|:\s+")
+# A colon after one of these reports what was done; it does not ask for it.
+REPORTED = re.compile(r"(?i)\b(?:done|did|ran|tried|failed|blocked|fixed|error|fatto|provato|"
+                      r"fallito|fait|essayé|échoué|klaar|gedaan|geprobeerd|mislukt)\s*:\s*$")
 BARE_TO_END = re.compile(r"(\S[^\n]*?)(?:\s+\([^()\n]*\))?\.?\s*$")
-BARE_IN_BRACKETS = re.compile(r"\(([^()\n]+)\)")
+# Not `$(...)`, which is part of the command around it.
+BARE_IN_BRACKETS = re.compile(r"(?<![$\w])\(([^()\n]+)\)")
 
 
 def reads_as_bare_command(text):
     """A command with nothing to mark it is believed on stronger evidence than
     one in quotes: a known program with a sign after it (`reads_as_command`),
-    and at most one plain word among its arguments, so "rm stale notes from
-    ~/notes" stays a sentence while `ssh maple-box 'df -h'` is a command."""
+    and at most one plain word among its arguments, never the last, so "rm
+    stale notes from ~/notes" and "rm -rf ~/maple adesso" stay sentences while
+    `ssh maple-box 'df -h'` is a command. With no quote to close it, a `?` or a
+    `!` is the sentence's, and so is a comma with words after it: pasted, the
+    `?` would be a glob and the words arguments."""
     if (not text or cut_or_broken(text) or "`" in text or ends_in_a_stray_mark(text)
             or joins_two_commands(text)):
         return False
-    words = SHELL_RUN.sub('"q"', text).split()
-    if words[:1] == ["!"]:
-        words = words[1:]
+    shell = re.sub(r"^!\s+", "", SHELL_RUN.sub('"q"', text))
+    if re.search(r"[?!](?:\s|$)|,\s", shell):
+        return False
+    words = shell.split()
     if not words or not reads_as_command(" ".join(words)) or slash_command(words[0]):
         return False
     first, rest = words[0], words[1:]
@@ -305,12 +330,13 @@ def reads_as_bare_command(text):
         return reads_as_bare_command(" ".join(rest))
     plain = [w for w in rest if not ARGUMENT_SIGN.search(w)
              and w not in SUBCOMMANDS.get(first, ())]
-    return len(plain) <= 1
+    return len(plain) <= 1 and (not rest or rest[-1] not in plain)
 
 
 def bare_commands(text):
     """The commands written bare in `text`, where its edges show them whole."""
     spans = [m.span(1) for start in BARE_START.finditer(text)
+             if not REPORTED.search(text[:start.end()])
              for m in [BARE_TO_END.match(text, start.end())] if m]
     spans += [m.span(1) for m in BARE_IN_BRACKETS.finditer(text)]
     found = []

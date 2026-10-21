@@ -769,6 +769,54 @@ class RealShapes(unittest.TestCase):
     def test_a_plus_that_is_an_argument_stays_in_the_command(self):
         self.assertEqual(ask_commands.guess("Check it: $ echo 1 + 2"), ["echo 1 + 2"])
 
+    def test_a_bare_command_asked_as_a_question_or_with_a_clause_after_it_is_not_offered(self):
+        # Hunt 18-1: the `?` would be pasted as a glob, the clause as arguments.
+        for ask in ("Can you run this: ssh-add ~/.ssh/id_maple?",
+                    "Posso fare: git reset --hard origin/dev?",
+                    "git push --force ok?",
+                    "Prochaine étape : git push --force-with-lease ?",
+                    "Please: make test V=1!",
+                    "Tried: git push --force, rejected",
+                    "Esegui: ssh-add ~/.ssh/id_maple, grazie"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_a_word_of_prose_after_a_bare_command_is_not_taken_as_its_argument(self):
+        # Hunt 18-1: pasted, `rm` would delete one more file named "adesso".
+        for ask in ("Lancia: rm -rf ~/.cache/maple adesso",
+                    "Run: rm -rf ~/build/maple too",
+                    "Then: sudo rm -rf /var/lib/maple/cache now",
+                    "Lance ceci : ssh-add ~/.ssh/id_maple svp",
+                    "Retry: ssh-add -D first"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_a_colon_that_reports_what_was_done_does_not_offer_it_again(self):
+        # Hunt 18-1: a button that repeats a destructive step already taken.
+        for ask in ("Done: rm -rf ~/build/maple", "Fatto: rm -rf ~/build/maple",
+                    "Tried: git push --force origin dev", "Failed: ssh-add ~/.ssh/id_maple",
+                    "Klaar: rm -rf ~/build/maple"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_a_command_substitution_is_not_a_bracket_of_its_own(self):
+        self.assertEqual(ask_commands.guess("Run: export TOKEN=$(cat ~/.config/maple.env)"),
+                         ["export TOKEN=$(cat ~/.config/maple.env)"])
+
+    def test_a_web_route_in_quotes_is_not_a_slash_command(self):
+        # Hunt 18-1: routes share names with Claude's built-in commands.
+        for ask in ("The `/login` route returns 302, should I fix it?",
+                    'Is "/status" the right health endpoint?',
+                    "Should the `/add-user` endpoint require auth?",
+                    'Rename "/export" to "/download"?',
+                    'Delete "/var-old" too?',
+                    'Try "/review the PR" or merge?'):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_the_shell_prefix_counts_once(self):
+        self.assertEqual(ask_commands.guess("Run: ! ! rm -rf ~/maple"), [])
+
     def test_a_folder_at_the_root_in_quotes_is_still_a_name(self):
         for ask in ('Is "/tmp" the right place?', 'Keep it under "/opt" or "/srv"?',
                     'Is the split "A/B" or "/ maple"?'):

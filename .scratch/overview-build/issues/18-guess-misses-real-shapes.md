@@ -34,3 +34,7 @@ Corpus: every `team-line` Bash call in `~/.claude/projects/*/*.jsonl` changed in
 - Rules 1 to 3, the bare rule and the `+` rule, each test-first in `tests/test_guessed_commands.py` (`RealShapes`, 11 tests). Ticket 14's test that pinned "no button for `!` and for `/compact --keep-tools`" is changed to the new rule; "npm login" and "git lfs pull" still get none.
 - Real data, the same 289 distinct asks (any `--n`) on the branch: 7 guessed before, 20 after; the one false positive is gone and no new one appears. Still missed: a bare command in the middle of a sentence, or followed by more words after a comma.
 - Tests run locally (load 5): `test_guessed_commands` 116 OK, `test_turn_hook` 23 OK, `test_needs_you` 49 OK, `test_needs_you_reader` 40 OK; private TMPDIR left with 0 entries. The full suite runs elsewhere.
+
+## Hunt 18-1 (Opus fallback, Codex unavailable: 429 usage limit, 2026-10-21)
+
+NO-GO on `7d3b13a`, five P1, all reproduced and fixed test-first: a bare command ending in `?`/`!` or followed by a comma clause (the `?` pasted as a glob); one plain word of prose taken as the last argument (`rm -rf ~/maple adesso`); a colon that reports (`Done: rm -rf ...`); a web route in quotes taken for a slash command (`"/login"`, `"/review the PR"`); the inside of `$(...)` offered as a bracket command. P2 `! !` fixed too; P2 a bracket command offered as a choice is accepted and listed in the README. After the fix: 122 guesser tests OK, the hunter's 61 inputs all right, worst time 2.5 ms, real asks still 7 -> 20 with no false positive.
