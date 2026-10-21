@@ -689,6 +689,37 @@ class Secrets(Case):
         self.assertIn("sweep", err)
         self.assert_no_leak(TOKEN)
 
+    def test_a_secret_paste_stays_on_a_gone_sessions_card_and_the_file_sweep_leaves_it_alone(self):
+        """Tickets 02 and 03 meet: the card of a session that left holds a secret, masked; the
+        roster poll's file sweep (old texts, old temp files) touches neither keyring nor record,
+        and nothing of it is ever on disk; withdraw with the provider takes the keyring item."""
+        code, pid, _ = self.leave("Token", "sk-test-" + "ab12" * 8, "--provider", "fake")
+        self.assertEqual(code, 0)
+        self.fake._sessions = []
+        for prune in (lines.forget, seen.forget):
+            prune(set())
+        old = time.time() - 10 * paste.SWEEP_AFTER
+        stray = paste.store() / "dead.tmp"
+        stray.write_text("x")
+        os.utime(stray, (old, old))
+        self.vault.calls.clear()
+        got = json.loads(self.get("/api/roster")[1])
+        self.assertEqual(self.vault.calls, [])                  # the poll never asks the keyring
+        self.assertFalse(stray.exists())                        # the file sweep did its work
+        (card,) = got["kept"]
+        (shown,) = card["pastes"]
+        self.assertEqual((shown["id"], shown["secret"], shown["first"]), (pid, True, ""))
+        self.assertNotIn(b"sk-test-", json.dumps(got).encode())
+        self.assertEqual(sorted(self.vault.items), [pid])       # the item is still there
+        self.assertEqual(self.text_of(pid)[1], ("sk-test-" + "ab12" * 8).encode())
+        self.assertEqual(list(paste.store().glob("*.txt")), [])
+        self.assertNotIn(b"sk-test-", self.everything_else())
+        code, _, _ = self.command("withdraw", "a", "--provider", "other", pid)   # not its provider
+        self.assertEqual((code, sorted(self.vault.items)), (1, [pid]))
+        code, _, _ = self.command("withdraw", "a", "--provider", "fake", pid)
+        self.assertEqual((code, self.vault.items), (0, {}))
+        self.assertEqual(json.loads(self.get("/api/roster")[1])["kept"], [])
+
     def test_sweep_removes_keyring_items_no_record_points_at_and_names_records_without_an_item(self):
         _, kept, _ = self.leave("Kept", SECRET_TEXT)
         _, lost, _ = self.leave("Lost", SECRET_TEXT)
