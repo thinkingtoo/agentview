@@ -237,6 +237,26 @@ class Lifecycle(Case):
             self.assertEqual(self.post(route, {"id": 5}), 400)
             self.assertEqual(self.post(route, {"id": "nope"}), 404)
 
+    def test_done_that_cannot_remove_the_paste_says_so_and_it_stays(self):
+        pid = self.make("t", "text")
+        os.chmod(paste.store(), 0o500)          # a folder that cannot be changed
+        self.addCleanup(os.chmod, paste.store(), 0o700)
+        if os.access(paste.store(), os.W_OK):
+            self.skipTest("this user can write anywhere")
+        self.assertEqual(self.post("/api/paste_done", {"id": pid}), 500)
+        self.assertNotEqual(self.withdraw("a", pid).returncode, 0)
+        self.assertEqual([p["id"] for p in self.pastes()], [pid])
+
+    def test_copy_racing_done_never_leaves_a_paste_without_its_text(self):
+        ids = [self.make(f"t{i}", f"text {i}") for i in range(40)]
+        threads = [threading.Thread(target=f, args=(pid,)) for pid in ids for f in (paste.copied, paste.done)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(self.pastes(), [])
+        self.assertEqual(sorted(p.name for p in paste.store().iterdir() if p.suffix in (".json", ".txt")), [])
+
     def test_pruning_the_lines_of_gone_sessions_leaves_the_pastes(self):
         pid = self.make("t", "text", session="gone")
         lines.forget(set())

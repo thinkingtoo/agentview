@@ -17,6 +17,8 @@ written last, so the roster, which reads the records every poll, never reads a
 text and never sees a half-made one.
 """
 import argparse
+import contextlib
+import fcntl
 import json
 import re
 import secrets
@@ -104,8 +106,21 @@ def create(session_id, title, path, root=None):
 def _unlink(path):
     try:
         path.unlink()
-    except OSError:
+    except FileNotFoundError:
         pass
+    except OSError as err:
+        raise Refused(f"could not remove the Paste: {err.strerror}") from None
+
+
+@contextlib.contextmanager
+def _changing(root):
+    """One change to a Paste at a time, across the server's threads and the
+    command's processes: a copy mark read before a done and written after it
+    would bring the record back without its text."""
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with open(root / ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
 
 
 def _record(pid, root=None):
@@ -152,21 +167,33 @@ def text(pid, root=None):
 
 def copied(pid, root=None):
     """Mark it copied. It stays. False when there is no such Paste."""
-    got = _record(pid, root)
-    if got is None:
-        return False
-    got["copied"] = True
-    return lines.write_atomic(_root(root) / f"{pid}.json", json.dumps(got))
+    root = _root(root)
+    try:
+        with _changing(root):
+            got = _record(pid, root)
+            if got is None:
+                return False
+            got["copied"] = True
+            if not lines.write_atomic(root / f"{pid}.json", json.dumps(got)):
+                raise Refused("could not write the Paste")
+    except OSError as err:
+        raise Refused(f"could not write the Paste: {err.strerror}") from None
+    return True
 
 
 def done(pid, root=None, session_id=None):
-    """Remove a Paste. False when there is none, or when it is not `session_id`'s."""
-    got = _record(pid, root)
-    if got is None or (session_id is not None and got["session"] != session_id):
-        return False
+    """Remove a Paste. False when there is none, or when it is not `session_id`'s.
+    `Refused` when it is there and cannot be removed."""
     root = _root(root)
-    _unlink(root / f"{pid}.json")       # the record first: without it there is no Paste
-    _unlink(root / f"{pid}.txt")
+    try:
+        with _changing(root):
+            got = _record(pid, root)
+            if got is None or (session_id is not None and got["session"] != session_id):
+                return False
+            _unlink(root / f"{pid}.json")       # the record first: without it there is no Paste
+            _unlink(root / f"{pid}.txt")
+    except OSError as err:
+        raise Refused(f"could not remove the Paste: {err.strerror}") from None
     return True
 
 

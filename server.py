@@ -422,7 +422,11 @@ class Handler(BaseHTTPRequestHandler):
         pid = body.get("id")
         if not isinstance(pid, str):
             return self.send_error(400, "expected {id}")
-        if not change(pid):
+        try:
+            changed = change(pid)
+        except paste.Refused as why:
+            return self.send_error(500, str(why))
+        if not changed:
             return self.send_error(404, "no such Paste")
         self._send(json.dumps({"ok": True}), "application/json")
 
