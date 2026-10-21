@@ -4,7 +4,9 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Claimed by:** Ines 2026-10-21 22:42
+
+**Status:** in-progress
 
 - [ ] The command creates a Paste from a file and prints its id; missing, empty or oversized files are refused with a non-zero exit and nothing written
 - [ ] `/api/roster` lists a session's Pastes (id, title, first line, copied flag) without their full text
