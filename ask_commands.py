@@ -141,7 +141,7 @@ KNOWN = PROGRAMS | SUBCOMMANDS.keys() | WRAPPERS
 
 # A command typed into a Claude pane rather than a shell. "/tmp" and "/opt" are
 # folders, so a name counts when Claude Code has it built in, or when it reads
-# as a skill: a plugin's `plugin:skill`, or words joined by hyphens.
+# as a plugin's skill, `plugin:skill`. Hyphenated words alone are routes too.
 SLASH_BUILTINS = frozenset("""
 compact autocompact clear mcp model config login logout resume init review help status cost
 memory permissions hooks agents doctor plugin context rewind exit add-dir bug export
@@ -155,7 +155,7 @@ def slash_command(word):
     if not SLASH_COMMAND.fullmatch(word):
         return False
     name = word[1:]
-    return name in SLASH_BUILTINS or ":" in name or "-" in name
+    return name in SLASH_BUILTINS or ":" in name
 
 
 def reads_as_slash_command(words, prompted):
@@ -300,27 +300,48 @@ def argument_of_a_runner(before):
 # whole inside of a pair of brackets. Only an edge on both sides tells where it
 # starts and ends; in the middle of a sentence nothing is offered.
 BARE_START = re.compile(r"^|:\s+")
-# A colon after one of these reports what was done; it does not ask for it.
-REPORTED = re.compile(r"(?i)\b(?:done|did|ran|tried|failed|blocked|fixed|error|fatto|provato|"
-                      r"fallito|fait|essayé|échoué|klaar|gedaan|geprobeerd|mislukt)\s*:\s*$")
-BARE_TO_END = re.compile(r"(\S[^\n]*?)(?:\s+\([^()\n]*\))?\.?\s*$")
+# A colon introduces a command only after a verb that asks for it to be run,
+# in the clause before it: "Done:", "Errore:", "Status:" report one, and no list
+# of such words is ever complete. A negation turns the verb round, and so does
+# a word that says it already ran ("Already run:").
+RUN_VERBS = re.compile(r"(?i)(?<!\w)(?:run|execute|type|paste|launch|enter|start|esegui|lancia|"
+                       r"digita|incolla|avvia|lance|lancez|exécute|exécutez|tape|tapez|colle|"
+                       r"collez|draai|voer|typ|plak)(?!\w)")
+NEGATION = re.compile(r"(?i)(?<!\w)(?:don't|do not|never|not|non|mai|ne|pas|jamais|niet|nooit|"
+                      r"geen|already|già|déjà|reeds)(?!\w)|n't(?!\w)")
+CLAUSE_START = re.compile(r"[.!?;\n]\s")
+# A full stop after the command is the sentence's, unless it follows a dot
+# (`cd ..`, `pip install -e ..`): then the dots are the command's.
+# A remark in brackets at the end is left out, unless it names more to run
+# ("(and ~/.cache/maple2)"): then the command offered would be half of it.
+BARE_TO_END = re.compile(r"(\S[^\n]*?)(?:\s+(\([^()\n]*\)))?(?:(?<![.\s])\.)?\s*$")
+
+
+def asks_to_run(before):
+    """Whether the clause just before a colon asks the person to run something."""
+    clause = CLAUSE_START.split(before)[-1]
+    return RUN_VERBS.search(clause) is not None and NEGATION.search(clause) is None
+
 # Not `$(...)`, which is part of the command around it.
 BARE_IN_BRACKETS = re.compile(r"(?<![$\w])\(([^()\n]+)\)")
+
+
+PROSE_WORD = re.compile(r"[^\W\d_]+")
 
 
 def reads_as_bare_command(text):
     """A command with nothing to mark it is believed on stronger evidence than
     one in quotes: a known program with a sign after it (`reads_as_command`),
-    and at most one plain word among its arguments, never the last, so "rm
-    stale notes from ~/notes" and "rm -rf ~/maple adesso" stay sentences while
-    `ssh maple-box 'df -h'` is a command. With no quote to close it, a `?` or a
+    and no word of a sentence among its arguments, so "rm stale notes from
+    ~/notes", "rm -rf ~/maple adesso" and "git pull in ~/maple" stay sentences
+    while `ssh maple-box 'df -h'` is a command. With no quote to close it, a `?` or a
     `!` is the sentence's, and so is a comma with words after it: pasted, the
     `?` would be a glob and the words arguments."""
     if (not text or cut_or_broken(text) or "`" in text or ends_in_a_stray_mark(text)
             or joins_two_commands(text)):
         return False
     shell = re.sub(r"^!\s+", "", SHELL_RUN.sub('"q"', text))
-    if re.search(r"[?!](?:\s|$)|,\s", shell):
+    if re.search(r"[?!\uff1f\uff01](?:\s|$)|,\s|[\u00a1\u00bf\u203c\u2047-\u2049]", shell):
         return False
     words = shell.split()
     if not words or not reads_as_command(" ".join(words)) or slash_command(words[0]):
@@ -328,16 +349,23 @@ def reads_as_bare_command(text):
     first, rest = words[0], words[1:]
     if first in WRAPPERS or ENV_ASSIGNMENT.match(first):
         return reads_as_bare_command(" ".join(rest))
-    plain = [w for w in rest if not ARGUMENT_SIGN.search(w)
-             and w not in SUBCOMMANDS.get(first, ())]
-    return len(plain) <= 1 and (not rest or rest[-1] not in plain)
+    # A word of letters alone is a word of the sentence: pasted, "in", "or" or
+    # "adesso" would be an argument. A host or a target has a sign, a digit or
+    # a hyphen (`maple-box`), and a tool's own subcommand is its own.
+    return not any(PROSE_WORD.fullmatch(w) and w not in SUBCOMMANDS.get(first, ())
+                   for w in rest)
 
 
 def bare_commands(text):
     """The commands written bare in `text`, where its edges show them whole."""
-    spans = [m.span(1) for start in BARE_START.finditer(text)
-             if not REPORTED.search(text[:start.end()])
-             for m in [BARE_TO_END.match(text, start.end())] if m]
+    spans = []
+    for start in BARE_START.finditer(text):
+        if start.start() and not asks_to_run(text[:start.start()]):
+            continue
+        m = BARE_TO_END.match(text, start.end())
+        remark = (m.group(2) or "()")[1:-1] if m else ""
+        if m and not any(ARGUMENT_SIGN.search(w) for w in remark.split()):
+            spans.append(m.span(1))
     spans += [m.span(1) for m in BARE_IN_BRACKETS.finditer(text)]
     found = []
     for start, end in spans:

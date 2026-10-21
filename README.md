@@ -400,15 +400,19 @@ built-in with arguments that are no words of a sentence (`"/autocompact
 450k"`, `"/compact --keep-tools"`); `"/login"` and `"/review the PR"` stay
 words. When the session marked nothing and wrote no `$`, a command written bare
 is offered where its edges show it whole: everything after a colon to the end
-of the ask (less a full stop and a remark in brackets at the very end), or the
+of the ask (less a full stop, and a remark in brackets at the very end unless
+the remark names more to run), when the clause before the colon has a verb that
+asks for it to be run (`run`, `type`, `paste`, `esegui`, `lancia`, `digita`,
+`lance`, `tape`, `draai`, `plak` ...) and no negation or "already"; or the
 whole inside of a pair of brackets other than `$(...)`. A bare command needs
-more than a quoted one: a known program with a sign after it, at most one plain
-word among its arguments and never as the last, no `?` or `!` and no comma with
-words after it, since with no quote round it those belong to the sentence (and
-pasted, a `?` is a glob). So `Note: rm stale notes from ~/notes`, `Lancia: rm
--rf ~/maple adesso` and `Can you run: ssh-add ~/.ssh/id?` stay sentences, and
-`(ssh-add ~/.ssh/id_maple)` is a command. A colon after a word that reports what
-was done (`Done:`, `Tried:`, `Fatto:`, `Klaar:` ...) offers nothing. A `+`
+more than a quoted one: a known program with a sign after it, no word of a
+sentence among its arguments (a word of letters alone that is not the tool's
+own subcommand), no `?` or `!` and no comma with words after it, since with no
+quote round it those belong to the sentence (and pasted, a `?` is a glob). So
+`Note: rm stale notes from ~/notes`, `Run: git pull in ~/maple`, `Your call: rm
+-rf ~/build or ~/dist`, `Done: rm -rf ~/build`, `Don't run: git push --force`
+and `Can you run: ssh-add ~/.ssh/id?` offer nothing, and `Run the wizard: bash
+~/stage/wizard.sh` and `(ssh-add ~/.ssh/id_maple)` are commands. A `+`
 standing alone before a program's name (`git commit + git push`)
 is the sentence's "and": two commands in prose, and nothing is offered.
 
