@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""Leave a text for the person on this session's card. Run by the session itself.
+
+    paste create <session-id> --title "Message to Sven" <file>     prints the new id
+    paste withdraw <session-id> <paste-id>
+
+The text comes from a file, never from an argument: quotes, backslashes and
+line breaks do not survive a shell. Withdraw a Paste only when you have seen
+that it was used (the mail is sent, the policy is live).
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import paste
+
+if __name__ == "__main__":
+    sys.exit(paste.main())

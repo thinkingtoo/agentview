@@ -21,6 +21,7 @@ import jump
 import lines
 import log
 import notes
+import paste
 import projects
 import providers
 import seen
@@ -268,7 +269,8 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(length) or "{}")
 
     ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "merge", "chime", "restore",
-              "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep")
+              "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep",
+              "paste_copied", "paste_done")
 
     def do_POST(self):
         if not self._local():
@@ -416,6 +418,26 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400, "expected {query}")
         self._send(json.dumps(notes.search(query)), "application/json")
 
+    def _paste_change(self, body, change):
+        pid = body.get("id")
+        if not isinstance(pid, str):
+            return self.send_error(400, "expected {id}")
+        try:
+            changed = change(pid)
+        except paste.Refused as why:
+            return self.send_error(500, str(why))
+        if not changed:
+            return self.send_error(404, "no such Paste")
+        self._send(json.dumps({"ok": True}), "application/json")
+
+    def _paste_copied(self, body):
+        """The copy button of a Paste: it is on the clipboard now. It stays."""
+        self._paste_change(body, paste.copied)
+
+    def _paste_done(self, body):
+        """The done button: you have used it, or you do not want it."""
+        self._paste_change(body, paste.done)
+
     def _line(self, body):
         key, text = body.get("key"), body.get("text")
         if not isinstance(key, str) or not isinstance(text, str):
@@ -522,6 +544,13 @@ class Handler(BaseHTTPRequestHandler):
                                    "providers": status,
                                    "chime": fleet.config_value("chime", True)}),
                        "application/json")
+        elif self.path.startswith("/api/paste_text"):
+            # The text of one Paste, on a click, exactly as the session left it.
+            ask = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            data = paste.text((ask.get("id") or [""])[0])
+            if data is None:
+                return self.send_error(404, "no such Paste")
+            self._send(data.decode("utf-8", "replace"), "text/plain; charset=utf-8")
         elif self.path.startswith("/api/search"):
             ask = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             query = (ask.get("q") or [""])[0]

@@ -1464,6 +1464,126 @@ def guessed_pass(browser):
     page.close()
 
 
+class PasteFake(Fake):
+    """A Fake that also keeps Pastes, as the server does: the text on request,
+    a copy that marks and keeps, a done that removes."""
+
+    def __init__(self, body, texts):
+        super().__init__(body)
+        self.texts = texts          # id -> the text
+        self.fetched = []
+
+    def tiles(self):
+        return [t for c in self.body["columns"] for t in c["sessions"]]
+
+    def apply(self, path, b):
+        super().apply(path, b)
+        for t in self.tiles():
+            if path == "/api/paste_done":
+                t["pastes"] = [p for p in t.get("pastes", []) if p["id"] != b["id"]]
+            elif path == "/api/paste_copied":
+                for p in t.get("pastes", []):
+                    if p["id"] == b["id"]:
+                        p["copied"] = True
+
+    def handle(self, route):
+        url = urllib.parse.urlsplit(route.request.url)
+        if route.request.method == "GET" and url.path == "/api/paste_text":
+            pid = urllib.parse.parse_qs(url.query)["id"][0]
+            self.fetched.append(pid)
+            if pid in self.texts:
+                return route.fulfill(status=200, content_type="text/plain; charset=utf-8", body=self.texts[pid])
+            return route.fulfill(status=404, body="no such Paste")
+        return super().handle(route)
+
+
+def paste_pass(browser):
+    """Spec Paste, ticket 01: a Paste sits on its card as title + first line +
+    copy + done, a click on the title opens the whole text, copy puts the exact
+    text on the clipboard and keeps the Paste, done removes it, and none of it
+    jumps or marks the tile."""
+    full = f"\ufeffHoi Sven,\n\n\tHe said \"it's fine\" \\ {BOMB}\n\n\nGroeten\n"
+    texts = {"p1": full, "p2": "policy line 1\nline 2", "p3": "third"}
+    maple = ("maple", "maple", [S("q1", "Vera", "idle", line="Notes drafted"), S("q2", "Mei", "idle", line="Tests green")])
+    body = roster([maple])
+    body["columns"][0]["sessions"][0]["pastes"] = [
+        {"id": "p1", "title": "Message to Sven", "first": "Hoi Sven,", "secret": False, "copied": False},
+        {"id": "p2", "title": f"Policy {BOMB}", "first": "policy line 1", "secret": False, "copied": False},
+        {"id": "p3", "title": "Third", "first": "third", "secret": False, "copied": False}]
+    fake = PasteFake(body, texts)
+    page = new_page(browser, fake, clipboard=True)
+    page.goto("http://localhost/", wait_until="load")
+    page.wait_for_selector(".tile")
+    t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
+    rows = t("q1").locator(".paste")
+
+    check("every Paste of the session shows, in the order sent, on its card only",
+          rows.locator(".ptitle").all_inner_texts() == ["Message to Sven", f"Policy {BOMB}", "Third"]
+          and t("q2").locator(".paste").count() == 0, rows.locator(".ptitle").all_inner_texts())
+    check("each shows its first line, a copy button and a done button",
+          rows.locator(".pfirst").all_inner_texts() == ["Hoi Sven,", "policy line 1", "third"]
+          and rows.locator("button.pcopy").count() == 3 and rows.locator("button.pdone").count() == 3)
+    check("the full text is not on the page until opened, and not fetched",
+          "Groeten" not in page.locator("#main").inner_text() and fake.fetched == [])
+    check("R7: markup in a title is shown as text and builds nothing",
+          page.locator("img").count() == 0 and page.locator("#main [onerror]").count() == 0)
+
+    posts = len(fake.posts)
+    rows.nth(0).locator(".ptitle").click()
+    page.wait_for_selector(".ptext")
+    check("a click on the title opens the full text, exactly",
+          page.locator(".ptext").evaluate("e => e.textContent") == full, page.locator(".ptext").evaluate("e => e.textContent"))
+    check("opening sends nothing and does not jump or mark the tile",
+          len(fake.posts) == posts and "jumped" not in t("q1").get_attribute("class"), fake.posts[posts:])
+    page.wait_for_timeout(1200)         # a poll or two: the open text stays open
+    check("the open text survives the poll", page.locator(".ptext").count() == 1)
+    rows.nth(0).locator(".ptitle").click()
+    page.wait_for_timeout(200)
+    check("a second click on the title closes it", page.locator(".ptext").count() == 0)
+
+    rows.nth(0).locator("button.pcopy").click()
+    page.wait_for_timeout(400)
+    check("copy puts the whole text on the clipboard, every character and line break",
+          page.evaluate("navigator.clipboard.readText()") == full, page.evaluate("navigator.clipboard.readText()"))
+    check("the button says it copied", rows.nth(0).locator("button.pcopy").inner_text() == "copied")
+    check("copy told the server and nothing else: no jump, no seen mark",
+          fake.of("/api/paste_copied") == [{"id": "p1"}] and fake.of("/api/jump") == [] and fake.of("/api/seen") == [],
+          fake.posts[posts:])
+    check("and the Paste is still there, now marked copied",
+          rows.locator(".ptitle").all_inner_texts()[0] == "Message to Sven" and t("q1").locator(".paste").count() == 3)
+    page.wait_for_timeout(1800)
+    check("the button goes back to a word that says it can be used again",
+          rows.nth(0).locator("button.pcopy").inner_text() == "copy again", rows.nth(0).locator("button.pcopy").inner_text())
+
+    rows.nth(1).locator("button.pdone").click()
+    page.wait_for_function("document.querySelectorAll('.tile[data-sid=\"q1\"] .paste').length === 2")
+    check("done removes that Paste and only it",
+          t("q1").locator(".ptitle").all_inner_texts() == ["Message to Sven", "Third"]
+          and fake.of("/api/paste_done") == [{"id": "p2"}])
+    check("done does not jump or mark the tile either", fake.of("/api/jump") == [] and fake.of("/api/seen") == [])
+    check("no stray request", not fake.stray, fake.stray)
+    page.context.close()
+
+    # A Paste that can no longer be read says so instead of copying nothing.
+    body2 = roster([maple])
+    body2["columns"][0]["sessions"][0]["pastes"] = [
+        {"id": "gone", "title": "Gone", "first": "x", "secret": False, "copied": False}]
+    fake2 = PasteFake(body2, {})
+    page = new_page(browser, fake2, clipboard=True)
+    page.goto("http://localhost/", wait_until="load")
+    page.wait_for_selector(".paste")
+    page.locator(".paste button.pcopy").click()
+    page.wait_for_timeout(400)
+    check("a Paste that cannot be fetched is not copied and is not marked copied",
+          page.locator(".paste button.pcopy").inner_text() == "not copied" and fake2.of("/api/paste_copied") == [])
+    page.close()
+    # The browser logs the 404 it was given on purpose; that one is expected, any other is not.
+    expected = [e for e in errors if e == "console: Failed to load resource: the server responded with a status of 404 (Not Found)"]
+    check("the one console error is the 404 of the Paste that is gone", len(expected) == 1, errors)
+    for e in expected:
+        errors.remove(e)
+
+
 def clock_said(line):
     """The time of day a line says, as (hour, minute, on another day), whatever
     the browser's locale writes it as: `14:20`, `2:20 PM`, `Tue 14.20`."""
@@ -2648,6 +2768,7 @@ def main():
         card_pass(browser)
         needs_pass(browser)
         guessed_pass(browser)
+        paste_pass(browser)
         kinds_pass(browser)
         codex_pass(browser)
         hand_pass(browser)

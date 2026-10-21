@@ -50,6 +50,10 @@ _Avoid_: subject, status line
 **Session line**:
 What a session writes about itself at the end of each turn: where the work stands, and what is left for the person.
 
+**Paste**:
+A titled text a session leaves for the person on its card, to use somewhere else (a mail, a policy, a command). It waits there until the person ticks it done, or the session withdraws it because it saw the thing happen. Copying it never removes it.
+_Avoid_: draft, clipboard item, handout
+
 **Overview**:
 The main page: every running project, separated, with its sessions.
 _Avoid_: dashboard, roster

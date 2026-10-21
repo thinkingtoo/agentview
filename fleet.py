@@ -25,6 +25,7 @@ import finished
 import jump
 import lines
 import pace
+import paste
 import projects
 import providers
 import runs
@@ -767,6 +768,10 @@ def roster(providers=None):
     does not.
     """
     everyone = members(providers)
+    # Read once for the round, not once for a tile.
+    waiting = paste.waiting()
+    for s in everyone:
+        s["pastes"] = waiting.get(s["id"], [])
     columns = columns_of(everyone)
     for s in everyone:
         s.pop("paths", None)
@@ -1063,6 +1068,9 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         # Named for what it is: a guess, unlike the exact command of a
         # permission prompt in `stuck.context`.
         "guessedCommands": guessed_commands_of(m, stuck),
+        # What the session left for you to use (`paste.py`): titles and first
+        # lines only. The text is fetched on a click.
+        "pastes": m.get("pastes", []),
         # The chime rings for a blocked session whatever its flag says, so the
         # tile carries what it is asking, the way the old row did.
         "blocked": m["blocked"], "need": need_of(m),
