@@ -4,7 +4,7 @@
 
 **Claimed by:** Tarek 2026-10-22 (boss dispatch, task #5, track `paste`)
 
-**Status:** ready-for-agent
+**Status:** done, merged as e71ec9a
 
 ## Decision: stale fixture, not code
 
@@ -12,7 +12,7 @@
 
 ## Boxes
 
-- [ ] `session()` in `tests/test_routines.py` carries `waits: False`; the 3 errors are gone
-- [ ] Full suite on t-compute: 0 errors
-- [ ] Review GO on the final head
-- [ ] Merged to dev, branch and worktree removed
+- [x] `session()` in `tests/test_routines.py` carries waits, bgTasks, call, subFresh, justWrote (all five; ticket 21 added them); tests.test_routines 13 OK
+- [x] Full suite on t-compute from git archive of 3822a67: 2195 tests, OK (skipped=4), 0 errors
+- [x] Review GO on 3822a67: Opus fallback, Codex unavailable (agentview-wt/reviews/routines-waits-review-1.md)
+- [x] Merged to dev as e71ec9a, branch and worktree removed
