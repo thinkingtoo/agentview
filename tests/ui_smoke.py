@@ -1656,6 +1656,13 @@ def paste_stay_pass(browser):
     page.wait_for_function("document.querySelector('#main .paste.first-hit')")
     check("with the filter hiding every Paste, the count clears the filter and goes to the first",
           page.input_value("#q") == "" and page.locator("#main .paste").count() > 0, page.input_value("#q"))
+    # With one Paste still in sight and the earliest hidden, the count still goes to the earliest.
+    page.fill("#q", "Hanne")
+    page.wait_for_function("document.querySelectorAll('#main .paste').length === 1")
+    page.locator("#count button[data-paste-count]").click()
+    page.wait_for_function("document.querySelector('.paste.first-hit')")
+    check("with the first Paste hidden by a filter and a later one shown, it still goes to the first",
+          page.locator("#main .paste.first-hit .ptitle").inner_text() == "On the tile" and page.input_value("#q") == "")
     # A lit count shrinks the other columns to their cards, and the Paste on them is out of sight.
     page.locator('#count button[data-count="needs"]').click()
     page.wait_for_selector(".ov-col.shrunk")

@@ -20,6 +20,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import os
 import re
 import secrets
 import sys
@@ -183,6 +184,16 @@ def waiting(root=None):
 SWEEP_AFTER = 600
 
 
+def _present(path):
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True            # cannot tell: then it is not ours to remove
+    return True
+
+
 def sweep(root=None, after=SWEEP_AFTER):
     """Remove what a crash left: a text whose record never came, and the
     half-written files of an atomic write. A text whose record exists is
@@ -195,9 +206,11 @@ def sweep(root=None, after=SWEEP_AFTER):
     now = time.time()
     for path in found:
         try:
-            if path.suffix == ".txt" and (root / f"{path.stem}.json").exists():
+            # lstat, never following a link: a probe that follows one into a
+            # filesystem that does not answer would stall the roster poll.
+            if path.suffix == ".txt" and _present(root / f"{path.stem}.json"):
                 continue
-            if now - path.stat().st_mtime > after:
+            if now - os.lstat(path).st_mtime > after:
                 path.unlink()
         except OSError:
             pass

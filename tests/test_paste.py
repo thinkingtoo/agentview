@@ -435,6 +435,20 @@ class Staying(Case):
                          sorted([f"{pid}.txt", f"{pid}.json", "1" * 16 + ".txt", "1" * 16 + ".json"]))
         self.assertEqual(self.text_of(pid)[1], b"text")
 
+    def test_the_sweep_does_not_follow_links(self):
+        root = paste.store()
+        root.mkdir(parents=True, exist_ok=True)
+        lone = root / ("3" * 16 + ".txt")
+        lone.write_text("orphan")
+        (root / ("3" * 16 + ".json")).symlink_to(self.tmp / "nowhere")   # a record that is a dangling link
+        stray = root / "x.y.tmp"
+        stray.symlink_to(self.tmp / "nowhere")
+        os.utime(lone, (1, 1))
+        os.utime(stray, (1, 1), follow_symlinks=False)
+        paste.sweep()
+        self.assertTrue(lone.exists())            # its record is there, whatever it points at
+        self.assertFalse(os.path.lexists(stray))  # an old stray link goes, the target is not touched
+
     def test_a_fresh_text_with_no_record_is_left_for_the_create_that_is_writing_it(self):
         paste.store().mkdir(parents=True, exist_ok=True)
         young = paste.store() / ("2" * 16 + ".txt")

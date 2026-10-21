@@ -1751,17 +1751,15 @@ document.getElementById("sound").addEventListener("click", async () => {
 // The Paste count takes you to the first Paste on the page, in the order it is drawn.
 document.getElementById("count").addEventListener("click", ev => {
   if (!ev.target.closest("button[data-paste-count]")) return;
-  const visible = () => document.querySelector("#main .ov-col:not(.shrunk) .paste, #main .ov-col.kept .paste");
-  let first = visible();
-  if (!first && (query || LIGHT)) {
-    // A filter or a lit count hides the card it is on: the Paste count is the whole
-    // roster's, so they give way.
+  // A filter or a lit count hides cards, and the Paste count is the whole roster's:
+  // they give way first, so that the first Paste is the roster's first.
+  if (query || LIGHT) {
     query = "";
     LIGHT = "";
     document.getElementById("q").value = "";
     paint();
-    first = visible();
   }
+  const first = document.querySelector("#main .paste");
   if (!first) return;
   first.scrollIntoView({ block: "center", inline: "center" });
   first.classList.remove("first-hit");
