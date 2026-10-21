@@ -190,8 +190,10 @@ def done(pid, root=None, session_id=None):
             got = _record(pid, root)
             if got is None or (session_id is not None and got["session"] != session_id):
                 return False
-            _unlink(root / f"{pid}.json")       # the record first: without it there is no Paste
+            # The text first. Whatever fails after that leaves a Paste on the card,
+            # which can be ticked again; the other way round leaves a text nobody sees.
             _unlink(root / f"{pid}.txt")
+            _unlink(root / f"{pid}.json")
     except OSError as err:
         raise Refused(f"could not remove the Paste: {err.strerror}") from None
     return True

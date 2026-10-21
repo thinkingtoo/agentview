@@ -247,6 +247,21 @@ class Lifecycle(Case):
         self.assertNotEqual(self.withdraw("a", pid).returncode, 0)
         self.assertEqual([p["id"] for p in self.pastes()], [pid])
 
+    def test_a_done_that_fails_half_way_leaves_a_paste_that_can_be_ticked_again(self):
+        pid = self.make("t", "text")
+        real = Path.unlink
+
+        def failing(path, *a, **k):
+            if path.suffix == ".txt":
+                raise PermissionError(1, "Operation not permitted")
+            return real(path, *a, **k)
+        with mock.patch.object(Path, "unlink", failing):
+            self.assertEqual(self.post("/api/paste_done", {"id": pid}), 500)
+        self.assertEqual([p["id"] for p in self.pastes()], [pid])      # still on the card, not hidden
+        self.assertEqual(self.post("/api/paste_done", {"id": pid}), 200)
+        self.assertEqual(self.pastes(), [])
+        self.assertEqual(sorted(p.name for p in paste.store().iterdir() if p.suffix in (".json", ".txt")), [])
+
     def test_copy_racing_done_never_leaves_a_paste_without_its_text(self):
         ids = [self.make(f"t{i}", f"text {i}") for i in range(40)]
         threads = [threading.Thread(target=f, args=(pid,)) for pid in ids for f in (paste.copied, paste.done)]
