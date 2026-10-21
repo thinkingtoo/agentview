@@ -388,6 +388,22 @@ between quotes, claims every quote inside it, so a command the lists do not
 know (`fly ssh console -C "rm -rf /data"`) never has its argument offered as a
 command of its own.
 
+Three more shapes, from what sessions really wrote (ticket 18). Claude Code's
+`!` prefix stays on the command and is copied with it (`$ ! bash x.sh`,
+`"! ssh-add ~/.ssh/id_maple"`), since it says the command goes into a Claude
+prompt. A `$` the session escaped (`\$ make test`) is still a prompt. A slash
+command to type in a Claude pane (`$ /plugin:skill`, `"/autocompact 450k"`)
+counts when Claude Code has it built in or its name reads as a skill (a
+`plugin:skill` or hyphenated words), so `"/tmp"` stays a folder. When the
+session marked nothing and wrote no `$`, a command written bare is offered
+where its edges show it whole: everything after a colon to the end of the ask
+(less a remark in brackets at the very end), or the whole inside of a pair of
+brackets. A bare command needs more than a quoted one: a known program with a
+sign after it and at most one plain word among its arguments, so `Note: rm
+stale notes from ~/notes` stays a sentence and `(ssh-add ~/.ssh/id_maple)` is a
+command. A `+` standing alone before a program's name (`git commit + git push`)
+is the sentence's "and": two commands in prose, and nothing is offered.
+
 A quote opens after a space, a bracket, a colon or a comma and closes before a
 space or punctuation: one glued to a word or an `=` (`--title="x"`) is part of
 an argument. When a quote mark stands somewhere that no pair claims (a quote
@@ -411,11 +427,10 @@ really wrote is a bug; on a shape listed here it is a known limit.
 
 Known limits, accepted:
 
-- A command named bare, with no quote and no `$` (`run git status and tell
-  me`), gets no button: a sentence that holds a command cannot be told from one
-  that does not, and the hook asks for the quotes or the `$ ` to say which it is.
-  On one day of real asks, before the hook asked for them, 76 of 1,747 distinct
-  asks named a command that way.
+- A command named bare, with no quote and no `$`, gets a button only where its
+  edges show it whole (above); in the middle of a sentence (`run git status and
+  tell me`, `Run ssh-add ~/.ssh/id in a terminal`) it gets none, and neither
+  does one followed by more words after a comma.
 - A single quote in the ask or in the `did` reaches the store whole only if the
   session writes it as the hook says (`'\''`); that is the session's doing, and
   nothing in the page can see it done wrong. Written correctly, a command with paired single
@@ -429,8 +444,8 @@ Known limits, accepted:
   shifts the quotes of the ask behind it), or makes `team-line` refuse the line.
 - A program the lists do not know (`tiroir-work next` in quotes) gets no
   button, and neither does a known tool with a subcommand its list lacks
-  (`"npm login"`, `"git lfs pull"`) or Claude Code's `!` prefix
-  (`"! ssh-add ~/.ssh/id_maple"`). A title that starts with a tool's name and a
+  (`"npm login"`, `"git lfs pull"`), or a slash command that is neither built
+  in nor named like a skill (`"/boss"`). A title that starts with a tool's name and a
   sign (`"python 3.12"`), or with a tool and one of its own subcommands
   (`"git rebase workflow"`, `"pip install problems"`), gets one.
 - A `$` command with no sentence end after it runs on into the words that

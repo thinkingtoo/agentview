@@ -6,7 +6,9 @@ mouse, a button on a sentence costs the person's trust in every other button.
 The rule that follows from it is that the text offered is always text the
 session wrote as one whole command. Where that cannot be told -- a command
 after a `$` with more words behind it, a command inside a quote that holds
-another, a quote that was never closed -- nothing is offered.
+another, a quote that was never closed -- nothing is offered. A command with
+no mark at all is offered only where the edges of the ask show it whole, and on
+stronger evidence (`reads_as_bare_command`).
 """
 import re
 from typing import NamedTuple
@@ -49,14 +51,15 @@ vagrant doas
 """.split())
 CLAUSE_END = re.compile(r"[.!?;:,]\s|[(\[{\u2014\u2013]")
 
-# `$ ` as a shell prompt: after a space, a colon or an opening bracket, then a
+# `$ ` as a shell prompt: after a space, a colon or an opening bracket (a
+# backslash before the sign is a session escaping it), then a
 # command word. `$5` and `$HOME` have no space after the sign, `$ 5` no command
 # word, and `20 $` is an amount. A quoted argument is one unit, so the comma in `-m "one, two"`
 # does not end the command; the end of the line does, so the match can never
 # fail and the engine never has to try the quoted and the plain way of reading
 # each quote.
 DOLLAR_COMMAND = re.compile(
-    r"(?<!\d)(?:^|[\s:(\[{])\$ +([A-Za-z./~(\[{]"
+    r"(?<!\d)(?:^|[\s:(\[{])\\?\$ +((?:! +)?[A-Za-z./~(\[{]"
     r"(?:\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\\n])*`|(?<!\w)'[^'\n]*'(?!\w)"
     # A flag with a comma stuck to it (`-F,`) belongs to the command when a
     # quote or another flag comes after it; "-d, then tell me" is a clause.
@@ -136,6 +139,23 @@ ONE_WORD_AFTER = frozenset({"make"})
 
 KNOWN = PROGRAMS | SUBCOMMANDS.keys() | WRAPPERS
 
+# A command typed into a Claude pane rather than a shell. "/tmp" and "/opt" are
+# folders, so a name counts when Claude Code has it built in, or when it reads
+# as a skill: a plugin's `plugin:skill`, or words joined by hyphens.
+SLASH_BUILTINS = frozenset("""
+compact autocompact clear mcp model config login logout resume init review help status cost
+memory permissions hooks agents doctor plugin context rewind exit add-dir bug export
+""".split())
+SLASH_COMMAND = re.compile(r"/(?:[a-z][a-z0-9-]*:)?[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
+
+
+def slash_command(word):
+    """Whether `word` names a Claude Code slash command."""
+    if not SLASH_COMMAND.fullmatch(word):
+        return False
+    name = word[1:]
+    return name in SLASH_BUILTINS or ":" in name or "-" in name
+
 
 class Hit(NamedTuple):
     start: int
@@ -147,7 +167,8 @@ def reads_as_command(text):
     """A known program, or a script run by its path, with something after it.
 
     One word alone is a name ("git", "./notes", "go"), not an instruction;
-    the exception is a script named by its path ("./deploy.sh"). A path with
+    the exceptions are a script named by its path ("./deploy.sh") and a Claude
+    slash command ("/compact"). Claude Code's `!` prefix is looked past. A path with
     plain words after it ("~/Google Drive/My Drive") is a name that has spaces
     in it, so a path starts a command only when it names a script or a flag
     follows.
@@ -156,6 +177,11 @@ def reads_as_command(text):
     if not words:
         return False
     first, rest = words[0], words[1:]
+    if first == "!" and rest:
+        # Claude Code's shell prefix: the command is what follows it.
+        return reads_as_command(" ".join(rest))
+    if slash_command(first):
+        return True
     pathlike = first.startswith(PATHS) or (first.startswith("/") and first.count("/") > 1)
     if not rest:
         return pathlike and bool(SCRIPT.search(first))
@@ -185,6 +211,10 @@ def reads_as_prompted(text):
     words = [w for w in text.split() if w != "$"]
     if not words:
         return False
+    if words[0] == "!":
+        words = words[1:]
+        if not words:
+            return False
     first, rest = words[0], words[1:]
     if first.startswith(PATHS) or (first.startswith("/") and first.count("/") > 1
                                    and re.search(r"[A-Za-z]", first) is not None):
@@ -211,6 +241,14 @@ def cut_or_broken(command):
             or any(command.count(close) > command.count(open_) for open_, close in CLOSERS))
 
 
+def joins_two_commands(command):
+    """`git commit --allow-empty + git push`: a `+` standing alone before the
+    name of a program is the sentence's "and", so this is two commands in prose
+    and pasting it runs neither."""
+    words = command.split()
+    return any(w == "+" and nxt in KNOWN for w, nxt in zip(words, words[1:]))
+
+
 def ends_in_a_stray_mark(command):
     """A command that ends in a mark the session may have meant as part of its
     sentence: a `.` (`rm -rf ~/.cache/maple/*.`, `cd ~.`, `go test ./....`,
@@ -227,7 +265,7 @@ def quoted_command(said):
     whole. A backtick would run what it holds, an escaped or a nested quote
     means the pairing is not the session's, and a comma or a colon at the end
     is the typography of the quote."""
-    return (reads_as_command(said) and not cut_or_broken(said)
+    return (reads_as_command(said) and not cut_or_broken(said) and not joins_two_commands(said)
             and not ESCAPED_QUOTE.search(said) and "`" not in said
             and not NESTED_OPENER.search(said) and not said.endswith((",", ";", ":")))
 
@@ -238,6 +276,49 @@ def argument_of_a_runner(before):
     maple "df -h"`, `watch -n 5 "kubectl get pods"`."""
     clause = CLAUSE_END.split(before)[-1]
     return any(w.strip("()[]{}\"'`,.:;").lower() in RUNNERS for w in clause.split()[-6:])
+
+
+# A command written with no quote and no `$` round it (ticket 18): the whole
+# rest of the ask after a colon, less a remark in brackets at its end, or the
+# whole inside of a pair of brackets. Only an edge on both sides tells where it
+# starts and ends; in the middle of a sentence nothing is offered.
+BARE_START = re.compile(r"^|:\s+")
+BARE_TO_END = re.compile(r"(\S[^\n]*?)(?:\s+\([^()\n]*\))?\.?\s*$")
+BARE_IN_BRACKETS = re.compile(r"\(([^()\n]+)\)")
+
+
+def reads_as_bare_command(text):
+    """A command with nothing to mark it is believed on stronger evidence than
+    one in quotes: a known program with a sign after it (`reads_as_command`),
+    and at most one plain word among its arguments, so "rm stale notes from
+    ~/notes" stays a sentence while `ssh maple-box 'df -h'` is a command."""
+    if (not text or cut_or_broken(text) or "`" in text or ends_in_a_stray_mark(text)
+            or joins_two_commands(text)):
+        return False
+    words = SHELL_RUN.sub('"q"', text).split()
+    if words[:1] == ["!"]:
+        words = words[1:]
+    if not words or not reads_as_command(" ".join(words)) or slash_command(words[0]):
+        return False
+    first, rest = words[0], words[1:]
+    if first in WRAPPERS or ENV_ASSIGNMENT.match(first):
+        return reads_as_bare_command(" ".join(rest))
+    plain = [w for w in rest if not ARGUMENT_SIGN.search(w)
+             and w not in SUBCOMMANDS.get(first, ())]
+    return len(plain) <= 1
+
+
+def bare_commands(text):
+    """The commands written bare in `text`, where its edges show them whole."""
+    spans = [m.span(1) for start in BARE_START.finditer(text)
+             for m in [BARE_TO_END.match(text, start.end())] if m]
+    spans += [m.span(1) for m in BARE_IN_BRACKETS.finditer(text)]
+    found = []
+    for start, end in spans:
+        command = text[start:end].strip()
+        if reads_as_bare_command(command):
+            found.append(Hit(start, end, command))
+    return found
 
 
 # The hook clips a line to 160 characters and the store clips it again on the
@@ -255,15 +336,17 @@ def guess(text):
     # something: it claims every quote inside it, whether or not it can be
     # offered itself, so the inside of a command the lists do not know is never
     # offered as a command of its own.
-    found, taken = [], []
+    found, taken, prompted = [], [], []
     for m in DOLLAR_COMMAND.finditer(text):
         command = m.group(1).strip()
         taken.append((m.start(1), m.end()))
+        prompted.append(m)
         # With words after it the end cannot be told from a comma or a full
         # stop that belongs to the command (`-F,`, `! -name`, `ls .`). A
         # backtick would run what it holds when pasted.
         if (reads_as_prompted(command) and COMPLETE.match(text, m.end())
                 and not cut_or_broken(command) and "`" not in command
+                and not joins_two_commands(command)
                 and not ends_in_a_stray_mark(command)):
             found.append(Hit(m.start(1), m.end(), command))
     spans = sorted(((m, mark) for pattern, mark in QUOTES for m in pattern.finditer(text)),
@@ -303,6 +386,11 @@ def guess(text):
         said = re.sub(r"^\$ +", "", said).strip()
         if quoted_command(said):
             found.append(Hit(m.start(), m.end(), said))
+    if not found and not prompted:
+        # Only when the session offered nothing marked and wrote no `$`: a
+        # line with a prompt in it is one whose end could not be told, and
+        # what stands near it may be the rest of it.
+        found = bare_commands(text)
     ordered = []
     for hit in sorted(found):
         if hit.command not in ordered:

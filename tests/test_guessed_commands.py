@@ -691,9 +691,8 @@ class GuessEdges(unittest.TestCase):
         self.assertEqual(ask_commands.guess("""Then run 'echo "a\\" b" > /tmp/x' please?"""), [])
         self.assertEqual(ask_commands.guess('Then run "echo \u201chi\u201d > /tmp/maple-x" please?'), [])
 
-    def test_twenty_dollars_is_an_amount_and_a_slash_command_is_not_a_path(self):
+    def test_twenty_dollars_is_an_amount(self):
         self.assertEqual(ask_commands.guess("Is the price 20 $ per-seat for 12 users?"), [])
-        self.assertEqual(ask_commands.guess('Type "/compact --keep-tools" in that pane?'), [])
 
     def test_a_comma_ends_the_clause_a_runner_was_named_in(self):
         self.assertEqual(ask_commands.guess('Once ssh works, run "make test" for me?'), ["make test"])
@@ -701,9 +700,78 @@ class GuessEdges(unittest.TestCase):
     def test_an_escaped_quote_in_the_sentence_outside_the_quotes_does_not_doubt_them(self):
         self.assertEqual(ask_commands.guess('Run "make test" and keep the \\" in the notes?'), ["make test"])
 
-    def test_a_tool_with_a_subcommand_the_list_lacks_and_the_bang_prefix_get_no_button(self):
+    def test_a_tool_with_a_subcommand_the_list_lacks_gets_no_button(self):
         # The safe direction: a missing button costs a selection with the mouse.
-        for ask in ('Try "npm login" or "git lfs pull"?', 'Run "! ssh-add ~/.ssh/id_maple" in this pane?'):
+        self.assertEqual(ask_commands.guess('Try "npm login" or "git lfs pull"?'), [])
+
+
+class RealShapes(unittest.TestCase):
+    """Shapes the sessions really wrote in the days after ticket 14, each one
+    a command the session marked that got no button (ticket 18). The lines are
+    invented in the shape of the real ones."""
+
+    def test_a_command_with_claude_codes_shell_prefix_after_a_dollar_keeps_the_prefix(self):
+        # The `!` says the command goes into a Claude prompt, so it is copied too.
+        self.assertEqual(ask_commands.guess("Run the id check: $ ! bash /home/maple/bin/ids.sh"),
+                         ["! bash /home/maple/bin/ids.sh"])
+
+    def test_a_quoted_command_with_the_shell_prefix_keeps_it(self):
+        # Ticket 14 left these without a button; sessions wrote them often.
+        self.assertEqual(ask_commands.guess('Run "! ssh-add ~/.ssh/id_maple" in this pane?'),
+                         ["! ssh-add ~/.ssh/id_maple"])
+
+    def test_a_dollar_the_session_escaped_still_marks_the_command(self):
+        # Inside the hook's single quotes the backslash stays in the text.
+        self.assertEqual(ask_commands.guess("Run it in a terminal. \\$ bash /home/maple/bin/set-pass.sh"),
+                         ["bash /home/maple/bin/set-pass.sh"])
+
+    def test_a_claude_slash_command_to_type_in_a_pane_is_offered(self):
+        for ask, command in (("Type it in the boss pane: $ /maple-skills:wayfinder", "/maple-skills:wayfinder"),
+                             ('Type "/maple-skills:wayfinder" in this pane', "/maple-skills:wayfinder"),
+                             ('Type "/autocompact 450k" in the boss pane', "/autocompact 450k"),
+                             ('Type "/compact --keep-tools" in that pane?', "/compact --keep-tools")):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [command])
+
+    def test_a_bare_command_that_ends_the_ask_after_a_colon_is_offered(self):
+        # The owner's choice for ticket 18: no marker, but strong evidence.
+        for ask, command in (
+                ("Run the wizard on the laptop: bash /home/maple/stage/wizard.sh "
+                 "(browser sign-in, only your hand can do it)", "bash /home/maple/stage/wizard.sh"),
+                ("Run the script that adds the rule: ! python3 -I /home/maple/add-rule.py",
+                 "! python3 -I /home/maple/add-rule.py"),
+                ("Save the password on the box: ssh maple-box 'umask 077; cat > /root/p.txt'.",
+                 "ssh maple-box 'umask 077; cat > /root/p.txt'")):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [command])
+
+    def test_a_bare_command_alone_in_brackets_is_offered(self):
+        self.assertEqual(ask_commands.guess("Unlock the key (ssh-add ~/.ssh/id_maple) so I can push"),
+                         ["ssh-add ~/.ssh/id_maple"])
+
+    def test_a_bare_sentence_that_starts_with_a_program_is_not_a_command(self):
+        for ask in ("Note: rm stale notes from ~/notes before Friday",
+                    "Decide: git history or a new file?",
+                    "Choice: make the page or the docs first",
+                    "Run ssh-add ~/.ssh/id_maple in a terminal and type the passphrase",
+                    "Read the plan (see ~/notes/plan.md) and decide",
+                    "Pick one (cat or dog)",
+                    "Next: find out who owns ~/maple/notes"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_two_commands_joined_by_a_plus_are_prose_not_one_command(self):
+        for ask in ("Start the deploy: $ git commit --allow-empty + git push in maple-site",
+                    'Run "git commit --allow-empty + git push" in maple-site'):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_a_plus_that_is_an_argument_stays_in_the_command(self):
+        self.assertEqual(ask_commands.guess("Check it: $ echo 1 + 2"), ["echo 1 + 2"])
+
+    def test_a_folder_at_the_root_in_quotes_is_still_a_name(self):
+        for ask in ('Is "/tmp" the right place?', 'Keep it under "/opt" or "/srv"?',
+                    'Is the split "A/B" or "/ maple"?'):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
 
