@@ -246,6 +246,14 @@
   .stuck-box code { flex:1 1 100%; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap;
                     overflow-wrap:anywhere; max-height:5.6em; overflow:hidden; background:var(--bg);
                     border:1px solid var(--line); border-radius:6px; padding:3px 6px; }
+  .pastes { margin-top:4px; display:flex; flex-direction:column; gap:4px; font-size:13px; }
+  .paste { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 8px; }
+  .paste .tool { color:var(--faint); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+  .paste .ptitle { font-weight:600; cursor:pointer; overflow-wrap:anywhere; }
+  .paste .pfirst { flex:1 1 8em; min-width:0; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .paste button { font-size:12px; padding:2px 9px; }
+  .paste pre.ptext { flex:1 1 100%; margin:0; padding:6px 8px; max-height:20em; overflow:auto; white-space:pre-wrap;
+    overflow-wrap:anywhere; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; border:1px solid var(--line,var(--faint)); border-radius:4px; }
   .stuck-box button.copy { margin-left:auto; font-size:12px; padding:2px 9px; }
   .tile.jumped { animation:flash .7s ease-out; }
   .tile.failed { animation:flash-bad 1.4s ease-out; }
@@ -869,6 +877,7 @@ function tile(t) {
     ${t.handover ? `<div class="said">“${esc(t.handover)}”</div>` : ""}
     ${stuckBox(t)}
     ${guessedBox(t)}
+    ${pastesBox(t)}
     ${handRow(t)}
   </div>`;
 }
@@ -1041,6 +1050,74 @@ document.getElementById("main").addEventListener("click", async ev => {
   COPIED = { key: sent.key, i, until: Date.now() + 1500, ok };
   button.textContent = ok ? "copied" : "not copied";
   setTimeout(() => { if (button.isConnected) button.textContent = "copy"; }, 1500);
+});
+
+// Pastes: text a session left for you on its card (`paste.py`). The roster has
+// the title and first line; the full text is fetched when you open or copy one,
+// and what is copied is what the server sent, character for character. Copying
+// keeps the Paste; only done removes it. Every word here is text a session wrote.
+const PASTE_OPEN = new Map();        // id -> the text, for the Pastes you opened
+let PASTE_COPIED = { id: "", until: 0, ok: true };
+
+function pastesBox(t) {
+  const found = t.pastes || [];
+  if (!found.length) return "";
+  return `<div class="pastes">${found.map(p => {
+    const now = PASTE_COPIED.id === p.id && Date.now() < PASTE_COPIED.until;
+    const label = now ? (PASTE_COPIED.ok ? "copied" : "not copied") : p.copied ? "copy again" : "copy";
+    return `<div class="paste" data-pid="${esc(p.id)}"><span class="tool">paste</span>`
+      + `<span class="ptitle" title="Show the whole text">${esc(p.title)}</span>`
+      + `<span class="pfirst">${esc(p.first)}</span>`
+      + `<button type="button" class="pcopy" title="Copy the whole text. It stays here until you tick it done.">${label}</button>`
+      + `<button type="button" class="pdone" title="You have used it: take it off the card.">done</button>`
+      + (PASTE_OPEN.has(p.id) ? `<pre class="ptext">${esc(PASTE_OPEN.get(p.id))}</pre>` : "")
+      + `</div>`;
+  }).join("")}</div>`;
+}
+
+async function pasteText(id) {
+  try {
+    const r = await fetch("/api/paste_text?id=" + encodeURIComponent(id));
+    return r.ok ? await r.text() : null;
+  } catch (e) { return null; }
+}
+
+function pastePost(path, id) {
+  return fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+                       body: JSON.stringify({ id }) });
+}
+
+// Before the tile's own click below, and it stops there: a click on a Paste is
+// not a click on the tile, so it neither jumps nor marks it seen.
+document.getElementById("main").addEventListener("click", async ev => {
+  const row = ev.target.closest(".paste");
+  if (!row) return;
+  ev.stopImmediatePropagation();
+  if (ev.target.closest("pre.ptext")) return;           // selecting text is not a command
+  ev.preventDefault();
+  const id = row.dataset.pid;
+  const show = () => { if (!busyWithUser()) paint(); };
+  if (ev.target.closest(".ptitle")) {
+    if (PASTE_OPEN.has(id)) { PASTE_OPEN.delete(id); return show(); }
+    const text = await pasteText(id);
+    PASTE_OPEN.set(id, text === null ? "(this Paste could not be read)" : text);
+    return show();
+  }
+  if (ev.target.closest(".pcopy")) {
+    const text = await pasteText(id);
+    const ok = text !== null && await copyText(text);
+    // Told only once it is on the clipboard: the Paste is marked copied then, and not before.
+    if (ok) { try { await pastePost("/api/paste_copied", id); } catch (e) { /* the clipboard has it */ } }
+    PASTE_COPIED = { id, until: Date.now() + 1500, ok };
+    show();
+    setTimeout(() => { if (PASTE_COPIED.id === id) paint(); }, 1600);
+    return load();
+  }
+  if (ev.target.closest(".pdone")) {
+    PASTE_OPEN.delete(id);
+    try { await pastePost("/api/paste_done", id); } catch (e) { /* the next poll says what is there */ }
+    return load();
+  }
 });
 
 // In No project: where the roster thinks this session belongs, one click away.
