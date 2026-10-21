@@ -57,6 +57,10 @@
   .flag.tool { color:var(--faint); border:1px solid var(--line); }
   .flag.ready { color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 45%,transparent); }
   .flag.unread { color:var(--dim); border:1px solid var(--line); }
+  /* What a working session is doing, in one word (ticket 21): green as the
+     work is, and blue with a dashed edge for a wait on a job of its own. */
+  .flag.act { color:var(--busy); border:1px solid color-mix(in srgb,var(--busy) 45%,transparent); }
+  .flag.act.wait { color:var(--accent); border:1px dashed color-mix(in srgb,var(--accent) 55%,transparent); }
   /* What it is blocked on, in Claude Code's own words. */
   .wf { color:var(--wait); font-size:11.5px; }
   .said { margin-top:3px; color:var(--dim); font-size:13px;
@@ -204,6 +208,11 @@
   .ov-head.st-limit .strip i:not(.u) { background:var(--limit); }
   .ov-head.st-moving { border-top-color:var(--busy); background:color-mix(in srgb,var(--busy) 7%,var(--card)); }
   .ov-head.st-moving .ov-state { color:var(--busy); }
+  /* Waiting: its turn is over and a job of its own runs on (a watch, a poll on
+     someone else). Blue, neither the green of work nor the grey of rest. */
+  .ov-head.st-waiting { border-top-color:var(--accent); background:color-mix(in srgb,var(--accent) 7%,var(--card)); }
+  .ov-head.st-waiting .ov-state { color:var(--accent); }
+  .ov-head.st-waiting .strip i:not(.u) { background:var(--accent); }
   .ov-head.st-idle { border-top-color:var(--idle); background:color-mix(in srgb,var(--idle) 7%,var(--card)); }
   .ov-head.st-idle .ov-state { color:var(--idle); }
   .ov-head.st-idle .strip i:not(.u) { background:var(--idle); }
@@ -696,7 +705,7 @@ const known = (table, key) => Object.prototype.hasOwnProperty.call(table, key) ?
 // The card's state word. The server decides the state (the most urgent of its
 // sessions); this is only how each is said.
 const STATE_WORD = { needs: "NEEDS YOU", error: "ERROR", hung: "HUNG", limit: "LIMIT",
-                     moving: "MOVING", idle: "ALL IDLE" };
+                     moving: "MOVING", waiting: "WAITING", idle: "ALL IDLE" };
 
 function column(c) {
   // The state is always the card's second line, never above the name.
@@ -823,10 +832,10 @@ function movementOf(c) {
   const bar = v => v === null ? `<i class="u" title="not seen"></i>`
     : v === 0 ? `<i class="z" title="0 writes"></i>`
     : `<i style="height:${Math.max(2, Math.round(v / top * 28))}px" title="${v} writes"></i>`;
-  const m = Object.fromEntries(["moving", "stuck", "idle"].map(k => [k, Number(c.summary?.[k]) || 0]));
+  const m = Object.fromEntries(["moving", "stuck", "idle", "waiting"].map(k => [k, Number(c.summary?.[k]) || 0]));
   return `<div class="ov-mv">
     <div class="strip" role="img" aria-label="Writes per minute, last 30 minutes">${bars.map(bar).join("")}</div>
-    <div class="mix">${m.moving} moving · ${m.stuck} stuck · ${m.idle} idle</div>
+    <div class="mix">${m.moving} moving · ${m.stuck} stuck${m.waiting ? ` · ${m.waiting} waiting` : ""} · ${m.idle} idle</div>
   </div>`;
 }
 
@@ -853,7 +862,7 @@ function tile(t) {
   const light = lightOf(t);
   return `<div class="tile ${can ? "can" : ""} ${alarm}${light}" data-sid="${esc(t.key)}">
     <div class="rhead">
-      ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${unpinButton(t)}${moveButton(t)}${jumpLabel(t, via)}
+      ${mark({ ...t, flag: notNeeds ? "" : t.flag, status: t.moving ? "busy" : t.status })}<span class="nm">${esc(t.name || named(t))}</span>${tags}${tileFlag(t)}${activityTag(t)}${unpinButton(t)}${moveButton(t)}${jumpLabel(t, via)}
     </div>
     ${t.line ? `<div class="tline ${known(LINE_CLASS, t.lineSource)}" title="${esc(t.line)}">${esc(t.line)}</div>` : ""}
     ${t.movement ? `<div class="mv">${esc(t.movement.text)}</div>` : ""}
@@ -1048,6 +1057,14 @@ function jumpLabel(t, via) {
   if (via === "pane") return `<span class="go">open ↗</span>`;
   if (via === "attach") return `<span class="go">attach ↗</span>`;
   return `<span class="go none" title="${esc(t.jump?.reason || "no terminal")}">no terminal</span>`;
+}
+
+// One word for what a working session is doing; the server decides it, and
+// leaves it empty for a session that is stuck or at rest.
+function activityTag(t) {
+  const word = typeof t.activity === "string" ? t.activity : "";
+  if (!word) return "";
+  return `<span class="flag act${word === "waiting" ? " wait" : ""}">${esc(word)}</span>`;
 }
 
 function tileFlag(t) {

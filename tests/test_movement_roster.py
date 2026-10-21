@@ -84,10 +84,11 @@ class Sign(Base):
         self.assertEqual(self.movement(status="busy", quietFor=12.0, subQuiet=11.0),
                          (None, False))
 
-    def test_an_idle_session_with_a_background_job_is_moving_never_idle(self):
+    def test_an_idle_session_with_a_background_job_is_waiting_not_moving(self):
+        # Ticket 20: its turn is over and nothing works; it waits on the job.
         got = self.movement(status="idle", updatedAt=ago(30), quietFor=29.0,
                             bgTasks=[{"label": "Run the unit tests", "since": 5.0}])
-        self.assertEqual(got, ({"kind": "waiting", "text": "waiting on: Run the unit tests, 5 min"}, True))
+        self.assertEqual(got, ({"kind": "waiting", "text": "waiting on: Run the unit tests, 5 min"}, False))
 
     def test_several_jobs_are_counted_and_the_oldest_sets_the_time(self):
         self.assertEqual(self.sign(status="idle", updatedAt=ago(30),
@@ -164,11 +165,14 @@ class TheBound(Base):
         self.assertTrue(self.moving(**hours(5)))
         self.assertFalse(self.moving(**hours(7)))
 
-    def test_a_background_job_is_moving_for_hours_but_not_for_ever(self):
+    def test_an_idle_sessions_background_job_is_a_wait_at_any_age(self):
+        # Ticket 20: no six-hour cut-off for a wait; it lasts as long as the job.
         job = lambda h: dict(status="idle", updatedAt=ago(h * 60),
                              bgTasks=[{"label": "watch", "since": h * 60}])
-        self.assertTrue(self.moving(**job(5)))
-        self.assertFalse(self.moving(**job(7)))
+        for hours in (5, 7, 30):
+            with self.subTest(hours=hours):
+                tile = self.tile(session("a", **job(hours)))
+                self.assertEqual((tile["moving"], tile["movement"]["kind"]), (False, "waiting"))
 
     def test_a_busy_session_keeps_the_grace_after_the_bound_for_ten_minutes(self):
         # The evidence stops at six hours; "not moving for ten minutes" is
@@ -277,27 +281,35 @@ class Mix(Base):
             session("c", status="waiting", waitingFor="input needed", updatedAt=ago(2),
                     asking={"kind": "question", "questions": []}),
             session("d", status="idle", updatedAt=ago(50)))
-        self.assertEqual(got, {"moving": 2, "stuck": 1, "idle": 1})
+        self.assertEqual(got, {"moving": 2, "stuck": 1, "idle": 1, "waiting": 0})
 
     def test_a_session_that_needs_you_is_stuck_even_with_a_job_running(self):
         got = self.summary(session("a", status="waiting", waitingFor="input needed",
                                    updatedAt=ago(2), bgTasks=[{"label": "watch", "since": 3.0}],
                                    asking={"kind": "question", "questions": []}))
-        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0})
+        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0, "waiting": 0})
 
-    def test_an_idle_session_with_a_job_is_moving(self):
+    def test_an_idle_session_with_a_job_is_waiting(self):
         got = self.summary(session("a", status="idle", updatedAt=ago(30),
                                    bgTasks=[{"label": "watch", "since": 30.0}]))
-        self.assertEqual(got, {"moving": 1, "stuck": 0, "idle": 0})
+        self.assertEqual(got, {"moving": 0, "stuck": 0, "idle": 0, "waiting": 1})
+
+    def test_a_card_whose_only_sign_is_a_wait_says_waiting(self):
+        waits = session("a", status="idle", updatedAt=ago(30),
+                        bgTasks=[{"label": "watch", "since": 30.0}])
+        resting = session("b", status="idle", updatedAt=ago(50))
+        self.assertEqual(self.roster(waits, resting)["columns"][0]["state"], "waiting")
+        working = session("c", status="busy", quietFor=0.1)
+        self.assertEqual(self.roster(waits, working)["columns"][0]["state"], "moving")
 
     def test_a_busy_session_with_nothing_proving_it_moves_is_stuck(self):
         got = self.summary(session("a", status="busy", quietFor=40.0))
-        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0})
+        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0, "waiting": 0})
 
     def test_a_session_that_asked_you_something_is_stuck(self):
         self.wrote_ask("a", "Which database should I use?")
         got = self.summary(session("a", status="idle", updatedAt=ago(20)))
-        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0})
+        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0, "waiting": 0})
 
     def wrote_ask(self, sid, ask):
         lines.begin_turn(sid, self.lines)

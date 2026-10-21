@@ -63,7 +63,7 @@ class Folded(Base):
     def test_the_session_is_moving_not_idle_while_its_run_is_alive(self):
         got = self.both([starter()], [run()])
         self.assertEqual(got["counts"], {"needs": 0, "otherStuck": 0, "moving": 1})
-        self.assertEqual(got["columns"][0]["summary"], {"moving": 1, "stuck": 0, "idle": 0})
+        self.assertEqual(got["columns"][0]["summary"], {"moving": 1, "stuck": 0, "idle": 0, "waiting": 0})
         self.assertEqual(got["columns"][0]["state"], "moving")
 
     def test_without_the_run_the_same_session_is_idle(self):

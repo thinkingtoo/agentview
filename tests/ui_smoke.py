@@ -203,7 +203,7 @@ STRIPS = {"maple": [None] * 6 + [0, 0, 1, 3, 2, 0, 0, 0, 4, 9, 6, 2, 0, 0, 1, 1,
 
 
 def mix(sessions):
-    out = {"moving": 0, "stuck": 0, "idle": 0}
+    out = {"moving": 0, "stuck": 0, "idle": 0, "waiting": 0}
     for s in sessions:
         out["stuck" if s["stuck"] else "moving" if s["moving"] else "idle"] += 1
     return out

@@ -51,9 +51,10 @@ class Counts(Base):
         got = self.counts(waiting("a", asking=asks(), bgTasks=[{"label": "watch", "since": 3.0}]))
         self.assertEqual(got, {"needs": 1, "otherStuck": 0, "moving": 0})
 
-    def test_a_session_waiting_on_a_background_job_is_moving_not_idle(self):
+    def test_a_session_waiting_on_a_background_job_is_not_counted_as_moving(self):
+        # Ticket 20: it waits on the job; nothing is asked of you either.
         got = self.counts(idle("a", bgTasks=[{"label": "watch", "since": 3.0}]), idle("b"))
-        self.assertEqual(got, {"needs": 0, "otherStuck": 0, "moving": 1})
+        self.assertEqual(got, {"needs": 0, "otherStuck": 0, "moving": 0})
 
     def test_the_counts_cover_every_project_and_no_project(self):
         got = self.counts(waiting("a", project="maple", asking=asks()), moving("b", "orchard"),

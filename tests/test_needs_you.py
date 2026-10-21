@@ -129,7 +129,7 @@ class Requests(Base):
 
     def test_it_is_counted_stuck_in_the_mix(self):
         got = self.roster(self.request())["columns"][0]["summary"]
-        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0})
+        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0, "waiting": 0})
 
     def test_the_menu_a_person_opened_is_still_not_stuck(self):
         self.assertIsNone(self.stuck(session("a", status="waiting", waitingFor="dialog open")))

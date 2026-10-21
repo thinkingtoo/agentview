@@ -106,9 +106,14 @@ def fold(pairs, now):
         jobs = list(raw["bgTasks"]) if isinstance(raw.get("bgTasks"), list) else []
         # A run under one of the starter's own background tasks is that task, which
         # the starter already lists: a second job would count the one shell twice.
+        # The run is marked as one: a Codex run works, so it is movement even
+        # when the session that started it has ended its turn (ticket 20).
         held = task_of(run)
         if held is None or not any(isinstance(job, dict) and job.get("id") == held for job in jobs):
-            raw["bgTasks"] = jobs + [{"label": run["run"], "since": since}]
+            raw["bgTasks"] = jobs + [{"label": run["run"], "since": since, "run": True}]
+        else:
+            raw["bgTasks"] = [{**job, "run": True} if isinstance(job, dict) and job.get("id") == held
+                              else job for job in jobs]
         if strip_of(raw) is not None and run["writes"] is not None:
             raw["writes"] = minutes.added([strip_of(raw), run["writes"]])
         amended[starter] = out[starter] = (provider, raw)
