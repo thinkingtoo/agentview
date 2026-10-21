@@ -7,7 +7,7 @@
 
 **Claimed by:** Bruno 2026-10-21 23:27
 
-**Status:** in-progress
+**Status:** done
 
 - [x] Pruning finished or closed sessions never removes their Pastes; only done or withdrawn ones go
 - [x] A Paste of a closed session still shows, with copy and done working
