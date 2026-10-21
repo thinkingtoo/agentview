@@ -31,6 +31,7 @@ import log
 import paste
 import seen
 import server
+import finished
 from test_providers import Fake, minimal
 
 REAL_STORE = lines.store          # before any test patches it
@@ -289,6 +290,171 @@ class Lifecycle(Case):
         pid = self.make("t", "text", session="gone")
         lines.forget(set())
         self.assertEqual(self.text_of(pid)[1], b"text")
+
+
+class Other(Fake):
+    """A second provider whose sessions can have the same bare id as a Fake's."""
+    name = "other"
+
+
+class Staying(Case):
+    """Ticket 02: a Paste outlives the card it was left on, is counted in the
+    header, belongs to provider + id, and its leftovers are swept."""
+
+    def roster(self):
+        return json.loads(self.get("/api/roster")[1])
+
+    def finish(self, key="fake:a"):
+        """You read its handover, long after its stop: a pill, not a tile."""
+        finished.mark_read(key, 1790000000000)
+
+    def pills(self):
+        return [p for c in self.roster()["columns"] for p in c["pills"]]
+
+    def kept(self):
+        return self.roster()["kept"]
+
+    def test_a_paste_goes_from_live_to_finished_to_gone_and_is_listed_all_the_way(self):
+        pid = self.make("Message to Sven", "Hoi Sven,\nsecond")
+        self.assertEqual([p["id"] for p in self.pastes()], [pid])        # live: on its tile
+        self.finish()
+        (pill,) = self.pills()                                             # finished: on its pill
+        self.assertEqual([p["id"] for p in pill["pastes"]], [pid])
+        self.assertEqual(self.roster()["kept"], [])
+        self.fake._sessions = []                                           # gone from the roster
+        for prune in (lines.forget, seen.forget, finished.forget):         # everything the poll prunes with
+            prune(set())
+        got = self.roster()
+        self.assertEqual(self.pills(), [])
+        self.assertEqual([(k["session"], [p["id"] for p in k["pastes"]]) for k in got["kept"]], [("a", [pid])])
+        self.assertEqual(self.text_of(pid)[1], b"Hoi Sven,\nsecond")
+
+    def test_copy_and_done_work_on_the_paste_of_a_gone_session(self):
+        keep, gone = self.make("keep", "k"), self.make("gone", "g")
+        self.fake._sessions = []
+        self.assertEqual(self.post("/api/paste_copied", {"id": keep}), 200)
+        (card,) = self.kept()
+        self.assertEqual([(p["id"], p["copied"]) for p in card["pastes"]], [(keep, True), (gone, False)])
+        self.assertEqual(self.post("/api/paste_done", {"id": gone}), 200)
+        self.assertEqual([p["id"] for p in self.kept()[0]["pastes"]], [keep])
+        self.assertEqual(self.post("/api/paste_done", {"id": keep}), 200)
+        self.assertEqual(self.kept(), [])
+
+    def test_a_live_session_is_never_in_kept(self):
+        self.make("t", "text")
+        self.assertEqual(self.kept(), [])
+
+    def test_the_header_count_is_every_waiting_paste_on_tiles_pills_and_gone_sessions(self):
+        self.assertEqual(self.roster()["pastes"], 0)
+        self.make("one", "1")
+        self.make("two", "2")
+        self.assertEqual(self.roster()["pastes"], 2)
+        self.finish()
+        self.make("three", "3", session="gone")
+        self.assertEqual(self.roster()["pastes"], 3)
+        self.fake._sessions = []
+        self.assertEqual(self.roster()["pastes"], 3)
+        self.post("/api/paste_done", {"id": self.make("four", "4")})
+        self.assertEqual(self.roster()["pastes"], 3)
+
+    def test_a_paste_changes_no_flag_and_no_count_of_the_chime(self):
+        before = self.roster()
+        self.make("t", "text")
+        after = self.roster()
+        self.assertEqual((after["flags"], after["counts"]), (before["flags"], before["counts"]))
+
+    def test_a_paste_left_on_a_routine_is_kept_because_a_routine_has_no_card(self):
+        self.fake._sessions = [minimal(id="r", name="Nightly", routine="nightly-report", cwd="/home/alice")]
+        pid = self.make("t", "text", session="r")
+        got = self.roster()
+        self.assertEqual([(k["session"], [p["id"] for p in k["pastes"]]) for k in got["kept"]], [("r", [pid])])
+        self.assertEqual(got["pastes"], 1)
+
+    # -- identity
+    def two_providers(self):
+        self.other = Other([minimal(id="a", name="Olga", cwd="/home/alice/Projects/maple", canJump=True)])
+        fleet._providers = lambda: [self.fake, self.other]
+        self.addCleanup(setattr, fleet, "_providers", lambda: [self.fake])
+
+    def tiles(self):
+        return {t["key"]: [p["id"] for p in t["pastes"]]
+                for c in self.roster()["columns"] for t in c["sessions"]}
+
+    def test_a_paste_made_for_one_provider_does_not_show_on_the_other_with_the_same_bare_id(self):
+        self.two_providers()
+        mine = self.run_command("create", "a", "--provider", "other", "--title", "t", self.write("x"))
+        self.assertEqual(mine.returncode, 0, mine.stderr)
+        self.assertEqual(self.tiles(), {"fake:a": [], "other:a": [mine.stdout.strip()]})
+
+    def test_a_paste_for_a_provider_with_no_such_session_is_kept_not_shown_on_another(self):
+        self.two_providers()
+        got = self.run_command("create", "a", "--provider", "third", "--title", "t", self.write("x"))
+        self.assertEqual(self.tiles(), {"fake:a": [], "other:a": []})
+        self.assertEqual([(k["provider"], k["session"]) for k in self.kept()], [("third", "a")])
+        self.assertEqual(self.roster()["pastes"], 1)
+
+    def test_a_paste_that_names_no_provider_still_shows_on_a_session_with_that_id(self):
+        # Made before providers were named, or by a session that could not say.
+        self.two_providers()
+        pid = self.make("t", "text")
+        self.assertEqual(self.tiles(), {"fake:a": [pid], "other:a": [pid]})
+
+    def test_withdraw_needs_the_provider_it_was_made_for(self):
+        pid = self.run_command("create", "a", "--provider", "other", "--title", "t", self.write("x")).stdout.strip()
+        wrong = self.run_command("withdraw", "a", "--provider", "fake", pid)
+        self.assertNotEqual(wrong.returncode, 0)
+        self.assertEqual(self.roster()["pastes"], 1)
+        right = self.run_command("withdraw", "a", "--provider", "other", pid)
+        self.assertEqual(right.returncode, 0, right.stderr)
+        self.assertEqual(self.roster()["pastes"], 0)
+
+    def test_a_bad_provider_name_is_refused(self):
+        got = self.run_command("create", "a", "--provider", "../x", "--title", "t", self.write("x"))
+        self.assertNotEqual(got.returncode, 0)
+        self.assertEqual(self.store_bytes(), b"")
+
+    # -- leftovers of a crash
+    def aged(self, path, seconds):
+        old = time.time() - seconds
+        os.utime(path, (old, old))
+
+    def test_an_old_text_with_no_record_is_swept_and_a_text_with_a_record_never(self):
+        pid = self.make("t", "text")
+        root = paste.store()
+        orphan = root / ("0" * 16 + ".txt")
+        orphan.write_text("left by a crash")
+        stray = root / "a.b.tmp"
+        stray.write_text("half")
+        corrupt = root / ("1" * 16 + ".txt")                 # its record is there, if unreadable
+        corrupt.write_text("kept")
+        (root / ("1" * 16 + ".json")).write_text("{not json")
+        for path in (orphan, stray, corrupt, root / f"{pid}.txt", root / f"{pid}.json"):
+            self.aged(path, 3600)
+        self.roster()
+        self.assertEqual(sorted(p.name for p in root.iterdir() if p.name != ".lock"),
+                         sorted([f"{pid}.txt", f"{pid}.json", "1" * 16 + ".txt", "1" * 16 + ".json"]))
+        self.assertEqual(self.text_of(pid)[1], b"text")
+
+    def test_the_sweep_does_not_follow_links(self):
+        root = paste.store()
+        root.mkdir(parents=True, exist_ok=True)
+        lone = root / ("3" * 16 + ".txt")
+        lone.write_text("orphan")
+        (root / ("3" * 16 + ".json")).symlink_to(self.tmp / "nowhere")   # a record that is a dangling link
+        stray = root / "x.y.tmp"
+        stray.symlink_to(self.tmp / "nowhere")
+        os.utime(lone, (1, 1))
+        os.utime(stray, (1, 1), follow_symlinks=False)
+        paste.sweep()
+        self.assertTrue(lone.exists())            # its record is there, whatever it points at
+        self.assertFalse(os.path.lexists(stray))  # an old stray link goes, the target is not touched
+
+    def test_a_fresh_text_with_no_record_is_left_for_the_create_that_is_writing_it(self):
+        paste.store().mkdir(parents=True, exist_ok=True)
+        young = paste.store() / ("2" * 16 + ".txt")
+        young.write_text("being made")
+        self.roster()
+        self.assertTrue(young.exists())
 
 
 if __name__ == "__main__":

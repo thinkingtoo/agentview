@@ -768,15 +768,43 @@ def roster(providers=None):
     does not.
     """
     everyone = members(providers)
-    # Read once for the round, not once for a tile.
-    waiting = paste.waiting()
-    for s in everyone:
-        s["pastes"] = waiting.get(s["id"], [])
+    kept, pastes = place_pastes(everyone, paste.waiting())
+    paste.sweep()
     columns = columns_of(everyone)
     for s in everyone:
         s.pop("paths", None)
     return {"columns": columns, "counts": counts_of(columns),
-            "banners": banners_of(providers), "flags": flags_of(everyone)}
+            "banners": banners_of(providers), "flags": flags_of(everyone),
+            # The header's count, and the Pastes of sessions that are no longer
+            # on the machine: they stay until ticked done (`paste.py`).
+            "pastes": pastes, "kept": kept}
+
+
+def place_pastes(everyone, found):
+    """Lay each Paste on the session it was left on: the rows of `everyone` get
+    their `pastes`. Returns the Pastes with no session on the machine, one entry
+    per `(provider, session id)`, and how many Pastes there are in all.
+
+    A Paste that names its provider belongs to that provider's session alone;
+    one that does not belongs to every session with its id. A routine has no
+    card on the page, so a Paste left on one is kept like any other that has
+    no card to sit on."""
+    by_id = {}
+    for s in everyone:
+        s["pastes"] = []
+        by_id.setdefault(s["id"], []).append(s)
+    kept, count = {}, 0
+    for session, provider, shown in found:
+        count += 1
+        owners = [s for s in by_id.get(session, []) if paste.belongs_to(provider, s["provider"]) and not s["routine"]]
+        for s in owners:
+            s["pastes"].append(shown)
+        if not owners:
+            card = kept.setdefault((provider, session), {
+                "key": f"{provider}:{session}" if provider else session,
+                "session": session, "provider": provider, "pastes": []})
+            card["pastes"].append(shown)
+    return list(kept.values()), count
 
 
 def flags_of(everyone):
@@ -1024,6 +1052,8 @@ def pill_of(m, tile):
             "counted": None,
             "idle": {"since": since, "text": span_text(since)},
             "line": tile["line"], "jump": tile["jump"],
+            # A finished session's Pastes stay on its card until ticked done.
+            "pastes": m.get("pastes", []),
             # What the filter box looks through, as it does for a tile.
             "find": tile["find"]}
 
