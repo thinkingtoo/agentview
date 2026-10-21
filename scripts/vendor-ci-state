@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Copy claude-boss' ci_state module into this repo, stamped with its commit.
+#
+#   scripts/vendor-ci-state [path-to-claude-boss]
+#
+# The master copy lives in claude-boss (skills/boss/ci_state.py). Never edit the
+# vendored file; change the master and run this again.
+set -euo pipefail
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+src="${1:-${CLAUDE_BOSS_ROOT:-$here/../boss-plugin}}"
+master="$src/skills/boss/ci_state.py"
+dest="$here/ci_state.py"
+[[ -f "$master" ]] || { echo "no $master" >&2; exit 1; }
+commit="$(git -C "$src" log -1 --format=%h -- skills/boss/ci_state.py)"
+{
+    head -1 "$master"
+    echo "# vendored from claude-boss@$commit -- do not edit, run scripts/vendor-ci-state"
+    tail -n +2 "$master"
+} > "$dest"
+chmod +x "$dest"
+echo "vendored ci_state.py from claude-boss@$commit"

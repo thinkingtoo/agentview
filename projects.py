@@ -178,6 +178,79 @@ def _remote(common):
     return f"{host.lower()}/{path.strip('/').removesuffix('.git')}"
 
 
+SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+# A HEAD or a ref is one short line; packed-refs is one line per ref. Read no
+# more than a repository with many tags has, so a huge file costs a bound.
+HEAD_BYTES, PACKED_BYTES = 4096, 4 << 20
+
+
+def _small(path, limit):
+    """A regular file's text, at most `limit` bytes of it, or None."""
+    if not regular(path):
+        return None
+    try:
+        with open(path, "rb") as f:
+            return f.read(limit).decode("utf-8", errors="replace")
+    except (OSError, ValueError):                # ValueError: a NUL in the path
+        return None
+
+
+def _admin(cwd):
+    """The folder holding this checkout's own HEAD: `.git`, or a worktree's
+    folder under the shared one. None when the folder is in no repository."""
+    here, home = Path(cwd), Path.home()
+    for d in (here, *here.parents):
+        if d == home:
+            return None
+        git = d / ".git"
+        if git.is_dir():
+            return git
+        if git.is_file():
+            text = _small(git, HEAD_BYTES) or ""
+            target = text.split(":", 1)[1].strip() if text.startswith("gitdir:") else ""
+            return (d / target) if target and "\0" not in target else None
+    return None
+
+
+def _ref(admin, common, ref):
+    """The commit a ref names, loose (in the checkout's own folder or the
+    shared one) or packed, or None."""
+    for folder in (admin, common):
+        sha = (_small(folder / ref, HEAD_BYTES) or "").strip()
+        if SHA.fullmatch(sha):
+            return sha
+    for line in (_small(common / "packed-refs", PACKED_BYTES) or "").splitlines():
+        sha, _, name = line.partition(" ")
+        if name == ref and SHA.fullmatch(sha):
+            return sha
+    return None
+
+
+def head_of(cwd):
+    """(the remote as `host/owner/name`, the commit the checkout is at, the
+    commit origin's branch of the same name was at when last fetched or pushed,
+    or None) for a session's folder, or None. Read from the `.git` files, never
+    by running git: this is on the page's poll path (ticket 22)."""
+    found = _repository(cwd) if cwd and os.path.isabs(cwd) else None
+    admin = _admin(cwd) if found else None
+    if not admin:
+        return None
+    common = found[0]
+    remote = _remote(common)
+    head = (_small(admin / "HEAD", HEAD_BYTES) or "").strip()
+    if not remote or not head:
+        return None
+    if SHA.fullmatch(head):
+        return remote, head, None                 # detached: no branch to have pushed
+    ref = head[len("ref:"):].strip() if head.startswith("ref:") else ""
+    if not ref.startswith("refs/heads/") or ".." in ref.split("/") or "\0" in ref:
+        return None
+    sha = _ref(admin, common, ref)
+    if not sha:
+        return None
+    return remote, sha, _ref(admin, common, "refs/remotes/origin/" + ref[len("refs/heads/"):])
+
+
 def _subfolders(path):
     try:
         with os.scandir(path) as entries:

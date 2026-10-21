@@ -37,6 +37,10 @@ class Base(unittest.TestCase):
         self.lines = tmp / "lines"
         lines.store, kept = (lambda: self.lines), lines.store
         self.addCleanup(setattr, lines, "store", kept)
+        # No test reaches GitHub or writes the real CI cache (ticket 22): the
+        # ones about CI put their own answer here.
+        self.addCleanup(setattr, fleet, "CI_STATE", fleet.CI_STATE)
+        fleet.CI_STATE = lambda repo, branch: {"status": "unknown"}
 
     def roster(self, *sessions, provider=None):
         fleet.CONFIG.write_text(json.dumps(self.config))

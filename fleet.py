@@ -19,6 +19,7 @@ import time
 from pathlib import Path
 
 import ask_commands
+import ci_state
 import context
 import finished
 import jump
@@ -1007,7 +1008,7 @@ def is_finished(m, tile, after):
     however old it is. Unread, it stays a tile: a pill is also a way of not looking."""
     return (m["idleFor"] is not None and m["idleFor"] >= after
             and not m["unread"] and not m["pinned"] and m["n"] <= 0
-            and not m["moving"] and not m["waits"] and not tile["stuck"])
+            and not m["moving"] and not tile["waiting"] and not tile["stuck"])
 
 
 def pill_of(m, tile):
@@ -1033,6 +1034,7 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
     # a busy session nothing proves is moving is Hung (its kind).
     flag = None if m["flag"] in ("tool", "stuck") else m["flag"]
     stuck = stuck_of(m)
+    ci = ci_of(m, stuck)
     # The chime's `ready` is another question and is not touched.
     return {
         "key": m["key"], "name": m["name"], "provider": m["provider"],
@@ -1049,10 +1051,11 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         "line": line, "lineSource": source,
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
-        "movement": m["movement"], "moving": m["moving"],
-        # Waiting on a job of its own with its turn over: not moving, not idle.
-        "waiting": m["waits"] and not stuck,
-        "activity": activity_of(m, stuck),
+        "movement": ci["sign"] if ci else m["movement"], "moving": m["moving"],
+        # Waiting on a job of its own, or on CI, with its turn over: not moving, not idle.
+        "waiting": (m["waits"] or bool(ci)) and not stuck,
+        "activity": "waiting" if ci else activity_of(m, stuck),
+        "ci": ci and {"status": ci["status"], "url": ci["url"]},
         "stuck": stuck,
         # The header count the tile is in, for the page to light it up when
         # that count is clicked.
@@ -1452,6 +1455,73 @@ def activity_of(m, stuck):
     if jobs:
         return work_word(" ".join(t["label"] for t in jobs)) or "waiting"
     return "thinking"
+
+
+# Waiting on CI (ticket 22). The state of a branch's latest Actions run comes
+# from the vendored claude-boss module, which only ever reads its cache here
+# and refreshes it in a process of its own; where the session's checkout is
+# comes from its `.git` files. Both are names a test can replace.
+CI_STATE = ci_state.ci_state
+CI_HEAD = projects.head_of
+# A session resting longer than this is not asked about: its CI is not what
+# it is doing, and every branch asked about costs a refresh a minute.
+CI_LOOK_MINUTES = 180
+CI_GOING = ("queued", "in_progress")
+CI_LONGEST_S = 7 * 24 * 3600     # a wait or an ETA past a week is no number to print
+
+
+def ci_of(m, stuck):
+    """The CI run a session at rest is waiting on, for the page, or None: the
+    latest run on its branch, queued or running, for the commit its own
+    checkout is at and has pushed. A session at work or stuck is not asked,
+    nor one with no branch, a remote that is not on GitHub, or a commit origin
+    does not have. Nothing here can fail the roster: a checkout's files are
+    whatever is on disk."""
+    try:
+        return _ci_of(m, stuck)
+    except Exception:
+        return None
+
+
+def _ci_of(m, stuck):
+    if stuck or m["moving"] or not m["branch"] or not (m["status"] == "idle" or m["waits"]):
+        return None
+    if not m["waits"] and (m["idleFor"] is None or m["idleFor"] > CI_LOOK_MINUTES):
+        return None
+    head = CI_HEAD(m["cwd"])
+    if not head or not head[0].startswith("github.com/"):
+        return None
+    repo, sha, pushed = head
+    if pushed != sha:
+        return None
+    got = CI_STATE(repo, m["branch"])
+    if not isinstance(got, dict) or got.get("status") not in CI_GOING or got.get("head_sha") != sha:
+        return None
+    return {"status": got["status"], "url": got.get("run_url"), "sign": ci_sign(got)}
+
+
+def ci_sign(got):
+    """The movement sign of a wait on CI: how long it has queued or run, and
+    the ETA, which for a queued run leaves the queue out."""
+    def minutes(seconds):
+        plain = (isinstance(seconds, (int, float)) and not isinstance(seconds, bool)
+                 and math.isfinite(seconds) and 0 <= seconds < CI_LONGEST_S)
+        return span_text(seconds / 60) if plain else None
+    eta_s = got.get("eta_s")
+    eta = minutes(eta_s) if eta_s else None
+    if got["status"] == "queued":
+        queued = minutes(got.get("queued_for_s"))
+        text = "waiting on CI: queued" + (f" {queued}" if queued else "")
+        text += f", then about {eta}" if eta else ""
+    else:
+        running = minutes(got.get("running_for_s"))
+        text = "waiting on CI: running" + (f" {running}" if running else "")
+        if eta:
+            text += f", about {eta} left"
+        elif eta_s == 0 and not isinstance(eta_s, bool):
+            # The module clamps an ETA at 0 once a run outlasts the median.
+            text += ", longer than usual"
+    return {"kind": "waiting", "on": "CI", "text": text}
 
 
 def waits_on_a_job(status, tasks, turn_over=False):
