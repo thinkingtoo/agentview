@@ -388,6 +388,19 @@ between quotes, claims every quote inside it, so a command the lists do not
 know (`fly ssh console -C "rm -rf /data"`) never has its argument offered as a
 command of its own.
 
+Three more shapes, from what sessions really wrote (ticket 18). Claude Code's
+`!` prefix stays on the command and is copied with it (`$ ! bash x.sh`,
+`"! ssh-add ~/.ssh/id_maple"`), since it says the command goes into a Claude
+prompt; it counts once (`! ! rm` is not offered). A `$` the session escaped
+(`\$ make test`) is still a prompt. A slash command to type in a Claude pane
+shares its shape with a web route (`/login`, `/status`, `/add-user`), so after a
+`$` it counts when Claude Code has it built in or it names a plugin's skill
+(`plugin:skill`), and in quotes only a `plugin:skill`, or a built-in with
+arguments that are no words of a sentence (`"/autocompact 450k"`, `"/compact
+--keep-tools"`); `"/login"`, `"/add-user"` and `"/review the PR"` stay words. A
+`+` standing alone before a program's name (`git commit + git push`) is the
+sentence's "and": two commands in prose, and nothing is offered.
+
 A quote opens after a space, a bracket, a colon or a comma and closes before a
 space or punctuation: one glued to a word or an `=` (`--title="x"`) is part of
 an argument. When a quote mark stands somewhere that no pair claims (a quote
@@ -412,10 +425,11 @@ really wrote is a bug; on a shape listed here it is a known limit.
 Known limits, accepted:
 
 - A command named bare, with no quote and no `$` (`run git status and tell
-  me`), gets no button: a sentence that holds a command cannot be told from one
-  that does not, and the hook asks for the quotes or the `$ ` to say which it is.
-  On one day of real asks, before the hook asked for them, 76 of 1,747 distinct
-  asks named a command that way.
+  me`, `Run the wizard: bash ~/stage/wizard.sh`), gets no button: a sentence
+  that holds a command cannot be told from one that does not, and the hook asks
+  for the quotes or the `$ ` to say which it is. Ticket 18 tried an evidence
+  rule for it and three hunts each found prose it took for a command
+  (`Run failed: npm run build`, `git pull in ~/maple`); ticket 19 holds it.
 - A single quote in the ask or in the `did` reaches the store whole only if the
   session writes it as the hook says (`'\''`); that is the session's doing, and
   nothing in the page can see it done wrong. Written correctly, a command with paired single
@@ -429,8 +443,11 @@ Known limits, accepted:
   shifts the quotes of the ask behind it), or makes `team-line` refuse the line.
 - A program the lists do not know (`tiroir-work next` in quotes) gets no
   button, and neither does a known tool with a subcommand its list lacks
-  (`"npm login"`, `"git lfs pull"`) or Claude Code's `!` prefix
-  (`"! ssh-add ~/.ssh/id_maple"`). A title that starts with a tool's name and a
+  (`"npm login"`, `"git lfs pull"`), or a slash command that is neither built
+  in nor named like a skill (`"/boss"`), or one in quotes that is not a
+  `plugin:skill` and has no arguments (`"/mattpocock-wayfinder"`). After a `$`
+  a built-in with arguments is taken for a slash command even when it is a
+  route (`$ /status --json`). A title that starts with a tool's name and a
   sign (`"python 3.12"`), or with a tool and one of its own subcommands
   (`"git rebase workflow"`, `"pip install problems"`), gets one.
 - A `$` command with no sentence end after it runs on into the words that
