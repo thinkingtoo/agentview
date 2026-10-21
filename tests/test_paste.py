@@ -735,6 +735,20 @@ class Secrets(Case):
         self.assertEqual(self.command("withdraw", "a", lost)[0], 0)
         self.assertEqual(self.command("sweep"), (0, "", ""))             # nothing left to say once clean
 
+    def test_sweep_keeps_the_item_of_a_record_it_could_not_read_in_time(self):
+        code, pid, _ = self.leave("Token", "sk-test-" + "cd34" * 8)
+        self.assertEqual(code, 0)
+        with mock.patch.object(lines, "read_bounded", lambda path, limit: None):
+            stray, lost = paste.sweep_keyring()
+        self.assertEqual((stray, lost, sorted(self.vault.items)), ([], [], [pid]))
+        self.assertEqual(self.text_of(pid)[1], ("sk-test-" + "cd34" * 8).encode())
+
+    def test_the_note_to_delete_the_input_file_is_printed_when_the_record_read_is_slow(self):
+        with mock.patch.object(lines, "read_bounded", lambda path, limit: None):
+            code, pid, err = self.leave("Token", "sk-test-" + "ef56" * 8)
+        self.assertEqual(code, 0)
+        self.assertIn("delete it", err)
+
     def test_sweep_in_another_store_leaves_this_stores_items_alone(self):
         _, pid, _ = self.leave("Kept", SECRET_TEXT)
         other = self.tmp / "another-store"

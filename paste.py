@@ -191,11 +191,14 @@ def _changing(root):
         yield
 
 
-def _record(pid, root=None):
+def _record(pid, root=None, patient=False):
+    """The record, or None. The poll reads with a time limit (a slow read is None, as if absent);
+    a caller that acts on absence (`sweep_keyring`, the note after `create`) must be `patient`."""
     if not isinstance(pid, str) or not ID.fullmatch(pid):
         return None
     # Read on every poll, under the lock the page waits on: bounded in time.
-    data = lines.read_bounded(str(_root(root) / f"{pid}.json"), RECORD_MAX)
+    read = lines.read_plain if patient else lines.read_bounded
+    data = read(str(_root(root) / f"{pid}.json"), RECORD_MAX)
     try:
         got = json.loads(data.decode("utf-8")) if data else None
     except (ValueError, RecursionError):
@@ -344,8 +347,12 @@ def sweep_keyring(root=None):
                 items = set(vault.ids(_scope(root)))
             except vault.Unavailable as why:
                 raise Refused(str(why)) from None
-            records = {r["id"] for r in (_record(p.stem, root) for p in root.glob("*.json")) if r and _is_secret(r)}
-            stray = sorted(items - records)
+            records = {r["id"] for r in (_record(p.stem, root, patient=True) for p in root.glob("*.json"))
+                       if r and _is_secret(r)}
+            # A record file that is there but unreadable right now still points at its item:
+            # only an id with no record file at all is a stray. A deleted item cannot come back.
+            pointed = records | {p.stem for p in root.glob("*.json") if _present(p)}
+            stray = sorted(items - pointed)
             for pid in stray:
                 try:
                     vault.delete(pid, _scope(root))
@@ -378,7 +385,7 @@ def main(argv=None, out=None, err=None):
         if args.cmd == "create":
             pid = create(args.session, args.title, args.file, provider=args.provider, secret=args.secret)
             print(pid, file=out)
-            if _is_secret(_record(pid) or {}):
+            if _is_secret(_record(pid, patient=True) or {}):
                 print(f"paste: kept in the keyring as a secret; {args.file} still holds the text, delete it", file=err)
         elif args.cmd == "sweep":
             stray, lost = sweep_keyring()
