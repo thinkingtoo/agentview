@@ -49,14 +49,15 @@ vagrant doas
 """.split())
 CLAUSE_END = re.compile(r"[.!?;:,]\s|[(\[{\u2014\u2013]")
 
-# `$ ` as a shell prompt: after a space, a colon or an opening bracket, then a
+# `$ ` as a shell prompt: after a space, a colon or an opening bracket (a
+# backslash before the sign is a session escaping it), then a
 # command word. `$5` and `$HOME` have no space after the sign, `$ 5` no command
 # word, and `20 $` is an amount. A quoted argument is one unit, so the comma in `-m "one, two"`
 # does not end the command; the end of the line does, so the match can never
 # fail and the engine never has to try the quoted and the plain way of reading
 # each quote.
 DOLLAR_COMMAND = re.compile(
-    r"(?<!\d)(?:^|[\s:(\[{])\$ +([A-Za-z./~(\[{]"
+    r"(?<!\d)(?:^|[\s:(\[{])\\?\$ +((?:! +)?[A-Za-z./~(\[{]"
     r"(?:\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\\n])*`|(?<!\w)'[^'\n]*'(?!\w)"
     # A flag with a comma stuck to it (`-F,`) belongs to the command when a
     # quote or another flag comes after it; "-d, then tell me" is a clause.
@@ -136,6 +137,38 @@ ONE_WORD_AFTER = frozenset({"make"})
 
 KNOWN = PROGRAMS | SUBCOMMANDS.keys() | WRAPPERS
 
+# A command typed into a Claude pane rather than a shell. "/tmp" and "/opt" are
+# folders, so a name counts when Claude Code has it built in, or when it reads
+# as a plugin's skill, `plugin:skill`. Hyphenated words alone are routes too.
+SLASH_BUILTINS = frozenset("""
+compact autocompact clear mcp model config login logout resume init review help status cost
+memory permissions hooks agents doctor plugin context rewind exit add-dir bug export
+""".split())
+SLASH_ARGUMENT = re.compile(ARGUMENT_SIGN.pattern + r"|\d")
+SLASH_COMMAND = re.compile(r"/(?:[a-z][a-z0-9-]*:)?[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
+
+
+def slash_command(word):
+    """Whether `word` may name a Claude Code slash command."""
+    if not SLASH_COMMAND.fullmatch(word):
+        return False
+    name = word[1:]
+    return name in SLASH_BUILTINS or ":" in name
+
+
+def reads_as_slash_command(words, prompted):
+    """A slash command, judged by where it stands. A web route has the same
+    shape ("/login", "/status", "/add-user"), so in quotes only a plugin's
+    `plugin:skill` counts alone, and a built-in needs arguments that are no
+    words of a sentence (`/compact --keep-tools`, `/autocompact 450k`). After a
+    `$` the prompt already says it is something to type."""
+    first, rest = words[0], words[1:]
+    if not slash_command(first) or not all(SLASH_ARGUMENT.search(w) for w in rest):
+        return False
+    if prompted or ":" in first:
+        return True
+    return first[1:] in SLASH_BUILTINS and bool(rest)
+
 
 class Hit(NamedTuple):
     start: int
@@ -147,7 +180,8 @@ def reads_as_command(text):
     """A known program, or a script run by its path, with something after it.
 
     One word alone is a name ("git", "./notes", "go"), not an instruction;
-    the exception is a script named by its path ("./deploy.sh"). A path with
+    the exceptions are a script named by its path ("./deploy.sh") and a Claude
+    slash command ("/compact"). Claude Code's `!` prefix is looked past. A path with
     plain words after it ("~/Google Drive/My Drive") is a name that has spaces
     in it, so a path starts a command only when it names a script or a flag
     follows.
@@ -156,6 +190,11 @@ def reads_as_command(text):
     if not words:
         return False
     first, rest = words[0], words[1:]
+    if first == "!":
+        # Claude Code's shell prefix, once: the command is what follows it.
+        return bool(rest) and rest[0] != "!" and reads_as_command(" ".join(rest))
+    if first.startswith("/") and first.count("/") == 1:
+        return reads_as_slash_command(words, prompted=False)
     pathlike = first.startswith(PATHS) or (first.startswith("/") and first.count("/") > 1)
     if not rest:
         return pathlike and bool(SCRIPT.search(first))
@@ -185,7 +224,13 @@ def reads_as_prompted(text):
     words = [w for w in text.split() if w != "$"]
     if not words:
         return False
+    if words[0] == "!":
+        words = words[1:]
+        if not words or words[0] == "!":
+            return False
     first, rest = words[0], words[1:]
+    if first.startswith("/") and first.count("/") == 1:
+        return reads_as_slash_command(words, prompted=True)
     if first.startswith(PATHS) or (first.startswith("/") and first.count("/") > 1
                                    and re.search(r"[A-Za-z]", first) is not None):
         return True
@@ -211,6 +256,14 @@ def cut_or_broken(command):
             or any(command.count(close) > command.count(open_) for open_, close in CLOSERS))
 
 
+def joins_two_commands(command):
+    """`git commit --allow-empty + git push`: a `+` standing alone before the
+    name of a program is the sentence's "and", so this is two commands in prose
+    and pasting it runs neither."""
+    words = command.split()
+    return any(w == "+" and nxt in KNOWN for w, nxt in zip(words, words[1:]))
+
+
 def ends_in_a_stray_mark(command):
     """A command that ends in a mark the session may have meant as part of its
     sentence: a `.` (`rm -rf ~/.cache/maple/*.`, `cd ~.`, `go test ./....`,
@@ -227,7 +280,7 @@ def quoted_command(said):
     whole. A backtick would run what it holds, an escaped or a nested quote
     means the pairing is not the session's, and a comma or a colon at the end
     is the typography of the quote."""
-    return (reads_as_command(said) and not cut_or_broken(said)
+    return (reads_as_command(said) and not cut_or_broken(said) and not joins_two_commands(said)
             and not ESCAPED_QUOTE.search(said) and "`" not in said
             and not NESTED_OPENER.search(said) and not said.endswith((",", ";", ":")))
 
@@ -264,6 +317,7 @@ def guess(text):
         # backtick would run what it holds when pasted.
         if (reads_as_prompted(command) and COMPLETE.match(text, m.end())
                 and not cut_or_broken(command) and "`" not in command
+                and not joins_two_commands(command)
                 and not ends_in_a_stray_mark(command)):
             found.append(Hit(m.start(1), m.end(), command))
     spans = sorted(((m, mark) for pattern, mark in QUOTES for m in pattern.finditer(text)),
