@@ -24,7 +24,7 @@ Corpus: every `team-line` Bash call in `~/.claude/projects/*/*.jsonl` changed in
 
 ## Open
 
-- Decided (Tarek): a command written with `!` is copied with the `!`, as the session wrote it. The session chose the prefix because the command goes into a Claude prompt; one meant for a terminal is written without it (seen in the corpus: "in a normal terminal, not with !").
+- Decided by the owner, 2026-10-21 (overrides an earlier call of mine): the `!` is never copied; he adds it himself when the command goes into a Claude prompt.
 - Decided by the owner, 2026-10-21: a command with no marker gets a button when the evidence is strong (a known program with a sign after it, at the end of the ask after a colon or alone inside brackets).
 - The false positive: a lone `+` before a program's name is the sentence's "and"; nothing is offered.
 - Owner, 2026-10-21: the "Clipboard (Proactive Copy)" section of `~/.claude/CLAUDE.md` is what makes sessions write "the command is in your clipboard" instead of the command. Remove it once the buttons have proved themselves on real asks.

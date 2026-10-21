@@ -293,6 +293,8 @@ def argument_of_a_runner(before):
     return any(w.strip("()[]{}\"'`,.:;").lower() in RUNNERS for w in clause.split()[-6:])
 
 
+SHELL_PREFIX = re.compile(r"^!\s+")
+
 # The hook clips a line to 160 characters and the store clips it again on the
 # way out, so nothing longer comes from a session. Matching a run of quote marks
 # costs the square of its length, so a bound on the text is a bound on the time:
@@ -359,6 +361,9 @@ def guess(text):
             found.append(Hit(m.start(), m.end(), said))
     ordered = []
     for hit in sorted(found):
-        if hit.command not in ordered:
-            ordered.append(hit.command)
+        # Claude Code's `!` is never copied: the person adds it when the
+        # command goes into a Claude prompt (the owner's rule, 2026-10-21).
+        command = SHELL_PREFIX.sub("", hit.command)
+        if command not in ordered:
+            ordered.append(command)
     return ordered
