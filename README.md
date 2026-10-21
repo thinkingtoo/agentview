@@ -394,27 +394,12 @@ Three more shapes, from what sessions really wrote (ticket 18). Claude Code's
 prompt; it counts once (`! ! rm` is not offered). A `$` the session escaped
 (`\$ make test`) is still a prompt. A slash command to type in a Claude pane
 shares its shape with a web route (`/login`, `/status`, `/add-user`), so after a
-`$` it counts when Claude Code has it built in or its name reads as a skill (a
-`plugin:skill` or hyphenated words), and in quotes only a `plugin:skill`, or a
-built-in with arguments that are no words of a sentence (`"/autocompact
-450k"`, `"/compact --keep-tools"`); `"/login"` and `"/review the PR"` stay
-words. When the session marked nothing and wrote no `$`, a command written bare
-is offered where its edges show it whole: everything after a colon to the end
-of the ask (less a full stop, and a remark in brackets at the very end unless
-the remark names more to run), when the clause before the colon has a verb that
-asks for it to be run (`run`, `type`, `paste`, `esegui`, `lancia`, `digita`,
-`lance`, `tape`, `draai`, `plak` ...) and no negation or "already"; or the
-whole inside of a pair of brackets other than `$(...)`. A bare command needs
-more than a quoted one: a known program with a sign after it, no word of a
-sentence among its arguments (a word of letters alone that is not the tool's
-own subcommand), no `?` or `!` and no comma with words after it, since with no
-quote round it those belong to the sentence (and pasted, a `?` is a glob). So
-`Note: rm stale notes from ~/notes`, `Run: git pull in ~/maple`, `Your call: rm
--rf ~/build or ~/dist`, `Done: rm -rf ~/build`, `Don't run: git push --force`
-and `Can you run: ssh-add ~/.ssh/id?` offer nothing, and `Run the wizard: bash
-~/stage/wizard.sh` and `(ssh-add ~/.ssh/id_maple)` are commands. A `+`
-standing alone before a program's name (`git commit + git push`)
-is the sentence's "and": two commands in prose, and nothing is offered.
+`$` it counts when Claude Code has it built in or it names a plugin's skill
+(`plugin:skill`), and in quotes only a `plugin:skill`, or a built-in with
+arguments that are no words of a sentence (`"/autocompact 450k"`, `"/compact
+--keep-tools"`); `"/login"`, `"/add-user"` and `"/review the PR"` stay words. A
+`+` standing alone before a program's name (`git commit + git push`) is the
+sentence's "and": two commands in prose, and nothing is offered.
 
 A quote opens after a space, a bracket, a colon or a comma and closes before a
 space or punctuation: one glued to a word or an `=` (`--title="x"`) is part of
@@ -439,10 +424,12 @@ really wrote is a bug; on a shape listed here it is a known limit.
 
 Known limits, accepted:
 
-- A command named bare, with no quote and no `$`, gets a button only where its
-  edges show it whole (above); in the middle of a sentence (`run git status and
-  tell me`, `Run ssh-add ~/.ssh/id in a terminal`) it gets none, and neither
-  does one followed by more words after a comma.
+- A command named bare, with no quote and no `$` (`run git status and tell
+  me`, `Run the wizard: bash ~/stage/wizard.sh`), gets no button: a sentence
+  that holds a command cannot be told from one that does not, and the hook asks
+  for the quotes or the `$ ` to say which it is. Ticket 18 tried an evidence
+  rule for it and three hunts each found prose it took for a command
+  (`Run failed: npm run build`, `git pull in ~/maple`); ticket 19 holds it.
 - A single quote in the ask or in the `did` reaches the store whole only if the
   session writes it as the hook says (`'\''`); that is the session's doing, and
   nothing in the page can see it done wrong. Written correctly, a command with paired single
@@ -458,9 +445,9 @@ Known limits, accepted:
   button, and neither does a known tool with a subcommand its list lacks
   (`"npm login"`, `"git lfs pull"`), or a slash command that is neither built
   in nor named like a skill (`"/boss"`), or one in quotes that is not a
-  `plugin:skill` and has no arguments (`"/mattpocock-wayfinder"`). A bare
-  command offered as a choice in brackets (`Push it (git push --force)? Or
-  wait`) gets a button: the text is whole, the session only asked. A title that starts with a tool's name and a
+  `plugin:skill` and has no arguments (`"/mattpocock-wayfinder"`). After a `$`
+  a built-in with arguments is taken for a slash command even when it is a
+  route (`$ /status --json`). A title that starts with a tool's name and a
   sign (`"python 3.12"`), or with a tool and one of its own subcommands
   (`"git rebase workflow"`, `"pip install problems"`), gets one.
 - A `$` command with no sentence end after it runs on into the words that

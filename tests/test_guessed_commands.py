@@ -733,22 +733,6 @@ class RealShapes(unittest.TestCase):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [command])
 
-    def test_a_bare_command_that_ends_the_ask_after_a_colon_is_offered(self):
-        # The owner's choice for ticket 18: no marker, but strong evidence.
-        for ask, command in (
-                ("Run the wizard on the laptop: bash /home/maple/stage/wizard.sh "
-                 "(browser sign-in, only your hand can do it)", "bash /home/maple/stage/wizard.sh"),
-                ("Run the script that adds the rule: ! python3 -I /home/maple/add-rule.py",
-                 "! python3 -I /home/maple/add-rule.py"),
-                ("Run it on the box: ssh maple-box 'umask 077; cat > /root/p.txt'.",
-                 "ssh maple-box 'umask 077; cat > /root/p.txt'")):
-            with self.subTest(ask=ask):
-                self.assertEqual(ask_commands.guess(ask), [command])
-
-    def test_a_bare_command_alone_in_brackets_is_offered(self):
-        self.assertEqual(ask_commands.guess("Unlock the key (ssh-add ~/.ssh/id_maple) so I can push"),
-                         ["ssh-add ~/.ssh/id_maple"])
-
     def test_a_bare_sentence_that_starts_with_a_program_is_not_a_command(self):
         for ask in ("Note: rm stale notes from ~/notes before Friday",
                     "Decide: git history or a new file?",
@@ -809,14 +793,14 @@ class RealShapes(unittest.TestCase):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
 
-    def test_a_bare_command_that_ends_in_dots_keeps_them_or_is_not_offered(self):
+    def test_a_bare_command_that_ends_in_dots_is_not_cut_to_one(self):
         for ask in ("Run: cd ..", "Run: cd ~/maple && cd ..", "Next: pip install -e .."):
             with self.subTest(ask=ask):
                 self.assertNotIn(ask.split(": ", 1)[1][:-1], ask_commands.guess(ask))
                 self.assertTrue(all(c in ask for c in ask_commands.guess(ask)))
 
-    def test_a_colon_offers_a_bare_command_only_after_a_verb_that_asks_to_run_it(self):
-        # Hunt 18-2: no list of report words is ever complete; the verb is the evidence.
+    def test_a_colon_before_a_bare_command_offers_nothing(self):
+        # Hunts 18-1 to 18-3: no rule for a command with no mark held up; see ticket 19.
         for ask in ("Errore: rm -rf ~/build/maple", "Erreur : git push --force-with-lease",
                     "Executed: rm -rf ~/build/maple", "Eseguito: rm -rf ~/build/maple",
                     "Removed: rm -rf ~/build/maple", "Failed (exit 1): rm -rf ~/build/maple",
@@ -825,12 +809,6 @@ class RealShapes(unittest.TestCase):
                     "Niet draaien: rm -rf ~/maple"):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
-        for ask in ("Esegui nel terminale: bash /home/maple/bin/x.sh",
-                    "Lance dans un terminal : bash /home/maple/bin/x.sh",
-                    "Draai in een terminal: bash /home/maple/bin/x.sh",
-                    "Type it in a terminal: bash /home/maple/bin/x.sh"):
-            with self.subTest(ask=ask):
-                self.assertEqual(ask_commands.guess(ask), ["bash /home/maple/bin/x.sh"])
 
     def test_a_verb_that_says_it_already_ran_is_a_report(self):
         for ask in ("Already run: rm -rf ~/.cache/maple", "Già eseguito: rm -rf ~/maple",
@@ -840,8 +818,6 @@ class RealShapes(unittest.TestCase):
 
     def test_a_remark_in_brackets_that_names_more_to_run_keeps_the_command_from_being_offered(self):
         self.assertEqual(ask_commands.guess("Run: rm -rf ~/.cache/maple (and ~/.cache/maple2)"), [])
-        self.assertEqual(ask_commands.guess("Run: git log -1 --oneline (paste it here)"),
-                         ["git log -1 --oneline"])
 
     def test_a_mark_of_a_sentence_in_another_script_is_not_an_argument(self):
         for ask in ("Run: rm -rf ~/build \u203c", "Run: git push --force-with-lease \u00bfok"):
@@ -855,8 +831,8 @@ class RealShapes(unittest.TestCase):
         self.assertEqual(ask_commands.guess("Run $ /home-assistant"), [])
 
     def test_a_command_substitution_is_not_a_bracket_of_its_own(self):
-        self.assertEqual(ask_commands.guess("Run: export TOKEN=$(cat ~/.config/maple.env)"),
-                         ["export TOKEN=$(cat ~/.config/maple.env)"])
+        self.assertNotIn("cat ~/.config/maple.env",
+                         ask_commands.guess("Run: export TOKEN=$(cat ~/.config/maple.env)"))
 
     def test_a_web_route_in_quotes_is_not_a_slash_command(self):
         # Hunt 18-1: routes share names with Claude's built-in commands.

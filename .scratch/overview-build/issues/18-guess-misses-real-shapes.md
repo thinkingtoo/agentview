@@ -6,7 +6,7 @@
 
 **Claimed by:** Tarek 2026-10-21
 
-**Status:** in review (branch `overview/18-guess-shapes`)
+**Status:** done
 
 ## Findings (Tarek, 2026-10-21, counts only: the repo is public, no real ask text here)
 
@@ -42,3 +42,11 @@ NO-GO on `7d3b13a`, five P1, all reproduced and fixed test-first: a bare command
 ## Hunt 18-2 (Opus fallback, Codex unavailable, 2026-10-21)
 
 NO-GO on `4386b3b`: round 1 all fixed; new P1 on the bare path: a word of prose inside the command (`git pull in ~/maple`, `rm -rf ~/build or ~/dist`), `cd ..` cut to `cd .` by the sentence's full stop, and report words the `Done:` list missed (`Errore:`, `Executed:`, `Don't run:` ...). Fixed by changing the rule, not by growing lists: a colon offers a bare command only after a verb that asks for it to be run (no negation, no "already"); no letters-only word that is not the tool's subcommand among the arguments; the full stop is the sentence's only after a non-dot; a bracket remark that names more to run blocks the offer. P2 fixed: fullwidth `？`/`！`, `¿ ¡ ‼`, a hyphen-only slash name after `$`. Accepted: `$ /status --json` (a route after a prompt), history expansion inside quotes (unchanged from origin/dev). Real asks: 7 -> 19 (the one lost has no run verb before its colon). 130 guesser tests OK.
+
+## Hunt 18-3 (Opus fallback, Codex unavailable, 2026-10-21) and the cut
+
+NO-GO on `81d0893`: rounds 1 and 2 fixed, three new P1 all on the bare path (a run verb as a noun or in a report: `Run failed: npm run build --prod`, `Start date: rm -rf ~/x`; a run verb in an earlier comma clause; `Don’t run:` with U+2019), P2s on prose stuck to punctuation, the bracket path ignoring negation, a dropped `(as root)` remark, placeholders, and 67 ms on 400 characters of colons. The marked shapes (`!`, `\$`, slash commands, the `+` rule) were clean in all three hunts.
+
+Third hunt, so the cap: the bare path is taken out of this ticket (Tarek's call, the owner's "yes if the evidence is strong" did not hold up: three hunts in a row found prose it took for a command) and moved to ticket 19 with every finding. Its negative tests stay as guards. The code at `81d0893` is the starting point there.
+
+After the cut: 128 guesser tests OK, `test_turn_hook` 23, `test_needs_you` 49, `test_needs_you_reader` 40, TMPDIR left empty. All ~440 hunt inputs: 3 differ from origin/dev, all marked and right (`$ ! bash ~/x.sh`, `$ ! rm -rf ~/x`, `$ /status --json`, the last accepted in the README). Real asks: 7 -> 15. Worst time 0.5 ms.

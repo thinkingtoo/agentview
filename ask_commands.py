@@ -6,9 +6,7 @@ mouse, a button on a sentence costs the person's trust in every other button.
 The rule that follows from it is that the text offered is always text the
 session wrote as one whole command. Where that cannot be told -- a command
 after a `$` with more words behind it, a command inside a quote that holds
-another, a quote that was never closed -- nothing is offered. A command with
-no mark at all is offered only where the edges of the ask show it whole, and on
-stronger evidence (`reads_as_bare_command`).
+another, a quote that was never closed -- nothing is offered.
 """
 import re
 from typing import NamedTuple
@@ -295,86 +293,6 @@ def argument_of_a_runner(before):
     return any(w.strip("()[]{}\"'`,.:;").lower() in RUNNERS for w in clause.split()[-6:])
 
 
-# A command written with no quote and no `$` round it (ticket 18): the whole
-# rest of the ask after a colon, less a remark in brackets at its end, or the
-# whole inside of a pair of brackets. Only an edge on both sides tells where it
-# starts and ends; in the middle of a sentence nothing is offered.
-BARE_START = re.compile(r"^|:\s+")
-# A colon introduces a command only after a verb that asks for it to be run,
-# in the clause before it: "Done:", "Errore:", "Status:" report one, and no list
-# of such words is ever complete. A negation turns the verb round, and so does
-# a word that says it already ran ("Already run:").
-RUN_VERBS = re.compile(r"(?i)(?<!\w)(?:run|execute|type|paste|launch|enter|start|esegui|lancia|"
-                       r"digita|incolla|avvia|lance|lancez|exécute|exécutez|tape|tapez|colle|"
-                       r"collez|draai|voer|typ|plak)(?!\w)")
-NEGATION = re.compile(r"(?i)(?<!\w)(?:don't|do not|never|not|non|mai|ne|pas|jamais|niet|nooit|"
-                      r"geen|already|già|déjà|reeds)(?!\w)|n't(?!\w)")
-CLAUSE_START = re.compile(r"[.!?;\n]\s")
-# A full stop after the command is the sentence's, unless it follows a dot
-# (`cd ..`, `pip install -e ..`): then the dots are the command's.
-# A remark in brackets at the end is left out, unless it names more to run
-# ("(and ~/.cache/maple2)"): then the command offered would be half of it.
-BARE_TO_END = re.compile(r"(\S[^\n]*?)(?:\s+(\([^()\n]*\)))?(?:(?<![.\s])\.)?\s*$")
-
-
-def asks_to_run(before):
-    """Whether the clause just before a colon asks the person to run something."""
-    clause = CLAUSE_START.split(before)[-1]
-    return RUN_VERBS.search(clause) is not None and NEGATION.search(clause) is None
-
-# Not `$(...)`, which is part of the command around it.
-BARE_IN_BRACKETS = re.compile(r"(?<![$\w])\(([^()\n]+)\)")
-
-
-PROSE_WORD = re.compile(r"[^\W\d_]+")
-
-
-def reads_as_bare_command(text):
-    """A command with nothing to mark it is believed on stronger evidence than
-    one in quotes: a known program with a sign after it (`reads_as_command`),
-    and no word of a sentence among its arguments, so "rm stale notes from
-    ~/notes", "rm -rf ~/maple adesso" and "git pull in ~/maple" stay sentences
-    while `ssh maple-box 'df -h'` is a command. With no quote to close it, a `?` or a
-    `!` is the sentence's, and so is a comma with words after it: pasted, the
-    `?` would be a glob and the words arguments."""
-    if (not text or cut_or_broken(text) or "`" in text or ends_in_a_stray_mark(text)
-            or joins_two_commands(text)):
-        return False
-    shell = re.sub(r"^!\s+", "", SHELL_RUN.sub('"q"', text))
-    if re.search(r"[?!\uff1f\uff01](?:\s|$)|,\s|[\u00a1\u00bf\u203c\u2047-\u2049]", shell):
-        return False
-    words = shell.split()
-    if not words or not reads_as_command(" ".join(words)) or slash_command(words[0]):
-        return False
-    first, rest = words[0], words[1:]
-    if first in WRAPPERS or ENV_ASSIGNMENT.match(first):
-        return reads_as_bare_command(" ".join(rest))
-    # A word of letters alone is a word of the sentence: pasted, "in", "or" or
-    # "adesso" would be an argument. A host or a target has a sign, a digit or
-    # a hyphen (`maple-box`), and a tool's own subcommand is its own.
-    return not any(PROSE_WORD.fullmatch(w) and w not in SUBCOMMANDS.get(first, ())
-                   for w in rest)
-
-
-def bare_commands(text):
-    """The commands written bare in `text`, where its edges show them whole."""
-    spans = []
-    for start in BARE_START.finditer(text):
-        if start.start() and not asks_to_run(text[:start.start()]):
-            continue
-        m = BARE_TO_END.match(text, start.end())
-        remark = (m.group(2) or "()")[1:-1] if m else ""
-        if m and not any(ARGUMENT_SIGN.search(w) for w in remark.split()):
-            spans.append(m.span(1))
-    spans += [m.span(1) for m in BARE_IN_BRACKETS.finditer(text)]
-    found = []
-    for start, end in spans:
-        command = text[start:end].strip()
-        if reads_as_bare_command(command):
-            found.append(Hit(start, end, command))
-    return found
-
-
 # The hook clips a line to 160 characters and the store clips it again on the
 # way out, so nothing longer comes from a session. Matching a run of quote marks
 # costs the square of its length, so a bound on the text is a bound on the time:
@@ -390,11 +308,10 @@ def guess(text):
     # something: it claims every quote inside it, whether or not it can be
     # offered itself, so the inside of a command the lists do not know is never
     # offered as a command of its own.
-    found, taken, prompted = [], [], []
+    found, taken = [], []
     for m in DOLLAR_COMMAND.finditer(text):
         command = m.group(1).strip()
         taken.append((m.start(1), m.end()))
-        prompted.append(m)
         # With words after it the end cannot be told from a comma or a full
         # stop that belongs to the command (`-F,`, `! -name`, `ls .`). A
         # backtick would run what it holds when pasted.
@@ -440,11 +357,6 @@ def guess(text):
         said = re.sub(r"^\$ +", "", said).strip()
         if quoted_command(said):
             found.append(Hit(m.start(), m.end(), said))
-    if not found and not prompted:
-        # Only when the session offered nothing marked and wrote no `$`: a
-        # line with a prompt in it is one whose end could not be told, and
-        # what stands near it may be the rest of it.
-        found = bare_commands(text)
     ordered = []
     for hit in sorted(found):
         if hit.command not in ordered:
