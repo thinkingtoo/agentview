@@ -21,10 +21,10 @@ from pathlib import Path
 import ask_commands
 import context
 import finished
-import paste
 import jump
 import lines
 import pace
+import paste
 import projects
 import providers
 import runs

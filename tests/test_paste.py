@@ -32,6 +32,7 @@ import seen
 import server
 from test_providers import Fake, minimal
 
+REAL_STORE = lines.store          # before any test patches it
 COMMAND = ROOT / "hooks" / "paste"
 NASTY = "He said \"it's fine\"\\n\tTab\there\n\n\nafter blank lines\r\nCRLF \u00e9\u4e2d \\ end\n"
 
@@ -176,6 +177,14 @@ class Create(Case):
             self.assertTrue(str(p).startswith(str(self.state / "agentview")), p)
         self.assertEqual(paste.store().parent, lines.store().parent)
 
+    def test_the_default_store_is_not_under_claude_or_a_synced_folder(self):
+        home = Path.home()
+        with mock.patch.dict(os.environ, {"XDG_STATE_HOME": ""}), mock.patch("lines.store", REAL_STORE):
+            where = paste.store().resolve()
+        self.assertEqual(where, (home / ".local" / "state" / "agentview" / "pastes").resolve())
+        for banned in (home / ".claude", home / "Documents"):
+            self.assertNotIn(banned.resolve(), where.parents)
+
 
 class Text(Case):
     def test_the_full_text_comes_back_byte_identical(self):
@@ -183,6 +192,10 @@ class Text(Case):
         status, body = self.text_of(pid)
         self.assertEqual(status, 200)
         self.assertEqual(body, NASTY.encode("utf-8"))
+
+    def test_a_leading_byte_order_mark_comes_back_too(self):
+        pid = self.make("t", "\ufeffBOM first")
+        self.assertEqual(self.text_of(pid)[1], "\ufeffBOM first".encode("utf-8"))
 
     def test_an_unknown_or_hostile_id_is_a_404_not_a_path(self):
         self.make("t", "text")

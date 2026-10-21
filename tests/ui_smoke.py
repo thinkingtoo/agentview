@@ -1502,7 +1502,7 @@ def paste_pass(browser):
     copy + done, a click on the title opens the whole text, copy puts the exact
     text on the clipboard and keeps the Paste, done removes it, and none of it
     jumps or marks the tile."""
-    full = f"Hoi Sven,\n\n\tHe said \"it's fine\" \\ {BOMB}\n\n\nGroeten\n"
+    full = f"\ufeffHoi Sven,\n\n\tHe said \"it's fine\" \\ {BOMB}\n\n\nGroeten\n"
     texts = {"p1": full, "p2": "policy line 1\nline 2", "p3": "third"}
     maple = ("maple", "maple", [S("q1", "Vera", "idle", line="Notes drafted"), S("q2", "Mei", "idle", line="Tests green")])
     body = roster([maple])

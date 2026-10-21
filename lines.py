@@ -131,6 +131,16 @@ def _plain_bytes(path, limit):
         os.close(fd)
 
 
+def read_plain(path, limit):
+    """The first `limit` bytes of a plain file, or None. Waits for nothing: see `_plain_bytes`."""
+    return _plain_bytes(path, limit)
+
+
+def write_atomic(path, text):
+    """Put `text` in the file whole or not at all, and say whether it landed."""
+    return _replace(path, text)
+
+
 def store():
     state = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
     return Path(state) / "agentview" / "lines"

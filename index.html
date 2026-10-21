@@ -1078,7 +1078,8 @@ function pastesBox(t) {
 async function pasteText(id) {
   try {
     const r = await fetch("/api/paste_text?id=" + encodeURIComponent(id));
-    return r.ok ? await r.text() : null;
+    // Not `r.text()`: it drops a leading byte-order mark, and what is copied is what was left.
+    return r.ok ? new TextDecoder("utf-8", { ignoreBOM: true }).decode(await r.arrayBuffer()) : null;
   } catch (e) { return null; }
 }
 

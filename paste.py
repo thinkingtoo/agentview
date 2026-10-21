@@ -16,6 +16,7 @@ Two files for a Paste, `<id>.txt` (the text, bytes as they were) and `<id>.json`
 written last, so the roster, which reads the records every poll, never reads a
 text and never sees a half-made one.
 """
+import argparse
 import json
 import re
 import secrets
@@ -60,7 +61,7 @@ def _first_line(text):
 def read_text_file(path):
     """The text in a file, or `Refused` saying what is wrong with it."""
     # Not a pipe, which waits for ever, nor a device, which has no end.
-    data = lines._plain_bytes(str(path), MAX_BYTES + 1)
+    data = lines.read_plain(str(path), MAX_BYTES + 1)
     if data is None:
         raise Refused(f"{path} is not a file that can be read")
     if len(data) > MAX_BYTES:
@@ -88,11 +89,11 @@ def create(session_id, title, path, root=None):
     pid = secrets.token_hex(8)
     try:
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if not lines._replace(root / f"{pid}.txt", text):
+        if not lines.write_atomic(root / f"{pid}.txt", text):
             raise Refused("could not write the Paste")
         record = {"id": pid, "session": session_id, "title": title, "first": _first_line(text),
                   "at": time.time_ns(), "secret": False, "copied": False}
-        if not lines._replace(root / f"{pid}.json", json.dumps(record)):
+        if not lines.write_atomic(root / f"{pid}.json", json.dumps(record)):
             _unlink(root / f"{pid}.txt")
             raise Refused("could not write the Paste")
     except OSError as err:
@@ -110,7 +111,7 @@ def _unlink(path):
 def _record(pid, root=None):
     if not isinstance(pid, str) or not ID.fullmatch(pid):
         return None
-    data = lines._plain_bytes(str(_root(root) / f"{pid}.json"), RECORD_MAX)
+    data = lines.read_plain(str(_root(root) / f"{pid}.json"), RECORD_MAX)
     try:
         got = json.loads(data.decode("utf-8")) if data else None
     except (ValueError, RecursionError):
@@ -146,7 +147,7 @@ def text(pid, root=None):
     """The full text of a Paste, exactly as it was left, or None."""
     if _record(pid, root) is None:
         return None
-    return lines._plain_bytes(str(_root(root) / f"{pid}.txt"), MAX_BYTES + 1)
+    return lines.read_plain(str(_root(root) / f"{pid}.txt"), MAX_BYTES + 1)
 
 
 def copied(pid, root=None):
@@ -155,7 +156,7 @@ def copied(pid, root=None):
     if got is None:
         return False
     got["copied"] = True
-    return lines._replace(_root(root) / f"{pid}.json", json.dumps(got))
+    return lines.write_atomic(_root(root) / f"{pid}.json", json.dumps(got))
 
 
 def done(pid, root=None, session_id=None):
@@ -170,7 +171,6 @@ def done(pid, root=None, session_id=None):
 
 
 def main(argv=None, out=None, err=None):
-    import argparse
     out, err = out or sys.stdout, err or sys.stderr
     p = argparse.ArgumentParser(prog="paste", description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
