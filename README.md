@@ -389,9 +389,9 @@ know (`fly ssh console -C "rm -rf /data"`) never has its argument offered as a
 command of its own.
 
 Three more shapes, from what sessions really wrote (ticket 18). Claude Code's
-`!` prefix stays on the command and is copied with it (`$ ! bash x.sh`,
-`"! ssh-add ~/.ssh/id_maple"`), since it says the command goes into a Claude
-prompt; it counts once (`! ! rm` is not offered). A `$` the session escaped
+`!` prefix is looked past and never copied (`$ ! bash x.sh` copies `bash
+x.sh`): whether the command goes into a Claude prompt is the person's call, and
+they add the `!` themselves; it counts once (`! ! rm` is not offered). A `$` the session escaped
 (`\$ make test`) is still a prompt. A slash command to type in a Claude pane
 shares its shape with a web route (`/login`, `/status`, `/add-user`), so after a
 `$` it counts when Claude Code has it built in or it names a plugin's skill
