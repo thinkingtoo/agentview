@@ -697,6 +697,8 @@ def _view(state, now):
             # card shows, and reads the ask out of the whole of it.
             "said": state["said"],
             "doing": activity([(call[1], call[2]) for call in running]),
+            # The tool of the newest call in flight, for the tile's one word.
+            "doingTool": running[-1][1] if running else "",
             # Liveliest correspondent first: a boss's team, in the order it
             # actually deals with them.
             "sent": [name for name, _ in state["sent"].most_common()],

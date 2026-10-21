@@ -4,7 +4,9 @@
 
 **Blocked by:** none
 
-**Status:** needs-triage
+**Claimed by:** Tarek 2026-10-21
+
+**Status:** in review (branch `overview/20-waiting`)
 
 ## What happened (Tarek, 2026-10-21, from the live roster)
 

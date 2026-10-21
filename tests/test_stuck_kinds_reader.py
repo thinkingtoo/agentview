@@ -866,7 +866,7 @@ class OtherSubagents(Base):
         self.over(3 * 3600, text(3 * 3600 + 2), turn_end(3 * 3600))
         fleet.CONFIG.write_text("{}")
         column = fleet.roster(providers=[self.provider])["columns"][0]
-        self.assertEqual((column["state"], column["summary"]), ("idle", {"moving": 0, "stuck": 0, "idle": 1}))
+        self.assertEqual((column["state"], column["summary"]), ("idle", {"moving": 0, "stuck": 0, "idle": 1, "waiting": 0}))
 
     def test_a_lead_whose_turn_is_over_is_moving_while_its_teammate_writes(self):
         self.over(900, text(902), turn_end(900))

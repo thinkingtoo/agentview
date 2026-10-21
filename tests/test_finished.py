@@ -156,16 +156,16 @@ class CountedInNothing(Finished):
     def test_a_project_with_only_pills_is_all_idle(self):
         got = self.column(self.finished("a"), self.finished("b"))
         self.assertEqual((got["state"], got["sessions"]), ("idle", []))
-        self.assertEqual(got["summary"], {"moving": 0, "stuck": 0, "idle": 0})
+        self.assertEqual(got["summary"], {"moving": 0, "stuck": 0, "idle": 0, "waiting": 0})
 
     def test_pills_do_not_make_a_project_look_busy(self):
         got = self.column(self.finished("a"), self.finished("b"), moving("m"))
-        self.assertEqual(got["summary"], {"moving": 1, "stuck": 0, "idle": 0})
+        self.assertEqual(got["summary"], {"moving": 1, "stuck": 0, "idle": 0, "waiting": 0})
         self.assertEqual(got["state"], "moving")
 
     def test_pills_stay_out_of_the_summary_so_the_tiles_alone_make_it(self):
         got = self.column(self.finished("a"), idle("b", updatedAt=ago(5)), hung("h", quiet=14.0))
-        self.assertEqual(got["summary"], {"moving": 0, "stuck": 1, "idle": 1})
+        self.assertEqual(got["summary"], {"moving": 0, "stuck": 1, "idle": 1, "waiting": 0})
 
     def test_pills_are_in_none_of_the_headers_counts(self):
         got = self.roster(self.finished("a"), self.finished("b", project="orchard"),
@@ -425,7 +425,7 @@ class Pinned(Finished):
         self.pin("a")
         got = self.roster(s)
         column = got["columns"][0]
-        self.assertEqual((column["summary"], column["state"]), ({"moving": 0, "stuck": 0, "idle": 1}, "idle"))
+        self.assertEqual((column["summary"], column["state"]), ({"moving": 0, "stuck": 0, "idle": 1, "waiting": 0}, "idle"))
         self.assertEqual(got["counts"], {"needs": 0, "otherStuck": 0, "moving": 0})
         self.assertIsNone(column["sessions"][0]["counted"])
 

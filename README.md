@@ -159,9 +159,26 @@ Code already writes, never from a model:
   never count);
 - it started a background command (a background Bash or a Monitor) and has not
   been told it ended (a `task-notification`, or its own `TaskStop`), and the
-  shell writing to that task's own output file is still alive. A shell that
-  belongs to something else does not stand in for it, which is why a resumed
-  session's tasks from the process that died are not running.
+  shell writing to that task's own output file is still alive, **while its turn
+  is still on** (busy). A shell that belongs to something else does not stand
+  in for it, which is why a resumed session's tasks from the process that died
+  are not running. A Codex run it started (folded into its tile, below) counts
+  whatever its status: Codex is an agent at work.
+
+An idle session whose own background job runs on (a watch, a long poll, a wait
+on someone else's action) is **waiting**, not moving (ticket 20): its tile says
+"waiting on: <job>", it is in neither the header's moving count nor the mix's,
+and for as long as the job is open, with no six-hour cut-off, it keeps a full
+tile and makes its card **WAITING** (blue) when nothing on it moves.
+
+A working tile carries **one word** next to the name for what it does
+(ticket 21): `reviewing`, `testing`, `building`, `deploying`, `pushing`,
+`merging`, `committing`, `installing` when a command, a skill, a subagent or a
+Codex run names that work; else what the tool is (`editing`, `reading`,
+`researching`, `messaging`, `delegating`, `running`); `delegating` while a
+subagent writes, `thinking` while it writes with no call in flight, and
+`waiting` (blue, dashed) for the wait above. A stuck tile says its kind instead,
+and a tile at rest has no word.
 
 The peer `status` is never evidence: it is written when it changes and has no
 heartbeat. For a provider that reports no writes at all, the moment the status
@@ -185,7 +202,8 @@ counters ride on the incremental tail the reader already keeps; they add no
 read. After a restart a transcript is read from its last 2 MB, so the minutes
 before that window are **unknown**, not empty: the strip leaves them as dotted
 stubs, and a minute any session in the project could not see is unknown for the
-project too. Under the strip, `2 moving · 1 stuck · 0 idle`: a session is
+project too. Under the strip, `2 moving · 1 stuck · 0 idle` (and `· 1 waiting`
+when one waits): a session is
 stuck when its tile carries a kind (below), even while a job runs. A menu the
 person opened (`dialog open`) is not stuck, and neither is a busy session whose
 processes could not be read.
@@ -197,7 +215,7 @@ kind's colour, a reason, and what the person needs to decide before they jump.
 A session has the most urgent kind that holds, in this order, and the card's
 state word (under its name) is the most urgent of its sessions':
 **NEEDS YOU** (amber), **ERROR** and **HUNG** (red), **LIMIT** (purple), then
-MOVING (green) and ALL IDLE (grey).
+MOVING (green), WAITING (blue) and ALL IDLE (grey).
 
 | kind | when | reason | context |
 |---|---|---|---|
@@ -311,7 +329,8 @@ full tile however old it is:
 
 - idle, and nothing shows a sign of life: the registry's stop and the newest write
   to its transcript are both `finished_after_minutes` old, a provider's strip of
-  writes has none in the last half hour, and no background job runs under it;
+  writes has none in the last half hour, and no background job runs under it
+  (a session waiting on one is never a pill);
 - **its handover read**, in the overview (below);
 - nothing left for the person: no open question or prompt, no `n` above nothing,
   no Error, Hung or Limit;

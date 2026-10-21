@@ -172,7 +172,7 @@ class Hung(Kind):
 
     def test_such_a_session_makes_its_card_idle_and_counts_idle_in_the_mix(self):
         column = self.roster(hung(quiet=190.0, turnOver=True))["columns"][0]
-        self.assertEqual((column["state"], column["summary"]), ("idle", {"moving": 0, "stuck": 0, "idle": 1}))
+        self.assertEqual((column["state"], column["summary"]), ("idle", {"moving": 0, "stuck": 0, "idle": 1, "waiting": 0}))
 
     def test_such_a_session_is_moving_while_a_subagent_writes(self):
         tile = self.tile(hung(quiet=40.0, subQuiet=2.0, turnOver=True))
@@ -426,7 +426,7 @@ class Card(Base):
     def test_a_card_whose_only_trouble_is_a_menu_the_person_opened_is_not_stuck(self):
         got = self.roster(session("a", status="waiting", waitingFor="dialog open", updatedAt=int(NOW_MS - 120000)))
         column = got["columns"][0]
-        self.assertEqual((column["state"], column["summary"]), ("idle", {"moving": 0, "stuck": 0, "idle": 1}))
+        self.assertEqual((column["state"], column["summary"]), ("idle", {"moving": 0, "stuck": 0, "idle": 1, "waiting": 0}))
 
 
 class Mix(Base):
@@ -441,16 +441,16 @@ class Mix(Base):
             session("d", status="idle", failure=failure("limit")),
             session("e", status="busy", quietFor=0.1),
             session("f", status="idle"))
-        self.assertEqual(got, {"moving": 1, "stuck": 4, "idle": 1})
+        self.assertEqual(got, {"moving": 1, "stuck": 4, "idle": 1, "waiting": 0})
 
     def test_an_error_session_is_stuck_even_with_a_job_running(self):
         got = self.summary(session("a", status="idle", failure=failure("error"),
                                    bgTasks=[{"label": "watch", "since": 3.0}]))
-        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0})
+        self.assertEqual(got, {"moving": 0, "stuck": 1, "idle": 0, "waiting": 0})
 
     def test_a_busy_session_with_unreadable_processes_is_not_stuck(self):
         got = self.summary(hung(quiet=40.0, toolFor=40.0, procsUnknown=True))
-        self.assertEqual(got, {"moving": 0, "stuck": 0, "idle": 1})
+        self.assertEqual(got, {"moving": 0, "stuck": 0, "idle": 1, "waiting": 0})
 
     def test_a_session_counted_stuck_always_has_a_kind_on_its_tile(self):
         statuses = ("idle", "busy", "waiting")

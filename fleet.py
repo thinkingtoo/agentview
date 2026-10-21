@@ -573,6 +573,10 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
     moves = {"writes": writes_of(raw.get("writes")), "subQuiet": sub_quiet,
              "bgTasks": tasks, "shellCpu": bool(raw.get("shellCpu")),
              "movement": sign, "moving": moving,
+             "waits": waits_on_a_job(status, tasks),
+             # The call in flight, for the one word next to the name (ticket 21).
+             "call": {"tool": _text(raw.get("doingTool")), "doing": _text(raw.get("doing"))}
+                     if in_flight is not None else None,
              # Minutes with no sign of life, for a busy session; and whether
              # /proc could not say what runs under it. Only a provider saying
              # so is believed: Hung is a claim, and it waits for a look that can tell.
@@ -909,12 +913,14 @@ STUCK_ORDER = ("needs", "error", "hung", "limit")
 
 def state_of(tiles):
     """The card's one word, from its sessions: the most urgent decides. Needs
-    you, Error, Hung, Limit, then moving, then all idle."""
+    you, Error, Hung, Limit, then moving, then waiting, then all idle."""
     kinds = {t["stuck"]["kind"] for t in tiles if t["stuck"]}
     for kind in STUCK_ORDER:
         if kind in kinds:
             return kind
-    return "moving" if any(t["moving"] for t in tiles) else "idle"
+    if any(t["moving"] for t in tiles):
+        return "moving"
+    return "waiting" if any(t["waiting"] for t in tiles) else "idle"
 
 
 def _column_name(project, names):
@@ -995,7 +1001,7 @@ def is_finished(m, tile, after):
     however old it is. Unread, it stays a tile: a pill is also a way of not looking."""
     return (m["idleFor"] is not None and m["idleFor"] >= after
             and not m["unread"] and not m["pinned"] and m["n"] <= 0
-            and not m["moving"] and not tile["stuck"])
+            and not m["moving"] and not m["waits"] and not tile["stuck"])
 
 
 def pill_of(m, tile):
@@ -1038,6 +1044,9 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         "jump": jump_of(m),
         "flag": flag, "flagNote": flag_note(m) if flag else "",
         "movement": m["movement"], "moving": m["moving"],
+        # Waiting on a job of its own with its turn over: not moving, not idle.
+        "waiting": m["waits"] and not stuck,
+        "activity": activity_of(m, stuck),
         "stuck": stuck,
         # The header count the tile is in, for the page to light it up when
         # that count is clicked.
@@ -1279,7 +1288,9 @@ def tasks_of(value):
         since = _minutes(t.get("since")) if isinstance(t, dict) else None
         if since is not None:
             out.append({"label": " ".join(_text(t.get("label")).split())[:80]
-                        or "a background job", "since": round(since, 1)})
+                        or "a background job", "since": round(since, 1),
+                        # A Codex run folded in (runs.py): an agent at work.
+                        "run": t.get("run") is True})
     return out[:MAX_JOBS]
 
 
@@ -1379,6 +1390,63 @@ def span_text(minutes):
     return "<1 min" if minutes < 1 else ago_text(minutes)
 
 
+# The one word next to a working session's name (ticket 21). A tool that
+# names its kind of work says it; a command, a skill or a subagent is read for
+# what it runs, the first that matches; anything else is running.
+TOOL_WORDS = {"Edit": "editing", "Write": "editing", "NotebookEdit": "editing",
+              "Read": "reading", "Glob": "reading", "Grep": "reading",
+              "WebFetch": "researching", "WebSearch": "researching",
+              "SendMessage": "messaging", "Agent": "delegating", "Task": "delegating"}
+READ_FOR_WORK = frozenset({"Bash", "Skill", ""})
+WORK_WORDS = tuple((re.compile(pattern, re.I), word) for pattern, word in (
+    (r"review", "reviewing"),
+    (r"\b(?:tests?|pytest|unittest|suite)\b", "testing"),
+    (r"\b(?:build|compile)", "building"),
+    (r"\bdeploy", "deploying"),
+    (r"\bpush", "pushing"),
+    (r"\b(?:merge|rebase)", "merging"),
+    (r"\bcommit", "committing"),
+    (r"\binstall", "installing"),
+))
+
+
+def work_word(text):
+    """What kind of work a command, a skill or a job label runs, or ""."""
+    return next((word for pattern, word in WORK_WORDS if pattern.search(text)), "")
+
+
+def activity_of(m, stuck):
+    """One word for what a session is doing, or "" when it is stuck (the tile
+    says that) or at rest. It is the page's reading of the facts the movement
+    sign already uses, so it never says more than they do."""
+    if stuck:
+        return ""
+    jobs = m["bgTasks"]
+    if m["waits"] and not m["moving"]:
+        return "waiting"
+    if not m["moving"]:
+        return ""
+    call = m["call"]
+    if call:
+        if call["tool"] in READ_FOR_WORK or call["tool"] not in TOOL_WORDS:
+            word = work_word(call["doing"])
+            if word:
+                return word
+        return TOOL_WORDS.get(call["tool"], "running")
+    if m["subQuiet"] is not None and m["status"] != "idle":
+        return "delegating"
+    if jobs:
+        return work_word(" ".join(t["label"] for t in jobs)) or "waiting"
+    return "thinking"
+
+
+def waits_on_a_job(status, tasks):
+    """Its turn is over and a background job it started runs on: a watch, a
+    long poll, a wait on someone else. That is waiting, not working, for as
+    long as the job is open (ticket 20)."""
+    return status == "idle" and any(not t["run"] for t in tasks)
+
+
 def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_for, hung_after,
                 cpu_ago=None, turn_over=False):
     """What shows that a session is alive: (the sign for its tile, moving, and
@@ -1419,8 +1487,10 @@ def movement_of(status, quiet, sub_quiet, in_flight, doing, cpu, tasks, status_f
     call = in_flight is not None
     jobs = sorted(tasks, key=lambda t: -t["since"])
     subagent = sub_quiet is not None and sub_quiet < hung_after
+    # A job counts only while the turn that started it is still on. An idle
+    # session whose job runs on is waiting on it, not working (`waits_on_a_job`).
     evidence = ((call and cpu and in_flight <= WAIT_MAX_MINUTES)
-                or any(t["since"] <= WAIT_MAX_MINUTES for t in jobs)
+                or any(t["since"] <= WAIT_MAX_MINUTES and (status != "idle" or t["run"]) for t in jobs)
                 or subagent)
     # A provider that says nothing about a busy session has only the moment
     # the status changed to go on: that counts for `hung_after` minutes, like
@@ -1481,12 +1551,14 @@ def mix_of(tiles):
     and one without (a menu the person opened, a busy session /proc could not
     vouch for) is not. Stuck wins over moving: a session that needs you needs
     you even with a job running."""
-    mix = {"moving": 0, "stuck": 0, "idle": 0}
+    mix = {"moving": 0, "stuck": 0, "idle": 0, "waiting": 0}
     for t in tiles:
         if t["stuck"]:
             mix["stuck"] += 1
         elif t["moving"]:
             mix["moving"] += 1
+        elif t["waiting"]:
+            mix["waiting"] += 1
         else:
             mix["idle"] += 1
     return mix
