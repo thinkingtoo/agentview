@@ -51,7 +51,7 @@ _Avoid_: subject, status line
 What a session writes about itself at the end of each turn: where the work stands, and what is left for the person.
 
 **Paste**:
-A titled text a session leaves for the person on its card, to use somewhere else (a mail, a policy, a command). It waits there until the person ticks it done, or the session withdraws it because it saw the thing happen. Copying it never removes it.
+A titled text a session leaves for the person on its card, to use somewhere else (a mail, a policy, a command). It waits there until the person ticks it done, or the session withdraws it because it saw the thing happen. Copying it never removes it. It outlives its session: when the session finishes it stays on the finished card, and when the session has left the machine it stays on a card of its own.
 _Avoid_: draft, clipboard item, handout
 
 **Overview**:

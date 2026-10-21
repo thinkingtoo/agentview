@@ -281,6 +281,12 @@
   .pill .nm { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .pill .for { margin-left:auto; color:var(--faint); white-space:nowrap; font-variant-numeric:tabular-nums; }
   .pill .go.none { opacity:1; color:var(--faint); }
+  .pill .pastes { flex:1 0 100%; }
+  .kept-head { font-size:12px; color:var(--dim); text-transform:uppercase; letter-spacing:.05em; }
+  .kept-card { border:1px solid var(--line); border-radius:6px; padding:5px 10px; display:flex; flex-direction:column; gap:2px; }
+  .kept-card .nm { font-weight:600; overflow-wrap:anywhere; }
+  .kept-card .for { color:var(--faint); font-size:12px; }
+  .paste.first-hit { animation:flash .9s ease-out; }
   .pill .why { flex:1 0 100%; color:var(--bad); font-size:12px; overflow-wrap:anywhere; }
   .pill .why.note { color:var(--dim); }
   .pill.jumped { animation:flash .7s ease-out; }
@@ -394,6 +400,8 @@ let READY = null;           // and who had already finished, for the same reason
 let SPEAKER = null;         // the audio context, built on your first click
 let MUZZLED = false;        // wanted to ring, and the browser would not have it
 let PROVIDERS = {};         // who answered the last poll, and who did not
+let PASTES = 0;             // the roster's count of Pastes waiting, anywhere
+let KEPT = [];              // the roster's `kept`: Pastes of sessions no longer on the machine
 let COUNTS = {};            // the roster's header counts: needs, stuck, moving
 let BANNERS = [];           // what is wrong with the whole machine, as the roster said
 let LIGHT = "";             // the count you clicked, whose sessions are lit up -- "" for none
@@ -575,7 +583,7 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { flags, columns, counts, banners, chime, providers, restore, saved, closed } = await r.json();
+    const { flags, columns, counts, banners, chime, providers, restore, saved, closed, pastes, kept } = await r.json();
     drawRestore(restore);
     drawClosed(closed);
     drawSave(saved);
@@ -587,6 +595,8 @@ async function load() {
     announce(flags || []);
     COLUMNS = columns || [];
     COUNTS = counts || {};
+    PASTES = Number.isInteger(pastes) && pastes > 0 ? pastes : 0;
+    KEPT = Array.isArray(kept) ? kept.filter(k => k && typeof k.key === "string" && Array.isArray(k.pastes)) : [];
     BANNERS = Array.isArray(banners) ? banners : [];
     paint();
   } catch (e) {
@@ -649,8 +659,18 @@ function overview(cols) {
   SHOWN = cols;
   const main = document.getElementById("main");
   const x = main.scrollLeft;          // a repaint every poll must not send you back to the first column
-  main.innerHTML = cols.length ? cols.map(column).join("") : nothing();
+  main.innerHTML = (cols.length ? cols.map(column).join("") : KEPT.length ? "" : nothing()) + keptColumn();
   main.scrollLeft = x;
+}
+
+// Pastes of sessions that have left the machine stay here, under a card of their
+// own, until each is ticked done. All the roster knows of such a session is its
+// id and provider, so that is its name.
+function keptColumn() {
+  if (!KEPT.length) return "";
+  return `<section class="ov-col kept"><div class="kept-head">Closed sessions</div>${KEPT.map(k =>
+    `<div class="kept-card" data-kept="${esc(k.key)}"><span class="nm">${esc(k.session)}</span>`
+    + `<span class="for">${k.provider ? esc(k.provider) + " · " : ""}closed</span>${pastesBox(k)}</div>`).join("")}</section>`;
 }
 
 // The words of the header's three counts. The roster counts; this is only how
@@ -676,15 +696,18 @@ function drawHead(cols, down) {
     return `<button class="hc ${k}" data-count="${k}" aria-pressed="${LIGHT === k}" ${n ? "" : "disabled"}
       title="${n ? "light up these sessions; click again to clear" : "none"}">${n} ${COUNT_WORD[k](n)}</button>`;
   }).join(" &nbsp;·&nbsp; ");
+  // Not one of the three counts: it lights nothing up, it takes you to the first Paste.
+  const pastes = PASTES ? ` &nbsp;·&nbsp; <button class="hc pastes" data-paste-count
+      title="Go to the first Paste waiting for you">${PASTES} ${PASTES === 1 ? "Paste" : "Pastes"} waiting</button>` : "";
   const html = `${total} ${total === 1 ? "session" : "sessions"} · ${cols.length} ${cols.length === 1 ? "project" : "projects"}`
     + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
-    + ` &nbsp;·&nbsp; ${buttons}${down}`;
+    + ` &nbsp;·&nbsp; ${buttons}${pastes}${down}`;
   if (html === HEAD_SHOWN) return;
   HEAD_SHOWN = html;
   // Rebuilding the buttons drops the focus from the one that has it, so a
   // keyboard press (Enter to light, Enter again to clear) would stop at the
   // first. Put it back on the button of the same count.
-  const held = document.activeElement?.closest("button.hc")?.dataset.count;
+  const held = document.activeElement?.closest("button.hc[data-count]")?.dataset.count;
   document.getElementById("count").innerHTML = html;
   if (held && known(COUNT_WORD, held)) document.querySelector(`#count button.hc[data-count="${held}"]`)?.focus();
 }
@@ -896,7 +919,7 @@ function pill(p) {
   const can = via === "pane" || via === "attach";
   const tags = (p.tags || []).map(g => `<span class="bg-tag ${esc(g)}">${esc(g)}</span>`).join("");
   return `<div class="pill ${can ? "can" : ""}${lightOf(p)}" data-sid="${esc(p.key)}" title="${esc(p.line)}">
-    <span class="dot"></span><span class="nm">${esc(p.name || named(p))}</span>${tags}<span class="for">${esc(p.idle?.text)}</span>${pinButton(p)}${jumpLabel(p, via)}
+    <span class="dot"></span><span class="nm">${esc(p.name || named(p))}</span>${tags}<span class="for">${esc(p.idle?.text)}</span>${pinButton(p)}${jumpLabel(p, via)}${pastesBox(p)}
   </div>`;
 }
 
@@ -1723,6 +1746,17 @@ document.getElementById("sound").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: JSON.stringify({ chime: CHIME }),
   }).catch(() => {});
+});
+
+// The Paste count takes you to the first Paste on the page, in the order it is drawn.
+document.getElementById("count").addEventListener("click", ev => {
+  if (!ev.target.closest("button[data-paste-count]")) return;
+  const first = document.querySelector("#main .paste");
+  if (!first) return;
+  first.scrollIntoView({ block: "center", inline: "center" });
+  first.classList.remove("first-hit");
+  void first.offsetWidth;
+  first.classList.add("first-hit");
 });
 
 // A click on a count lights up its sessions; a second click on the same one

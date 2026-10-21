@@ -1474,10 +1474,14 @@ class PasteFake(Fake):
         self.fetched = []
 
     def tiles(self):
-        return [t for c in self.body["columns"] for t in c["sessions"]]
+        # Wherever the server puts Pastes: tiles, finished pills, and the cards of closed sessions.
+        return ([t for c in self.body["columns"] for t in c["sessions"] + c.get("pills", [])]
+                + self.body.get("kept", []))
 
     def apply(self, path, b):
         super().apply(path, b)
+        if path == "/api/paste_done":
+            before = sum(len(t.get("pastes", [])) for t in self.tiles())
         for t in self.tiles():
             if path == "/api/paste_done":
                 t["pastes"] = [p for p in t.get("pastes", []) if p["id"] != b["id"]]
@@ -1485,6 +1489,10 @@ class PasteFake(Fake):
                 for p in t.get("pastes", []):
                     if p["id"] == b["id"]:
                         p["copied"] = True
+        if path == "/api/paste_done":
+            self.body["kept"] = [k for k in self.body.get("kept", []) if k["pastes"]]
+            if "pastes" in self.body:
+                self.body["pastes"] -= before - sum(len(t.get("pastes", [])) for t in self.tiles())
 
     def handle(self, route):
         url = urllib.parse.urlsplit(route.request.url)
@@ -1582,6 +1590,75 @@ def paste_pass(browser):
     check("the one console error is the 404 of the Paste that is gone", len(expected) == 1, errors)
     for e in expected:
         errors.remove(e)
+
+
+def paste_stay_pass(browser):
+    """Spec Paste, ticket 02: a Paste stays on a finished session's pill and on
+    the card of a closed session, copy and done work there, and the header says
+    how many wait and takes you to the first."""
+    def paste(pid, title, text):
+        return {"id": pid, "title": title, "first": text.splitlines()[0], "secret": False, "copied": False}
+    maple = ("maple", "maple", [S("q1", "Vera", "idle", line="Notes drafted")])
+    body = roster([maple], pastes=4, kept=[
+        {"key": "claude:zz", "session": "zz", "provider": "claude", "pastes": [paste("k1", f"Kept {BOMB}", "kept text")]}])
+    body["columns"][0]["sessions"][0]["pastes"] = [paste("t1", "On the tile", "tile text")]
+    body["columns"][0]["pills"] = [dict(P("f1", "Hanne", 300, line="Done"),
+                                        pastes=[paste("f1a", "Mail for Sven", "pill text"), paste("f1b", "Second", "second")])]
+    fake = PasteFake(body, {"t1": "tile text", "f1a": "pill text\nline 2", "f1b": "second", "k1": "kept text"})
+    page = new_page(browser, fake, clipboard=True)
+    page.goto("http://localhost/", wait_until="load")
+    page.wait_for_selector(".pill")
+    check("the header counts the Pastes waiting and says so",
+          "4 Pastes waiting" in head_line(page), head_line(page))
+    pill = lambda: page.locator('.pill[data-sid="f1"]')
+    check("a finished session's pill shows its Pastes, each with copy and done",
+          pill().locator(".ptitle").all_inner_texts() == ["Mail for Sven", "Second"]
+          and pill().locator("button.pcopy").count() == 2 and pill().locator("button.pdone").count() == 2)
+    check("a closed session has a card of its own with its Paste, named as text",
+          page.locator(".kept-card .ptitle").all_inner_texts() == [f"Kept {BOMB}"]
+          and page.locator(".kept-card .nm").inner_text() == "zz" and page.locator("img").count() == 0)
+
+    pill().locator(".pcopy").nth(0).click()
+    page.wait_for_timeout(400)
+    check("copy on a pill puts the whole text on the clipboard",
+          page.evaluate("navigator.clipboard.readText()") == "pill text\nline 2")
+    check("and it told the server, jumped nowhere and kept the Paste",
+          fake.of("/api/paste_copied") == [{"id": "f1a"}] and fake.of("/api/jump") == []
+          and pill().locator(".ptitle").count() == 2)
+    page.locator(".kept-card button.pcopy").click()
+    page.wait_for_timeout(400)
+    check("copy works on the card of a closed session",
+          page.evaluate("navigator.clipboard.readText()") == "kept text" and fake.of("/api/paste_copied")[-1] == {"id": "k1"})
+
+    page.locator(".kept-card button.pdone").click()
+    page.wait_for_function("document.querySelectorAll('.kept-card').length === 0")
+    check("done on a closed session's Paste removes it and its card, and the count drops",
+          fake.of("/api/paste_done") == [{"id": "k1"}] and "3 Pastes waiting" in head_line(page), head_line(page))
+    pill().locator("button.pdone").nth(1).click()
+    page.wait_for_function("document.querySelectorAll('.pill .paste').length === 1")
+    check("done on a pill's Paste removes that one", pill().locator(".ptitle").all_inner_texts() == ["Mail for Sven"])
+
+    page.locator("#count button[data-paste-count]").click()
+    first = page.locator("#main .paste").first
+    page.wait_for_function("document.querySelector('#main .paste.first-hit')")
+    box = first.bounding_box()
+    check("a click on the count takes you to the first Paste on the page",
+          first.get_attribute("class").find("first-hit") >= 0 and first.locator(".ptitle").inner_text() == "On the tile"
+          and 0 <= box["y"] <= page.viewport_size["height"], box)
+    check("it lights nothing up and rings nothing", page.locator("#count button[aria-pressed=true]").count() == 0
+          and fake.of("/api/jump") == [] and fake.of("/api/seen") == [])
+    check("no stray request", not fake.stray, fake.stray)
+    page.context.close()
+
+    # No Paste, no count; and a roster from before this ticket still draws.
+    old = roster([maple])
+    old.pop("pastes", None)
+    page = new_page(browser, PasteFake(old, {}))
+    page.goto("http://localhost/", wait_until="load")
+    page.wait_for_selector(".tile")
+    check("with no Paste there is no Paste count and no closed-sessions card",
+          "Paste" not in head_line(page) and page.locator(".kept-card").count() == 0, head_line(page))
+    page.close()
 
 
 def clock_said(line):
@@ -2769,6 +2846,7 @@ def main():
         needs_pass(browser)
         guessed_pass(browser)
         paste_pass(browser)
+        paste_stay_pass(browser)
         kinds_pass(browser)
         codex_pass(browser)
         hand_pass(browser)

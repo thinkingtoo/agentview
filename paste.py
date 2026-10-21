@@ -79,10 +79,21 @@ def read_text_file(path):
     return text
 
 
-def create(session_id, title, path, root=None):
-    """Leave a Paste on a session's card. Returns its id."""
-    if not isinstance(session_id, str) or not lines.SAFE.fullmatch(session_id):
-        raise Refused("not a session id")
+def _name(value, what):
+    if not isinstance(value, str) or not lines.SAFE.fullmatch(value):
+        raise Refused(f"not a {what}")
+    return value
+
+
+def create(session_id, title, path, root=None, provider=None):
+    """Leave a Paste on a session's card. Returns its id.
+
+    A session is one provider and one id; two providers may use the same id.
+    Say the `provider` and the Paste belongs to that session alone. Without it
+    the Paste belongs to every session with that id, as it did before."""
+    _name(session_id, "session id")
+    if provider is not None:
+        _name(provider, "provider name")
     title = _clip(title or "", TITLE_MAX)
     if not title:
         raise Refused("a Paste needs a title")
@@ -95,6 +106,8 @@ def create(session_id, title, path, root=None):
             raise Refused("could not write the Paste")
         record = {"id": pid, "session": session_id, "title": title, "first": _first_line(text),
                   "at": time.time_ns(), "secret": False, "copied": False}
+        if provider is not None:
+            record["provider"] = provider
         if not lines.write_atomic(root / f"{pid}.json", json.dumps(record)):
             _unlink(root / f"{pid}.txt")
             raise Refused("could not write the Paste")
@@ -145,18 +158,42 @@ def _shown(got):
 
 
 def waiting(root=None):
-    """Every Paste not yet done, by session id, each list in the order they were made."""
+    """Every Paste not yet done, as `(session id, provider or None, what the page
+    shows)`, in the order they were made."""
     root = _root(root)
     try:
         names = list(root.glob("*.json"))
     except OSError:
-        return {}
+        return []
     found = [r for r in (_record(p.stem, root) for p in names) if r]
     found.sort(key=lambda r: (r.get("at") if isinstance(r.get("at"), int) else 0, r["id"]))
-    by = {}
-    for r in found:
-        by.setdefault(r["session"], []).append(_shown(r))
-    return by
+    return [(r["session"], r["provider"] if isinstance(r.get("provider"), str) else None, _shown(r))
+            for r in found]
+
+
+# A text with no record is a `create` that is still writing, or one that died.
+# Only the second is old.
+SWEEP_AFTER = 600
+
+
+def sweep(root=None, after=SWEEP_AFTER):
+    """Remove what a crash left: a text whose record never came, and the
+    half-written files of an atomic write. A text whose record exists is
+    never touched, readable or not; neither is a young one."""
+    root = _root(root)
+    try:
+        found = list(root.glob("*.txt")) + list(root.glob("*.tmp"))
+    except OSError:
+        return
+    now = time.time()
+    for path in found:
+        try:
+            if path.suffix == ".txt" and (root / f"{path.stem}.json").exists():
+                continue
+            if now - path.stat().st_mtime > after:
+                path.unlink()
+        except OSError:
+            pass
 
 
 def text(pid, root=None):
@@ -182,14 +219,17 @@ def copied(pid, root=None):
     return True
 
 
-def done(pid, root=None, session_id=None):
-    """Remove a Paste. False when there is none, or when it is not `session_id`'s.
+def done(pid, root=None, session_id=None, provider=None):
+    """Remove a Paste. False when there is none, or when it is not `session_id`'s
+    (nor `provider`'s, when both the Paste and the caller name one).
     `Refused` when it is there and cannot be removed."""
     root = _root(root)
     try:
         with _changing(root):
             got = _record(pid, root)
             if got is None or (session_id is not None and got["session"] != session_id):
+                return False
+            if provider is not None and isinstance(got.get("provider"), str) and got["provider"] != provider:
                 return False
             # The text first. Whatever fails after that leaves a Paste on the card,
             # which can be ticked again; the other way round leaves a text nobody sees.
@@ -206,16 +246,18 @@ def main(argv=None, out=None, err=None):
     sub = p.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("create", help="leave a Paste; prints its id")
     c.add_argument("session")
+    c.add_argument("--provider", help="claude, codex...: the Paste then belongs to that provider's session alone")
     c.add_argument("--title", required=True)
     c.add_argument("file", help="the text, read from this file and never from an argument")
     w = sub.add_parser("withdraw", help="take back a Paste whose use you have seen")
     w.add_argument("session")
+    w.add_argument("--provider")
     w.add_argument("id")
     args = p.parse_args(argv)
     try:
         if args.cmd == "create":
-            print(create(args.session, args.title, args.file), file=out)
-        elif not done(args.id, session_id=args.session):
+            print(create(args.session, args.title, args.file, provider=args.provider), file=out)
+        elif not done(args.id, session_id=args.session, provider=args.provider):
             raise Refused(f"no Paste {args.id!r} on session {args.session!r}")
     except Refused as why:
         print(f"paste: {why}", file=err)
