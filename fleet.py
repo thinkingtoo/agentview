@@ -786,7 +786,9 @@ def place_pastes(everyone, found):
     per `(provider, session id)`, and how many Pastes there are in all.
 
     A Paste that names its provider belongs to that provider's session alone;
-    one that does not belongs to every session with its id."""
+    one that does not belongs to every session with its id. A routine has no
+    card on the page, so a Paste left on one is kept like any other that has
+    no card to sit on."""
     by_id = {}
     for s in everyone:
         s["pastes"] = []
@@ -794,7 +796,7 @@ def place_pastes(everyone, found):
     kept, count = {}, 0
     for session, provider, shown in found:
         count += 1
-        owners = [s for s in by_id.get(session, []) if paste.belongs_to(provider, s["provider"])]
+        owners = [s for s in by_id.get(session, []) if paste.belongs_to(provider, s["provider"]) and not s["routine"]]
         for s in owners:
             s["pastes"].append(shown)
         if not owners:

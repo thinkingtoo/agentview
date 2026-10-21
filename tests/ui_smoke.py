@@ -1599,7 +1599,9 @@ def paste_stay_pass(browser):
     def paste(pid, title, text):
         return {"id": pid, "title": title, "first": text.splitlines()[0], "secret": False, "copied": False}
     maple = ("maple", "maple", [S("q1", "Vera", "idle", line="Notes drafted")])
-    body = roster([maple], pastes=4, kept=[
+    oak = ("oak", "oak", [S("o1", "Olaf", "waiting", "waiting", note="input needed", line="Waiting",
+                            stuck=asks("Publish?", [("Yes", ""), ("No", "")]))])
+    body = roster([maple, oak], pastes=4, kept=[
         {"key": "claude:zz", "session": "zz", "provider": "claude", "pastes": [paste("k1", f"Kept {BOMB}", "kept text")]}])
     body["columns"][0]["sessions"][0]["pastes"] = [paste("t1", "On the tile", "tile text")]
     body["columns"][0]["pills"] = [dict(P("f1", "Hanne", 300, line="Done"),
@@ -1654,6 +1656,13 @@ def paste_stay_pass(browser):
     page.wait_for_function("document.querySelector('#main .paste.first-hit')")
     check("with the filter hiding every Paste, the count clears the filter and goes to the first",
           page.input_value("#q") == "" and page.locator("#main .paste").count() > 0, page.input_value("#q"))
+    # A lit count shrinks the other columns to their cards, and the Paste on them is out of sight.
+    page.locator('#count button[data-count="needs"]').click()
+    page.wait_for_selector(".ov-col.shrunk")
+    page.locator("#count button[data-paste-count]").click()
+    page.wait_for_function("document.querySelector('.paste.first-hit')")
+    check("with a lit count hiding the Pastes, the Paste count clears the light and goes to the first",
+          page.locator("#count button[aria-pressed=true]").count() == 0 and page.locator(".ov-col.shrunk").count() == 0)
     check("no stray request", not fake.stray, fake.stray)
     page.context.close()
 

@@ -363,6 +363,13 @@ class Staying(Case):
         after = self.roster()
         self.assertEqual((after["flags"], after["counts"]), (before["flags"], before["counts"]))
 
+    def test_a_paste_left_on_a_routine_is_kept_because_a_routine_has_no_card(self):
+        self.fake._sessions = [minimal(id="r", name="Nightly", routine="nightly-report", cwd="/home/alice")]
+        pid = self.make("t", "text", session="r")
+        got = self.roster()
+        self.assertEqual([(k["session"], [p["id"] for p in k["pastes"]]) for k in got["kept"]], [("r", [pid])])
+        self.assertEqual(got["pastes"], 1)
+
     # -- identity
     def two_providers(self):
         self.other = Other([minimal(id="a", name="Olga", cwd="/home/alice/Projects/maple", canJump=True)])
