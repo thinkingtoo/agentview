@@ -6,7 +6,9 @@
 
 **Claimed by:** Tarek 2026-10-21
 
-**Status:** in review (branch `overview/20-waiting`)
+**Status:** done
+
+**Merged to origin/dev as** `8ebee41` (with ticket 21), 2026-10-21; seen live: the Avetta card WAITING on a 24 h watch job, render-doc workers waiting on their CI watch jobs.
 
 ## What happened (Tarek, 2026-10-21, from the live roster)
 

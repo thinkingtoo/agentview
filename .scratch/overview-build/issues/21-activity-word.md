@@ -6,7 +6,9 @@
 
 **Claimed by:** Tarek 2026-10-21
 
-**Status:** in review (branch `overview/20-waiting`)
+**Status:** done
+
+**Merged to origin/dev as** `8ebee41` (with ticket 20), 2026-10-21.
 
 ## The rule (`fleet.activity_of`)
 
@@ -20,7 +22,7 @@
 
 - [x] The word per shape, through `roster()` with a fake provider (`tests/test_activity_word.py`, 9 tests)
 - [x] The page shows it next to the name: green, and blue with a dashed edge for `waiting`; escaped as text
-- [ ] Seen on the live page on real sessions
+- [x] Seen on the live page on real sessions (thinking, installing, running, waiting, 2026-10-21 22:40)
 
 ## Hunt 20-1 (Opus, 2026-10-21) on e5dbefd: NO-GO, fixed
 

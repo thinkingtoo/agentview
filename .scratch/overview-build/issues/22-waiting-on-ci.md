@@ -6,7 +6,9 @@
 
 **Claimed by:** Tarek 2026-10-21
 
-**Status:** in review (branch `overview/22-ci-wait`)
+**Status:** done, one box open
+
+**Merged to origin/dev as** `65f89a1`, 2026-10-21. The live box stays open until a matched run is seen on the page; the boss workers wait on the per-worker file claude-boss is adding (`~/.claude/pm/.workers/<session-id>.json`).
 
 ## How
 
