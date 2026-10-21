@@ -20,3 +20,7 @@
 - [x] Tile, card, counts and pills through `roster()` with a fake `ci_state` (`tests/test_ci_wait.py`, 9 tests)
 - [x] `head_of` on real temporary repositories: a checkout, a worktree, a packed ref, no repository or no remote (4 tests)
 - [ ] Seen on the live page on a real run
+
+## Hunt 22-1 (Opus, 2026-10-21) on 435bbf2: NO-GO on one P1, fixed
+
+P1: a NUL in a checkout's HEAD ref (`ref: refs/heads/a\0b`) raised `ValueError` out of `regular()` and would fail `/api/roster` for every tile. Fixed: the ref is refused, `_small` catches `ValueError`, and `ci_of` turns anything it raises into no CI (test with a `CI_HEAD` that raises). Clean: FIFOs, symlink loops, unreadable files, non-UTF-8 refs, `..`, host spellings (`GITHUB.COM` normalised, `github.com.evil.example` refused), no test reaching GitHub (traced: 0 calls). P2 taken: only a commit origin's branch also has is asked about (a local or unpushed branch costs no refresh); a run past its median says "longer than usual" instead of "about <1 min left"; an ETA that is a bool, negative, non-finite or over a week is left out. P2 accepted and in the README: two sessions in one checkout both show the wait; an ssh alias remote (`github-alias:o/n`) never shows CI.

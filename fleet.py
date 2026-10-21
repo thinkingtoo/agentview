@@ -1467,13 +1467,23 @@ CI_HEAD = projects.head_of
 # it is doing, and every branch asked about costs a refresh a minute.
 CI_LOOK_MINUTES = 180
 CI_GOING = ("queued", "in_progress")
+CI_LONGEST_S = 7 * 24 * 3600     # a wait or an ETA past a week is no number to print
 
 
 def ci_of(m, stuck):
     """The CI run a session at rest is waiting on, for the page, or None: the
     latest run on its branch, queued or running, for the commit its own
-    checkout is at. A session at work or stuck is not asked, nor one with no
-    branch or a remote that is not on GitHub."""
+    checkout is at and has pushed. A session at work or stuck is not asked,
+    nor one with no branch, a remote that is not on GitHub, or a commit origin
+    does not have. Nothing here can fail the roster: a checkout's files are
+    whatever is on disk."""
+    try:
+        return _ci_of(m, stuck)
+    except Exception:
+        return None
+
+
+def _ci_of(m, stuck):
     if stuck or m["moving"] or not m["branch"] or not (m["status"] == "idle" or m["waits"]):
         return None
     if not m["waits"] and (m["idleFor"] is None or m["idleFor"] > CI_LOOK_MINUTES):
@@ -1481,7 +1491,9 @@ def ci_of(m, stuck):
     head = CI_HEAD(m["cwd"])
     if not head or not head[0].startswith("github.com/"):
         return None
-    repo, sha = head
+    repo, sha, pushed = head
+    if pushed != sha:
+        return None
     got = CI_STATE(repo, m["branch"])
     if not isinstance(got, dict) or got.get("status") not in CI_GOING or got.get("head_sha") != sha:
         return None
@@ -1492,8 +1504,11 @@ def ci_sign(got):
     """The movement sign of a wait on CI: how long it has queued or run, and
     the ETA, which for a queued run leaves the queue out."""
     def minutes(seconds):
-        return span_text(seconds / 60) if isinstance(seconds, (int, float)) else None
-    eta = minutes(got.get("eta_s"))
+        plain = (isinstance(seconds, (int, float)) and not isinstance(seconds, bool)
+                 and math.isfinite(seconds) and 0 <= seconds < CI_LONGEST_S)
+        return span_text(seconds / 60) if plain else None
+    eta_s = got.get("eta_s")
+    eta = minutes(eta_s) if eta_s else None
     if got["status"] == "queued":
         queued = minutes(got.get("queued_for_s"))
         text = "waiting on CI: queued" + (f" {queued}" if queued else "")
@@ -1501,7 +1516,11 @@ def ci_sign(got):
     else:
         running = minutes(got.get("running_for_s"))
         text = "waiting on CI: running" + (f" {running}" if running else "")
-        text += f", about {eta} left" if eta else ""
+        if eta:
+            text += f", about {eta} left"
+        elif eta_s == 0 and not isinstance(eta_s, bool):
+            # The module clamps an ETA at 0 once a run outlasts the median.
+            text += ", longer than usual"
     return {"kind": "waiting", "on": "CI", "text": text}
 
 

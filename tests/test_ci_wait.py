@@ -45,7 +45,7 @@ class CiWait(Base):
         super().setUp()
         self.asked = []
         self.answer = run(running_for_s=12 * 60, eta_s=8 * 60)
-        self.head = ("github.com/maple/notes", SHA)
+        self.head = ("github.com/maple/notes", SHA, SHA)
 
         def state(repo, branch):
             self.asked.append((repo, branch))
@@ -94,11 +94,36 @@ class CiWait(Base):
 
     def test_a_session_with_no_branch_or_no_github_remote_is_not_asked(self):
         self.tile(session("a", status="idle", updatedAt=ago(5)))
-        self.head = ("gitlab.example.com/maple/notes", SHA)
+        self.head = ("gitlab.example.com/maple/notes", SHA, SHA)
         self.tile(resting())
         self.head = None
         self.tile(resting())
         self.assertEqual(self.asked, [])
+
+    def test_a_commit_not_pushed_to_origin_is_not_asked_about(self):
+        # Hunt 22-1: a local branch, or one ahead of origin, has no run of its own.
+        for pushed in (None, "c" * 40):
+            with self.subTest(pushed=pushed):
+                self.head = ("github.com/maple/notes", SHA, pushed)
+                self.tile(resting())
+        self.assertEqual(self.asked, [])
+
+    def test_a_run_past_its_usual_time_says_so_instead_of_a_minute_left(self):
+        self.answer = run(running_for_s=25 * 60, eta_s=0)
+        self.assertEqual(self.tile(resting())["movement"]["text"],
+                         "waiting on CI: running 25 min, longer than usual")
+
+    def test_an_eta_that_is_not_a_plain_count_of_seconds_is_left_out(self):
+        for eta in (True, -5, 10 ** 300, float("inf"), float("nan"), "8"):
+            with self.subTest(eta=eta):
+                self.answer = run(running_for_s=3 * 60, eta_s=eta)
+                self.assertEqual(self.tile(resting())["movement"]["text"], "waiting on CI: running 3 min")
+
+    def test_nothing_the_ci_part_raises_reaches_the_roster(self):
+        def broken(cwd):
+            raise ValueError("embedded null character")
+        fleet.CI_HEAD = broken
+        self.assertFalse(self.tile(resting())["waiting"])
 
     def test_a_session_resting_for_hours_is_not_asked(self):
         self.tile(session("a", status="idle", updatedAt=ago(5 * 60), quietFor=5 * 60.0,
@@ -134,7 +159,10 @@ class HeadOf(unittest.TestCase):
 
     def test_a_checkout_says_its_remote_and_commit(self):
         root, git = self.repo()
-        self.assertEqual(projects.head_of(str(root)), ("github.com/maple/notes", git("rev-parse", "HEAD")))
+        sha = git("rev-parse", "HEAD")
+        self.assertEqual(projects.head_of(str(root)), ("github.com/maple/notes", sha, None))
+        git("update-ref", "refs/remotes/origin/main", sha)
+        self.assertEqual(projects.head_of(str(root)), ("github.com/maple/notes", sha, sha))
 
     def test_a_worktree_says_its_own_commit(self):
         root, git = self.repo()
@@ -146,13 +174,18 @@ class HeadOf(unittest.TestCase):
                         "commit", "-qm", "b"], check=True)
         own = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"], capture_output=True,
                              text=True).stdout.strip()
-        self.assertEqual(projects.head_of(str(wt)), ("github.com/maple/notes", own))
+        self.assertEqual(projects.head_of(str(wt))[:2], ("github.com/maple/notes", own))
 
     def test_a_packed_ref_is_read(self):
         root, git = self.repo()
         sha = git("rev-parse", "HEAD")
         git("pack-refs", "--all")
         self.assertEqual(projects.head_of(str(root))[1], sha)
+
+    def test_a_ref_with_a_nul_in_it_is_none_not_an_error(self):
+        root, git = self.repo()
+        (root / ".git" / "HEAD").write_bytes(b"ref: refs/heads/a\0b\n")
+        self.assertIsNone(projects.head_of(str(root)))
 
     def test_no_repository_or_no_remote_is_none(self):
         self.assertIsNone(projects.head_of(str(self.folder())))

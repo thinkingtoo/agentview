@@ -174,10 +174,13 @@ tile and makes its card **WAITING** (blue) when nothing on it moves.
 A session at rest can also be **waiting on CI** (ticket 22): its turn is over
 (idle, or waiting on a job of its own), it has rested less than three hours,
 and the latest GitHub Actions run on its branch is queued or running **for the
-commit its own checkout is at** (read from its `.git` files, never by running
-git), so a run someone else pushed to the same branch is not its wait. The tile
+commit its own checkout is at**, which origin's branch of the same name also
+has (read from its `.git` files, never by running git): a run someone else
+pushed is not its wait, and a branch never pushed is not asked about. Two
+sessions in one checkout share its commit, so both show the wait. The tile
 says `waiting on CI: running 12 min, about 8 min left` (a queued run: `queued 5
-min, then about 20 min`, the ETA leaving the queue out), the word is `waiting`,
+min, then about 20 min`, the ETA leaving the queue out; a run past its usual
+time says `longer than usual`), the word is `waiting`,
 the card is WAITING, and it is never a pill. The run's state comes from
 `ci_state.py`, vendored from claude-boss (`scripts/vendor-ci-state`): on the
 poll path it only reads its cache (`~/.cache/ci-state`, or `$CI_STATE_CACHE`)
