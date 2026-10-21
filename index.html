@@ -668,9 +668,9 @@ function overview(cols) {
 // id and provider, so that is its name.
 function keptColumn() {
   if (!KEPT.length) return "";
-  return `<section class="ov-col kept"><div class="kept-head">Gone from this machine</div>${KEPT.map(k =>
+  return `<section class="ov-col kept"><div class="kept-head">Sessions without a card</div>${KEPT.map(k =>
     `<div class="kept-card" data-kept="${esc(k.key)}"><span class="nm">${esc(k.session)}</span>`
-    + `<span class="for">${k.provider ? esc(k.provider) + " · " : ""}gone</span>${pastesBox(k)}</div>`).join("")}</section>`;
+    + `<span class="for">${k.provider ? esc(k.provider) + " · " : ""}not on the page</span>${pastesBox(k)}</div>`).join("")}</section>`;
 }
 
 // The words of the header's three counts. The roster counts; this is only how

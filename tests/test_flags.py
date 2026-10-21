@@ -36,7 +36,7 @@ class Flags(Base):
 
     def test_the_roster_has_flags_and_no_blocks(self):
         got = self.roster(session("a"))
-        self.assertEqual(sorted(got), ["banners", "columns", "counts", "flags"])
+        self.assertEqual(sorted(got), ["banners", "columns", "counts", "flags", "kept", "pastes"])
         self.assertNotIn("blocks", got)
 
     def test_a_row_is_the_key_the_id_the_name_the_raw_flag_and_whether_it_is_blocked(self):
