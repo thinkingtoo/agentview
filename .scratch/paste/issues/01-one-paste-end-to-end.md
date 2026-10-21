@@ -6,7 +6,7 @@
 
 **Claimed by:** Ines 2026-10-21 22:42
 
-**Status:** in-progress
+**Status:** done
 
 - [x] The command creates a Paste from a file and prints its id; missing, empty or oversized files are refused with a non-zero exit and nothing written
 - [x] `/api/roster` lists a session's Pastes (id, title, first line, copied flag) without their full text
@@ -18,4 +18,4 @@
 - [x] GLOSSARY.md has the entry **Paste**, with "draft, clipboard item, handout" under Avoid
 - [x] Tests go through the command + roster seam with a fake provider and a throwaway store, as the notes route tests do
 
-**Built:** branch `paste-01`, head `a3fcda6`, not merged. Boxes ticked on tests in `tests/test_paste.py` (command, roster, routes; 24 tests) and `paste_pass` in `tests/ui_smoke.py`, run alone. Codex GO on that head: `agentview-wt/reviews/paste-01-codex-4.md`.
+**Built:** branch `paste-01`, head `a3fcda6`, merged into dev as `216b199`. Boxes ticked on tests in `tests/test_paste.py` (command, roster, routes; 24 tests) and `paste_pass` in `tests/ui_smoke.py`, run alone. Codex GO on that head: `agentview-wt/reviews/paste-01-codex-4.md`.
