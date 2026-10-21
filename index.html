@@ -1079,7 +1079,10 @@ document.getElementById("main").addEventListener("click", async ev => {
 // the title and first line; the full text is fetched when you open or copy one,
 // and what is copied is what the server sent, character for character. Copying
 // keeps the Paste; only done removes it. Every word here is text a session wrote.
+// A secret (kept in your login keyring, never in a file) is only ever dots here:
+// opening it does not show it, and only copy fetches the real text, on the click.
 const PASTE_OPEN = new Map();        // id -> the text, for the Pastes you opened
+const PASTE_DOTS = "\u2022".repeat(12);          // a fixed length: no hint of the real one
 let PASTE_COPIED = { id: "", until: 0, ok: true };
 
 function pastesBox(t) {
@@ -1088,9 +1091,9 @@ function pastesBox(t) {
   return `<div class="pastes">${found.map(p => {
     const now = PASTE_COPIED.id === p.id && Date.now() < PASTE_COPIED.until;
     const label = now ? (PASTE_COPIED.ok ? "copied" : "not copied") : p.copied ? "copy again" : "copy";
-    return `<div class="paste" data-pid="${esc(p.id)}"><span class="tool">paste</span>`
-      + `<span class="ptitle" title="Show the whole text">${esc(p.title)}</span>`
-      + `<span class="pfirst">${esc(p.first)}</span>`
+    return `<div class="paste" data-pid="${esc(p.id)}"${p.secret ? ' data-secret="1"' : ""}><span class="tool">${p.secret ? "secret" : "paste"}</span>`
+      + `<span class="ptitle" title="${p.secret ? "A secret: shown as dots; copy puts the real text on the clipboard" : "Show the whole text"}">${esc(p.title)}</span>`
+      + `<span class="pfirst">${p.secret ? PASTE_DOTS : esc(p.first)}</span>`
       + `<button type="button" class="pcopy" title="Copy the whole text. It stays here until you tick it done.">${label}</button>`
       + `<button type="button" class="pdone" title="You have used it: take it off the card.">done</button>`
       + (PASTE_OPEN.has(p.id) ? `<pre class="ptext">${esc(PASTE_OPEN.get(p.id))}</pre>` : "")
@@ -1100,7 +1103,7 @@ function pastesBox(t) {
 
 async function pasteText(id) {
   try {
-    const r = await fetch("/api/paste_text?id=" + encodeURIComponent(id));
+    const r = await fetch("/api/paste_text?id=" + encodeURIComponent(id), { headers: { "X-Fleet": "1" } });
     // Not `r.text()`: it drops a leading byte-order mark, and what is copied is what was left.
     return r.ok ? new TextDecoder("utf-8", { ignoreBOM: true }).decode(await r.arrayBuffer()) : null;
   } catch (e) { return null; }
@@ -1123,6 +1126,7 @@ document.getElementById("main").addEventListener("click", async ev => {
   const show = () => { if (!busyWithUser()) paint(); };
   if (ev.target.closest(".ptitle")) {
     if (PASTE_OPEN.has(id)) { PASTE_OPEN.delete(id); return show(); }
+    if (row.dataset.secret) { PASTE_OPEN.set(id, PASTE_DOTS); return show(); }
     const text = await pasteText(id);
     PASTE_OPEN.set(id, text === null ? "(this Paste could not be read)" : text);
     return show();

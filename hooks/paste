@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Leave a text for the person on this session's card. Run by the session itself.
 
-    paste create <session-id> [--provider claude] --title "Message to Sven" <file>     prints the new id
+    paste create <session-id> [--provider claude] --title "Message to Sven" [--secret] <file>     prints the new id
     paste withdraw <session-id> [--provider claude] <paste-id>
+    paste sweep
 
 Name the provider when you know it: two providers may use the same session id,
 and a Paste with a provider belongs to that provider's session alone.
@@ -10,6 +11,14 @@ and a Paste with a provider belongs to that provider's session alone.
 The text comes from a file, never from an argument: quotes, backslashes and
 line breaks do not survive a shell. Withdraw a Paste only when you have seen
 that it was used (the mail is sent, the policy is live).
+
+A password, token or key goes into the person's login keyring, never into a
+file: say `--secret`, and a token or password found in the text counts without
+it. The command refuses, and writes nothing, when the keyring cannot be reached
+(it is unlocked by logging in). Keep a title free of secrets, since the card
+shows it in the clear, and delete the file you wrote the text in once you have
+made the Paste. `sweep` is for after a crash: it removes keyring items no Paste
+points at and names Pastes whose item is gone.
 """
 import sys
 from pathlib import Path

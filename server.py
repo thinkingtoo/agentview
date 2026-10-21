@@ -264,6 +264,14 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return self.headers.get("X-Fleet") == "1"
 
+    def _local_get(self):
+        """The text of a Paste may come out of the keyring, so its GET gets the guard a POST has:
+        the custom header cannot be sent by a page on another origin without a preflight that
+        is refused, and the Host check closes the way in by a name that points at this machine."""
+        host = self.headers.get("Host", "")
+        return (self.headers.get("X-Fleet") == "1"
+                and host in (f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"))
+
     def _body(self):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
@@ -546,8 +554,14 @@ class Handler(BaseHTTPRequestHandler):
                        "application/json")
         elif self.path.startswith("/api/paste_text"):
             # The text of one Paste, on a click, exactly as the session left it.
+            if not self._local_get():
+                log.event("refused", path="/api/paste_text", origin=self.headers.get("Origin"))
+                return self.send_error(403, "not a local request")
             ask = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
-            data = paste.text((ask.get("id") or [""])[0])
+            try:
+                data = paste.text((ask.get("id") or [""])[0])
+            except paste.Refused as why:
+                return self.send_error(500, str(why))
             if data is None:
                 return self.send_error(404, "no such Paste")
             self._send(data.decode("utf-8", "replace"), "text/plain; charset=utf-8")
