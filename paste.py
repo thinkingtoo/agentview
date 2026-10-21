@@ -74,7 +74,7 @@ def read_text_file(path):
         raise Refused(f"{path} is not UTF-8 text") from None
     if "\x00" in text:
         raise Refused(f"{path} is not text")
-    if not text.strip():
+    if not text.lstrip("\ufeff").strip():
         raise Refused(f"{path} is empty")
     return text
 
@@ -126,7 +126,8 @@ def _changing(root):
 def _record(pid, root=None):
     if not isinstance(pid, str) or not ID.fullmatch(pid):
         return None
-    data = lines.read_plain(str(_root(root) / f"{pid}.json"), RECORD_MAX)
+    # Read on every poll, under the lock the page waits on: bounded in time.
+    data = lines.read_bounded(str(_root(root) / f"{pid}.json"), RECORD_MAX)
     try:
         got = json.loads(data.decode("utf-8")) if data else None
     except (ValueError, RecursionError):

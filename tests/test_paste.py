@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 import unittest
 import urllib.error
@@ -146,7 +147,7 @@ class Create(Case):
 
     def test_a_missing_empty_blank_or_oversized_file_is_refused_and_nothing_is_written(self):
         cases = {"missing": self.tmp / "nope.txt", "empty": self.write(b"", "e"),
-                 "blank": self.write(b" \n\t\n", "b"), "oversized": self.write(b"x" * (paste.MAX_BYTES + 1), "o"),
+                 "blank": self.write(b" \n\t\n", "b"), "bom only": self.write(b"\xef\xbb\xbf \n", "m"), "oversized": self.write(b"x" * (paste.MAX_BYTES + 1), "o"),
                  "not text": self.write(b"\xff\xfe\x00bin", "n"), "directory": self.tmp}
         for label, path in cases.items():
             got = self.run_command("create", "a", "--title", "t", path)
@@ -196,6 +197,18 @@ class Text(Case):
     def test_a_leading_byte_order_mark_comes_back_too(self):
         pid = self.make("t", "\ufeffBOM first")
         self.assertEqual(self.text_of(pid)[1], "\ufeffBOM first".encode("utf-8"))
+
+    def test_a_record_that_never_answers_does_not_stop_the_roster(self):
+        self.make("t", "text")
+        real, started = lines._plain_bytes, time.monotonic()
+
+        def stalled(path, limit):
+            if str(path).endswith(".json") and "pastes" in str(path):
+                time.sleep(3)
+            return real(path, limit)
+        with mock.patch("lines._plain_bytes", stalled), mock.patch("lines.READ_BUDGET", 0.2):
+            self.assertEqual(self.pastes(), [])
+        self.assertLess(time.monotonic() - started, 2.5)
 
     def test_an_unknown_or_hostile_id_is_a_404_not_a_path(self):
         self.make("t", "text")

@@ -136,6 +136,11 @@ def read_plain(path, limit):
     return _plain_bytes(path, limit)
 
 
+def read_bounded(path, limit):
+    """Like `read_plain`, and gives up (None) after `READ_BUDGET`: for a read made on every poll."""
+    return _small_bytes(path, limit)
+
+
 def write_atomic(path, text):
     """Put `text` in the file whole or not at all, and say whether it landed."""
     return _replace(path, text)
