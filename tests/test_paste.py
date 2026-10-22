@@ -481,10 +481,11 @@ class Staying(Case):
         root.mkdir(parents=True, exist_ok=True)
         os.mkfifo(root / ".lock")
         (root / ("0" * 16 + ".txt")).write_text("x")
-        done = threading.Thread(target=paste.sweep, daemon=True)
-        done.start()
-        done.join(5)
-        self.assertFalse(done.is_alive())
+        for call in (paste.sweep, lambda: self.assertRaises(OSError, paste._changing(root).__enter__)):
+            done = threading.Thread(target=call, daemon=True)
+            done.start()
+            done.join(5)
+            self.assertFalse(done.is_alive())
 
     def test_an_old_text_with_no_record_is_swept_and_a_text_with_a_record_never(self):
         pid = self.make("t", "text")
