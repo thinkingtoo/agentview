@@ -32,6 +32,7 @@ import fcntl
 import hashlib
 import json
 import os
+import stat
 import re
 import secrets
 import sys
@@ -202,9 +203,20 @@ def _changing(root, wait=True):
     would bring the record back without its text. `wait=False` raises BlockingIOError
     instead of waiting for the lock."""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with open(root / ".lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if wait:
+        with open(root / ".lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
+        return
+    # The poll's way in: it must not stall on a lock that is a FIFO or a link to one.
+    fd = os.open(root / ".lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("the lock is not a file")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
+    finally:
+        os.close(fd)
 
 
 def _record(pid, root=None, patient=False):

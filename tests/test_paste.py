@@ -476,6 +476,16 @@ class Staying(Case):
         paste.sweep()
         self.assertFalse(orphan.exists())
 
+    def test_a_sweep_does_not_hang_on_a_lock_that_is_a_fifo(self):
+        root = paste.store()
+        root.mkdir(parents=True, exist_ok=True)
+        os.mkfifo(root / ".lock")
+        (root / ("0" * 16 + ".txt")).write_text("x")
+        done = threading.Thread(target=paste.sweep, daemon=True)
+        done.start()
+        done.join(5)
+        self.assertFalse(done.is_alive())
+
     def test_an_old_text_with_no_record_is_swept_and_a_text_with_a_record_never(self):
         pid = self.make("t", "text")
         root = paste.store()
