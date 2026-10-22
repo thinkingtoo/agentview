@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately).
 
-**Claimed by:** none
+**Claimed by:** Habib 2026-10-22 13:20
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 - [ ] POST with Origin `http://localhost.attacker.example` and with a foreign Host is refused; tests fail on 99d586f
 - [ ] The dashboard's own calls (127.0.0.1 and localhost, right port) still pass; live check after restart

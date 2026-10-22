@@ -4,9 +4,9 @@
 
 **Blocked by:** None (can start immediately).
 
-**Claimed by:** none
+**Claimed by:** Tarek 2026-10-22 13:20
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 - [ ] A test with a creator stalled between the writes beyond the sweep age: fails on 99d586f, passes after the fix
 - [ ] Review GO on the fix, suite on t-compute green
