@@ -56,10 +56,17 @@ class _Session:
             self.service = self.dbus.Interface(service, SERVICE)
             _, self.session = self.service.OpenSession("plain", self.dbus.String("", variant_level=1),
                                                        timeout=TIMEOUT)
-        except Unavailable:
+        except BaseException as err:
+            # `__exit__` does not run when `__enter__` raises: the connection is closed here.
+            bus = getattr(self, "bus", None)
+            if bus is not None:
+                try:
+                    bus.close()
+                except Exception:
+                    pass
+            if isinstance(err, Exception) and not isinstance(err, Unavailable):
+                raise _unavailable(err) from None
             raise
-        except Exception as err:
-            raise _unavailable(err) from None
         return self
 
     def __exit__(self, kind, err, tb):
