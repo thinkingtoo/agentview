@@ -6,8 +6,8 @@
 
 **Claimed by:** Habib 2026-10-22 13:22
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] A test that a GET of `/api/roster` with a foreign Host is refused, failing on dd3dbd4; the same GET with a 127.0.0.1 or localhost Host still answers 200
-- [ ] Review GO on the fix, suite on t-compute green
+- [x] A test that a GET of `/api/roster` with a foreign Host is refused, failing on dd3dbd4; the same GET with a 127.0.0.1 or localhost Host still answers 200. Evidence: tests/test_get_host_guard.py, 27 failures on ea806ef's tree before the fix, all pass after.
+- [x] Review GO on the fix, suite on t-compute green. Evidence: Codex GO on 1891709 (reviews/paste-09-codex-1.md); merged as cfb6943, suite on the merge tree 2262 OK, skipped 4.
 - [ ] Live check on the restarted service: the dashboard loads and polls; a curl GET of `/api/roster` with a foreign Host gets 403
