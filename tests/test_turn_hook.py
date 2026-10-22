@@ -76,8 +76,8 @@ class Starting(unittest.TestCase):
         with _commands_in("/home/alice/Projects/agentview/hooks"):
             said = turn_line.begin({"session_id": sid, "prompt": "go"},
                                    root=self.root)["hookSpecificOutput"]["additionalContext"]
-        self.assertLess(len(said), 2000, len(said))
-        self.assertGreater(len(said), 1850, "the budget was 750 before 2026-10-19, 925 before the Paste paragraph and 1700 before ticket 10; if the text got "
+        self.assertLess(len(said), 2150, len(said))
+        self.assertGreater(len(said), 2000, "the budget was 750 before 2026-10-19, 925 before the Paste paragraph and 1700 before ticket 10; if the text got "
                                           "shorter, tighten the ceiling above to match")
 
     def test_the_session_is_told_how_to_leave_a_paste(self):
@@ -103,7 +103,8 @@ class Starting(unittest.TestCase):
         said = turn_line.begin({"session_id": "s1", "prompt": "go"},
                                root=self.root)["hookSpecificOutput"]["additionalContext"]
         for fragment in ("If creating a Paste is refused", "say so in the ask",
-                         "put the text itself in your question or reply", "never stay silent"):
+                         "put the text itself in your question or reply", "never stay silent",
+                         "for a secret, say only that it was refused"):
             self.assertIn(fragment, said)
 
     def test_a_command_the_person_types_reaches_the_ask_line(self):
