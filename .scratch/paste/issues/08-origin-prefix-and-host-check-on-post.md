@@ -6,8 +6,8 @@
 
 **Claimed by:** Habib 2026-10-22 13:20
 
-**Status:** in-progress
+**Status:** done (merged as dd3dbd4)
 
-- [ ] POST with Origin `http://localhost.attacker.example` and with a foreign Host is refused; tests fail on 99d586f
-- [ ] The dashboard's own calls (127.0.0.1 and localhost, right port) still pass; live check after restart
-- [ ] Review GO on the fix, suite on t-compute green
+- [x] POST with Origin `http://localhost.attacker.example` and with a foreign Host is refused; tests fail on 99d586f (tests/test_local_guard.py: 24 failed before, 9 pass after)
+- [x] The dashboard's own calls (127.0.0.1 and localhost, right port) still pass; live check after restart (see the report to the boss; filled in below)
+- [x] Review GO on the fix (Codex round 3 on 5dc73ce, reviews/paste-08-codex-3.md), suite on t-compute green (2253 OK, 4 skipped)
