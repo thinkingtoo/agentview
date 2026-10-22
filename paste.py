@@ -28,6 +28,7 @@ the two.
 """
 import argparse
 import contextlib
+import errno
 import fcntl
 import hashlib
 import json
@@ -208,7 +209,7 @@ def _changing(root, wait=True):
     fd = os.open(root / ".lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError("the lock is not a file")
+            raise OSError(errno.EINVAL, "the lock is not a file")
         fcntl.flock(fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
     finally:
