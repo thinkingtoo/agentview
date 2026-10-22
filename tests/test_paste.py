@@ -231,6 +231,26 @@ class Lifecycle(Case):
         self.assertEqual([p["copied"] for p in self.pastes()], [True])
         self.assertEqual(self.text_of(pid)[1], b"text")
 
+    def test_copy_and_done_are_not_fooled_by_a_slow_read_of_the_record(self):
+        # The poll gives up on a slow read and says "absent"; a change must not.
+        pid = self.make("t", "text")
+        with mock.patch.object(lines, "read_bounded", lambda path, limit: None):
+            self.assertEqual(self.post("/api/paste_copied", {"id": pid}), 200)
+        self.assertEqual([p["copied"] for p in self.pastes()], [True])
+        with mock.patch.object(lines, "read_bounded", lambda path, limit: None):
+            self.assertEqual(self.post("/api/paste_done", {"id": pid}), 200)
+        self.assertEqual(self.pastes(), [])
+        self.assertEqual(sorted(p.name for p in paste.store().iterdir() if p.suffix in (".json", ".txt")), [])
+
+    def test_a_copy_that_joins_an_old_read_cannot_bring_a_done_paste_back(self):
+        pid = self.make("t", "text")
+        old = paste._record(pid)                  # what a poll read before the done
+        self.assertEqual(self.post("/api/paste_done", {"id": pid}), 200)
+        with mock.patch.object(lines, "read_bounded", lambda path, limit: json.dumps(old).encode()):
+            self.post("/api/paste_copied", {"id": pid})
+        self.assertEqual(self.pastes(), [])
+        self.assertEqual(sorted(p.name for p in paste.store().iterdir() if p.suffix in (".json", ".txt")), [])
+
     def test_done_removes_it_and_only_it(self):
         keep, gone = self.make("keep", "k"), self.make("gone", "g")
         self.assertEqual(self.post("/api/paste_done", {"id": gone}), 200)
@@ -469,12 +489,14 @@ SECRET_TEXT = "Hoi Sven, jouw nieuwe toegang:\n" + TOKEN + "\n\"quoted\" \\ tab\
 
 class FakeVault:
     """The keyring, in memory. Records every call, by id: never the text."""
-    Unavailable = vault.Unavailable
+    Unavailable, Unsure = vault.Unavailable, vault.Unsure
 
     def __init__(self):
         self.items, self.calls, self.stores = {}, [], {}
         self.down = None            # a reason: every call raises Unavailable(reason)
         self.fail_delete = False
+        self.put_times_out = False  # the item is kept, then the reply never comes
+        self.put_refused = None     # a reason: only `put` raises a plain Unavailable
 
     def _call(self, op, pid=None):
         self.calls.append((op, pid))
@@ -484,8 +506,12 @@ class FakeVault:
     # An item belongs to a store, as in the real keyring: a call for another store sees nothing.
     def put(self, pid, text, store):
         self._call("put", pid)
+        if self.put_refused:
+            raise vault.Unavailable(self.put_refused)
         self.items[pid] = text
         self.stores[pid] = store
+        if self.put_times_out:
+            raise vault.Unsure("the keyring cannot be reached (timeout)")
 
     def get(self, pid, store):
         self._call("get", pid)
@@ -779,6 +805,33 @@ class Secrets(Case):
         self.assertNotEqual(self.command("sweep")[0], 0)
         self.assertEqual(len(self.pastes()), 1)
 
+    def test_a_put_whose_reply_is_lost_leaves_no_orphan_item(self):
+        self.vault.put_times_out = True
+        code, _, err = self.leave("Token", SECRET_TEXT)
+        self.assertNotEqual(code, 0)
+        self.assertIn("no Paste was made", err)
+        self.assertEqual((self.vault.items, self.pastes()), ({}, []))
+
+    def test_a_put_whose_reply_is_lost_and_cannot_be_taken_back_names_the_item(self):
+        self.vault.put_times_out = self.vault.fail_delete = True
+        code, _, err = self.leave("Token", SECRET_TEXT)
+        self.assertNotEqual(code, 0)
+        (pid,) = self.vault.items
+        self.assertIn(pid, err)
+        self.assertIn("sweep", err)
+        self.assertNotIn(TOKEN, err)
+        self.vault.fail_delete = self.vault.put_times_out = False
+        self.assertEqual(self.command("sweep")[0], 0)           # the orphan is findable and goes
+        self.assertEqual(self.vault.items, {})
+
+    def test_a_put_the_keyring_refused_outright_makes_no_second_call_and_names_no_item(self):
+        self.vault.put_refused = "the keyring is locked"
+        code, _, err = self.leave("Token", SECRET_TEXT)
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("sweep", err)
+        self.assertIn(("put", None), [(op, None) for op, _ in self.vault.calls])      # it got as far as the put
+        self.assertNotIn("delete", [op for op, _ in self.vault.calls])
+
     def test_a_title_that_looks_like_a_secret_is_refused_marked_or_not(self):
         for flags in ((), ("--secret",)):
             code, out, err = self.leave("password=" + "Tr0ub4dor&3x", "text", *flags)
@@ -788,6 +841,18 @@ class Secrets(Case):
         code, _, err = self.leave(TOKEN, "text")
         self.assertNotEqual(code, 0)
         self.assertNotIn(TOKEN, err)
+        self.assertEqual((self.vault.calls, self.pastes(), self.store_bytes()), ([], [], b""))
+
+    def test_a_token_in_a_long_title_is_caught_before_the_title_is_clipped(self):
+        # Clipped at 80 the token would be cut in two and no longer look like one.
+        for lead in (60, 75, 90, 200):
+            title = "Token for Sven " + "x" * lead + " " + TOKEN
+            self.assertTrue(paste.credentials.looks_secret(title))
+            self.assertFalse(paste.credentials.looks_secret(paste._clip(title, paste.TITLE_MAX)), lead)
+            code, out, err = self.leave(title, "text")
+            self.assertNotEqual(code, 0, lead)
+            self.assertIn("title", err)
+            self.assertNotIn(TOKEN[:12], err)
         self.assertEqual((self.vault.calls, self.pastes(), self.store_bytes()), ([], [], b""))
 
     def test_a_title_naming_the_secret_without_being_one_is_fine(self):
@@ -832,8 +897,9 @@ class Dbus(unittest.TestCase):
 
     def setUp(self):
         self.addCleanup(mock.patch.stopall)
+        self.bus_closed = 0
 
-    def fake_connect(self, fail_with=None, locked=False, prompt="/"):
+    def fake_connect(self, fail_with=None, locked=False, prompt="/", create_fails=None):
         calls = []
         secret = self.SECRET
 
@@ -846,7 +912,7 @@ class Dbus(unittest.TestCase):
                 return inner
 
             def close(inner):
-                pass
+                self.bus_closed += 1
 
         class Ifaces:
             String = staticmethod(lambda s, variant_level=0: s)
@@ -870,6 +936,8 @@ class Dbus(unittest.TestCase):
                         return locked
 
                     def CreateItem(i, props, sec, replace, timeout=None):
+                        if create_fails:
+                            raise create_fails
                         calls.append(("CreateItem", sec[2]))
                         return "/item/1", prompt
 
@@ -912,6 +980,35 @@ class Dbus(unittest.TestCase):
                 vault.put("a" * 16, self.SECRET, "s" * 16)
         self.assertIn("locked", str(caught.exception))
         self.assertNotIn("CreateItem", [c[0] for c in calls])
+
+    def test_the_connection_is_closed_when_opening_the_session_fails(self):
+        connect, _ = self.fake_connect(fail_with=RuntimeError("no session"))
+        with mock.patch("vault._connect", connect):
+            with self.assertRaises(vault.Unavailable):
+                vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertEqual(self.bus_closed, 1)
+
+    def test_a_create_that_gets_no_reply_is_unsure_not_merely_unavailable(self):
+        connect, calls = self.fake_connect(create_fails=TimeoutError("no reply for " + self.SECRET))
+        with mock.patch("vault._connect", connect):
+            with self.assertRaises(vault.Unsure) as caught:
+                vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertNotIn(self.SECRET, str(caught.exception))
+        self.assertNotIn(self.SECRET, repr(caught.exception.__cause__))
+        self.assertEqual((self.bus_closed, calls[-1]), (1, ("Close",)))
+
+    def test_a_refusal_before_the_create_is_unavailable_and_not_unsure(self):
+        connect, _ = self.fake_connect(locked=True)
+        with mock.patch("vault._connect", connect):
+            with self.assertRaises(vault.Unavailable) as caught:
+                vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertNotIsInstance(caught.exception, vault.Unsure)
+
+    def test_the_connection_is_closed_once_when_all_goes_well(self):
+        connect, _ = self.fake_connect()
+        with mock.patch("vault._connect", connect):
+            vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertEqual(self.bus_closed, 1)
 
     def test_a_bus_that_is_not_there_is_unavailable(self):
         with mock.patch.dict(os.environ, {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent/bus"}):

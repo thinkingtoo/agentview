@@ -32,6 +32,10 @@ class Unavailable(Exception):
     """The keyring cannot be used right now. The text says why, in words that never carry a secret."""
 
 
+class Unsure(Unavailable):
+    """The request to keep a text went out and no answer came back: the keyring may hold the item."""
+
+
 def _address():
     return os.environ.get("DBUS_SESSION_BUS_ADDRESS") or f"unix:path=/run/user/{os.getuid()}/bus"
 
@@ -59,8 +63,15 @@ class _Session:
         except Unavailable:
             raise
         except Exception as err:
+            self._close_bus()           # `__exit__` does not run when `__enter__` raises
             raise _unavailable(err) from None
         return self
+
+    def _close_bus(self):
+        try:
+            self.bus.close()
+        except Exception:               # no bus yet, or already gone
+            pass
 
     def __exit__(self, kind, err, tb):
         try:
@@ -68,10 +79,7 @@ class _Session:
                                 "org.freedesktop.Secret.Session").Close(timeout=TIMEOUT)
         except Exception:
             pass
-        try:
-            self.bus.close()
-        except Exception:
-            pass
+        self._close_bus()
         if isinstance(err, Exception) and not isinstance(err, Unavailable):
             raise _unavailable(err) from None
 
@@ -121,7 +129,10 @@ def put(pid, text, store):
             signature="sv")
         secret = s.dbus.Struct((s.session, s.dbus.ByteArray(b""), s.dbus.ByteArray(text.encode("utf-8")),
                                 "text/plain; charset=utf-8"), signature="oayays")
-        _, prompt = s.interface(collection, COLLECTION).CreateItem(props, secret, True, timeout=TIMEOUT)
+        try:
+            _, prompt = s.interface(collection, COLLECTION).CreateItem(props, secret, True, timeout=TIMEOUT)
+        except Exception as err:
+            raise Unsure(_unavailable(err).args[0]) from None
         s.refuse_prompt(prompt)
 
 
