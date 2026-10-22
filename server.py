@@ -253,24 +253,39 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def _host_ok(self):
+        """The Host names this server by a loopback name and its own port. A page on a name the
+        attacker controls, pointed at this machine by DNS rebinding, sends its own name here."""
+        port = self.server.server_port
+        return self.headers.get("Host", "") in (f"127.0.0.1:{port}", f"localhost:{port}")
+
+    def _origin_ok(self):
+        """No Origin is a command line or a same-origin GET. One that is sent must be this server,
+        scheme, host and port compared exactly: a prefix test lets `localhost.attacker.example` in."""
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return True
+        try:
+            parts = urllib.parse.urlsplit(origin)
+            return (parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost")
+                    and parts.port == self.server.server_port
+                    and not (parts.path or parts.query or parts.fragment or parts.username))
+        except ValueError:
+            return False
+
     def _local(self):
         """A page on another origin can POST here; it cannot forge these.
 
         The damage would only be a switched terminal tab, but a jump is still
         an action, and actions get a guard.
         """
-        origin = self.headers.get("Origin")
-        if origin and not origin.startswith(("http://127.0.0.1", "http://localhost")):
-            return False
-        return self.headers.get("X-Fleet") == "1"
+        return self._origin_ok() and self._host_ok() and self.headers.get("X-Fleet") == "1"
 
     def _local_get(self):
         """The text of a Paste may come out of the keyring, so its GET gets the guard a POST has:
         the custom header cannot be sent by a page on another origin without a preflight that
         is refused, and the Host check closes the way in by a name that points at this machine."""
-        host = self.headers.get("Host", "")
-        return (self.headers.get("X-Fleet") == "1"
-                and host in (f"127.0.0.1:{self.server.server_port}", f"localhost:{self.server.server_port}"))
+        return self.headers.get("X-Fleet") == "1" and self._host_ok()
 
     def _body(self):
         length = int(self.headers.get("Content-Length", 0))
