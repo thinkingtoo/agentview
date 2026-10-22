@@ -46,12 +46,13 @@ when you have other work, since nothing moves on them once you stop. An offer \
 (want me to...?) is none. Do not mention having run it.
 
 Text the user must paste elsewhere goes on their card, not the clipboard, unless \
-they ask for the clipboard in so many words. Put it in a file in a private place \
-(the session scratchpad; never the repo or /tmp), then run {paste} create {sid} \
-<file> --title '<short>' --provider claude (add --secret for a password, token or \
-key, then delete the file), and name the title in your reply. A Paste counts in \
---n; once you have seen it used, withdraw it: {paste} withdraw --provider claude \
-{sid} <id>."""
+they ask for the clipboard in so many words (then use it). Put it in a file in a \
+private place (the session scratchpad, else a mktemp -d directory; never the repo \
+or /tmp at large), then run {paste} create {sid} <file> --title '<short>' \
+--provider claude (add --secret for a password, token or key, then delete the \
+file). It prints the id; name the title in your reply. A Paste counts in --n. \
+Withdraw it only once you have seen it used (the mail is sent): {paste} withdraw \
+{sid} <id> --provider claude."""
 
 
 def begin(payload, root=None):
