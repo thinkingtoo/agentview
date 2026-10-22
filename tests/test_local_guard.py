@@ -63,6 +63,19 @@ class Guard(unittest.TestCase):
         self.assertEqual(self.post(fleet=None), 403)
         self.assertEqual(self.post(fleet="0"), 403)
 
+    def test_on_port_80_the_browser_leaves_the_port_out(self):
+        self.httpd.server_port = 80  # the handler reads it; the socket stays where it is
+        for host in ("127.0.0.1", "localhost", "127.0.0.1:80"):
+            for origin in ("http://127.0.0.1", "http://localhost:80"):
+                with self.subTest(host=host, origin=origin):
+                    self.assertEqual(self.post(origin=origin, host=host), 400)
+        self.assertEqual(self.post(origin="http://localhost.attacker.example", host="127.0.0.1"), 403)
+        self.assertEqual(self.post(host="evil.example"), 403)
+        self.httpd.server_port = self.port
+
+    def test_off_port_80_a_portless_name_is_refused(self):
+        self.assertEqual(self.post(origin="http://127.0.0.1", host="127.0.0.1"), 403)
+
 
 if __name__ == "__main__":
     unittest.main()

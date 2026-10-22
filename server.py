@@ -257,7 +257,10 @@ class Handler(BaseHTTPRequestHandler):
         """The Host names this server by a loopback name and its own port. A page on a name the
         attacker controls, pointed at this machine by DNS rebinding, sends its own name here."""
         port = self.server.server_port
-        return self.headers.get("Host", "") in (f"127.0.0.1:{port}", f"localhost:{port}")
+        names = [f"127.0.0.1:{port}", f"localhost:{port}"]
+        if port == 80:  # a browser leaves the default port out
+            names += ["127.0.0.1", "localhost"]
+        return self.headers.get("Host", "") in names
 
     def _origin_ok(self):
         """No Origin is a command line or a same-origin GET. One that is sent must be this server,
@@ -268,7 +271,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             parts = urllib.parse.urlsplit(origin)
             return (parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost")
-                    and parts.port == self.server.server_port
+                    and (parts.port or 80) == self.server.server_port
                     and not (parts.path or parts.query or parts.fragment or parts.username))
         except ValueError:
             return False
