@@ -4,7 +4,9 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Claimed by:** Habib 2026-10-22 13:22
+
+**Status:** in-progress
 
 - [ ] A test that a GET of `/api/roster` with a foreign Host is refused, failing on dd3dbd4; the same GET with a 127.0.0.1 or localhost Host still answers 200
 - [ ] Review GO on the fix, suite on t-compute green
