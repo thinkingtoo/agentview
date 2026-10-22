@@ -77,7 +77,7 @@ class Starting(unittest.TestCase):
             said = turn_line.begin({"session_id": sid, "prompt": "go"},
                                    root=self.root)["hookSpecificOutput"]["additionalContext"]
         self.assertLess(len(said), 2000, len(said))
-        self.assertGreater(len(said), 1850, "the budget was 750 before 2026-10-19, 925 before the Paste paragraph and 1550 before ticket 10; if the text got "
+        self.assertGreater(len(said), 1850, "the budget was 750 before 2026-10-19, 925 before the Paste paragraph and 1700 before ticket 10; if the text got "
                                           "shorter, tighten the ceiling above to match")
 
     def test_the_session_is_told_how_to_leave_a_paste(self):
@@ -99,20 +99,22 @@ class Starting(unittest.TestCase):
 
     def test_a_refused_paste_is_said_out_loud(self):
         # 2026-10-22 18:42: the classifier refused a `paste create` and the session said nothing, so
-        # the person looked for a card that did not exist (ticket 10, cause A).
+        # the person looked for a card that did not exist (ticket 10, .scratch/paste/issues/10-*.md, cause A).
         said = turn_line.begin({"session_id": "s1", "prompt": "go"},
                                root=self.root)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn("If paste create is refused (by the classifier or by an error), say so in "
-                      "the --ask line and put the text itself in your question or reply; "
-                      "never stay silent.", said)
+        for fragment in ("If creating a Paste is refused", "say so in the ask",
+                         "put the text itself in your question or reply", "never stay silent"):
+            self.assertIn(fragment, said)
 
     def test_a_command_the_person_types_reaches_the_ask_line(self):
         # A command offered only inside an AskUserQuestion option had no home (ticket 10, cause B).
         # The copy button never adds the "!" (the person does), so the text says to leave it off.
         said = turn_line.begin({"session_id": "s1", "prompt": "go"},
                                root=self.root)["hookSpecificOutput"]["additionalContext"]
-        self.assertIn('A command the user must type goes in the --ask line after "$ " too, '
-                      "even when an option of your question offers it, without a leading !.", said)
+        for fragment in ('must run or type goes after "$ " in the ask too',
+                         "even when an option of your question offers it",
+                         "without a leading ! (the user adds it)"):
+            self.assertIn(fragment, said)
 
     def test_the_size_does_not_depend_on_where_the_checkout_lives(self):
         sizes = set()
