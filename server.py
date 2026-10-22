@@ -542,6 +542,11 @@ class Handler(BaseHTTPRequestHandler):
                    "application/json")
 
     def do_GET(self):
+        # A GET carries no X-Fleet, but a page rebound onto this machine is same-origin with it
+        # and could read the roster: the Host must name this server, on every route.
+        if not self._host_ok():
+            log.event("refused", path=self.path.split("?", 1)[0], host=self.headers.get("Host"))
+            return self.send_error(403, "not a local request")
         if self.path.startswith("/api/roster"):
             # A poll is expected to be fast. The 9-second round that made
             # clicking feel broken would have written a line every time.
