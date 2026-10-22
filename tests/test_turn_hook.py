@@ -61,14 +61,30 @@ class Starting(unittest.TestCase):
         # it to copy) and, the same day, one more for the single quote (how it
         # is written in either field, because both sit inside the hook's own
         # single quotes); the ceiling leaves room for one more sentence and
-        # no more.
+        # no more. Ticket paste-04 added the Paste paragraph (about 600 characters):
+        # a session must learn from this text alone how to leave a Paste.
         sid = "00000000-0000-4000-8000-000000000000"
-        with mock.patch.object(turn_line, "WRITER", Path("/home/alice/Projects/agentview/hooks/team-line")):
+        with mock.patch.object(turn_line, "WRITER", Path("/home/alice/Projects/agentview/hooks/team-line")), mock.patch.object(turn_line, "PASTE", Path("/home/alice/Projects/agentview/hooks/paste")):
             said = turn_line.begin({"session_id": sid, "prompt": "go"},
                                    root=self.root)["hookSpecificOutput"]["additionalContext"]
-        self.assertLess(len(said), 925, len(said))
-        self.assertGreater(len(said), 870, "the budget was 750 before 2026-10-19; if the text got "
+        self.assertLess(len(said), 1600, len(said))
+        self.assertGreater(len(said), 1450, "the budget was 750 before 2026-10-19; if the text got "
                                           "shorter, tighten the ceiling above to match")
+
+    def test_the_session_is_told_how_to_leave_a_paste(self):
+        # The only instruction a session gets for text the person must paste elsewhere:
+        # the command with its absolute path, a file (never an argument), --provider,
+        # the secret flag, the private file's fate, and that a Paste counts in --n.
+        with mock.patch.object(turn_line, "WRITER", Path("/home/alice/Projects/agentview/hooks/team-line")), mock.patch.object(turn_line, "PASTE", Path("/home/alice/Projects/agentview/hooks/paste")):
+            said = turn_line.begin({"session_id": "s1", "prompt": "go"},
+                                   root=self.root)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("/home/alice/Projects/agentview/hooks/paste create s1 <file>", said)
+        self.assertIn("--title", said)
+        self.assertIn("--provider claude", said)
+        self.assertIn("--secret", said)
+        self.assertIn("delete the file", said)
+        self.assertIn("clipboard", said)
+        self.assertRegex(said, r"counts? in --n|in --n")
 
     def test_the_size_does_not_depend_on_where_the_checkout_lives(self):
         sizes = set()
