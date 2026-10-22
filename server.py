@@ -286,10 +286,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._origin_ok() and self._host_ok() and self.headers.get("X-Fleet") == "1"
 
     def _local_get(self):
-        """The text of a Paste may come out of the keyring, so its GET gets the guard a POST has:
-        the custom header cannot be sent by a page on another origin without a preflight that
-        is refused, and the Host check closes the way in by a name that points at this machine."""
-        return self.headers.get("X-Fleet") == "1" and self._host_ok()
+        """The text of a Paste may come out of the keyring, so its GET also needs the custom
+        header, which a page on another origin cannot send without a preflight that is refused.
+        do_GET has already checked the Host."""
+        return self.headers.get("X-Fleet") == "1"
 
     def _body(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -542,6 +542,11 @@ class Handler(BaseHTTPRequestHandler):
                    "application/json")
 
     def do_GET(self):
+        # A GET carries no X-Fleet, but a page rebound onto this machine is same-origin with it
+        # and could read the roster: the Host must name this server, on every route.
+        if not self._host_ok():
+            log.event("refused", path=self.path.split("?", 1)[0], host=self.headers.get("Host"))
+            return self.send_error(403, "not a local request")
         if self.path.startswith("/api/roster"):
             # A poll is expected to be fast. The 9-second round that made
             # clicking feel broken would have written a line every time.
