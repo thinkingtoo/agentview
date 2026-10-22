@@ -29,6 +29,7 @@ sys.path.insert(0, str(HERE.parent))
 import lines          # noqa: E402  -- after the path is set
 
 WRITER = HERE / "team-line"
+PASTE = HERE / "paste"
 
 ASK = """Before this turn ends, run this once, as your last action:
 
@@ -42,7 +43,16 @@ of the ask, within the single-quoted text. A single quote in either field is \
 written as '\\''. --n is how many things are left for the user when this turn ends: a decision, \
 a command for them to run, a mail for them to send, a sign-in. Count them even \
 when you have other work, since nothing moves on them once you stop. An offer \
-(want me to...?) is none. Do not mention having run it."""
+(want me to...?) is none. Do not mention having run it.
+
+Text the user must paste elsewhere goes on their card, not the clipboard, unless \
+they ask for the clipboard in so many words (then use it). Put it in a file in a \
+private place (the session scratchpad, else a mktemp -d directory; never the repo \
+or /tmp at large), then run {paste} create {sid} <file> --title '<short>' \
+--provider claude (add --secret for a password, token or key, then delete the \
+file). It prints the id; name the title in your reply. A Paste counts in --n. \
+Withdraw it only once you have seen it used (the mail is sent): {paste} withdraw \
+{sid} <id> --provider claude."""
 
 
 def begin(payload, root=None):
@@ -53,7 +63,7 @@ def begin(payload, root=None):
     lines.begin_turn(sid, root)
     return {"hookSpecificOutput": {
         "hookEventName": "UserPromptSubmit",
-        "additionalContext": ASK.format(writer=WRITER, sid=sid)}}
+        "additionalContext": ASK.format(writer=WRITER, paste=PASTE, sid=sid)}}
 
 
 def main():
