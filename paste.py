@@ -199,7 +199,8 @@ def _unlink(path):
 def _changing(root, wait=True):
     """One change to a Paste at a time, across the server's threads and the
     command's processes: a copy mark read before a done and written after it
-    would bring the record back without its text."""
+    would bring the record back without its text. `wait=False` raises BlockingIOError
+    instead of waiting for the lock."""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with open(root / ".lock", "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -299,9 +300,7 @@ def sweep(root=None, after=SWEEP_AFTER):
                         path.unlink()
                 except OSError:
                     pass
-    except BlockingIOError:
-        return
-    except OSError:
+    except OSError:         # a busy lock (BlockingIOError) or a store we cannot write to
         return
 
 
