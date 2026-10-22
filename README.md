@@ -1547,3 +1547,14 @@ second, full-file scanner that nothing called, and the summary tests ran
 against *that* — so they stayed green while the live one carried a badge bug
 for the whole of its life. If a test can only be written against a function
 the page does not use, the function is the problem.
+
+## Pastes
+
+A session leaves a text for you on its card with `hooks/paste create <session> --title T [--secret] FILE`
+(see `paste.py`). A password, token or key (marked `--secret`, or recognised by `credentials.py`) is kept in
+your login keyring, never in a file; the card shows dots, and copy puts the real text on the clipboard. This is
+the one place agentview needs a third-party module: `dbus-python` (the system package `python3-dbus`), imported
+only when a secret is made, read or deleted. Without it, or with the keyring locked, a secret Paste is refused
+and nothing is written; plain Pastes are unaffected. `hooks/paste sweep` cleans up after a crash. A secret's keyring item is tied to the store's folder: if the
+state directory is moved, its secret Pastes lose their items (the page says it cannot read them), so tick
+them done and have the sessions leave them again.

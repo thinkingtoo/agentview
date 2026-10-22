@@ -6,6 +6,8 @@ A fake provider stands behind the roster and the store is a throwaway under a
 temp state directory. The command runs as a process of its own, as a session
 runs it, with `XDG_STATE_HOME` pointing at that directory.
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -32,6 +34,7 @@ import paste
 import seen
 import server
 import finished
+import vault
 from test_providers import Fake, minimal
 
 REAL_STORE = lines.store          # before any test patches it
@@ -75,7 +78,9 @@ class Case(unittest.TestCase):
     def run_command(self, *args):
         return subprocess.run([sys.executable, str(COMMAND), *map(str, args)], capture_output=True,
                               text=True, stdin=subprocess.DEVNULL, timeout=30,
-                              env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+                              env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1",
+                                   # Never the real keyring, whatever a text turns out to hold.
+                                   "DBUS_SESSION_BUS_ADDRESS": "unix:path=" + str(self.tmp / "no-bus")})
 
     def make(self, title, text, session="a"):
         got = self.run_command("create", session, "--title", title, self.write(text))
@@ -88,9 +93,10 @@ class Case(unittest.TestCase):
     # -- what the page does
     base = property(lambda self: f"http://127.0.0.1:{self.httpd.server_port}")
 
-    def get(self, path):
+    def get(self, path, headers=None):
         try:
-            with urllib.request.urlopen(self.base + path, timeout=10) as r:
+            req = urllib.request.Request(self.base + path, headers=headers or {})
+            with urllib.request.urlopen(req, timeout=10) as r:
                 return r.status, r.read()
         except urllib.error.HTTPError as err:
             err.close()
@@ -112,7 +118,7 @@ class Case(unittest.TestCase):
         return tiles[0]["pastes"] if tiles else None
 
     def text_of(self, pid):
-        return self.get("/api/paste_text?id=" + urllib.parse.quote(pid))
+        return self.get("/api/paste_text?id=" + urllib.parse.quote(pid), {"X-Fleet": "1"})
 
     def store_bytes(self):
         return b"".join(p.read_bytes() for p in sorted(self.state.rglob("*")) if p.is_file())
@@ -455,6 +461,462 @@ class Staying(Case):
         young.write_text("being made")
         self.roster()
         self.assertTrue(young.exists())
+
+# Built in pieces: no secret scanner should take this file for a leak.
+TOKEN = "gh" + "p_" + "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5"
+SECRET_TEXT = "Hoi Sven, jouw nieuwe toegang:\n" + TOKEN + "\n\"quoted\" \\ tab\there\n"
+
+
+class FakeVault:
+    """The keyring, in memory. Records every call, by id: never the text."""
+    Unavailable = vault.Unavailable
+
+    def __init__(self):
+        self.items, self.calls, self.stores = {}, [], {}
+        self.down = None            # a reason: every call raises Unavailable(reason)
+        self.fail_delete = False
+
+    def _call(self, op, pid=None):
+        self.calls.append((op, pid))
+        if self.down:
+            raise vault.Unavailable(self.down)
+
+    # An item belongs to a store, as in the real keyring: a call for another store sees nothing.
+    def put(self, pid, text, store):
+        self._call("put", pid)
+        self.items[pid] = text
+        self.stores[pid] = store
+
+    def get(self, pid, store):
+        self._call("get", pid)
+        return self.items.get(pid) if self.stores.get(pid) == store else None
+
+    def delete(self, pid, store):
+        self._call("delete", pid)
+        if self.fail_delete:
+            raise vault.Unavailable("the keyring cannot be reached (test)")
+        if self.stores.get(pid) != store:
+            return False
+        return self.items.pop(pid, None) is not None
+
+    def ids(self, store):
+        self._call("ids")
+        return sorted(p for p in self.items if self.stores.get(p) == store)
+
+
+class Secrets(Case):
+    def setUp(self):
+        super().setUp()
+        self.vault = FakeVault()
+        patch = mock.patch.object(paste, "vault", self.vault)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.stderr = io.StringIO()
+        redirect = contextlib.redirect_stderr(self.stderr)
+        redirect.__enter__()
+        self.addCleanup(redirect.__exit__, None, None, None)
+        self.inputs = []
+
+    def command(self, *args):
+        """The command, in this process so that the fake keyring answers it."""
+        out, err = io.StringIO(), io.StringIO()
+        code = paste.main([str(a) for a in args], out, err)
+        self.stderr.write(err.getvalue())
+        return code, out.getvalue().strip(), err.getvalue()
+
+    def leave(self, title, text, *flags, session="a"):
+        path = self.write(text, f"in{len(self.inputs)}.txt")
+        self.inputs.append(path)
+        return self.command("create", session, "--title", title, *flags, path)
+
+    def everything_else(self):
+        """Every byte under the temp directory except the files the session wrote."""
+        return b"".join(p.read_bytes() for p in sorted(self.tmp.rglob("*"))
+                        if p.is_file() and p not in self.inputs)
+
+    def log_text(self):
+        log_file = self.tmp / "events.jsonl"
+        return log_file.read_text() if log_file.exists() else ""
+
+    def assert_no_leak(self, *secrets):
+        gathered = (self.everything_else().decode("utf-8", "replace") + self.stderr.getvalue()
+                    + self.log_text() + json.dumps(self.vault.calls) + self.get("/api/roster")[1].decode())
+        for secret in secrets:
+            self.assertNotIn(secret, gathered)
+
+    def test_a_marked_secret_goes_to_the_keyring_and_nowhere_in_the_store(self):
+        code, pid, err = self.leave("New login", "just a word\n", "--secret")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.vault.items, {pid: "just a word\n"})
+        self.assertEqual(self.store_bytes().count(b"just a word"), 0)
+        self.assert_no_leak("just a word")
+
+    def test_an_unmarked_text_with_a_token_is_handled_as_a_secret(self):
+        code, pid, err = self.leave("New login", SECRET_TEXT)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.vault.items, {pid: SECRET_TEXT})
+        self.assertTrue(self.pastes()[0]["secret"])
+        self.assertNotIn(TOKEN.encode(), self.store_bytes())
+        self.assert_no_leak(TOKEN, "Hoi Sven, jouw")
+
+    def test_the_roster_never_carries_a_secrets_text_not_even_the_first_line(self):
+        self.leave("New login", SECRET_TEXT)
+        self.leave("Second", "plain first line\nthen " + TOKEN, "--secret")
+        raw = self.get("/api/roster")[1].decode()
+        for word in ("Hoi Sven", "toegang", TOKEN, "plain first line"):
+            self.assertNotIn(word, raw)
+        self.assertEqual([(p["secret"], p["first"]) for p in self.pastes()], [(True, ""), (True, "")])
+
+    def test_a_secret_record_that_somehow_holds_a_first_line_still_shows_none(self):
+        _, pid, _ = self.leave("New login", SECRET_TEXT)
+        record = paste.store() / f"{pid}.json"
+        data = json.loads(record.read_text())
+        record.write_text(json.dumps({**data, "first": "Hoi Sven, jouw"}))
+        self.assertEqual(self.pastes()[0]["first"], "")
+
+    def test_a_plain_paste_never_touches_the_keyring_even_when_it_is_down(self):
+        self.vault.down = "no keyring"
+        code, pid, err = self.leave("Plain", "Hoi Sven,\nhet voorstel staat klaar. Het wachtwoord: zie de kluis.\n")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.vault.calls, [])
+        self.assertEqual(self.text_of(pid)[0], 200)
+        self.assertFalse(self.pastes()[0]["secret"])
+
+    def test_the_text_comes_from_the_keyring_byte_identical_and_copying_does_not_touch_it(self):
+        _, pid, _ = self.leave("New login", SECRET_TEXT)
+        status, body = self.text_of(pid)
+        self.assertEqual((status, body), (200, SECRET_TEXT.encode()))
+        before = list(self.vault.calls)
+        self.assertEqual(self.post("/api/paste_copied", {"id": pid}), 200)
+        self.assertEqual(self.vault.calls, before)
+        self.assertTrue(self.pastes()[0]["copied"])
+        self.assertEqual(self.text_of(pid)[1], SECRET_TEXT.encode())
+
+    def test_the_text_of_a_secret_when_the_keyring_is_down_is_an_error_not_a_missing_paste(self):
+        _, pid, _ = self.leave("New login", SECRET_TEXT)
+        self.vault.down = "the keyring is locked"
+        self.assertEqual(self.text_of(pid)[0], 500)
+        self.assertEqual([p["id"] for p in self.pastes()], [pid])      # still listed
+
+    def test_done_deletes_the_keyring_item_and_the_record(self):
+        _, pid, _ = self.leave("New login", SECRET_TEXT)
+        self.assertEqual(self.post("/api/paste_done", {"id": pid}), 200)
+        self.assertEqual((self.vault.items, self.pastes()), ({}, []))
+        self.assertEqual(self.text_of(pid)[0], 404)
+
+    def test_withdraw_deletes_the_keyring_item_and_the_record(self):
+        _, pid, _ = self.leave("New login", SECRET_TEXT)
+        self.assertEqual(self.command("withdraw", "a", pid)[0], 0)
+        self.assertEqual((self.vault.items, self.pastes()), ({}, []))
+
+    def test_a_plain_paste_done_does_not_call_the_keyring(self):
+        _, pid, _ = self.leave("Plain", "just text")
+        self.assertEqual(self.post("/api/paste_done", {"id": pid}), 200)
+        self.assertEqual(self.vault.calls, [])
+
+    def test_when_the_keyring_delete_fails_the_record_stays_and_done_says_it_failed(self):
+        _, pid, _ = self.leave("New login", SECRET_TEXT)
+        self.vault.fail_delete = True
+        self.assertEqual(self.post("/api/paste_done", {"id": pid}), 500)
+        code, _, err = self.command("withdraw", "a", pid)
+        self.assertNotEqual(code, 0)
+        self.assertIn("keyring", err)
+        self.assertEqual([p["id"] for p in self.pastes()], [pid])
+        self.assertIn(pid, self.vault.items)
+        self.assertEqual(self.text_of(pid)[1], SECRET_TEXT.encode())     # nothing was half lost
+        self.vault.fail_delete = False
+        self.assertEqual(self.post("/api/paste_done", {"id": pid}), 200)
+        self.assertEqual((self.vault.items, self.pastes()), ({}, []))
+        self.assert_no_leak(TOKEN)
+
+    def test_a_done_cut_short_after_the_keyring_delete_leaves_a_card_that_says_it_cannot_be_read(self):
+        _, pid, _ = self.leave("New login", SECRET_TEXT)
+        real = Path.unlink
+
+        def failing(path, *a, **k):
+            if path.suffix == ".json":
+                raise PermissionError(1, "Operation not permitted")
+            return real(path, *a, **k)
+        with mock.patch.object(Path, "unlink", failing):
+            self.assertEqual(self.post("/api/paste_done", {"id": pid}), 500)
+        self.assertEqual(self.vault.items, {})
+        self.assertEqual([p["id"] for p in self.pastes()], [pid])        # on the card, not hidden
+        self.assertEqual(self.text_of(pid)[0], 404)                      # and it cannot be read
+        self.assertEqual(self.post("/api/paste_done", {"id": pid}), 200)  # a tick finishes it
+        self.assertEqual(self.pastes(), [])
+
+    def test_a_keyring_that_cannot_be_reached_makes_the_command_fail_and_write_nothing(self):
+        for reason in ("the keyring is locked", "the keyring cannot be reached (ServiceUnknown)"):
+            self.vault.down = reason
+            for flags in (("--secret",), ()):
+                text = "pw " + TOKEN if not flags else "just a word"
+                code, out, err = self.leave("New login", text, *flags)
+                self.assertNotEqual(code, 0)
+                self.assertEqual(out, "")
+                self.assertIn(reason, err)
+                self.assertNotIn(TOKEN, err)
+                self.assertEqual([p for p in self.state.rglob("*") if p.is_file()], [])   # not even the lock
+        self.assertEqual(self.pastes(), [])
+
+    def test_a_keyring_that_goes_away_between_the_probe_and_the_put_makes_no_paste(self):
+        def put(pid, text, store):
+            self.vault.calls.append(("put", pid))
+            raise vault.Unavailable("the keyring cannot be reached (test)")
+        self.vault.put = put
+        code, out, err = self.leave("New login", SECRET_TEXT)
+        self.assertNotEqual(code, 0)
+        self.assertEqual((out, self.vault.items, self.pastes(), self.store_bytes()), ("", {}, [], b""))
+        self.assertEqual([p for p in self.state.rglob("*.txt")] + [p for p in self.state.rglob("*.json")], [])
+        self.assert_no_leak(TOKEN)
+
+    def test_a_record_that_cannot_be_written_takes_its_keyring_item_back(self):
+        real = lines.write_atomic
+        with mock.patch("lines.write_atomic", lambda path, text: False if str(path).endswith(".json") else real(path, text)):
+            code, out, err = self.leave("New login", SECRET_TEXT)
+        self.assertNotEqual(code, 0)
+        self.assertEqual(self.vault.items, {})
+        self.assertEqual(self.pastes(), [])
+        self.assert_no_leak(TOKEN)
+
+    def test_a_keyring_item_that_cannot_be_taken_back_is_named_so_it_is_not_silent(self):
+        real = lines.write_atomic
+        self.vault.fail_delete = True
+        with mock.patch("lines.write_atomic", lambda path, text: False if str(path).endswith(".json") else real(path, text)):
+            code, out, err = self.leave("New login", SECRET_TEXT)
+        self.assertNotEqual(code, 0)
+        (pid,) = self.vault.items
+        self.assertIn(pid, err)
+        self.assertIn("sweep", err)
+        self.assert_no_leak(TOKEN)
+
+    def test_a_secret_paste_stays_on_a_gone_sessions_card_and_the_file_sweep_leaves_it_alone(self):
+        """Tickets 02 and 03 meet: the card of a session that left holds a secret, masked; the
+        roster poll's file sweep (old texts, old temp files) touches neither keyring nor record,
+        and nothing of it is ever on disk; withdraw with the provider takes the keyring item."""
+        code, pid, _ = self.leave("Token", "sk-test-" + "ab12" * 8, "--provider", "fake")
+        self.assertEqual(code, 0)
+        self.fake._sessions = []
+        for prune in (lines.forget, seen.forget):
+            prune(set())
+        old = time.time() - 10 * paste.SWEEP_AFTER
+        stray = paste.store() / "dead.tmp"
+        stray.write_text("x")
+        os.utime(stray, (old, old))
+        self.vault.calls.clear()
+        got = json.loads(self.get("/api/roster")[1])
+        self.assertEqual(self.vault.calls, [])                  # the poll never asks the keyring
+        self.assertFalse(stray.exists())                        # the file sweep did its work
+        (card,) = got["kept"]
+        (shown,) = card["pastes"]
+        self.assertEqual((shown["id"], shown["secret"], shown["first"]), (pid, True, ""))
+        self.assertNotIn(b"sk-test-", json.dumps(got).encode())
+        self.assertEqual(sorted(self.vault.items), [pid])       # the item is still there
+        self.assertEqual(self.text_of(pid)[1], ("sk-test-" + "ab12" * 8).encode())
+        self.assertEqual(list(paste.store().glob("*.txt")), [])
+        self.assertNotIn(b"sk-test-", self.everything_else())
+        code, _, _ = self.command("withdraw", "a", "--provider", "other", pid)   # not its provider
+        self.assertEqual((code, sorted(self.vault.items)), (1, [pid]))
+        code, _, _ = self.command("withdraw", "a", "--provider", "fake", pid)
+        self.assertEqual((code, self.vault.items), (0, {}))
+        self.assertEqual(json.loads(self.get("/api/roster")[1])["kept"], [])
+
+    def test_sweep_removes_keyring_items_no_record_points_at_and_names_records_without_an_item(self):
+        _, kept, _ = self.leave("Kept", SECRET_TEXT)
+        _, lost, _ = self.leave("Lost", SECRET_TEXT)
+        self.vault.items.pop(lost)
+        self.vault.items["f" * 16] = "stray"
+        self.vault.stores["f" * 16] = paste._scope(paste.store())
+        code, out, err = self.command("sweep")
+        self.assertEqual(code, 0, err)
+        self.assertIn("f" * 16, out)
+        self.assertIn(lost, out)
+        self.assertNotIn(kept, out)
+        self.assertEqual(list(self.vault.items), [kept])
+        self.assertEqual(self.command("withdraw", "a", lost)[0], 0)
+        self.assertEqual(self.command("sweep"), (0, "", ""))             # nothing left to say once clean
+
+    def test_sweep_keeps_the_item_of_a_record_it_could_not_read_in_time(self):
+        code, pid, _ = self.leave("Token", "sk-test-" + "cd34" * 8)
+        self.assertEqual(code, 0)
+        with mock.patch.object(lines, "read_bounded", lambda path, limit: None):
+            stray, lost = paste.sweep_keyring()
+        self.assertEqual((stray, lost, sorted(self.vault.items)), ([], [], [pid]))
+        self.assertEqual(self.text_of(pid)[1], ("sk-test-" + "cd34" * 8).encode())
+
+    def test_the_note_to_delete_the_input_file_is_printed_when_the_record_read_is_slow(self):
+        with mock.patch.object(lines, "read_bounded", lambda path, limit: None):
+            code, pid, err = self.leave("Token", "sk-test-" + "ef56" * 8)
+        self.assertEqual(code, 0)
+        self.assertIn("delete it", err)
+
+    def test_sweep_in_another_store_leaves_this_stores_items_alone(self):
+        _, pid, _ = self.leave("Kept", SECRET_TEXT)
+        other = self.tmp / "another-store"
+        stray, lost = paste.sweep_keyring(other)
+        self.assertEqual((stray, lost), ([], []))
+        self.assertEqual(list(self.vault.items), [pid])
+        self.assertEqual(self.text_of(pid)[1], SECRET_TEXT.encode())
+
+    def test_the_command_says_when_it_kept_a_secret_so_the_file_can_go(self):
+        code, pid, err = self.leave("New login", SECRET_TEXT)
+        self.assertIn("delete", err)
+        self.assertIn("in0.txt", err)
+        self.assertNotIn(TOKEN, err)
+        _, _, plain_err = self.leave("Plain", "just text")
+        self.assertEqual(plain_err, "")
+
+    def test_the_text_of_a_paste_is_refused_without_the_header_or_for_a_foreign_host(self):
+        _, pid, _ = self.leave("New login", SECRET_TEXT)
+        path = "/api/paste_text?id=" + pid
+        self.assertEqual(self.get(path)[0], 403)
+        self.assertEqual(self.get(path, {"X-Fleet": "1", "Host": "evil.example"})[0], 403)
+        self.assertEqual(self.get(path, {"X-Fleet": "1", "Host": f"127.0.0.1:{self.httpd.server_port}"})[0], 200)
+        self.assertEqual(self.get(path, {"X-Fleet": "1", "Host": f"localhost:{self.httpd.server_port}"})[0], 200)
+
+    def test_sweep_with_the_keyring_down_fails_and_removes_nothing(self):
+        self.leave("Kept", SECRET_TEXT)
+        self.vault.down = "the keyring is locked"
+        self.assertNotEqual(self.command("sweep")[0], 0)
+        self.assertEqual(len(self.pastes()), 1)
+
+    def test_a_title_that_looks_like_a_secret_is_refused_marked_or_not(self):
+        for flags in ((), ("--secret",)):
+            code, out, err = self.leave("password=" + "Tr0ub4dor&3x", "text", *flags)
+            self.assertNotEqual(code, 0)
+            self.assertIn("title", err)
+            self.assertNotIn("Tr0ub4dor", err)
+        code, _, err = self.leave(TOKEN, "text")
+        self.assertNotEqual(code, 0)
+        self.assertNotIn(TOKEN, err)
+        self.assertEqual((self.vault.calls, self.pastes(), self.store_bytes()), ([], [], b""))
+
+    def test_a_title_naming_the_secret_without_being_one_is_fine(self):
+        self.assertEqual(self.leave("New login for the router", SECRET_TEXT)[0], 0)
+
+    def test_nothing_of_the_text_is_in_a_log_an_error_or_a_temp_file(self):
+        secrets_seen = (TOKEN, "toegang", "tab\there")
+        _, pid, _ = self.leave("New login", SECRET_TEXT)
+        self.text_of(pid)
+        self.post("/api/paste_copied", {"id": pid})
+        self.vault.fail_delete = True
+        self.post("/api/paste_done", {"id": pid})
+        self.command("withdraw", "a", pid)
+        self.vault.fail_delete = False
+        self.vault.down = "no"
+        self.text_of(pid)
+        self.leave("Another", SECRET_TEXT)
+        self.assert_no_leak(*secrets_seen)
+
+    def test_no_secret_text_reaches_a_subprocess(self):
+        with mock.patch("subprocess.Popen", side_effect=AssertionError("a subprocess")), \
+                mock.patch("os.system", side_effect=AssertionError("a shell")):
+            _, pid, _ = self.leave("New login", SECRET_TEXT)
+            self.text_of(pid)
+            self.post("/api/paste_done", {"id": pid})
+
+    def test_the_command_in_a_process_of_its_own_fails_with_no_keyring_and_writes_nothing(self):
+        if True:
+            for text, flags in (("just a word", ["--secret"]), (SECRET_TEXT, [])):
+                got = self.run_command("create", "a", "--title", "t", *flags, self.write(text, "real.txt"))
+                self.assertNotEqual(got.returncode, 0)
+                self.assertEqual(got.stdout, "")
+                self.assertIn("keyring", got.stderr)
+                self.assertNotIn(TOKEN, got.stderr)
+                self.assertNotIn("just a word", got.stderr)
+        self.assertEqual(self.store_bytes(), b"")
+
+
+class Dbus(unittest.TestCase):
+    """The Secret Service client against a stand-in for D-Bus, never the real keyring."""
+    SECRET = "pw" + "-Zx9" + "-never-shown"
+
+    def setUp(self):
+        self.addCleanup(mock.patch.stopall)
+
+    def fake_connect(self, fail_with=None, locked=False, prompt="/"):
+        calls = []
+        secret = self.SECRET
+
+        class Fake:
+            def __init__(inner):
+                inner.path = ""
+
+            def get_object(inner, bus, path, introspect=True):
+                inner.path = path
+                return inner
+
+            def close(inner):
+                pass
+
+        class Ifaces:
+            String = staticmethod(lambda s, variant_level=0: s)
+            Dictionary = staticmethod(lambda d, signature=None: d)
+            Struct = staticmethod(lambda t, signature=None: t)
+            ByteArray = staticmethod(lambda b: b)
+
+            @staticmethod
+            def Interface(obj, name):
+                class I:
+                    def OpenSession(i, kind, arg, timeout=None):
+                        if fail_with:
+                            raise fail_with
+                        calls.append(("OpenSession", kind))
+                        return "", "/session/1"
+
+                    def ReadAlias(i, name, timeout=None):
+                        return "/collection/login"
+
+                    def Get(i, iface, prop, timeout=None):
+                        return locked
+
+                    def CreateItem(i, props, sec, replace, timeout=None):
+                        calls.append(("CreateItem", sec[2]))
+                        return "/item/1", prompt
+
+                    def Dismiss(i, timeout=None):
+                        calls.append(("Dismiss", obj.path))
+
+                    def Close(i, timeout=None):
+                        calls.append(("Close",))
+                return I()
+        return (lambda: (Ifaces, Fake())), calls
+
+    def test_the_text_travels_in_the_message_and_the_session_is_closed(self):
+        connect, calls = self.fake_connect()
+        with mock.patch("vault._connect", connect), mock.patch("subprocess.Popen", side_effect=AssertionError("argv")):
+            vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertIn(("CreateItem", self.SECRET.encode()), calls)
+        self.assertEqual(calls[-1], ("Close",))
+
+    def test_a_prompt_is_dismissed_and_the_text_refused(self):
+        connect, calls = self.fake_connect(prompt="/prompt/7")
+        with mock.patch("vault._connect", connect):
+            with self.assertRaises(vault.Unavailable):
+                vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertIn(("Dismiss", "/prompt/7"), calls)
+
+    def test_a_backend_error_that_echoes_the_text_is_not_repeated(self):
+        class Echo(Exception):
+            pass
+        connect, _ = self.fake_connect(fail_with=Echo("could not store " + self.SECRET))
+        with mock.patch("vault._connect", connect):
+            with self.assertRaises(vault.Unavailable) as caught:
+                vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertNotIn(self.SECRET, str(caught.exception))
+        self.assertNotIn(self.SECRET, repr(caught.exception.__cause__))
+
+    def test_a_locked_keyring_is_unavailable_and_is_not_asked_to_unlock(self):
+        connect, calls = self.fake_connect(locked=True)
+        with mock.patch("vault._connect", connect):
+            with self.assertRaises(vault.Unavailable) as caught:
+                vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertIn("locked", str(caught.exception))
+        self.assertNotIn("CreateItem", [c[0] for c in calls])
+
+    def test_a_bus_that_is_not_there_is_unavailable(self):
+        with mock.patch.dict(os.environ, {"DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent/bus"}):
+            with self.assertRaises(vault.Unavailable):
+                vault.get("a" * 16, "s" * 16)
 
 
 if __name__ == "__main__":

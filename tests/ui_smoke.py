@@ -1472,6 +1472,7 @@ class PasteFake(Fake):
         super().__init__(body)
         self.texts = texts          # id -> the text
         self.fetched = []
+        self.headers = []           # the X-Fleet header of each text fetch
 
     def tiles(self):
         # Wherever the server puts Pastes: tiles, finished pills, and the cards of closed sessions.
@@ -1499,6 +1500,7 @@ class PasteFake(Fake):
         if route.request.method == "GET" and url.path == "/api/paste_text":
             pid = urllib.parse.parse_qs(url.query)["id"][0]
             self.fetched.append(pid)
+            self.headers.append(route.request.headers.get("x-fleet"))
             if pid in self.texts:
                 return route.fulfill(status=200, content_type="text/plain; charset=utf-8", body=self.texts[pid])
             return route.fulfill(status=404, body="no such Paste")
@@ -1584,6 +1586,32 @@ def paste_pass(browser):
     page.wait_for_timeout(400)
     check("a Paste that cannot be fetched is not copied and is not marked copied",
           page.locator(".paste button.pcopy").inner_text() == "not copied" and fake2.of("/api/paste_copied") == [])
+    page.close()
+
+    # Ticket 03: a secret is dots on the page, opening does not unmask it, copy copies the real text.
+    real = "gh" + "p_" + "aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY3zA5\nsecond \"line\"\n"
+    body3 = roster([maple])
+    body3["columns"][0]["sessions"][0]["pastes"] = [
+        {"id": "s1", "title": "New token", "first": "", "secret": True, "copied": False},
+        {"id": "s2", "title": "Plain", "first": "visible first line", "secret": False, "copied": False}]
+    fake3 = PasteFake(body3, {"s1": real, "s2": "visible first line\nrest"})
+    page = new_page(browser, fake3, clipboard=True)
+    page.goto("http://localhost/", wait_until="load")
+    page.wait_for_selector(".paste")
+    secret_row = page.locator('.paste[data-pid="s1"]')
+    check("a secret shows as dots, never its text", "\u2022" in secret_row.locator(".pfirst").inner_text()
+          and "ghp_" not in page.locator("#main").inner_text() and "second" not in page.locator("#main").inner_text()
+          and fake3.fetched == [], secret_row.locator(".pfirst").inner_text())
+    check("a plain Paste beside it is unchanged", page.locator('.paste[data-pid="s2"] .pfirst').inner_text() == "visible first line")
+    secret_row.locator(".ptitle").click()
+    page.wait_for_selector(".ptext")
+    check("opening a secret does not unmask it and fetches nothing",
+          set(page.locator(".ptext").inner_text()) == {"\u2022"} and fake3.fetched == [], page.locator(".ptext").inner_text())
+    secret_row.locator("button.pcopy").click()
+    page.wait_for_timeout(400)
+    check("copy puts the real text on the clipboard", page.evaluate("navigator.clipboard.readText()") == real)
+    check("the fetch of a text carries the local-request header the server now requires", fake3.headers == ["1"], fake3.headers)
+    check("and the page still shows only dots", "ghp_" not in page.content() and fake3.of("/api/paste_copied") == [{"id": "s1"}])
     page.close()
     # The browser logs the 404 it was given on purpose; that one is expected, any other is not.
     expected = [e for e in errors if e == "console: Failed to load resource: the server responded with a status of 404 (Not Found)"]

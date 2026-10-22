@@ -15,10 +15,21 @@ Two files for a Paste, `<id>.txt` (the text, bytes as they were) and `<id>.json`
 (who, title, first line, copied). The record is what makes a Paste exist and is
 written last, so the roster, which reads the records every poll, never reads a
 text and never sees a half-made one.
+
+A secret Paste (the session said so, or `credentials.looks_secret` found a
+token or a password in the text) has no `.txt`: its text is in the login
+keyring (`vault.py`) and the record, which has no first line either, only says
+so. There is no plain-file fallback: with the keyring out of reach the command
+refuses. Two things then have to go together, the keyring item and the record.
+Done removes the item first, so a failure leaves the record on the card, which
+can be ticked again; the record is written last when making one, and if that
+fails the item is taken back. `paste sweep` (`sweep_keyring`) finds what a crash left between
+the two.
 """
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -27,7 +38,9 @@ import sys
 import time
 from pathlib import Path
 
+import credentials
 import lines
+import vault
 
 # A runaway file stays off the page.
 MAX_BYTES = 100_000
@@ -47,6 +60,11 @@ def store():
 
 def _root(root):
     return Path(root) if root else store()
+
+
+def _scope(root):
+    """Which store a keyring item belongs to: its place, so that another store never touches it."""
+    return hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:16]
 
 
 def _clip(text, limit):
@@ -86,7 +104,7 @@ def _name(value, what):
     return value
 
 
-def create(session_id, title, path, root=None, provider=None):
+def create(session_id, title, path, root=None, provider=None, secret=False):
     """Leave a Paste on a session's card. Returns its id.
 
     A session is one provider and one id; two providers may use the same id.
@@ -98,9 +116,14 @@ def create(session_id, title, path, root=None, provider=None):
     title = _clip(title or "", TITLE_MAX)
     if not title:
         raise Refused("a Paste needs a title")
+    # The title is on the card and in the roster, in the clear.
+    if credentials.looks_secret(title):
+        raise Refused("the title looks like a secret; the card shows it in the clear")
     text = read_text_file(path)
     root = _root(root)
     pid = secrets.token_hex(8)
+    if secret or credentials.looks_secret(text):
+        return _create_secret(root, pid, session_id, title, text, provider)
     try:
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if not lines.write_atomic(root / f"{pid}.txt", text):
@@ -115,6 +138,37 @@ def create(session_id, title, path, root=None, provider=None):
     except OSError as err:
         raise Refused(f"could not write the Paste: {err.strerror}") from None
     return pid
+
+
+def _create_secret(root, pid, session_id, title, text, provider=None):
+    record = {"id": pid, "session": session_id, "title": title, "first": "",
+              "at": time.time_ns(), "secret": True, "copied": False}
+    if provider is not None:
+        record["provider"] = provider
+    try:
+        # Asked before anything is created on disk: an unreachable keyring leaves nothing behind,
+        # not even the folder and its lock. (A keyring that goes away between this and the put
+        # leaves the empty lock file and no Paste: no text, no record.)
+        try:
+            vault.ids(_scope(root))
+        except vault.Unavailable as why:
+            raise Refused(f"{why}; no Paste was made") from None
+        # Held until the record is down, so that `sweep` never sees the item alone.
+        with _changing(root):
+            try:
+                vault.put(pid, text, _scope(root))
+            except vault.Unavailable as why:
+                raise Refused(f"{why}; no Paste was made") from None
+            if lines.write_atomic(root / f"{pid}.json", json.dumps(record)):
+                return pid
+            try:
+                vault.delete(pid, _scope(root))
+            except vault.Unavailable:
+                raise Refused(f"could not write the Paste, and its keyring item {pid} could not be taken "
+                              "back; `paste sweep` removes it") from None
+    except OSError as err:
+        raise Refused(f"could not write the Paste: {err.strerror}") from None
+    raise Refused("could not write the Paste")
 
 
 def _unlink(path):
@@ -137,11 +191,14 @@ def _changing(root):
         yield
 
 
-def _record(pid, root=None):
+def _record(pid, root=None, patient=False):
+    """The record, or None. The poll reads with a time limit (a slow read is None, as if absent);
+    a caller that acts on absence (`sweep_keyring`, the note after `create`) must be `patient`."""
     if not isinstance(pid, str) or not ID.fullmatch(pid):
         return None
     # Read on every poll, under the lock the page waits on: bounded in time.
-    data = lines.read_bounded(str(_root(root) / f"{pid}.json"), RECORD_MAX)
+    read = lines.read_plain if patient else lines.read_bounded
+    data = read(str(_root(root) / f"{pid}.json"), RECORD_MAX)
     try:
         got = json.loads(data.decode("utf-8")) if data else None
     except (ValueError, RecursionError):
@@ -153,9 +210,15 @@ def _record(pid, root=None):
     return got
 
 
+def _is_secret(record):
+    return record.get("secret") is True
+
+
 def _shown(got):
-    return {"id": got["id"], "title": got["title"], "first": str(got.get("first") or ""),
-            "secret": got.get("secret") is True, "copied": got.get("copied") is True}
+    secret = _is_secret(got)
+    # Never the first line of a secret, whatever a record says.
+    return {"id": got["id"], "title": got["title"], "first": "" if secret else str(got.get("first") or ""),
+            "secret": secret, "copied": got.get("copied") is True}
 
 
 def belongs_to(made_for, provider):
@@ -218,8 +281,15 @@ def sweep(root=None, after=SWEEP_AFTER):
 
 def text(pid, root=None):
     """The full text of a Paste, exactly as it was left, or None."""
-    if _record(pid, root) is None:
+    got = _record(pid, root)
+    if got is None:
         return None
+    if _is_secret(got):
+        try:
+            kept = vault.get(pid, _scope(_root(root)))
+        except vault.Unavailable as why:
+            raise Refused(str(why)) from None
+        return None if kept is None else kept.encode("utf-8")
     return lines.read_plain(str(_root(root) / f"{pid}.txt"), MAX_BYTES + 1)
 
 
@@ -253,11 +323,44 @@ def done(pid, root=None, session_id=None, provider=None):
                 return False
             # The text first. Whatever fails after that leaves a Paste on the card,
             # which can be ticked again; the other way round leaves a text nobody sees.
-            _unlink(root / f"{pid}.txt")
+            if _is_secret(got):
+                try:
+                    vault.delete(pid, _scope(root))
+                except vault.Unavailable as why:
+                    raise Refused(f"could not remove the Paste: {why}") from None
+            else:
+                _unlink(root / f"{pid}.txt")
             _unlink(root / f"{pid}.json")
     except OSError as err:
         raise Refused(f"could not remove the Paste: {err.strerror}") from None
     return True
+
+
+def sweep_keyring(root=None):
+    """What a crash can leave between a keyring item and its record, undone or named:
+    items nothing points at are removed, records without an item are named.
+    Returns (ids removed, ids of records whose item is gone)."""
+    root = _root(root)
+    try:
+        with _changing(root):
+            try:
+                items = set(vault.ids(_scope(root)))
+            except vault.Unavailable as why:
+                raise Refused(str(why)) from None
+            records = {r["id"] for r in (_record(p.stem, root, patient=True) for p in root.glob("*.json"))
+                       if r and _is_secret(r)}
+            # A record file that is there but unreadable right now still points at its item:
+            # only an id with no record file at all is a stray. A deleted item cannot come back.
+            pointed = records | {p.stem for p in root.glob("*.json") if _present(p)}
+            stray = sorted(items - pointed)
+            for pid in stray:
+                try:
+                    vault.delete(pid, _scope(root))
+                except vault.Unavailable as why:
+                    raise Refused(f"could not remove keyring item {pid}: {why}") from None
+            return stray, sorted(records - items)
+    except OSError as err:
+        raise Refused(f"could not sweep: {err.strerror}") from None
 
 
 def main(argv=None, out=None, err=None):
@@ -268,15 +371,28 @@ def main(argv=None, out=None, err=None):
     c.add_argument("session")
     c.add_argument("--provider", help="claude, codex...: the Paste then belongs to that provider's session alone")
     c.add_argument("--title", required=True)
+    c.add_argument("--secret", action="store_true",
+                   help="keep the text in the login keyring, never in a file (a token or password in "
+                        "the text is recognised without this)")
     c.add_argument("file", help="the text, read from this file and never from an argument")
     w = sub.add_parser("withdraw", help="take back a Paste whose use you have seen")
     w.add_argument("session")
     w.add_argument("--provider")
     w.add_argument("id")
+    sub.add_parser("sweep", help="remove keyring items no Paste points at; name Pastes whose item is gone")
     args = p.parse_args(argv)
     try:
         if args.cmd == "create":
-            print(create(args.session, args.title, args.file, provider=args.provider), file=out)
+            pid = create(args.session, args.title, args.file, provider=args.provider, secret=args.secret)
+            print(pid, file=out)
+            if _is_secret(_record(pid, patient=True) or {}):
+                print(f"paste: kept in the keyring as a secret; {args.file} still holds the text, delete it", file=err)
+        elif args.cmd == "sweep":
+            stray, lost = sweep_keyring()
+            for pid in stray:
+                print(f"removed keyring item {pid}: no Paste points at it", file=out)
+            for pid in lost:
+                print(f"Paste {pid} has no keyring item: it cannot be read; tick it done", file=out)
         elif not done(args.id, session_id=args.session, provider=args.provider):
             raise Refused(f"no Paste {args.id!r} on session {args.session!r}")
     except Refused as why:
