@@ -489,7 +489,7 @@ SECRET_TEXT = "Hoi Sven, jouw nieuwe toegang:\n" + TOKEN + "\n\"quoted\" \\ tab\
 
 class FakeVault:
     """The keyring, in memory. Records every call, by id: never the text."""
-    Unavailable = vault.Unavailable
+    Unavailable, Unsure = vault.Unavailable, vault.Unsure
 
     def __init__(self):
         self.items, self.calls, self.stores = {}, [], {}
@@ -508,7 +508,7 @@ class FakeVault:
         self.items[pid] = text
         self.stores[pid] = store
         if self.put_times_out:
-            raise vault.Unavailable("the keyring cannot be reached (timeout)")
+            raise vault.Unsure("the keyring cannot be reached (timeout)")
 
     def get(self, pid, store):
         self._call("get", pid)
@@ -820,6 +820,13 @@ class Secrets(Case):
         self.vault.fail_delete = self.vault.put_times_out = False
         self.assertEqual(self.command("sweep")[0], 0)           # the orphan is findable and goes
         self.assertEqual(self.vault.items, {})
+
+    def test_a_put_the_keyring_refused_outright_makes_no_second_call_and_names_no_item(self):
+        self.vault.down = "the keyring is locked"
+        code, _, err = self.leave("Token", SECRET_TEXT)
+        self.assertNotEqual(code, 0)
+        self.assertNotIn("sweep", err)
+        self.assertNotIn("delete", [op for op, _ in self.vault.calls])
 
     def test_a_title_that_looks_like_a_secret_is_refused_marked_or_not(self):
         for flags in ((), ("--secret",)):

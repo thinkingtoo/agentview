@@ -115,11 +115,12 @@ def create(session_id, title, path, root=None, provider=None, secret=False):
         _name(provider, "provider name")
     # The whole title is looked at, then clipped: a token cut in two by the clip no longer looks
     # like one, and its first half would be on the card and in the roster, in the clear.
-    whole = title or ""
-    title = _clip(whole, TITLE_MAX)
+    raw_title = title or ""
+    title = _clip(raw_title, TITLE_MAX)
     if not title:
         raise Refused("a Paste needs a title")
-    if credentials.looks_secret(whole) or credentials.looks_secret(" ".join(whole.split())):
+    # Also as the card shows it, its white space collapsed.
+    if credentials.looks_secret(raw_title) or credentials.looks_secret(" ".join(raw_title.split())):
         raise Refused("the title looks like a secret; the card shows it in the clear")
     text = read_text_file(path)
     root = _root(root)
@@ -159,13 +160,17 @@ def _create_secret(root, pid, session_id, title, text, provider=None):
         with _changing(root):
             try:
                 vault.put(pid, text, _scope(root))
-            except vault.Unavailable as why:
-                # A reply that never came may follow an item that was kept. Taken back, or named.
+            except vault.Unsure as why:
+                # The reply was lost, the item may not be: taken back, or named so it is not silent.
                 try:
-                    vault.delete(pid, _scope(root))
+                    taken = vault.delete(pid, _scope(root))
                 except vault.Unavailable:
-                    raise Refused(f"{why}; no Paste was made, but the keyring may have kept an item "
-                                  f"{pid}; `paste sweep` removes it") from None
+                    taken = False
+                if taken:
+                    raise Refused(f"{why}; no Paste was made") from None
+                raise Refused(f"{why}; no Paste was made, but the keyring may still keep an item "
+                              f"{pid}; `paste sweep` removes it") from None
+            except vault.Unavailable as why:
                 raise Refused(f"{why}; no Paste was made") from None
             if lines.write_atomic(root / f"{pid}.json", json.dumps(record)):
                 return pid
@@ -201,7 +206,8 @@ def _changing(root):
 
 def _record(pid, root=None, patient=False):
     """The record, or None. The poll reads with a time limit (a slow read is None, as if absent);
-    a caller that acts on absence (`sweep_keyring`, the note after `create`) must be `patient`."""
+    a caller that changes a Paste or acts on absence (`copied`, `done`, `sweep_keyring`, the note
+    after `create`) must be `patient`."""
     if not isinstance(pid, str) or not ID.fullmatch(pid):
         return None
     # Read on every poll, under the lock the page waits on: bounded in time.
