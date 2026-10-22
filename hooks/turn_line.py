@@ -52,7 +52,10 @@ or /tmp at large), then run {paste} create {sid} <file> --title '<short>' \
 --provider claude (add --secret for a password, token or key, then delete the \
 file). It prints the id; name the title in your reply. A Paste counts in --n. \
 Withdraw it only once you have seen it used (the mail is sent): {paste} withdraw \
-{sid} <id> --provider claude."""
+{sid} <id> --provider claude. If paste create is refused (by the classifier or by an \
+error), say so in the --ask line and put the text itself in your question or reply; \
+never stay silent. A command the user must type goes in the --ask line after "$ " too, \
+even when an option of your question offers it, without a leading !."""
 
 
 def begin(payload, root=None):
