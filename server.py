@@ -260,7 +260,7 @@ class Handler(BaseHTTPRequestHandler):
         names = [f"127.0.0.1:{port}", f"localhost:{port}"]
         if port == 80:  # a browser leaves the default port out
             names += ["127.0.0.1", "localhost"]
-        return self.headers.get("Host", "") in names
+        return self.headers.get("Host", "").lower() in names  # a name is not case-sensitive
 
     def _origin_ok(self):
         """No Origin is a command line or a same-origin GET. One that is sent must be this server,

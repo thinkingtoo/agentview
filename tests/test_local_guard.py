@@ -55,6 +55,10 @@ class Guard(unittest.TestCase):
                 self.assertEqual(self.post(route, host=f"rebound.attacker.example:{self.port}"), 403)
                 self.assertEqual(self.post(route, host=f"127.0.0.1:{self.port + 1}"), 403)
 
+    def test_the_name_is_not_case_sensitive(self):
+        self.assertEqual(self.post(host=f"LOCALHOST:{self.port}"), 400)
+        self.assertEqual(self.post(host=f"LocalHost:{self.port + 1}"), 403)
+
     def test_the_right_host_passes(self):
         self.assertEqual(self.post(host=f"localhost:{self.port}"), 400)
         self.assertEqual(self.post(host=f"127.0.0.1:{self.port}"), 400)
