@@ -4,7 +4,9 @@
 
 **Blocked by:** 01 (One Paste end to end), 03 (Secrets in the keyring) — so no session switches over before a token is safe from a plain file.
 
-**Status:** ready-for-agent
+**Claimed by:** Bruno 2026-10-22 10:02
+
+**Status:** in-progress
 
 - [ ] The CLAUDE.md clipboard section is replaced (surgical edit, the rest of the file untouched)
 - [ ] The `team-line` reminder text names `paste`, how to call it with a file, and that it counts in `n`
