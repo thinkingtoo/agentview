@@ -444,6 +444,26 @@ class Staying(Case):
         old = time.time() - seconds
         os.utime(path, (old, old))
 
+    def test_a_creator_stalled_between_its_two_writes_does_not_lose_its_text_to_a_sweep(self):
+        real = lines.write_atomic
+        swept = []
+
+        def stalled(path, data, *a, **k):
+            if str(path).endswith(".json") and not swept:
+                # the creator sleeps here past the sweep age; the roster poll sweeps meanwhile
+                for text in paste.store().glob("*.txt"):
+                    self.aged(text, 3600)
+                paste.sweep()
+                swept.append(True)
+            return real(path, data, *a, **k)
+
+        src = self.tmp / "in.txt"
+        src.write_text("the text")
+        with mock.patch("lines.write_atomic", stalled):
+            pid = paste.create("a", "t", str(src))
+        self.assertTrue(swept)
+        self.assertEqual(paste.text(pid), b"the text")
+
     def test_an_old_text_with_no_record_is_swept_and_a_text_with_a_record_never(self):
         pid = self.make("t", "text")
         root = paste.store()
