@@ -277,7 +277,8 @@ class Handler(BaseHTTPRequestHandler):
         """A page on another origin can POST here; it cannot forge these.
 
         The damage would only be a switched terminal tab, but a jump is still
-        an action, and actions get a guard.
+        an action, and actions get a guard: this server's own Origin and Host,
+        and the custom header.
         """
         return self._origin_ok() and self._host_ok() and self.headers.get("X-Fleet") == "1"
 
