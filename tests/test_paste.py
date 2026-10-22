@@ -496,6 +496,7 @@ class FakeVault:
         self.down = None            # a reason: every call raises Unavailable(reason)
         self.fail_delete = False
         self.put_times_out = False  # the item is kept, then the reply never comes
+        self.put_refused = None     # a reason: only `put` raises a plain Unavailable
 
     def _call(self, op, pid=None):
         self.calls.append((op, pid))
@@ -505,6 +506,8 @@ class FakeVault:
     # An item belongs to a store, as in the real keyring: a call for another store sees nothing.
     def put(self, pid, text, store):
         self._call("put", pid)
+        if self.put_refused:
+            raise vault.Unavailable(self.put_refused)
         self.items[pid] = text
         self.stores[pid] = store
         if self.put_times_out:
@@ -822,10 +825,11 @@ class Secrets(Case):
         self.assertEqual(self.vault.items, {})
 
     def test_a_put_the_keyring_refused_outright_makes_no_second_call_and_names_no_item(self):
-        self.vault.down = "the keyring is locked"
+        self.vault.put_refused = "the keyring is locked"
         code, _, err = self.leave("Token", SECRET_TEXT)
         self.assertNotEqual(code, 0)
         self.assertNotIn("sweep", err)
+        self.assertIn(("put", None), [(op, None) for op, _ in self.vault.calls])      # it got as far as the put
         self.assertNotIn("delete", [op for op, _ in self.vault.calls])
 
     def test_a_title_that_looks_like_a_secret_is_refused_marked_or_not(self):
@@ -895,7 +899,7 @@ class Dbus(unittest.TestCase):
         self.addCleanup(mock.patch.stopall)
         self.bus_closed = 0
 
-    def fake_connect(self, fail_with=None, locked=False, prompt="/"):
+    def fake_connect(self, fail_with=None, locked=False, prompt="/", create_fails=None):
         calls = []
         secret = self.SECRET
 
@@ -932,6 +936,8 @@ class Dbus(unittest.TestCase):
                         return locked
 
                     def CreateItem(i, props, sec, replace, timeout=None):
+                        if create_fails:
+                            raise create_fails
                         calls.append(("CreateItem", sec[2]))
                         return "/item/1", prompt
 
@@ -981,6 +987,22 @@ class Dbus(unittest.TestCase):
             with self.assertRaises(vault.Unavailable):
                 vault.put("a" * 16, self.SECRET, "s" * 16)
         self.assertEqual(self.bus_closed, 1)
+
+    def test_a_create_that_gets_no_reply_is_unsure_not_merely_unavailable(self):
+        connect, calls = self.fake_connect(create_fails=TimeoutError("no reply for " + self.SECRET))
+        with mock.patch("vault._connect", connect):
+            with self.assertRaises(vault.Unsure) as caught:
+                vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertNotIn(self.SECRET, str(caught.exception))
+        self.assertNotIn(self.SECRET, repr(caught.exception.__cause__))
+        self.assertEqual((self.bus_closed, calls[-1]), (1, ("Close",)))
+
+    def test_a_refusal_before_the_create_is_unavailable_and_not_unsure(self):
+        connect, _ = self.fake_connect(locked=True)
+        with mock.patch("vault._connect", connect):
+            with self.assertRaises(vault.Unavailable) as caught:
+                vault.put("a" * 16, self.SECRET, "s" * 16)
+        self.assertNotIsInstance(caught.exception, vault.Unsure)
 
     def test_the_connection_is_closed_once_when_all_goes_well(self):
         connect, _ = self.fake_connect()
