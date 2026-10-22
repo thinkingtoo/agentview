@@ -6,7 +6,7 @@
 
 **Claimed by:** Tarek 2026-10-22 13:20
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] A test with a creator stalled between the writes beyond the sweep age: fails on 99d586f, passes after the fix
-- [ ] Review GO on the fix, suite on t-compute green
+- [x] A test with a creator stalled between the writes beyond the sweep age: fails on 99d586f, passes after the fix (Staying.test_a_creator_stalled_between_its_two_writes_does_not_lose_its_text_to_a_sweep)
+- [x] Review GO on the fix (reviews/paste-07-codex-3.md, e1edf1b; the last commit is a one-line errno in an error message, accepted under the three-round cap), suite on t-compute green: 2256 tests OK on merge 0a0a2a4
