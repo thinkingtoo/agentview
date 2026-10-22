@@ -28,10 +28,12 @@ the two.
 """
 import argparse
 import contextlib
+import errno
 import fcntl
 import hashlib
 import json
 import os
+import stat
 import re
 import secrets
 import sys
@@ -128,16 +130,18 @@ def create(session_id, title, path, root=None, provider=None, secret=False):
     if secret or credentials.looks_secret(text):
         return _create_secret(root, pid, session_id, title, text, provider)
     try:
-        root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if not lines.write_atomic(root / f"{pid}.txt", text):
-            raise Refused("could not write the Paste")
-        record = {"id": pid, "session": session_id, "title": title, "first": _first_line(text),
-                  "at": time.time_ns(), "secret": False, "copied": False}
-        if provider is not None:
-            record["provider"] = provider
-        if not lines.write_atomic(root / f"{pid}.json", json.dumps(record)):
-            _unlink(root / f"{pid}.txt")
-            raise Refused("could not write the Paste")
+        # Held across both writes, so that `sweep` never sees the text alone, however long the
+        # creator stalls between them.
+        with _changing(root):
+            if not lines.write_atomic(root / f"{pid}.txt", text):
+                raise Refused("could not write the Paste")
+            record = {"id": pid, "session": session_id, "title": title, "first": _first_line(text),
+                      "at": time.time_ns(), "secret": False, "copied": False}
+            if provider is not None:
+                record["provider"] = provider
+            if not lines.write_atomic(root / f"{pid}.json", json.dumps(record)):
+                _unlink(root / f"{pid}.txt")
+                raise Refused("could not write the Paste")
     except OSError as err:
         raise Refused(f"could not write the Paste: {err.strerror}") from None
     return pid
@@ -194,14 +198,22 @@ def _unlink(path):
 
 
 @contextlib.contextmanager
-def _changing(root):
+def _changing(root, wait=True):
     """One change to a Paste at a time, across the server's threads and the
     command's processes: a copy mark read before a done and written after it
-    would bring the record back without its text."""
+    would bring the record back without its text. `wait=False` raises BlockingIOError
+    instead of waiting for the lock."""
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with open(root / ".lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    # Opened so that a lock that is a FIFO or a link to one cannot stall the caller; only the
+    # flock itself may wait.
+    fd = os.open(root / ".lock", os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(errno.EINVAL, "the lock is not a file")
+        fcntl.flock(fd, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
         yield
+    finally:
+        os.close(fd)
 
 
 def _record(pid, root=None, patient=False):
@@ -280,17 +292,25 @@ def sweep(root=None, after=SWEEP_AFTER):
         found = list(root.glob("*.txt")) + list(root.glob("*.tmp"))
     except OSError:
         return
-    now = time.time()
-    for path in found:
-        try:
-            # lstat, never following a link: a probe that follows one into a
-            # filesystem that does not answer would stall the roster poll.
-            if path.suffix == ".txt" and _present(root / f"{path.stem}.json"):
-                continue
-            if now - os.lstat(path).st_mtime > after:
-                path.unlink()
-        except OSError:
-            pass
+    if not found:
+        return
+    # A creator holds the lock from its text to its record. If the lock is taken, someone is
+    # mid-change and the sweep waits for the next poll rather than stall this one.
+    try:
+        with _changing(root, wait=False):
+            now = time.time()
+            for path in found:
+                try:
+                    # lstat, never following a link: a probe that follows one into a
+                    # filesystem that does not answer would stall the roster poll.
+                    if path.suffix == ".txt" and _present(root / f"{path.stem}.json"):
+                        continue
+                    if now - os.lstat(path).st_mtime > after:
+                        path.unlink()
+                except OSError:
+                    pass
+    except OSError:         # a busy lock (BlockingIOError) or a store we cannot write to
+        return
 
 
 def text(pid, root=None):

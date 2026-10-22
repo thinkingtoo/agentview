@@ -444,6 +444,49 @@ class Staying(Case):
         old = time.time() - seconds
         os.utime(path, (old, old))
 
+    def test_a_creator_stalled_between_its_two_writes_does_not_lose_its_text_to_a_sweep(self):
+        real = lines.write_atomic
+        swept = []
+
+        def stalled(path, data, *a, **k):
+            if str(path).endswith(".json") and not swept:
+                # the creator sleeps here past the sweep age; the roster poll sweeps meanwhile
+                for stored in paste.store().glob("*.txt"):
+                    self.aged(stored, 3600)
+                paste.sweep()
+                swept.append(True)
+            return real(path, data, *a, **k)
+
+        src = self.tmp / "in.txt"
+        src.write_text("the text")
+        with mock.patch("lines.write_atomic", stalled):
+            pid = paste.create("a", "t", str(src))
+        self.assertTrue(swept)
+        self.assertEqual(paste.text(pid), b"the text")
+
+    def test_a_sweep_finding_the_lock_taken_leaves_an_old_orphan_for_the_next_poll(self):
+        root = paste.store()
+        root.mkdir(parents=True, exist_ok=True)
+        orphan = root / ("0" * 16 + ".txt")
+        orphan.write_text("left by a crash")
+        self.aged(orphan, 3600)
+        with paste._changing(root):
+            paste.sweep()
+            self.assertTrue(orphan.exists())
+        paste.sweep()
+        self.assertFalse(orphan.exists())
+
+    def test_a_sweep_does_not_hang_on_a_lock_that_is_a_fifo(self):
+        root = paste.store()
+        root.mkdir(parents=True, exist_ok=True)
+        os.mkfifo(root / ".lock")
+        (root / ("0" * 16 + ".txt")).write_text("x")
+        for call in (paste.sweep, lambda: self.assertRaises(OSError, paste._changing(root).__enter__)):
+            done = threading.Thread(target=call, daemon=True)
+            done.start()
+            done.join(5)
+            self.assertFalse(done.is_alive())
+
     def test_an_old_text_with_no_record_is_swept_and_a_text_with_a_record_never(self):
         pid = self.make("t", "text")
         root = paste.store()
