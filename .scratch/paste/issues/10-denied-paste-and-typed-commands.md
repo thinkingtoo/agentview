@@ -10,8 +10,8 @@ The rule, in the reminder and in CLAUDE.md, in a sentence or two each:
 
 **Claimed by:** Lennart 2026-10-22 18:55
 
-**Status:** in-progress
+**Status:** done (merged; the `~/.claude/CLAUDE.md` box below waits on Thierry)
 
-- [ ] `turn_line.py` reminder text says both points; a test pins the wording (fails before the change)
+- [x] `turn_line.py` reminder text says both points; a test pins the wording (fails before the change) -- evidence: tests/test_turn_hook.py `test_a_refused_paste_is_said_out_loud`, `test_a_command_the_person_types_reaches_the_ask_line` (red before 7aedbeb, green after); 111 tests OK
 - [ ] `~/.claude/CLAUDE.md` "Clipboard (Leave a Paste)" carries both points, surgical diff only in that section, committed and pushed in `~/.claude` by path
-- [ ] Review GO (mattpocock-skills:code-review, then `/codex-review` through the runner, Opus fallback at once), test files touched run locally; the reminder seen live in a fresh session's hook output
+- [x] Review GO (mattpocock-skills:code-review, then `/codex-review` through the runner, Opus fallback at once), test files touched run locally; the reminder seen live in a fresh session's hook output -- evidence: reviews/paste-10-review-1.md and -2.md (GO at 57db02a); `python3 hooks/turn_line.py` with a dummy session prints the new text after merge
