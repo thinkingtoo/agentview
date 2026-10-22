@@ -286,10 +286,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._origin_ok() and self._host_ok() and self.headers.get("X-Fleet") == "1"
 
     def _local_get(self):
-        """The text of a Paste may come out of the keyring, so its GET gets the guard a POST has:
-        the custom header cannot be sent by a page on another origin without a preflight that
-        is refused, and the Host check closes the way in by a name that points at this machine."""
-        return self.headers.get("X-Fleet") == "1" and self._host_ok()
+        """The text of a Paste may come out of the keyring, so its GET also needs the custom
+        header, which a page on another origin cannot send without a preflight that is refused.
+        do_GET has already checked the Host."""
+        return self.headers.get("X-Fleet") == "1"
 
     def _body(self):
         length = int(self.headers.get("Content-Length", 0))
