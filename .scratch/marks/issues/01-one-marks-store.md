@@ -2,7 +2,7 @@
 
 **What to build:** spec `docs/specs/2026-10-25-marks.md`, decisions 1 to 6. A module `marks.py` with one lock and one file `marks.json`, one record per `provider:id` key (`seen`, `read`, `pinned`), imported once from `seen.json` and `finished.json`, which are left untouched. `seen.py` and `finished.py` go; `fleet`, `poll`, `server` and the tests move to `marks`; `fleet.live` and `poll.round` take `marks_path`.
 
-**Blocked by:** none
+**Blocked by:** None (can start immediately)
 
 **Status:** ready-for-agent
 
