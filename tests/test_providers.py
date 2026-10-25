@@ -58,13 +58,13 @@ class Normalization(unittest.TestCase):
 
     def test_and_roster_does_not_explode_on_it(self):
         rows = self.rows(minimal())
-        real = fleet.sessions
-        fleet.sessions = lambda providers=None: rows
+        real = fleet.ask
+        fleet.ask = lambda providers=None, **kw: (rows, set(), {})
         try:
             members = fleet.members()
             roster = fleet.roster()
         finally:
-            fleet.sessions = real
+            fleet.ask = real
         self.assertEqual(members[0]["key"], "fake:s1")
         self.assertIn("overridden", members[0])
         self.assertEqual([t["key"] for c in roster["columns"] for t in c["sessions"]], ["fake:s1"])

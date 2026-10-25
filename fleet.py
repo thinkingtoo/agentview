@@ -308,11 +308,10 @@ def own_line(session_id, status, asked, root=None, said="", doing=""):
 LIVE_BUDGET = 2.0
 
 # Two polls can overlap -- the server is threaded -- and the providers keep
-# caches. One lock serialises the round.
+# caches. One lock serialises access to them: the round (`poll.round`) takes
+# it once around everything it does, and the click path (`find`, `look`)
+# takes it around each call to a provider.
 POLL = threading.RLock()
-
-# What the last round found out, for the server to report beside the rows.
-ROUND = {"failed": {}, "answered": set()}
 
 _pools = {}
 _pending = {}
@@ -342,39 +341,43 @@ def _ask(p):
     return got, None
 
 
-def sessions(providers=None):
-    """Every live session from every provider, normalised into rows.
+def ask(providers=None, *, now=None, seen_path=None, finished_path=None):
+    """Ask every provider for its live sessions, normalised into rows.
 
-    A provider that fails or stalls is reported in `ROUND["failed"]` and the
-    page goes on without it; the ones that answered are in `ROUND["answered"]`.
+    Returns `(rows, answered, failed)`: the names of the providers that
+    answered, and for each that failed or stalled why, so the page goes on
+    without it. Takes no lock: the round that calls it holds `POLL`.
     """
-    with POLL:
-        shelves = config()
-        assigned = config_value("assign", {})
-        marks = seen.load()
-        remembered = finished.load()
-        thresholds = {
-            "after": config_value("stuck_after_minutes", 5),
-            "tool_after": config_value("long_tool_minutes", 20),
-            "waiting_after": config_value("waiting_after_seconds", 20) / 60,
-            # How long a busy session may go without a sign of life before
-            # it counts as not moving.
-            "hung_after": positive_value("hung_after_minutes", 10),
-        }
-        now = time.time()
-        asked, failed, answered = [], {}, set()
-        for p in (providers if providers is not None else _providers()):
-            got, err = _ask(p)
-            if err:
-                failed[p.name] = err
-                continue
-            answered.add(p.name)
-            asked.extend((p, raw) for raw in got)
-        # Runs are folded into the tile of the session that started them (runs.py).
-        out = [row for row in (normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered)
-                               for p, raw in runs.fold(asked, now)) if row]
-        ROUND["failed"], ROUND["answered"] = failed, answered
-        return out
+    shelves = config()
+    assigned = config_value("assign", {})
+    marks = seen.load(seen_path)
+    remembered = finished.load(finished_path)
+    thresholds = {
+        "after": config_value("stuck_after_minutes", 5),
+        "tool_after": config_value("long_tool_minutes", 20),
+        "waiting_after": config_value("waiting_after_seconds", 20) / 60,
+        # How long a busy session may go without a sign of life before
+        # it counts as not moving.
+        "hung_after": positive_value("hung_after_minutes", 10),
+    }
+    now = time.time() if now is None else now
+    asked, failed, answered = [], {}, set()
+    for p in (providers if providers is not None else _providers()):
+        got, err = _ask(p)
+        if err:
+            failed[p.name] = err
+            continue
+        answered.add(p.name)
+        asked.extend((p, raw) for raw in got)
+    # Runs are folded into the tile of the session that started them (runs.py).
+    rows = [row for row in (normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered)
+                            for p, raw in runs.fold(asked, now)) if row]
+    return rows, answered, failed
+
+
+def sessions(providers=None, **kw):
+    """The rows of `ask`, for a caller that needs nothing else."""
+    return ask(providers, **kw)[0]
 
 
 def _providers():
@@ -685,10 +688,11 @@ def sessions_in(groups):
     return [s for members in groups.values() for s in members]
 
 
-def members(providers=None):
+def members(providers=None, rows=None):
     """Every session on the machine, routines and finished ones included, in
-    the order the overview is made from. Each is the raw row the round made:
-    its flag, its silence, the paths it touched.
+    the order the overview is made from. Each is the raw row the round made
+    (`rows`, or the providers are asked here): its flag, its silence, the
+    paths it touched.
 
     Project-first: the question is what is happening, and who is on it.
 
@@ -705,7 +709,7 @@ def members(providers=None):
     """
     groups = {}
     listed = {}
-    for s in sessions(providers):
+    for s in (sessions(providers) if rows is None else rows):
         # A session is one `provider:id`. A provider that lists it twice has
         # still only one session to show, and one to count for the chime --
         # and if only one of the records knows it leads a track, that one.
@@ -758,23 +762,30 @@ def _project_order(key, group, rank):
             -max(s["updatedAt"] for s in group))
 
 
-def roster(providers=None):
+def roster(providers=None, *, rows=None, answered=None, now=None,
+           seen_path=None, finished_path=None, paste_root=None):
     """The page's data: `columns` (the overview, one per project), the
-    header's `counts`, the `banners`, and `flags`.
+    header's `counts`, the `banners`, and `flags`. A query: it writes nothing.
+
+    The round (`poll.round`) passes the `rows` it asked for and who
+    `answered`; given only `providers`, the asking is done here, which is what
+    a test wants.
 
     `flags` is for what rings and what is forgotten: one row per session on
     the machine, routines and finished sessions too, with the raw flag the
     chime has always read. A tile may say less than its flag does; the chime
     does not.
     """
-    everyone = members(providers)
-    kept, pastes = place_pastes(everyone, paste.waiting())
-    paste.sweep()
+    if rows is None:
+        rows, answered, _ = ask(providers, now=now, seen_path=seen_path, finished_path=finished_path)
+    everyone = members(rows=rows)
+    kept, pastes = place_pastes(everyone, paste.waiting(paste_root))
     columns = columns_of(everyone)
     for s in everyone:
         s.pop("paths", None)
     return {"columns": columns, "counts": counts_of(columns),
-            "banners": banners_of(providers), "flags": flags_of(everyone),
+            "banners": banners_of(providers, answered=answered, now=now),
+            "flags": flags_of(everyone),
             # The header's count, and the Pastes of sessions that are no longer
             # on the machine: they stay until ticked done (`paste.py`).
             "pastes": pastes, "kept": kept}
@@ -917,11 +928,13 @@ def limit_banner(p, now):
     return {"kind": "limit", "text": f"{name} usage limit reached"}
 
 
-def banners_of(providers=None):
+def banners_of(providers=None, *, answered=None, now=None):
     """What is wrong with the whole machine, or with a provider's whole account,
     said once across the top of the page: each a `kind` and the `text` to print.
     Never a kind of stuck on a tile -- every session it concerns is held by it
-    alike. The page prints these and looks for nothing of its own."""
+    alike. The page prints these and looks for nothing of its own.
+
+    `answered` is who answered this round; None means everyone did."""
     banners = []
     try:
         free = disk_usage(claude.claude_dir()).free
@@ -930,10 +943,10 @@ def banners_of(providers=None):
     if free is not None and free < positive_value("disk_full_mb", DISK_FULL_MB) * MB:
         banners.append({"kind": "disk",
                         "text": f"Disk full: {size_text(free)} left where sessions write"})
-    now = time.time()
+    now = time.time() if now is None else now
     for p in (providers if providers is not None else _providers()):
         # What a provider that did not answer this round last said is not news.
-        if p.name in ROUND["answered"] and callable(getattr(p, "limit", None)):
+        if (answered is None or p.name in answered) and callable(getattr(p, "limit", None)):
             limited = limit_banner(p, now)
             if limited:
                 banners.append(limited)
