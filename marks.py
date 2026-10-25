@@ -101,14 +101,15 @@ def _imported(path):
 
 def _read(path):
     """`(records, how)`: how is "ok", "missing", "broken" for a file that
-    exists and is not a JSON object, or "error" when the read itself failed
-    (too many open files, an I/O error): that says nothing about the file."""
+    exists and is not a JSON object, is nested too deep, may not be read, or
+    is a directory; or "error" when the read itself failed (too many open
+    files, an I/O error): that says nothing about the file."""
     try:
         with path.open(encoding="utf-8") as fh:
             got = json.load(fh)
     except FileNotFoundError:
         return {}, "missing"
-    except ValueError:
+    except (ValueError, RecursionError, PermissionError, IsADirectoryError):
         return {}, "broken"
     except OSError:
         return {}, "error"

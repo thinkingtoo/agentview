@@ -411,6 +411,35 @@ class Import(Dir):
         self.assertEqual(marks.load(self.path), {})
         self.untouched(before)
 
+    def test_a_file_nobody_may_read_or_that_is_a_directory_or_too_deep_is_broken(self):
+        real = Path.open
+        cases = {
+            "denied": lambda: self.path.write_text("{}"),
+            "directory": lambda: self.path.mkdir(),
+            "deep": lambda: self.path.write_text("[" * 200000),
+        }
+        for name, make in cases.items():
+            with self.subTest(case=name):
+                for f in self.broken():
+                    if f.is_dir():
+                        f.rmdir()
+                    else:
+                        f.unlink()
+                if self.path.is_dir():
+                    self.path.rmdir()
+                else:
+                    self.path.unlink(missing_ok=True)
+                make()
+
+                def denied(p, *a, **k):
+                    if name == "denied" and p == self.path:
+                        raise PermissionError(13, "denied")
+                    return real(p, *a, **k)
+                with mock.patch.object(Path, "open", denied):
+                    marks.mark("fake:a", 100, True, self.path)
+                self.assertEqual(len(self.broken()), 1)
+                self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100, "read": 100}})
+
     def test_two_broken_files_in_one_second_are_both_kept(self):
         with mock.patch.object(marks.time, "strftime", return_value="T"):
             for junk in ("{one", "{two"):
