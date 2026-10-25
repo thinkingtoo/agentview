@@ -45,7 +45,7 @@ class GetGuard(unittest.TestCase):
                     self.assertEqual(self.get(path, host=host), 403)
 
     def test_the_roster_is_never_computed_for_a_foreign_host(self):
-        with mock.patch.object(server.fleet, "roster", side_effect=AssertionError("ran")):
+        with mock.patch.object(server.poll, "round", side_effect=AssertionError("ran")):
             self.assertEqual(self.get("/api/roster", host="rebound.attacker.example"), 403)
 
     def test_the_dashboard_polls_still_answer(self):
@@ -55,13 +55,12 @@ class GetGuard(unittest.TestCase):
                     self.assertEqual(self.get(path, host=host), 200)
 
     def test_the_roster_answers_for_a_local_host(self):
-        data = {"flags": []}
-        with mock.patch.object(server.fleet, "roster", return_value=data), \
+        # The round (`poll.round`) is what the route depends on; a stub stands in for it.
+        data = {"flags": [], "providers": {}}
+        with mock.patch.object(server.poll, "round", return_value=data), \
              mock.patch.object(server, "restorable", return_value=[]), \
              mock.patch.object(server, "closed_now", return_value=[]), \
-             mock.patch.object(server, "coverage", return_value={}), \
-             mock.patch.object(server.seen, "forget"), mock.patch.object(server.finished, "forget"), \
-             mock.patch.object(server.lines, "forget"), mock.patch.object(server.log, "note_roster"):
+             mock.patch.object(server, "coverage", return_value={}):
             for host in (f"127.0.0.1:{self.port}", f"localhost:{self.port}"):
                 with self.subTest(host=host):
                     self.assertEqual(self.get("/api/roster", host=host), 200)

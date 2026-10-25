@@ -117,3 +117,7 @@ The person has seen what the session said when it stopped, as of that stop, in t
 **Movement**:
 Visible evidence that a session is still making progress, including while it waits on CI or tests.
 _Avoid_: activity, liveness
+
+**Round**:
+One poll of the overview: ask every provider, build the roster, settle what is forgotten, sweep the Pastes. A provider that fails or stalls is reported and the round goes on without it; what belongs to that provider is not forgotten that round, and session lines are forgotten only on a round every provider answered. Module `poll.py`, entry `poll.round`.
+_Avoid_: poll cycle, refresh, tick (the chime's)

@@ -1,71 +1,20 @@
-"""One poll across providers: who answered, who failed, and what the click does.
+"""The marks a round forgets, the key migration, and what the click does.
 
-A single provider must not be able to take the page down, and a provider
-that misses a round must not make everything you had read come back as
-`ready` when it returns.
+The round itself (who answered, who failed, what is forgotten and swept) is
+`tests/test_poll.py`. A provider that misses a round must not make everything
+you had read come back as `ready` when it returns.
 """
 import json
 import shutil
 import sys
 import tempfile
-import threading
-import time
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 import seen
-from providers.base import Provider
 from test_providers import Fake, minimal
-
-
-class Broken(Provider):
-    name = "broken"
-    capabilities = frozenset()
-
-    def live(self):
-        raise RuntimeError("sqlite is locked")
-
-
-class Slow(Provider):
-    name = "slow"
-    capabilities = frozenset()
-    gate = threading.Event()
-
-    def live(self):
-        self.gate.wait(10)
-        return []
-
-
-class Round(unittest.TestCase):
-    def test_a_provider_that_raises_does_not_take_the_others_down(self):
-        rows = fleet.sessions(providers=[Broken(), Fake([minimal()])])
-        self.assertEqual([r["key"] for r in rows], ["fake:s1"])
-        self.assertEqual(fleet.ROUND["answered"], {"fake"})
-        self.assertIn("sqlite is locked", fleet.ROUND["failed"]["broken"])
-
-    def test_a_provider_that_stalls_is_reported_within_the_budget(self):
-        slow = Slow()
-        fleet.LIVE_BUDGET, was = 0.2, fleet.LIVE_BUDGET
-        try:
-            t = time.perf_counter()
-            rows = fleet.sessions(providers=[slow, Fake([minimal()])])
-            self.assertLess(time.perf_counter() - t, 1.5)
-        finally:
-            fleet.LIVE_BUDGET = was
-            slow.gate.set()
-        self.assertEqual([r["key"] for r in rows], ["fake:s1"])
-        self.assertIn("slow", fleet.ROUND["failed"])
-        self.assertEqual(fleet.ROUND["answered"], {"fake"})
-
-    def test_a_provider_that_returns_nonsense_is_a_failed_provider(self):
-        class Odd(Provider):
-            name = "odd"
-            def live(self):
-                return {"not": "a list"}
-        fleet.sessions(providers=[Odd()])
-        self.assertIn("odd", fleet.ROUND["failed"])
 
 
 class Forgetting(unittest.TestCase):

@@ -56,8 +56,9 @@ class Refused(Exception):
     """A Paste that was not made, or a change that was not made. The text says why."""
 
 
-def store():
-    return lines.store().parent / "pastes"
+def store(lines_root=None):
+    """Where the Pastes live: beside the session lines, or beside the `lines_root` given."""
+    return (Path(lines_root) if lines_root else lines.store()).parent / "pastes"
 
 
 def _root(root):

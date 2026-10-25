@@ -18,13 +18,11 @@ import finished
 import fleet
 import hand
 import jump
-import lines
 import log
 import notes
 import paste
+import poll
 import projects
-import providers
-import seen
 import snapshot
 import subprocess
 import tickets
@@ -548,32 +546,15 @@ class Handler(BaseHTTPRequestHandler):
             log.event("refused", path=self.path.split("?", 1)[0], host=self.headers.get("Host"))
             return self.send_error(403, "not a local request")
         if self.path.startswith("/api/roster"):
-            # A poll is expected to be fast. The 9-second round that made
-            # clicking feel broken would have written a line every time.
-            with fleet.POLL:
-                with log.timed("roster", 1.5):
-                    data = fleet.roster()
-                flags = data["flags"]
-                failed = {**providers.broken(), **fleet.ROUND["failed"]}
-                answered = set(fleet.ROUND["answered"])
-            log.note_roster(flags)
-            live = {f["key"] for f in flags}
-            # Only the providers that answered get their dead sessions
-            # forgotten: a missed round must not bring back as `ready`
-            # everything you had already read.
-            seen.forget(live, answered=answered)
-            finished.forget(live, answered=answered)
-            if not fleet.ROUND["failed"]:
-                lines.forget({f["id"] for f in flags})
-            status = {name: {"ok": True} for name in answered}
-            status.update({name: {"ok": False, "error": why} for name, why in failed.items()})
-            live_ids = {f["key"].partition(":")[2] for f in flags
+            # The round does the asking, the forgetting and the sweep
+            # (`poll.py`); what is added here is Claude-only.
+            data = poll.round()
+            live_ids = {f["key"].partition(":")[2] for f in data["flags"]
                         if f["key"].startswith("claude:")}
             self._send(json.dumps({**data,
                                    "restore": restorable(live_ids),
                                    "closed": closed_now(live_ids),
                                    "saved": coverage(live_ids),
-                                   "providers": status,
                                    "chime": fleet.config_value("chime", True)}),
                        "application/json")
         elif self.path.startswith("/api/paste_text"):
