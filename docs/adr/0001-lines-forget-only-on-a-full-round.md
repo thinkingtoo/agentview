@@ -4,8 +4,8 @@ Date: 2026-10-25. Status: accepted.
 
 ## Context
 
-The round (`poll.round`) decides what the stores may forget. `seen` and
-`finished` key their records by `provider:id`, so when one provider misses a
+The round (`poll.round`) decides what the stores may forget. `marks` keys
+its records by `provider:id`, so when one provider misses a
 poll the round can still drop the dead sessions of the providers that answered
 and keep that provider's records untouched.
 
@@ -16,8 +16,8 @@ line file can be told apart from one of its sessions.
 
 ## Decision
 
-`lines.forget` runs only when every provider answered the round. `seen` and
-`finished` forget per provider. The round computes both facts in one place.
+`lines.forget` runs only when every provider answered the round. `marks.forget`
+drops per provider. The round computes both facts in one place.
 
 ## Consequences
 

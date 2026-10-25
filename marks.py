@@ -23,7 +23,8 @@ round (`poll.round`) cannot lose one another's write. The first `load` that
 finds no `marks.json` builds it from the two files this store replaced,
 `seen.json` and `finished.json`, which are never written or removed. Writes
 never raise: not knowing what you have read is a smaller problem than a page
-that will not load.
+that will not load. A file that exists and cannot be read loads as empty and is
+not rebuilt, but the next mark or pin writes over it.
 """
 import json
 import os
@@ -161,6 +162,7 @@ def mark(key, stamp, read, path=None):
     """You looked at this session as it is at the stop `stamp` and, when
     `read`, read its handover: both in one write. `read` off leaves an
     existing read stop alone."""
+    path = Path(path or store())
     if not key or not stamp:
         return load(path)
     with _LOCK:
@@ -169,11 +171,12 @@ def mark(key, stamp, read, path=None):
         record["seen"] = stamp
         if read:
             record["read"] = stamp
-        return _save(state, path or store())
+        return _save(state, path)
 
 
 def pin(key, on, path=None):
     """Pin a session open as a full tile, or let it shrink again."""
+    path = Path(path or store())
     if not key:
         return load(path)
     with _LOCK:
@@ -184,7 +187,7 @@ def pin(key, on, path=None):
             state[key].pop("pinned", None)
             if not state[key]:
                 del state[key]
-        return _save(state, path or store())
+        return _save(state, path)
 
 
 def forget(drop, path=None):
@@ -197,9 +200,10 @@ def forget(drop, path=None):
     is read again under the lock, so a mark or a pin that landed since the
     round began survives. A key not here is nothing.
     """
+    path = Path(path or store())
     with _LOCK:
         state = load(path)
         kept = {key: record for key, record in state.items() if key not in drop}
         if len(kept) != len(state):
-            _save(kept, path or store())
+            _save(kept, path)
         return kept

@@ -517,7 +517,7 @@ Known limits, accepted:
   reads as no line until the mount answers. The read stays out on a thread of its
   own and cannot be given up on, so a process that ends while it is out ends when
   the mount answers or is cut loose (`fusermount3 -u -z`). The other files the
-  page reads (`config.json`, `seen.json`, a repository's `.git/config`) are not
+  page reads (`config.json`, `marks.json`, a repository's `.git/config`) are not
   bounded this way.
 
 What is not offered, so that half a command is never one click away: a command
@@ -807,9 +807,9 @@ session outside a repo, a Codex row without a name is a provider that has no
 names.
 
 Every store is keyed `provider:id` — `assign` and `lines` in `config.json`,
-`marks.json` — and a bare id left over from before is migrated to `claude:` at
-start-up (in `marks.json`, once, when it is first built from the older `seen.json`
-and `finished.json`, which are left alone). Each `live()` runs under a time budget and inside a `try`: a
+`marks.json` — and a bare id left over from before is given `claude:` when
+`marks.json` is first built, once, from the older `seen.json` and `finished.json`,
+which are left alone. Each `live()` runs under a time budget and inside a `try`: a
 provider that fails a poll gets a *down* badge next to the count and the
 others carry on, and its read-marks are left alone until it is back, so a
 missed round cannot bring everything you had read back as ready.
