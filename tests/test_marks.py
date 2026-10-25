@@ -486,10 +486,6 @@ class Import(Dir):
         self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100}, "fake:b": {"seen": 5}})
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def failing_open(*paths, errno=5):
     """`Path.open` raising a read error (EIO by default) for these paths."""
     real = Path.open
@@ -593,3 +589,7 @@ class ImportReadError(Logged):
         self.assertEqual(marks.load(self.path),
                          {"fake:a": {"read": 100}, "fake:b": {"pinned": True}})
         self.assertTrue(self.path.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

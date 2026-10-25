@@ -38,7 +38,7 @@ import log
 DEFAULT_PROVIDER = "claude"
 
 _LOCK = threading.RLock()
-_stuck = set()               # stores whose last read failed, so a skip logs once
+_unreadable = set()         # stores whose last read failed, so a skip logs once
 
 
 def store():
@@ -128,7 +128,7 @@ def _read(path):
         return {}, "broken"
     except OSError:
         return {}, "error"
-    _stuck.discard(str(path))
+    _unreadable.discard(str(path))
     return _clean(got), ("ok" if isinstance(got, dict) else "broken")
 
 
@@ -162,8 +162,8 @@ def load(path=None):
 def _skipped(path):
     """A writer left the store alone because a read failed. One line in the
     log when that starts; nothing more until a read works and fails again."""
-    if str(path) not in _stuck:
-        _stuck.add(str(path))
+    if str(path) not in _unreadable:
+        _unreadable.add(str(path))
         log.event("marks_skipped", path=str(path),
                   why="a read of the marks or the files they are built from failed")
 
