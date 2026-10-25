@@ -4,7 +4,9 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Claimed by:** Youssef 2026-10-25 12:54
+
+**Status:** in-progress
 
 - [ ] Tests that fail on the tree before: a `mark` and a `forget` of another key from two threads both land (today `seen.mark` can lose to `seen.forget`); the import from both old files, from only one, with a bare id, with a corrupt old file, and the old files byte for byte unchanged after; an unreadable `marks.json` loads empty and is not rebuilt.
 - [ ] `fleet.mark_seen` is one `marks.mark(key, stamp, read)` write; `poll.round` reads `marks.keys` and calls `marks.forget` once; `seen.migrate` and its call in `fleet.py` are gone.
