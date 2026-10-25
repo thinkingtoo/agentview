@@ -8,7 +8,7 @@ goal: One poll is one module (poll.round) that decides once what is forgotten; s
 done_when: Tickets in .scratch/poll-round/issues are done
 
 - [ ] keyed-store: Review candidate 7, seen and finished as one keyed store (Thierry's pick, 2026-10-25)
-  next: Grill the design with Thierry (one file or two, one lock, the read-vs-seen distinction kept), then spec and tickets; context in the local handoff of 2026-10-25
+  next: Build ticket .scratch/marks/issues/01-one-marks-store.md (spec docs/specs/2026-10-25-marks.md, grilled with Thierry 2026-10-25)
   party: agent
   priority: Next
   last_update: 2026-10-25
