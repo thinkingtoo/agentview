@@ -6,9 +6,10 @@ Decide here, then do: one `log` line when a writer skips on `error` (once per st
 
 **Blocked by:** None (can start immediately)
 
-**Claimed by:** none
 
-**Status:** ready-for-agent
+**Claimed by:** Ciro 2026-10-25 18:55
+
+**Status:** in-progress
 
 - [ ] A test that fails on the tree before: a writer that skips on a persistent read error leaves a log line; a recovered read stops logging; no write happens in either case.
 - [ ] Suite green on the touched files locally and on t-compute; review GO.

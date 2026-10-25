@@ -6,9 +6,10 @@ Decide here, then do: when an old file fails with an `OSError` other than "not f
 
 **Blocked by:** None (can start immediately)
 
-**Claimed by:** none
 
-**Status:** ready-for-agent
+**Claimed by:** Ciro 2026-10-25 18:55
+
+**Status:** in-progress
 
 - [ ] A test that fails on the tree before: a read error on `seen.json` or `finished.json` with no `marks.json` writes nothing and the next load, once the read works, imports every record; a missing old file still counts as empty.
 - [ ] Suite green on the touched files locally and on t-compute; review GO.
