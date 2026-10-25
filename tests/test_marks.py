@@ -17,6 +17,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import log  # noqa: E402
 import marks  # noqa: E402
 
 
@@ -25,6 +26,9 @@ class Dir(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.path = self.tmp / "marks.json"
+        patcher = mock.patch.object(log, "LOG", self.tmp / "events.jsonl")
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
 
 class Facts(Dir):
@@ -395,6 +399,12 @@ class Import(Dir):
         self.assertEqual(self.broken(), [])
         self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100, "read": 100}})
 
+    def test_an_old_file_nobody_may_read_or_that_is_a_directory_adds_nothing_and_the_file_is_built(self):
+        (self.tmp / "seen.json").mkdir()                # read as IsADirectoryError: never clears
+        (self.tmp / "finished.json").write_text(json.dumps({"pinned": ["fake:b"]}))
+        self.assertEqual(marks.load(self.path), {"fake:b": {"pinned": True}})
+        self.assertTrue(self.path.exists())
+
     def test_a_failed_fresh_write_puts_the_broken_file_back_and_does_not_rebuild(self):
         before = self.old({"fake:x": 100})
         self.path.write_text("{broken")
@@ -483,6 +493,122 @@ class Import(Dir):
         self.old({"fake:a": 100})
         marks.mark("fake:b", 5, False, self.path)
         self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100}, "fake:b": {"seen": 5}})
+
+
+def failing_open(*paths, errno=5):
+    """`Path.open` raising a read error (EIO by default) for these paths."""
+    real = Path.open
+    names = {Path(p) for p in paths}
+
+    def flaky(p, *a, **k):
+        if p in names:
+            raise OSError(errno, "input/output error")
+        return real(p, *a, **k)
+    return mock.patch.object(Path, "open", flaky)
+
+
+class Logged(Dir):
+    def skipped(self):
+        if not log.LOG.exists():
+            return []
+        lines = [json.loads(l) for l in log.LOG.read_text().splitlines()]
+        return [l for l in lines if l["kind"] == "marks_skipped"]
+
+
+class PersistentReadError(Logged):
+    """A read error that does not clear leaves the file alone, and a line in
+    the log, once per state change and not once per poll (ticket 03)."""
+
+    def test_skipped_writers_leave_one_line_and_write_nothing(self):
+        marks.mark("fake:a", 100, True, self.path)
+        before = self.path.read_bytes()
+        with failing_open(self.path):
+            for _ in range(3):
+                marks.mark("fake:b", 100, True, self.path)
+                marks.pin("fake:a", True, self.path)
+                marks.forget({"fake:a"}, self.path)
+        self.assertEqual(self.path.read_bytes(), before)
+        lines = self.skipped()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["path"], str(self.path))
+
+    def test_a_recovered_read_stops_logging_and_a_new_failure_logs_again(self):
+        marks.mark("fake:a", 100, True, self.path)
+        with failing_open(self.path):
+            marks.mark("fake:b", 100, True, self.path)
+        self.assertEqual(len(self.skipped()), 1)
+        marks.mark("fake:b", 100, True, self.path)
+        marks.pin("fake:b", True, self.path)
+        self.assertEqual(len(self.skipped()), 1)
+        self.assertIn("fake:b", marks.load(self.path))
+        with failing_open(self.path):
+            marks.mark("fake:c", 100, True, self.path)
+        self.assertEqual(len(self.skipped()), 2)
+
+    def test_a_readable_store_logs_nothing(self):
+        marks.mark("fake:a", 100, True, self.path)
+        marks.pin("fake:a", True, self.path)
+        marks.forget({"fake:z"}, self.path)
+        self.assertEqual(self.skipped(), [])
+
+
+    def test_a_broken_file_that_cannot_be_set_aside_logs_once(self):
+        self.path.write_text("{broken")
+        with mock.patch.object(Path, "replace", side_effect=PermissionError("no")):
+            marks.mark("fake:a", 100, True, self.path)
+            marks.pin("fake:a", True, self.path)
+        self.assertEqual(len(self.skipped()), 1)
+
+
+class ImportReadError(Logged):
+    """An old file that fails to read for a reason other than "not there" makes
+    no `marks.json` this round; the import retries once the read works
+    (ticket 04)."""
+
+    def setUp(self):
+        super().setUp()
+        (self.tmp / "seen.json").write_text(json.dumps({"fake:a": 100}))
+        (self.tmp / "finished.json").write_text(
+            json.dumps({"read": {"fake:a": 100}, "pinned": ["fake:b"]}))
+        self.want = {"fake:a": {"seen": 100, "read": 100}, "fake:b": {"pinned": True}}
+
+    def test_a_read_error_on_seen_writes_nothing_and_the_next_load_imports_all(self):
+        with failing_open(self.tmp / "seen.json"):
+            self.assertEqual(marks.load(self.path), {})
+            self.assertFalse(self.path.exists())
+        self.assertEqual(marks.load(self.path), self.want)
+
+    def test_a_read_error_on_finished_writes_nothing_and_the_next_load_imports_all(self):
+        with failing_open(self.tmp / "finished.json"):
+            self.assertEqual(marks.load(self.path), {})
+            self.assertFalse(self.path.exists())
+        self.assertEqual(marks.load(self.path), self.want)
+
+    def test_a_writer_does_not_start_the_file_without_the_old_records(self):
+        with failing_open(self.tmp / "seen.json"):
+            marks.mark("fake:c", 300, True, self.path)
+            marks.pin("fake:c", True, self.path)
+            marks.forget({"fake:z"}, self.path)
+            self.assertFalse(self.path.exists())
+        self.assertEqual(len(self.skipped()), 1)
+        marks.mark("fake:c", 300, True, self.path)
+        self.assertEqual(marks.load(self.path),
+                         {**self.want, "fake:c": {"seen": 300, "read": 300}})
+
+    def test_the_import_recovering_lets_the_next_failure_log_again(self):
+        with failing_open(self.tmp / "seen.json"):
+            marks.mark("fake:c", 300, True, self.path)
+        self.assertEqual(len(self.skipped()), 1)
+        marks.load(self.path)                      # imports; the file exists now
+        with failing_open(self.path):
+            marks.mark("fake:c", 300, True, self.path)
+        self.assertEqual(len(self.skipped()), 2)
+
+    def test_a_missing_old_file_still_counts_as_empty(self):
+        (self.tmp / "seen.json").unlink()
+        self.assertEqual(marks.load(self.path),
+                         {"fake:a": {"read": 100}, "fake:b": {"pinned": True}})
+        self.assertTrue(self.path.exists())
 
 
 if __name__ == "__main__":
