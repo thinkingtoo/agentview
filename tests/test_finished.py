@@ -13,11 +13,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import finished
 import fleet
 import lines
 import poll
-import seen
+import marks
 from test_columns import Base, session
 from test_header import idle, moving
 from test_needs_you import asks, waiting
@@ -328,7 +327,7 @@ class Handover(Finished):
         s = self.stopped("a", 5 * HOUR, said="Search index rebuilt.")
         self.read(s)
         # Pinned open, so that there is a tile to look at: read, it would be a pill.
-        finished.pin("fake:a", True)
+        marks.pin("fake:a", True)
         tile = self.tile(s)
         self.assertEqual((tile["unread"], tile["handover"]), (False, ""))
 
@@ -361,10 +360,10 @@ class OldMarks(Finished):
     chime and the ready flag as they were; they do not finish a session."""
 
     def legacy(self, sid="a", minutes=5 * HOUR, **over):
-        """An idle session whose only mark is the block view's: seen.json, and
+        """An idle session whose only mark is the block view's: a seen stop in marks.json, and
         no read mark of the overview's."""
         s = self.stopped(sid, minutes, **over)
-        seen.mark(f"fake:{sid}", s["updatedAt"])
+        marks.mark(f"fake:{sid}", s["updatedAt"], False)
         return s
 
     def test_a_session_the_block_view_marked_seen_is_not_a_pill_before_its_handover_is_read(self):
@@ -387,7 +386,7 @@ class OldMarks(Finished):
 
     def test_an_old_mark_for_an_earlier_stop_counts_for_nothing_either_way(self):
         s = self.stopped("a", 5 * HOUR)
-        seen.mark("fake:a", s["updatedAt"] - 1000)
+        marks.mark("fake:a", s["updatedAt"] - 1000, False)
         self.assertEqual(self.column(s)["pills"], [])
 
     def test_the_read_mark_is_for_the_stop_it_was_made_at(self):
@@ -398,20 +397,20 @@ class OldMarks(Finished):
 
     def test_a_chime_mark_alone_never_finishes_a_session_whatever_wrote_it(self):
         # What the page cannot tell: a jump that failed used to write this too.
-        seen.mark("fake:a", self.stopped("a", 5 * HOUR)["updatedAt"])
+        marks.mark("fake:a", self.stopped("a", 5 * HOUR)["updatedAt"], False)
         self.assertEqual(self.column(self.stopped("a", 5 * HOUR))["pills"], [])
 
     def test_the_old_view_and_the_overview_agree_the_session_is_read_after_one_click(self):
         s = self.stopped("a", 5 * HOUR)
         fleet.mark_seen("fake:a", s)
-        self.assertFalse(seen.ready("fake:a", s["updatedAt"], seen.load()))
+        self.assertFalse(marks.ready("fake:a", s["updatedAt"], marks.load()))
 
 
 class Pinned(Finished):
     """A pill pinned open is a full tile until you unpin it or the session closes."""
 
     def pin(self, sid, on=True):
-        finished.pin(f"fake:{sid}", on)
+        marks.pin(f"fake:{sid}", on)
 
     def test_a_pinned_pill_is_a_full_tile(self):
         s = self.finished("a", 5 * HOUR, name="Femi")
@@ -454,7 +453,7 @@ class Pinned(Finished):
         s = self.finished("a", 5 * HOUR, name="Femi")
         self.pin("a")
         poll.round(providers=[Fake([])])                     # the poll that no longer lists it
-        self.assertEqual(finished.load()["pinned"], [])
+        self.assertFalse(marks.pinned("fake:a", marks.load()))
         # Resumed later under the same id it is not pinned, and what you read
         # of it before it closed is forgotten with it, as the seen mark is.
         got = self.column(s)

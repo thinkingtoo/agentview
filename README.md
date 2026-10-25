@@ -367,21 +367,21 @@ the tile showed (`POST /api/seen {key, stop}`), and only that stop is read: a
 session that stopped again since the page's last poll has a handover the page never
 showed. What is remembered is not
 "you saw this session" but *the stop you read*, so a session that works and stops
-again has a handover nobody has read. This is `finished.json` in the state folder,
-beside `seen.json`, and it is a separate fact from the chime's seen mark. **The
+again has a handover nobody has read. It is the `read` field of the session's record in `marks.json` in the state folder,
+and a separate fact from the chime's `seen` field. **The
 chime's seen marks that predate the overview do not count as having read a
 handover here**: they say a row was clicked (a jump that failed used to write one
 too), and the old row did not put what the session said in front of you. They
 keep driving the chime and the `ready` flag exactly as before; a session whose
 only mark is one of those stays a full tile, with its handover shown, until it
 is looked at once in the overview. A click with no stop (`/api/seen {key}`)
-tells the chime and reads nothing. `fleet.mark_seen` writes both for a jump that
+tells the chime and reads nothing. `fleet.mark_seen` writes both stops in one write for a jump that
 reached the terminal.
 
 **Pin.** The pin button on a pill keeps it open as a full tile until you unpin it
 or the session closes (`POST /api/keep {key, pinned}`; only a live session can be
-pinned). A pinned idle session is an ordinary idle tile. The pin is in
-`finished.json`, not in `config.json`, and is dropped when a poll in which its
+pinned). A pinned idle session is an ordinary idle tile. The pin is the
+`pinned` field in `marks.json`, not in `config.json`, and is dropped when a poll in which its
 provider answered no longer lists the session (so a missed poll does not unpin
 anything).
 
@@ -807,8 +807,9 @@ session outside a repo, a Codex row without a name is a provider that has no
 names.
 
 Every store is keyed `provider:id` — `assign` and `lines` in `config.json`,
-`seen.json` — and a bare id left over from before is migrated to `claude:` at
-start-up. Each `live()` runs under a time budget and inside a `try`: a
+`marks.json` — and a bare id left over from before is migrated to `claude:` at
+start-up (in `marks.json`, once, when it is first built from the older `seen.json`
+and `finished.json`, which are left alone). Each `live()` runs under a time budget and inside a `try`: a
 provider that fails a poll gets a *down* badge next to the count and the
 others carry on, and its read-marks are left alone until it is back, so a
 missed round cannot bring everything you had read back as ready.
@@ -1082,7 +1083,7 @@ wrote. Between calls it falls back to the session's own running commentary. An
 MCP tool is addressed `mcp__<server>__<tool>`, which is a wire address; the page
 says *Gmail users drafts create*.
 
-The lines live in `~/.local/state/agentview/lines/`, beside `seen.json` and
+The lines live in `~/.local/state/agentview/lines/`, beside `marks.json` and
 out of `config.json` — that file is yours to hand-edit, this one is written by a
 hook. Sessions that are gone are forgotten on the next poll.
 
@@ -1345,8 +1346,9 @@ Tuesday* with the same grey dot. So the page works out one flag per session:
 | **green, breathing** | Working | `busy` |
 
 **Ready is keyed to the moment it stopped**, not to the session
-(`~/.local/state/agentview/seen.json`; `finished.json` beside it holds the
-handovers read in the overview and the pins). A session that works again and stops
+(the `seen` field of the session's record in
+`~/.local/state/agentview/marks.json`, which also holds the handovers read in the
+overview and the pins). A session that works again and stops
 again carries a new `statusUpdatedAt`, so it comes back as ready by itself —
 nothing has to be cleared and nothing can go stale. Clicking a card marks it
 seen, whether or not the jump lands. A ready row prints **the last thing the

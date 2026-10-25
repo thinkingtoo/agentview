@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 import lines
-import seen
+import marks
 from test_providers import Fake, minimal
 
 
@@ -32,8 +32,8 @@ class Base(unittest.TestCase):
         self.config = {}
         fleet.CONFIG, was = tmp / "config.json", fleet.CONFIG
         self.addCleanup(setattr, fleet, "CONFIG", was)
-        seen.store, kept = (lambda: tmp / "seen.json"), seen.store
-        self.addCleanup(setattr, seen, "store", kept)
+        marks.store, kept = (lambda: tmp / "marks.json"), marks.store
+        self.addCleanup(setattr, marks, "store", kept)
         self.lines = tmp / "lines"
         lines.store, kept = (lambda: self.lines), lines.store
         self.addCleanup(setattr, lines, "store", kept)

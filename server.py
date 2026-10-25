@@ -14,11 +14,11 @@ from pathlib import Path
 import archive
 import context
 import embedder
-import finished
 import fleet
 import hand
 import jump
 import log
+import marks
 import notes
 import paste
 import poll
@@ -346,7 +346,7 @@ class Handler(BaseHTTPRequestHandler):
         "Pin (a session)".)
 
         Kept with the seen marks, not in config.json: it is a click, and it
-        ends with the session (`finished.forget`, on every poll). Only a
+        ends with the session (`marks.forget`, on every poll). Only a
         session that is alive can be pinned, the way only one can be jumped to.
         """
         key, pinned = body.get("key"), body.get("pinned")
@@ -354,7 +354,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400, "expected {key, pinned: true|false}")
         if not fleet.find(key):
             return self.send_error(404, "no such live session")
-        finished.pin(key, pinned)
+        marks.pin(key, pinned)
         self._send(json.dumps({"ok": True, "pinned": pinned}), "application/json")
 
     def _jump(self, body):

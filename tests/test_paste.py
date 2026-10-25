@@ -31,9 +31,8 @@ import fleet
 import lines
 import log
 import paste
-import seen
+import marks
 import server
-import finished
 import vault
 from test_providers import Fake, minimal
 
@@ -51,7 +50,7 @@ class Case(unittest.TestCase):
         self.fake = Fake([minimal(id="a", name="Ilse", cwd="/home/alice/Projects/maple", canJump=True)])
         for target, new in (("fleet.CONFIG", self.tmp / "config.json"),
                             ("fleet._providers", lambda: [self.fake]),
-                            ("seen.store", lambda: self.tmp / "seen.json"),
+                            ("marks.store", lambda: self.tmp / "marks.json"),
                             ("lines.store", lambda: self.state / "agentview" / "lines"),
                             ("log.LOG", self.tmp / "events.jsonl"),
                             ("server.restorable", lambda live: None),
@@ -332,7 +331,9 @@ class Staying(Case):
 
     def finish(self, key="fake:a"):
         """You read its handover, long after its stop: a pill, not a tile."""
-        finished.mark_read(key, 1790000000000)
+        path = marks.store()                                   # read only: no seen stop beside it
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({key: {"read": 1790000000000}}))
 
     def pills(self):
         return [p for c in self.roster()["columns"] for p in c["pills"]]
@@ -348,7 +349,7 @@ class Staying(Case):
         self.assertEqual([p["id"] for p in pill["pastes"]], [pid])
         self.assertEqual(self.roster()["kept"], [])
         self.fake._sessions = []                                           # gone from the roster
-        for prune in (lines.forget, seen.forget, finished.forget):         # everything the poll prunes with
+        for prune in (lines.forget, marks.forget):         # everything the poll prunes with
             prune(set())
         got = self.roster()
         self.assertEqual(self.pills(), [])
@@ -765,7 +766,7 @@ class Secrets(Case):
         code, pid, _ = self.leave("Token", "sk-test-" + "ab12" * 8, "--provider", "fake")
         self.assertEqual(code, 0)
         self.fake._sessions = []
-        for prune in (lines.forget, seen.forget):
+        for prune in (lines.forget, marks.forget):
             prune(set())
         old = time.time() - 10 * paste.SWEEP_AFTER
         stray = paste.store() / "dead.tmp"

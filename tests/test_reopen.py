@@ -22,7 +22,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import seen  # noqa: E402
+import marks  # noqa: E402
 import snapshot  # noqa: E402
 
 SID = "00000000-0000-4000-8000-0000000000c1"
@@ -168,7 +168,7 @@ class Endpoint(unittest.TestCase):
         server._OPENING.clear()
         self.opened, self.jumped, self.delay = [], [], 0
         for target, new in (
-                ("seen.store", lambda: self.root / "seen.json"),
+                ("marks.store", lambda: self.root / "marks.json"),
                 ("jump.open_tab", self.open_tab),
                 ("snapshot.starting", lambda sid: []),
                 ("snapshot.seed_name", lambda sid, name: self.seeded.append((sid, name))),
@@ -248,14 +248,14 @@ class Endpoint(unittest.TestCase):
         self.conversation()
         self.running()
         self.reopen()
-        self.assertFalse(seen.ready(f"claude:{SID}", 1790000000000, seen.load()))
+        self.assertFalse(marks.ready(f"claude:{SID}", 1790000000000, marks.load()))
 
     def test_a_jump_that_failed_leaves_it_unread(self):
         self.conversation()
         self.running()
         with mock.patch("fleet.jump_to", return_value={"ok": False, "reason": "wezterm cli spawn failed"}):
             self.assertFalse(self.reopen()["ok"])
-        self.assertTrue(seen.ready(f"claude:{SID}", 1790000000000, seen.load()))
+        self.assertTrue(marks.ready(f"claude:{SID}", 1790000000000, marks.load()))
 
     def test_a_click_that_only_waited_for_a_tab_does_not_claim_it_jumped(self):
         # A background session being attached answers "opening": a tab was
@@ -267,7 +267,7 @@ class Endpoint(unittest.TestCase):
         self.assertEqual((got["ok"], got["did"]), (True, "opening"))
         self.assertEqual(self.events("jumped")[0]["did"], "opening")
         # Nothing was reached, so what the session said is still unread.
-        self.assertTrue(seen.ready(f"claude:{SID}", 1790000000000, seen.load()))
+        self.assertTrue(marks.ready(f"claude:{SID}", 1790000000000, marks.load()))
 
     def test_a_closed_one_older_than_every_snapshot_opens_from_its_transcript_under_its_name(self):
         self.conversation()

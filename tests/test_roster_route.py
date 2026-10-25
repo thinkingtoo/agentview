@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 import lines
 import log
-import seen
+import marks
 import server
 from test_providers import Fake, minimal
 
@@ -30,7 +30,7 @@ class Poll(unittest.TestCase):
         fake = Fake([minimal(id="a", name="Ilse", cwd="/home/alice/Projects/maple", canJump=True)])
         for target, new in (("fleet.CONFIG", tmp / "config.json"),
                             ("fleet._providers", lambda: [fake]),
-                            ("seen.store", lambda: tmp / "seen.json"),
+                            ("marks.store", lambda: tmp / "marks.json"),
                             ("lines.store", lambda: tmp / "lines"),
                             ("log.LOG", tmp / "events.jsonl"),
                             ("server.restorable", lambda live: None),

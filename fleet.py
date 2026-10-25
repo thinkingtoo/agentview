@@ -21,15 +21,14 @@ from pathlib import Path
 import ask_commands
 import ci_state
 import context
-import finished
 import jump
 import lines
+import marks
 import pace
 import paste
 import projects
 import providers
 import runs
-import seen
 import working
 from providers import base, claude, minutes
 from providers.base import CAPABILITIES, STATUSES, on_a_terminal
@@ -162,7 +161,7 @@ def qualified(key, default="claude"):
 
 
 def migrate_keys(default="claude"):
-    """Once: bare session ids in config.json and seen.json become `provider:id`.
+    """Once: bare session ids in config.json become `provider:id`.
 
     Idempotent, so it runs at every start. The hand-written `assign` lines
     and `lines` overrides are what would otherwise silently stop matching.
@@ -175,7 +174,6 @@ def migrate_keys(default="claude"):
             patch[field] = new
     if patch:
         write_config(patch)
-    seen.migrate(default)
     return sorted(patch)
 
 
@@ -341,7 +339,7 @@ def _ask(p):
     return got, None
 
 
-def live(providers=None, *, now=None, seen_path=None, finished_path=None, lines_root=None):
+def live(providers=None, *, now=None, marks_path=None, lines_root=None):
     """Every provider's live sessions (`Provider.live`), normalised into rows.
 
     Returns `(rows, answered, failed)`: the names of the providers that
@@ -351,8 +349,7 @@ def live(providers=None, *, now=None, seen_path=None, finished_path=None, lines_
     """
     shelves = config()
     assigned = config_value("assign", {})
-    marks = seen.load(seen_path)
-    remembered = finished.load(finished_path)
+    remembered = marks.load(marks_path)
     thresholds = {
         "after": config_value("stuck_after_minutes", 5),
         "tool_after": config_value("long_tool_minutes", 20),
@@ -371,7 +368,7 @@ def live(providers=None, *, now=None, seen_path=None, finished_path=None, lines_
         answered.add(p.name)
         asked.extend((p, raw) for raw in got)
     # Runs are folded into the tile of the session that started them (runs.py).
-    rows = [row for row in (normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered,
+    rows = [row for row in (normalize(p, raw, shelves, assigned, thresholds, now, remembered,
                                       lines_root)
                             for p, raw in runs.fold(asked, now)) if row]
     return rows, answered, failed
@@ -421,13 +418,11 @@ def look(key, shown=None):
 
 def mark_seen(key, s, read=True):
     """Note that you have seen this session as it is now: for the chime, and --
-    unless `read` is off -- as a handover read in the overview (`finished.py`
+    unless `read` is off -- as a handover read in the overview (`marks.py`
     says why those are two). A terminal that came to the front shows the
     session as it is now, so a jump reads it."""
     stamp = _int(s.get("updatedAt"))
-    seen.mark(key, stamp)
-    if read:
-        finished.mark_read(key, stamp)
+    marks.mark(key, stamp, read)
 
 
 def jump_to(p, s):
@@ -521,10 +516,10 @@ def extras_of(value):
     return kept
 
 
-def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered, lines_root=None):
+def normalize(p, raw, shelves, assigned, thresholds, now, remembered, lines_root=None):
     """One provider's facts, made into the row the page draws. None if the
-    session is not even minimally conforming. `remembered` is what the overview
-    keeps (`finished.load()`): the handovers you read and the sessions you pinned.
+    session is not even minimally conforming. `remembered` is what you did with
+    each session (`marks.load()`): seen, handover read, pinned.
     `lines_root` is where the sessions' own lines are read from (`lines.store()`)."""
     if not isinstance(raw, dict):
         return None
@@ -546,7 +541,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered, lin
     paths = [x for x in (raw.get("paths") or []) if isinstance(x, str)]
     # Keyed to the moment it stopped, so a session that works and stops
     # again is ready once more without anything having to clear it.
-    unseen = seen.ready(key, updated, marks)
+    unseen = marks.ready(key, updated, remembered)
     project = projects.landed(assigned, assigned.get(key)) or resolve_project(cwd, shelves)
     # Only guess for the ones that have nothing better -- the guess costs a
     # vote over every path touched, and a session with a real cwd does not
@@ -635,9 +630,9 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered, lin
         # Stopped, and what it told you is not read in the overview -- whether or not
         # it said anything: a session with no words still wants a look before it
         # is forgotten, since "no words" may be a transcript that could not be read.
-        "unread": status == "idle" and bool(updated) and not finished.is_read(key, updated, remembered),
-        # Held open by you (a session pin: `finished.py`). `pinned` on a column is the project's.
-        "pinned": key in remembered["pinned"],
+        "unread": status == "idle" and bool(updated) and not marks.is_read(key, updated, remembered),
+        # Held open by you (a session pin: `marks.py`). `pinned` on a column is the project's.
+        "pinned": marks.pinned(key, remembered),
         "asking": asking,
         # The chime's reading of a provider that cannot say `waiting` (Codex):
         # an open request with no answer rings, as it is Needs you on the tile (a
@@ -766,7 +761,7 @@ def _project_order(key, group, rank):
 
 
 def roster(providers=None, *, rows=None, answered=None, now=None,
-           seen_path=None, finished_path=None, paste_root=None):
+           marks_path=None, paste_root=None):
     """The page's data: `columns` (the overview, one per project), the
     header's `counts`, the `banners`, and `flags`. A query: it writes nothing.
 
@@ -779,7 +774,7 @@ def roster(providers=None, *, rows=None, answered=None, now=None,
     does not.
     """
     if rows is None:
-        rows, answered, _ = live(providers, now=now, seen_path=seen_path, finished_path=finished_path)
+        rows, answered, _ = live(providers, now=now, marks_path=marks_path)
     everyone = members(rows=rows)
     kept, pastes = place_pastes(everyone, paste.waiting(paste_root))
     columns = columns_of(everyone)

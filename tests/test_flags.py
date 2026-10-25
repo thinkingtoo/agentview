@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 import lines
-import seen
+import marks
 from test_columns import Base, session
 from test_finished import HOUR, ago
 from test_needs_you import waiting
@@ -91,7 +91,7 @@ class Flags(Base):
 
     def test_the_old_marks_still_keep_the_ready_flag_off(self):
         s = session("a", status="idle", updatedAt=ago(5 * HOUR))
-        seen.mark("fake:a", s["updatedAt"])
+        marks.mark("fake:a", s["updatedAt"], False)
         (row,) = self.flags(s)
         self.assertIsNone(row["flag"])
 

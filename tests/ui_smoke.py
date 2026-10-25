@@ -2785,11 +2785,18 @@ def finished_e2e_pass(browser):
         tmp.write_text(json.dumps(rows))
         tmp.replace(root / "sessions.json")
 
-    state = lambda: json.loads((root / "finished.json").read_text()) if (root / "finished.json").exists() else {}
+    def state():
+        """The reads and pins in marks.json, as `{"read": {key: stop}, "pinned": [key]}`."""
+        try:
+            got = json.loads((root / "marks.json").read_text())
+        except (OSError, ValueError):
+            got = {}
+        return {"read": {k: r["read"] for k, r in got.items() if "read" in r},
+                "pinned": [k for k, r in got.items() if r.get("pinned")]}
     config_before = (root / "config.json").read_bytes()
     try:
-        # What the chime's marks hold: Odile's stop is marked seen in seen.json.
-        (root / "seen.json").write_text(json.dumps({"fake:b": sessions[1]["updatedAt"]}))
+        # What the chime's marks hold: Odile's stop is marked seen in marks.json.
+        (root / "marks.json").write_text(json.dumps({"fake:b": {"seen": sessions[1]["updatedAt"]}}))
         write(sessions)
         proc, port = start_hand_server(root, procs)
         page = open_hand_page(browser, port)

@@ -23,7 +23,7 @@ import fleet
 import lines
 import log
 import projects
-import seen
+import marks
 import server
 from test_providers import Fake, minimal
 from test_projects import TrackFixtures, sess
@@ -282,7 +282,7 @@ class Served(unittest.TestCase):
                           minimal(id="b", name="Odile", cwd="/home/alice/Projects/orchard")])
         for target, new in (("fleet.CONFIG", self.cfg),
                             ("fleet._providers", lambda: [self.fake]),
-                            ("seen.store", lambda: self.tmp / "seen.json"),
+                            ("marks.store", lambda: self.tmp / "marks.json"),
                             ("lines.store", lambda: self.tmp / "lines"),
                             ("log.LOG", self.tmp / "events.jsonl"),
                             ("server.restorable", lambda live: None),

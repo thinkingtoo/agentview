@@ -453,16 +453,16 @@ class ClickServer(FakeRegistry):
 
     def setUp(self):
         super().setUp()
-        import fleet, log, seen, server
+        import fleet, log, marks, server
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
         (tmp / "config.json").write_text("{}")
-        self.seen = seen
+        self.marks = marks
         self.opened, self.delay = [], 0
         jump._ATTACHING.clear()
         for target, new in (("fleet.CONFIG", tmp / "config.json"),
                             ("fleet._providers", lambda: [self.provider]),
-                            ("seen.store", lambda: tmp / "seen.json"),
+                            ("marks.store", lambda: tmp / "marks.json"),
                             ("log.LOG", tmp / "events.jsonl"),
                             ("jump.open_tab", self.open_tab),
                             ("jump._run", lambda argv, timeout=4: self.fail(f"ran {argv}")),
@@ -516,7 +516,7 @@ class ClickServer(FakeRegistry):
         return self.column()["sessions"][0]
 
     def unread(self):
-        return self.seen.ready(f"claude:{SID}", 1790000000000, self.seen.load())
+        return self.marks.ready(f"claude:{SID}", 1790000000000, self.marks.load())
 
 
 class Click(ClickServer):

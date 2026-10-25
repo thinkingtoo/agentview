@@ -24,7 +24,7 @@ import fleet
 import lines
 import log
 import notes
-import seen
+import marks
 import server
 from test_providers import Fake, minimal
 
@@ -41,7 +41,7 @@ class Route(unittest.TestCase):
         fake = Fake([minimal(id="a", name="Ilse", cwd="/home/alice/Projects/maple", canJump=True)])
         for target, new in (("fleet.CONFIG", self.config),
                             ("fleet._providers", lambda: [fake]),
-                            ("seen.store", lambda: self.tmp / "seen.json"),
+                            ("marks.store", lambda: self.tmp / "marks.json"),
                             ("lines.store", lambda: self.tmp / "lines"),
                             ("log.LOG", self.tmp / "events.jsonl"),
                             ("server.restorable", lambda live: None),
