@@ -12,22 +12,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
-import seen
+import marks
 from test_providers import Fake, minimal
 
 
 class Migration(unittest.TestCase):
-    def test_bare_ids_become_claude_keys_once(self):
-        path = Path(tempfile.mkdtemp()) / "seen.json"
-        self.addCleanup(shutil.rmtree, path.parent, True)
-        seen.mark("abc", 100, path)
-        seen.mark("codex:def", 200, path)
-        seen.migrate("claude", path)
-        self.assertEqual(seen.load(path), {"claude:abc": 100, "codex:def": 200})
-        before = path.stat().st_mtime_ns
-        seen.migrate("claude", path)                    # idempotent, no rewrite
-        self.assertEqual(path.stat().st_mtime_ns, before)
-
     def test_config_assign_and_lines_are_migrated_too(self):
         cfg = Path(tempfile.mkdtemp()) / "config.json"
         self.addCleanup(shutil.rmtree, cfg.parent, True)
@@ -65,14 +54,14 @@ class Click(unittest.TestCase):
         self.assertIsNone(fleet.find(4242))
 
     def test_looking_marks_the_session_read_whatever_happens_next(self):
-        path = Path(tempfile.mkdtemp()) / "seen.json"
+        path = Path(tempfile.mkdtemp()) / "marks.json"
         self.addCleanup(shutil.rmtree, path.parent, True)
-        seen.store, was = (lambda: path), seen.store
+        marks.store, was = (lambda: path), marks.store
         try:
             fleet.look("fake:s1")
         finally:
-            seen.store = was
-        self.assertEqual(seen.load(path), {"fake:s1": 777})
+            marks.store = was
+        self.assertEqual(marks.load(path), {"fake:s1": {"seen": 777}})
 
     def test_a_provider_without_jump_says_so_instead_of_guessing(self):
         self.fake.capabilities = {"status"}

@@ -18,12 +18,11 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import finished
 import fleet
 import lines
 import poll
 import providers
-import seen
+import marks
 from providers.base import Provider
 from test_providers import Fake, minimal
 
@@ -72,16 +71,15 @@ class Base(unittest.TestCase):
         (self.tmp / "config.json").write_text("{}")
         fleet.CONFIG, was = self.tmp / "config.json", fleet.CONFIG
         self.addCleanup(setattr, fleet, "CONFIG", was)
-        self.seen = self.tmp / "seen.json"
-        self.finished = self.tmp / "finished.json"
+        self.marks = self.tmp / "marks.json"
         self.lines = self.tmp / "lines"
         self.lines.mkdir()
         self.pastes = self.tmp / "pastes"
         self.pastes.mkdir()
 
     def round(self, *providers, now=NOW):
-        return poll.round(providers=list(providers), now=now, seen_path=self.seen,
-                          finished_path=self.finished, lines_root=self.lines)
+        return poll.round(providers=list(providers), now=now, marks_path=self.marks,
+                          lines_root=self.lines)
 
 
 class Answering(Base):
@@ -125,18 +123,15 @@ class Forgetting(Base):
     def setUp(self):
         super().setUp()
         for key in ("fake:s1", "fake:gone", "broken:z"):
-            seen.mark(key, 100, self.seen)
-            finished.mark_read(key, 100, self.finished)
-        finished.pin("broken:z", True, self.finished)
-        finished.pin("fake:gone", True, self.finished)
+            marks.mark(key, 100, True, self.marks)
+        marks.pin("broken:z", True, self.marks)
+        marks.pin("fake:gone", True, self.marks)
         lines.write("gone", did="old words", root=self.lines)
 
     def test_a_failed_providers_marks_and_pins_survive_the_round(self):
         self.round(Broken(), Fake([minimal()]))
-        self.assertEqual(seen.load(self.seen), {"fake:s1": 100, "broken:z": 100})
-        state = finished.load(self.finished)
-        self.assertEqual(state["read"], {"fake:s1": 100, "broken:z": 100})
-        self.assertEqual(state["pinned"], ["broken:z"])
+        self.assertEqual(marks.load(self.marks), {"fake:s1": {"seen": 100, "read": 100},
+                                                  "broken:z": {"seen": 100, "read": 100, "pinned": True}})
 
     def test_lines_are_kept_while_any_provider_is_missing(self):
         self.round(Broken(), Fake([minimal()]))
@@ -153,7 +148,8 @@ class Forgetting(Base):
         self.assertEqual(lines.read("gone", self.lines), {})
         # The gone session of the provider that answered is forgotten; a
         # provider not asked this round keeps its marks.
-        self.assertEqual(seen.load(self.seen), {"fake:s1": 100, "broken:z": 100})
+        self.assertEqual(marks.load(self.marks), {"fake:s1": {"seen": 100, "read": 100},
+                                                  "broken:z": {"seen": 100, "read": 100, "pinned": True}})
 
     def test_lines_are_kept_while_a_provider_is_broken_since_start_up(self):
         # A provider whose module did not load never answers either, and its
@@ -171,8 +167,7 @@ class Forgetting(Base):
         lines.write("s1", did="still here", root=self.lines)
         self.round(Broken(), Fake([minimal()]))
         self.round(Back(), Fake([minimal()]))
-        self.assertEqual(seen.load(self.seen), {"fake:s1": 100})
-        self.assertEqual(finished.load(self.finished), {"read": {"fake:s1": 100}, "pinned": []})
+        self.assertEqual(marks.load(self.marks), {"fake:s1": {"seen": 100, "read": 100}})
         self.assertEqual(lines.read("gone", self.lines), {})
         self.assertEqual(lines.read("s1", self.lines).get("did"), "still here")
 

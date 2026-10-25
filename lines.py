@@ -19,7 +19,7 @@ answer to them. `did` is the job the session is on, and the next prompt does
 not change that, so the last one is kept beside the line until a newer one is
 written.
 
-Kept beside `seen.json` rather than in `config.json`: that file is yours to
+Kept beside `marks.json` rather than in `config.json`: that file is yours to
 hand-edit, and this one is rewritten by a hook every time a session stops.
 """
 import codecs

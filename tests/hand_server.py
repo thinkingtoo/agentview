@@ -21,7 +21,7 @@ sys.path.insert(0, str(HERE))
 import fleet
 import lines
 import log
-import seen
+import marks
 import server
 from test_providers import Fake, minimal
 
@@ -56,7 +56,7 @@ def main():
         cfg.write_text("{}")
     fake = Reloaded(root / "sessions.json")
     for target, new in (("fleet.CONFIG", cfg), ("fleet._providers", lambda: [fake]),
-                        ("seen.store", lambda: root / "seen.json"), ("lines.store", lambda: root / "lines"),
+                        ("marks.store", lambda: root / "marks.json"), ("lines.store", lambda: root / "lines"),
                         ("log.LOG", root / "events.jsonl"), ("server.restorable", lambda live: None),
                         ("server.closed_now", lambda live: []), ("server.coverage", lambda live: None),
                         ("providers.broken", lambda: {})):

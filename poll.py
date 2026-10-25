@@ -8,16 +8,15 @@ the round goes on without it: nothing of that provider is forgotten, and
 session lines, whose files carry no provider, are forgotten only on a round
 every provider answered (ADR-0001).
 """
-import finished
 import fleet
 import lines
 import log
+import marks
 import paste
 import providers as provider_registry
-import seen
 
 
-def round(providers=None, now=None, seen_path=None, finished_path=None, lines_root=None):
+def round(providers=None, now=None, marks_path=None, lines_root=None):
     """One round. Every argument has a production default: the registered
     providers, the clock, and the stores' own places. A test passes fakes
     and a temporary directory and patches nothing.
@@ -32,8 +31,8 @@ def round(providers=None, now=None, seen_path=None, finished_path=None, lines_ro
         # A poll is due every 3 seconds. The 9-second round that made clicking
         # feel broken would have written a line every time.
         with log.timed("roster", 1.5):
-            rows, answered, failed = fleet.live(providers, now=now, seen_path=seen_path,
-                                                finished_path=finished_path, lines_root=lines_root)
+            rows, answered, failed = fleet.live(providers, now=now, marks_path=marks_path,
+                                                lines_root=lines_root)
             data = fleet.roster(providers, rows=rows, answered=answered, now=now,
                                 paste_root=paste_root)
         flags = data["flags"]
@@ -46,12 +45,11 @@ def round(providers=None, now=None, seen_path=None, finished_path=None, lines_ro
         # sessions of the providers that answered: a missed round must not
         # bring back as `ready` everything you had already read. Line files
         # carry no provider, so they go only on a round everyone answered.
-        held = seen.keys(seen_path) | finished.keys(finished_path)
+        held = marks.keys(marks_path)
         droppable = {key for key in held
                      if key not in here and key.partition(":")[0] in answered}
         full = not failed
-        seen.forget(droppable, seen_path)
-        finished.forget(droppable, finished_path)
+        marks.forget(droppable, marks_path)
         if full:
             lines.forget({f["id"] for f in flags}, lines_root)
         paste.sweep(paste_root)

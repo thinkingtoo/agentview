@@ -10,12 +10,23 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import finished
 import jump
-import seen
+import marks
 from test_attach import ClickServer, JOB, SID
 
 KEY = f"claude:{SID}"
+
+
+def seen_stops():
+    return {k: r["seen"] for k, r in marks.load().items() if "seen" in r}
+
+
+def read_stops():
+    return {k: r["read"] for k, r in marks.load().items() if "read" in r}
+
+
+def pinned_keys():
+    return [k for k in marks.load() if marks.pinned(k, marks.load())]
 LONG_AGO = 1790000000000          # a stop far more than two hours back
 
 
@@ -38,8 +49,8 @@ class Pill(ClickServer):
     def keys(self, part):
         return [t["key"] for t in self.column()[part]]
 
-    def marks(self):
-        return seen.load(), finished.load()
+    def stops(self):
+        return seen_stops(), read_stops()
 
 
 class Reading(Pill):
@@ -66,20 +77,20 @@ class LookingIsNotReading(Pill):
         # A look that names no stop (a tab from before the overview) posts the key
         # alone: the chime is told, nothing is read.
         self.assertEqual(self.post({"key": KEY}, path="/api/seen"), (200, {"ok": True}))
-        self.assertEqual((seen.load().get(KEY), finished.load()["read"]), (LONG_AGO, {}))
+        self.assertEqual((seen_stops().get(KEY), read_stops()), (LONG_AGO, {}))
         (tile,) = self.column()["sessions"]
         self.assertEqual((tile["key"], tile["unread"], self.keys("pills")), (KEY, True, []))
 
     def test_a_click_on_a_tile_reads_the_stop_it_showed_and_tells_the_chime_too(self):
         self.read_it()
-        self.assertEqual((seen.load().get(KEY), finished.load()["read"]), (LONG_AGO, {KEY: LONG_AGO}))
+        self.assertEqual((seen_stops().get(KEY), read_stops()), (LONG_AGO, {KEY: LONG_AGO}))
 
     def test_a_stop_the_page_never_showed_is_not_read(self):
         # The page showed the stop at LONG_AGO; the session worked and stopped
         # again before the click, with a handover nobody has seen.
         self.stop_again()
         self.assertEqual(self.post({"key": KEY, "stop": LONG_AGO}, path="/api/seen"), (200, {"ok": True}))
-        self.assertEqual(finished.load()["read"], {})
+        self.assertEqual(read_stops(), {})
         (tile,) = self.column()["sessions"]
         self.assertEqual((tile["unread"], tile["stop"], self.keys("pills")), (True, LONG_AGO + 60_000, []))
 
@@ -87,7 +98,7 @@ class LookingIsNotReading(Pill):
         for stop in ("soon", True, 1.5, [LONG_AGO], {"a": 1}):
             with self.subTest(stop=stop):
                 self.assertEqual(self.post({"key": KEY, "stop": stop}, path="/api/seen")[0], 400)
-        self.assertEqual((seen.load(), finished.load()["read"]), ({}, {}))
+        self.assertEqual((seen_stops(), read_stops()), ({}, {}))
 
 
 class JumpFromAPill(Pill):
@@ -102,31 +113,31 @@ class JumpFromAPill(Pill):
 
     def test_a_failed_jump_from_a_pill_marks_nothing_seen(self):
         self.read_it()
-        before = self.marks()
+        before = self.stops()
         self.fails = True
         status, done = self.post({"key": KEY})
         self.assertEqual((status, done["ok"], done["reason"]), (200, False, "wezterm cli spawn failed"))
-        self.assertEqual(self.marks(), before)
+        self.assertEqual(self.stops(), before)
         self.assertEqual(self.keys("pills"), [KEY])
 
     def test_a_click_that_only_waited_for_a_tab_marks_nothing_either(self):
         self.read_it()
         self.stop_again()
-        before = self.marks()
+        before = self.stops()
         jump._ATTACHING[JOB] = jump._now() + jump.ATTACH_GRACE
         status, done = self.post({"key": KEY})
         self.assertEqual((status, done["ok"], done["did"]), (200, True, "opening"))
-        self.assertEqual((self.marks(), self.opened), (before, []))
+        self.assertEqual((self.stops(), self.opened), (before, []))
 
     def test_a_session_that_stopped_again_since_the_poll_stays_unread_when_its_jump_fails(self):
         # The pill was read at the stop it shows. By the click the session has
         # stopped again; a jump that reaches nothing has shown you nothing.
         self.read_it()
         self.stop_again()
-        before = self.marks()
+        before = self.stops()
         self.fails = True
         self.post({"key": KEY})
-        self.assertEqual(self.marks(), before)
+        self.assertEqual(self.stops(), before)
         self.assertEqual((self.keys("sessions"), self.keys("pills")), ([KEY], []))
 
     def test_a_session_that_stopped_again_since_the_poll_is_read_when_its_jump_reached_it(self):
@@ -154,7 +165,7 @@ class Keep(Pill):
         self.keep()
         for _ in range(3):
             self.assertEqual((self.keys("sessions"), self.keys("pills")), ([KEY], []))
-        self.assertEqual(finished.load()["pinned"], [KEY])
+        self.assertEqual(pinned_keys(), [KEY])
 
     def test_unpinning_makes_it_a_pill_again(self):
         self.read_it()
@@ -168,28 +179,28 @@ class Keep(Pill):
         for rec in (self.cfg / "sessions").glob("*.json"):
             rec.unlink()
         self.assertEqual(self.roster()["columns"], [])
-        self.assertEqual(finished.load()["pinned"], [])
+        self.assertEqual(pinned_keys(), [])
 
     def test_a_session_that_is_not_alive_cannot_be_pinned(self):
         self.assertEqual(self.keep(key="claude:nobody")[0], 404)
-        self.assertEqual(finished.load()["pinned"], [])
+        self.assertEqual(pinned_keys(), [])
 
     def test_a_request_that_is_not_what_it_expects_is_refused(self):
         for body in ({}, {"key": KEY}, {"key": KEY, "pinned": "yes"}, {"key": 7, "pinned": True},
                      {"key": KEY, "pinned": 1}):
             with self.subTest(body=body):
                 self.assertEqual(self.post(body, path="/api/keep")[0], 400)
-        self.assertEqual(finished.load()["pinned"], [])
+        self.assertEqual(pinned_keys(), [])
 
     def test_the_guard_is_todays_a_local_page_with_the_fleet_header(self):
         self.assertEqual(self.keep(headers={"X-Fleet": "0"})[0], 403)
         self.assertEqual(self.keep(headers={"Origin": "http://evil.example"})[0], 403)
-        self.assertEqual(finished.load()["pinned"], [])
+        self.assertEqual(pinned_keys(), [])
 
     def test_pinning_opens_nothing_and_marks_nothing_seen(self):
-        before = seen.load()
+        before = seen_stops()
         self.keep()
-        self.assertEqual((self.opened, seen.load()), ([], before))
+        self.assertEqual((self.opened, seen_stops()), ([], before))
 
 
 if __name__ == "__main__":
