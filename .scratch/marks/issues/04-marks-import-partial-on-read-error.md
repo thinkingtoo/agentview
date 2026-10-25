@@ -11,7 +11,7 @@ Decide here, then do: when an old file fails with an `OSError` other than "not f
 
 **Claimed by:** Ciro 2026-10-25 18:55
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] A test that fails on the tree before: a read error on `seen.json` or `finished.json` with no `marks.json` writes nothing and the next load, once the read works, imports every record; a missing old file still counts as empty.
-- [ ] Suite green on the touched files locally and on t-compute; review GO.
+- [x] A test that fails on the tree before: a read error on `seen.json` or `finished.json` with no `marks.json` writes nothing and the next load, once the read works, imports every record; a missing old file still counts as empty. Evidence: `ImportReadError` in `tests/test_marks.py`, failing on dev before the fix. An old file that is unreadable by permission or is a directory still adds nothing (as `_read` treats it), a regression the round-1 review caught, covered by a test. Known gap: no chmod 000 test (the directory case covers the same branch; chmod is a no-op as root).
+- [x] Suite green on the touched files locally and on t-compute; review GO. Evidence: full suite on t-compute at 863792d: 2306 tests OK, 4 skipped, 0 entries left in the private TMPDIR. Matt's code-review answered (Standards: `_stuck` renamed to `_unreadable` since Stuck is a session word, new tests moved above the main guard; Spec: log clears on a finished import, an unsettable broken file logs too). Codex was out of tokens (usage limit, reset 21:39), so two rounds ran as Opus fallback; round 1 found two defects (fixed), round 2 on 863792d: `VERDICT: GO`.
