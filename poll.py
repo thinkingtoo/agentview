@@ -45,7 +45,7 @@ def round(providers=None, now=None, marks_path=None, lines_root=None):
         # sessions of the providers that answered: a missed round must not
         # bring back as `ready` everything you had already read. Line files
         # carry no provider, so they go only on a round everyone answered.
-        held = marks.keys(marks_path)
+        held = marks.load(marks_path)
         droppable = {key for key in held
                      if key not in here and key.partition(":")[0] in answered}
         full = not failed

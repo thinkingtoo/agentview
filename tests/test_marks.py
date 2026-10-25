@@ -108,19 +108,19 @@ class Facts(Dir):
         marks.mark("fake:a", 100, True, self.path)
         self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100, "read": 100, "pinned": True}})
 
-    def test_keys_is_every_session_with_any_mark(self):
+    def test_load_holds_every_session_with_any_mark(self):
         marks.mark("fake:a", 100, False, self.path)
         marks.pin("fake:b", True, self.path)
-        self.assertEqual(marks.keys(self.path), {"fake:a", "fake:b"})
+        self.assertEqual(set(marks.load(self.path)), {"fake:a", "fake:b"})
 
     def test_forget_drops_exactly_the_keys_given(self):
         for key in ("fake:a", "fake:b", "codex:a"):
             marks.mark(key, 100, True, self.path)
             marks.pin(key, True, self.path)
         marks.forget({"fake:b"}, self.path)
-        self.assertEqual(marks.keys(self.path), {"fake:a", "codex:a"})
+        self.assertEqual(set(marks.load(self.path)), {"fake:a", "codex:a"})
         marks.forget({"claude:x"}, self.path)
-        self.assertEqual(marks.keys(self.path), {"fake:a", "codex:a"})
+        self.assertEqual(set(marks.load(self.path)), {"fake:a", "codex:a"})
 
     def test_forget_with_nothing_to_drop_does_not_rewrite(self):
         marks.mark("fake:a", 100, False, self.path)
@@ -340,6 +340,127 @@ class Import(Dir):
         self.path.write_text("[1]")
         self.assertEqual(marks.load(self.path), {})
         self.assertEqual(self.path.read_text(), "[1]")
+
+    def broken(self):
+        return sorted(self.tmp.glob("marks.json.broken-*"))
+
+    def test_a_write_on_an_unreadable_file_sets_it_aside_first(self):
+        writes = {
+            "mark": lambda: marks.mark("fake:a", 100, True, self.path),
+            "pin": lambda: marks.pin("fake:a", True, self.path),
+            "forget": lambda: marks.forget({"fake:zz"}, self.path),
+        }
+        for name, write in writes.items():
+            for junk in ("{broken", "[1]", ""):
+                with self.subTest(write=name, junk=junk):
+                    for f in self.broken():
+                        f.unlink()
+                    self.path.write_text(junk)
+                    write()
+                    kept = self.broken()
+                    self.assertEqual([f.read_text() for f in kept], [junk])
+                    if name == "forget":
+                        self.assertEqual(marks.load(self.path), {})
+                    else:
+                        self.assertEqual(list(marks.load(self.path)), ["fake:a"])
+
+    def test_a_write_after_the_move_is_not_rebuilt_from_the_old_files(self):
+        before = self.old({"fake:x": 100}, {"read": {"fake:x": 100}, "pinned": ["fake:x"]})
+        self.path.write_text("{broken")
+        marks.mark("fake:a", 100, False, self.path)
+        self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100}})
+        self.untouched(before)
+
+    def test_a_forget_with_nothing_to_drop_does_not_let_the_next_load_rebuild(self):
+        before = self.old({"fake:x": 100}, {"read": {"fake:x": 100}, "pinned": ["fake:x"]})
+        self.path.write_text("{broken")
+        marks.forget(set(), self.path)
+        self.assertEqual(len(self.broken()), 1)
+        self.assertEqual(marks.load(self.path), {})
+        self.assertEqual(marks.load(self.path), {})
+        self.untouched(before)
+
+    def test_a_read_error_on_a_healthy_file_is_not_a_broken_file(self):
+        marks.mark("fake:a", 100, True, self.path)
+        real = Path.open
+
+        def flaky(p, *a, **k):
+            if p == self.path:
+                raise OSError(24, "too many open files")
+            return real(p, *a, **k)
+        with mock.patch.object(Path, "open", flaky):
+            marks.forget(set(), self.path)
+            marks.mark("fake:b", 100, True, self.path)
+            marks.pin("fake:a", True, self.path)
+        self.assertEqual(self.broken(), [])
+        self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100, "read": 100}})
+
+    def test_a_failed_fresh_write_puts_the_broken_file_back_and_does_not_rebuild(self):
+        before = self.old({"fake:x": 100})
+        self.path.write_text("{broken")
+        real = Path.open
+
+        def full(p, *a, **k):
+            if p.name.endswith(".tmp"):
+                raise OSError(28, "no space left")
+            return real(p, *a, **k)
+        with mock.patch.object(Path, "open", full):
+            marks.forget(set(), self.path)
+        self.assertEqual(self.path.read_text(), "{broken")
+        self.assertEqual(self.broken(), [])
+        self.assertEqual(marks.load(self.path), {})
+        self.untouched(before)
+
+    def test_a_file_nobody_may_read_or_that_is_a_directory_or_too_deep_is_broken(self):
+        real = Path.open
+        cases = {
+            "denied": lambda: self.path.write_text("{}"),
+            "directory": lambda: self.path.mkdir(),
+            "deep": lambda: self.path.write_text("[" * 200000),
+        }
+        for name, make in cases.items():
+            with self.subTest(case=name):
+                for f in self.broken():
+                    if f.is_dir():
+                        f.rmdir()
+                    else:
+                        f.unlink()
+                if self.path.is_dir():
+                    self.path.rmdir()
+                else:
+                    self.path.unlink(missing_ok=True)
+                make()
+
+                def denied(p, *a, **k):
+                    if name == "denied" and p == self.path:
+                        raise PermissionError(13, "denied")
+                    return real(p, *a, **k)
+                with mock.patch.object(Path, "open", denied):
+                    marks.mark("fake:a", 100, True, self.path)
+                self.assertEqual(len(self.broken()), 1)
+                self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100, "read": 100}})
+
+    def test_two_broken_files_in_one_second_are_both_kept(self):
+        with mock.patch.object(marks.time, "strftime", return_value="T"):
+            for junk in ("{one", "{two"):
+                self.path.write_text(junk)
+                marks.pin("fake:a", True, self.path)
+        self.assertEqual(sorted(f.read_text() for f in self.broken()), ["{one", "{two"])
+
+    def test_a_readable_file_is_never_set_aside(self):
+        marks.mark("fake:a", 100, False, self.path)
+        marks.pin("fake:a", True, self.path)
+        marks.forget({"fake:zz"}, self.path)
+        self.assertEqual(self.broken(), [])
+
+    def test_a_file_that_cannot_be_set_aside_is_left_alone_and_nothing_raises(self):
+        self.path.write_text("{broken")
+        with mock.patch.object(Path, "replace", side_effect=PermissionError("no")):
+            marks.mark("fake:a", 100, True, self.path)
+            marks.pin("fake:a", True, self.path)
+            marks.forget({"fake:a"}, self.path)
+        self.assertEqual(self.path.read_text(), "{broken")
+        self.assertEqual(self.broken(), [])
 
     def test_two_first_loads_at_once_import_once(self):
         self.old({"fake:a": 100})

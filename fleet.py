@@ -349,7 +349,7 @@ def live(providers=None, *, now=None, marks_path=None, lines_root=None):
     """
     shelves = config()
     assigned = config_value("assign", {})
-    remembered = marks.load(marks_path)
+    state = marks.load(marks_path)
     thresholds = {
         "after": config_value("stuck_after_minutes", 5),
         "tool_after": config_value("long_tool_minutes", 20),
@@ -368,7 +368,7 @@ def live(providers=None, *, now=None, marks_path=None, lines_root=None):
         answered.add(p.name)
         asked.extend((p, raw) for raw in got)
     # Runs are folded into the tile of the session that started them (runs.py).
-    rows = [row for row in (normalize(p, raw, shelves, assigned, thresholds, now, remembered,
+    rows = [row for row in (normalize(p, raw, shelves, assigned, thresholds, now, state,
                                       lines_root)
                             for p, raw in runs.fold(asked, now)) if row]
     return rows, answered, failed
@@ -516,9 +516,9 @@ def extras_of(value):
     return kept
 
 
-def normalize(p, raw, shelves, assigned, thresholds, now, remembered, lines_root=None):
+def normalize(p, raw, shelves, assigned, thresholds, now, state, lines_root=None):
     """One provider's facts, made into the row the page draws. None if the
-    session is not even minimally conforming. `remembered` is what you did with
+    session is not even minimally conforming. `state` is what you did with
     each session (`marks.load()`): seen, handover read, pinned.
     `lines_root` is where the sessions' own lines are read from (`lines.store()`)."""
     if not isinstance(raw, dict):
@@ -541,7 +541,7 @@ def normalize(p, raw, shelves, assigned, thresholds, now, remembered, lines_root
     paths = [x for x in (raw.get("paths") or []) if isinstance(x, str)]
     # Keyed to the moment it stopped, so a session that works and stops
     # again is ready once more without anything having to clear it.
-    unseen = marks.ready(key, updated, remembered)
+    unseen = marks.ready(key, updated, state)
     project = projects.landed(assigned, assigned.get(key)) or resolve_project(cwd, shelves)
     # Only guess for the ones that have nothing better -- the guess costs a
     # vote over every path touched, and a session with a real cwd does not
@@ -630,9 +630,9 @@ def normalize(p, raw, shelves, assigned, thresholds, now, remembered, lines_root
         # Stopped, and what it told you is not read in the overview -- whether or not
         # it said anything: a session with no words still wants a look before it
         # is forgotten, since "no words" may be a transcript that could not be read.
-        "unread": status == "idle" and bool(updated) and not marks.is_read(key, updated, remembered),
+        "unread": status == "idle" and bool(updated) and not marks.is_read(key, updated, state),
         # Held open by you (a session pin: `marks.py`). `pinned` on a column is the project's.
-        "pinned": marks.pinned(key, remembered),
+        "pinned": marks.pinned(key, state),
         "asking": asking,
         # The chime's reading of a provider that cannot say `waiting` (Codex):
         # an open request with no answer rings, as it is Needs you on the tile (a

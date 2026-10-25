@@ -24,11 +24,13 @@ finds no `marks.json` builds it from the two files this store replaced,
 `seen.json` and `finished.json`, which are never written or removed. Writes
 never raise: not knowing what you have read is a smaller problem than a page
 that will not load. A file that exists and cannot be read loads as empty and is
-not rebuilt, but the next mark or pin writes over it.
+not rebuilt; the next mark, pin or forget moves it aside first, to
+`marks.json.broken-<timestamp>`, and writes a fresh file.
 """
 import json
 import os
 import threading
+import time
 from pathlib import Path
 
 DEFAULT_PROVIDER = "claude"
@@ -97,30 +99,85 @@ def _imported(path):
     return out
 
 
+def _read(path):
+    """`(records, how)`: how is "ok", "missing", "broken" for a file that
+    exists and is not a JSON object, is nested too deep, may not be read, or
+    is a directory; or "error" when the read itself failed (too many open
+    files, an I/O error): that says nothing about the file."""
+    try:
+        with path.open(encoding="utf-8") as fh:
+            got = json.load(fh)
+    except FileNotFoundError:
+        return {}, "missing"
+    except (ValueError, RecursionError, PermissionError, IsADirectoryError):
+        return {}, "broken"
+    except OSError:
+        return {}, "error"
+    return _clean(got), ("ok" if isinstance(got, dict) else "broken")
+
+
 def load(path=None):
     """`{key: record}`. A file that exists and cannot be read is empty, and is
     not rebuilt from the old files; only a file that does not exist is."""
     path = Path(path or store())
-    try:
-        with path.open(encoding="utf-8") as fh:
-            return _clean(json.load(fh))
-    except FileNotFoundError:
-        pass
-    except (OSError, ValueError):
-        return {}
+    got, how = _read(path)
+    if how != "missing":
+        return got
     with _LOCK:
         # Another thread may have built it while this one waited.
-        try:
-            with path.open(encoding="utf-8") as fh:
-                return _clean(json.load(fh))
-        except FileNotFoundError:
-            pass
-        except (OSError, ValueError):
-            return {}
+        got, how = _read(path)
+        if how != "missing":
+            return got
         return _save(_clean(_imported(path)), path)
 
 
+def _aside(path):
+    """Move a file nobody can read out of the way of the next write, so the
+    write does not destroy it. The new name, or None when it did not move."""
+    stamp = time.strftime("%Y%m%dT%H%M%S")
+    for n in range(100):
+        target = path.with_name(f"{path.name}.broken-{stamp}" + (f"-{n}" if n else ""))
+        if target.exists():
+            continue
+        try:
+            path.replace(target)
+            return target
+        except OSError:
+            return None
+    return None
+
+
+def _current(path):
+    """The records a writer starts from, under the lock; None when the file is
+    unreadable and could not be set aside, or when the read failed (then the
+    writer leaves the file alone)."""
+    got, how = _read(path)
+    if how == "error":
+        return None
+    if how == "broken":
+        target = _aside(path)
+        if not target:
+            return None
+        # A fresh file at once: with none, the next load would rebuild from
+        # the old files, and a forget that has nothing to drop writes nothing.
+        # If even that cannot be written, put the old file back.
+        if not _write({}, path):
+            try:
+                target.replace(path)
+            except OSError:
+                pass
+            return None
+        return {}
+    return load(path) if how == "missing" else got
+
+
 def _save(state, path):
+    _write(state, path)
+    return state
+
+
+def _write(state, path):
+    """True when the file was written."""
     path = Path(path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,8 +190,8 @@ def _save(state, path):
             tmp.unlink(missing_ok=True)
             raise
     except OSError:
-        pass
-    return state
+        return False
+    return True
 
 
 def ready(key, stamp, state):
@@ -153,41 +210,40 @@ def pinned(key, state):
     return bool(state.get(key, {}).get("pinned"))
 
 
-def keys(path=None):
-    """Every session the file holds a mark for."""
-    return set(load(path))
-
-
 def mark(key, stamp, read, path=None):
     """You looked at this session as it is at the stop `stamp` and, when
     `read`, read its handover: both in one write. `read` off leaves an
     existing read stop alone."""
     path = Path(path or store())
     if not key or not stamp:
-        return load(path)
+        return
     with _LOCK:
-        state = load(path)
+        state = _current(path)
+        if state is None:
+            return
         record = state.setdefault(key, {})
         record["seen"] = stamp
         if read:
             record["read"] = stamp
-        return _save(state, path)
+        _save(state, path)
 
 
 def pin(key, on, path=None):
     """Pin a session open as a full tile, or let it shrink again."""
     path = Path(path or store())
     if not key:
-        return load(path)
+        return
     with _LOCK:
-        state = load(path)
+        state = _current(path)
+        if state is None:
+            return
         if on:
             state.setdefault(key, {})["pinned"] = True
         elif key in state:
             state[key].pop("pinned", None)
             if not state[key]:
                 del state[key]
-        return _save(state, path)
+        _save(state, path)
 
 
 def forget(drop, path=None):
@@ -202,7 +258,9 @@ def forget(drop, path=None):
     """
     path = Path(path or store())
     with _LOCK:
-        state = load(path)
+        state = _current(path)
+        if state is None:
+            return {}
         kept = {key: record for key, record in state.items() if key not in drop}
         if len(kept) != len(state):
             _save(kept, path)
