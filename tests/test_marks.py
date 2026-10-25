@@ -26,6 +26,9 @@ class Dir(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.path = self.tmp / "marks.json"
+        patcher = mock.patch.object(log, "LOG", self.tmp / "events.jsonl")
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
 
 class Facts(Dir):
@@ -396,6 +399,12 @@ class Import(Dir):
         self.assertEqual(self.broken(), [])
         self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100, "read": 100}})
 
+    def test_an_old_file_nobody_may_read_or_that_is_a_directory_adds_nothing_and_the_file_is_built(self):
+        (self.tmp / "seen.json").mkdir()                # read as IsADirectoryError: never clears
+        (self.tmp / "finished.json").write_text(json.dumps({"pinned": ["fake:b"]}))
+        self.assertEqual(marks.load(self.path), {"fake:b": {"pinned": True}})
+        self.assertTrue(self.path.exists())
+
     def test_a_failed_fresh_write_puts_the_broken_file_back_and_does_not_rebuild(self):
         before = self.old({"fake:x": 100})
         self.path.write_text("{broken")
@@ -499,12 +508,6 @@ def failing_open(*paths, errno=5):
 
 
 class Logged(Dir):
-    def setUp(self):
-        super().setUp()
-        patcher = mock.patch.object(log, "LOG", self.tmp / "events.jsonl")
-        patcher.start()
-        self.addCleanup(patcher.stop)
-
     def skipped(self):
         if not log.LOG.exists():
             return []

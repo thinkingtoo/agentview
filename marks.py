@@ -70,16 +70,15 @@ _UNREADABLE = object()
 
 def _json(path):
     """The parsed old file; None when it is not there or not JSON; `_UNREADABLE`
-    when the read itself failed, which says nothing about the file."""
+    when the read itself failed, which says nothing about the file. A file nobody
+    may read or that is a directory adds nothing, as it is broken in `_read`."""
     try:
         with path.open(encoding="utf-8") as fh:
             return json.load(fh)
-    except FileNotFoundError:
-        return None
+    except (FileNotFoundError, PermissionError, IsADirectoryError, ValueError):
+        return None                 # as `_read` takes these: the file, not the read
     except OSError:
         return _UNREADABLE
-    except ValueError:
-        return None
 
 
 def _qualified(key):
@@ -177,7 +176,8 @@ def _skipped(path):
         _unreadable.add(str(path))
     if first:
         log.event("marks_skipped", path=str(path),
-                  why="a read of the marks or the files they are built from failed")
+                  why="the marks could not be read, set aside or written, or the files "
+                  "they are built from could not be read")
 
 
 def _aside(path):

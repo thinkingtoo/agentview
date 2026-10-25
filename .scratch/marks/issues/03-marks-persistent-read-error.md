@@ -4,7 +4,7 @@
 
 Decide here, then do: one `log` line when a writer skips on `error` (once per state change, not per poll), or one line why not.
 
-**Decision (Ciro, 2026-10-25):** one `marks_skipped` line in `events.jsonl` (`log.event`) when a writer skips because a read failed, once per state change: `marks._stuck` holds the stores whose last read failed, and a read that works clears it, so the next failure logs again. Loads log nothing (they run every poll); the writers are where a click goes missing.
+**Decision (Ciro, 2026-10-25):** one `marks_skipped` line in `events.jsonl` (`log.event`) when a writer skips because a read failed, once per state change: `marks._unreadable` holds the stores whose last read failed, and a read that works clears it, so the next failure logs again. Loads log nothing (they run every poll); the writers are where a click goes missing.
 
 **Blocked by:** None (can start immediately)
 
