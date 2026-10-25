@@ -4,9 +4,9 @@
 
 **Blocked by:** 01
 
-**Claimed by:**
+**Claimed by:** Tarek, 2026-10-25
 
-**Status:** open
+**Status:** in progress
 
 - [ ] A test at the round's level that fails before the change: with providers A (answered) and B (failed), B's seen mark, finished read and pin survive, A's gone session loses all three, and no line file is removed; with both answered, the line file of a gone session is removed.
 - [ ] `seen.forget` and `finished.forget` take only the keys to drop; `grep -n answered seen.py finished.py` finds nothing.

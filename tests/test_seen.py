@@ -38,14 +38,16 @@ class Seen(unittest.TestCase):
         self.path.write_text("{ this is not json")
         self.assertEqual(seen.load(self.path), {})
 
-    def test_sessions_that_are_gone_are_forgotten(self):
+    def test_the_sessions_named_are_forgotten(self):
+        # Which ones are gone is the round's decision (`poll.round`).
         seen.mark("s1", 100, self.path)
         seen.mark("s2", 100, self.path)
-        seen.forget({"s2"}, self.path)
+        seen.forget({"s1"}, self.path)
         self.assertEqual(seen.load(self.path), {"s2": 100})
 
-    def test_forgetting_nothing_leaves_the_file_alone(self):
+    def test_a_key_not_in_the_file_is_nothing_and_leaves_it_alone(self):
         seen.mark("s1", 100, self.path)
         before = self.path.stat().st_mtime_ns
-        seen.forget({"s1"}, self.path)
+        seen.forget({"s2"}, self.path)
+        self.assertEqual(seen.load(self.path), {"s1": 100})
         self.assertEqual(self.path.stat().st_mtime_ns, before)

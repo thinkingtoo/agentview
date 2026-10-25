@@ -1,8 +1,7 @@
-"""The marks a round forgets, the key migration, and what the click does.
+"""The key migration, and what the click does.
 
 The round itself (who answered, who failed, what is forgotten and swept) is
-`tests/test_poll.py`. A provider that misses a round must not make everything
-you had read come back as `ready` when it returns.
+`tests/test_poll.py`.
 """
 import json
 import shutil
@@ -15,24 +14,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
 import seen
 from test_providers import Fake, minimal
-
-
-class Forgetting(unittest.TestCase):
-    def setUp(self):
-        self.path = Path(tempfile.mkdtemp()) / "seen.json"
-        self.addCleanup(shutil.rmtree, self.path.parent, True)
-        seen.mark("claude:a", 100, self.path)
-        seen.mark("codex:b", 100, self.path)
-
-    def test_a_failed_providers_marks_survive_the_round(self):
-        # Codex missed this poll: none of its sessions are live, and none of
-        # its marks may go.
-        seen.forget({"claude:a"}, self.path, answered={"claude"})
-        self.assertEqual(seen.load(self.path), {"claude:a": 100, "codex:b": 100})
-
-    def test_an_answering_providers_dead_sessions_are_forgotten(self):
-        seen.forget({"claude:a"}, self.path, answered={"claude", "codex"})
-        self.assertEqual(seen.load(self.path), {"claude:a": 100})
 
 
 class Migration(unittest.TestCase):

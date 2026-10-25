@@ -99,21 +99,25 @@ def pin(key, on, path=None):
         return save(state, path)
 
 
-def forget(live, path=None, *, answered=None):
-    """Drop what belongs to sessions that no longer exist, so the file cannot
-    grow forever and a pin ends with its session.
+def keys(path=None):
+    """Every session the file holds something for, read or pinned."""
+    state = load(path)
+    return set(state["read"]) | set(state["pinned"])
 
-    Only for the providers that answered this round, as for the seen marks: a
-    provider that missed a poll has no sessions in `live`, and forgetting its
-    pins would turn every pill of it back into a tile when it returns.
+
+def forget(drop, path=None):
+    """Drop what belongs to the sessions in `drop`, so the file cannot grow
+    forever and a pin ends with its session.
+
+    Which sessions are gone is the round's decision (`poll.round`), as for the
+    seen marks: forgetting the pins of a provider that missed a poll would
+    turn every pill of it back into a tile when it returns. A key not here is
+    nothing.
     """
-    def gone(key):
-        return key not in live and (answered is None or key.partition(":")[0] in answered)
-
     with _LOCK:
         state = load(path)
-        kept = {"read": {k: v for k, v in state["read"].items() if not gone(k)},
-                "pinned": [k for k in state["pinned"] if not gone(k)]}
+        kept = {"read": {k: v for k, v in state["read"].items() if k not in drop},
+                "pinned": [k for k in state["pinned"] if k not in drop]}
         if kept != state:
             save(kept, path)
         return kept

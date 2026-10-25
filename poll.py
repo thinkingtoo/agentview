@@ -39,11 +39,15 @@ def round(providers=None, now=None, seen_path=None, finished_path=None, lines_ro
         flags = data["flags"]
         log.note_roster(flags)
         here = {f["key"] for f in flags}
-        # Only the providers that answered get their gone sessions forgotten:
-        # a missed round must not bring back as `ready` everything you had
-        # already read.
-        seen.forget(here, seen_path, answered=answered)
-        finished.forget(here, finished_path, answered=answered)
+        # The one decision of what is forgotten. A keyed store drops the gone
+        # sessions of the providers that answered: a missed round must not
+        # bring back as `ready` everything you had already read. Line files
+        # carry no provider, so they go only on a round everyone answered.
+        held = set(seen.load(seen_path)) | finished.keys(finished_path)
+        gone = {key for key in held
+                if key not in here and key.partition(":")[0] in answered}
+        seen.forget(gone, seen_path)
+        finished.forget(gone, finished_path)
         if not failed:
             lines.forget({f["id"] for f in flags}, lines_root)
         paste.sweep(paste_root)

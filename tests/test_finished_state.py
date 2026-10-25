@@ -68,20 +68,20 @@ class State(unittest.TestCase):
         finished.pin("fake:a", True, blocked / "finished.json")
         finished.mark_read("fake:a", 100, blocked / "finished.json")
 
-    def test_forgetting_drops_what_no_longer_exists(self):
+    def test_forgetting_drops_only_the_keys_given(self):
         finished.mark_read("fake:a", 100, self.path)
         finished.mark_read("fake:b", 100, self.path)
         finished.pin("fake:a", True, self.path)
         finished.pin("fake:b", True, self.path)
-        finished.forget({"fake:a"}, self.path, answered={"fake"})
+        finished.forget({"fake:b"}, self.path)
         self.assertEqual(finished.load(self.path), {"read": {"fake:a": 100}, "pinned": ["fake:a"]})
 
-    def test_a_provider_that_did_not_answer_keeps_its_sessions_pins_and_marks(self):
-        # A missed round is not a closed session: forgetting then would turn
-        # every pill of that provider back into a tile when it comes back.
+    def test_a_key_not_in_the_store_is_nothing(self):
+        # Which keys may go is the round's decision (`poll.round`): a provider
+        # that missed a poll has none of its keys named.
         finished.mark_read("codex:a", 100, self.path)
         finished.pin("codex:a", True, self.path)
-        finished.forget({"claude:x"}, self.path, answered={"claude"})
+        finished.forget({"claude:x"}, self.path)
         self.assertEqual(finished.load(self.path), {"read": {"codex:a": 100}, "pinned": ["codex:a"]})
 
     def test_two_threads_changing_it_at_once_both_land(self):

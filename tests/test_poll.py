@@ -37,6 +37,13 @@ class Broken(Provider):
         raise RuntimeError("sqlite is locked")
 
 
+class Back(Broken):
+    """The broken provider, answering again with nothing live."""
+
+    def live(self):
+        return []
+
+
 class Slow(Provider):
     name = "slow"
     capabilities = frozenset()
@@ -146,6 +153,24 @@ class Forgetting(Base):
         # The gone session of the provider that answered is forgotten; a
         # provider not asked this round keeps its marks.
         self.assertEqual(seen.load(self.seen), {"fake:s1": 100, "broken:z": 100})
+
+    def test_the_round_alone_decides_what_goes(self):
+        # A answered, B failed: what the round names is gone from every store,
+        # what it does not name survives, and with B missing no line goes,
+        # because a line file cannot say whose session it was (ADR-0001).
+        lines.write("s1", did="still here", root=self.lines)
+        self.round(Broken(), Fake([minimal()]))
+        self.assertEqual(seen.load(self.seen), {"fake:s1": 100, "broken:z": 100})
+        self.assertEqual(finished.load(self.finished),
+                         {"read": {"fake:s1": 100, "broken:z": 100}, "pinned": ["broken:z"]})
+        self.assertEqual(lines.read("gone", self.lines).get("did"), "old words")
+        # Both answered, B with nothing live: B's session is gone too, and so
+        # is the line file of the gone session.
+        self.round(Back(), Fake([minimal()]))
+        self.assertEqual(seen.load(self.seen), {"fake:s1": 100})
+        self.assertEqual(finished.load(self.finished), {"read": {"fake:s1": 100}, "pinned": []})
+        self.assertEqual(lines.read("gone", self.lines), {})
+        self.assertEqual(lines.read("s1", self.lines).get("did"), "still here")
 
 
 class Sweeping(Base):
