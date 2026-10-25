@@ -341,7 +341,7 @@ def _ask(p):
     return got, None
 
 
-def live(providers=None, *, now=None, seen_path=None, finished_path=None):
+def live(providers=None, *, now=None, seen_path=None, finished_path=None, lines_root=None):
     """Every provider's live sessions (`Provider.live`), normalised into rows.
 
     Returns `(rows, answered, failed)`: the names of the providers that
@@ -371,7 +371,8 @@ def live(providers=None, *, now=None, seen_path=None, finished_path=None):
         answered.add(p.name)
         asked.extend((p, raw) for raw in got)
     # Runs are folded into the tile of the session that started them (runs.py).
-    rows = [row for row in (normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered)
+    rows = [row for row in (normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered,
+                                      lines_root)
                             for p, raw in runs.fold(asked, now)) if row]
     return rows, answered, failed
 
@@ -520,10 +521,11 @@ def extras_of(value):
     return kept
 
 
-def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
+def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered, lines_root=None):
     """One provider's facts, made into the row the page draws. None if the
     session is not even minimally conforming. `remembered` is what the overview
-    keeps (`finished.load()`): the handovers you read and the sessions you pinned."""
+    keeps (`finished.load()`): the handovers you read and the sessions you pinned.
+    `lines_root` is where the sessions' own lines are read from (`lines.store()`)."""
     if not isinstance(raw, dict):
         return None
     sid = raw.get("id")
@@ -651,7 +653,7 @@ def normalize(p, raw, shelves, assigned, marks, thresholds, now, remembered):
         "extras": extras_of(raw.get("extras")),
         # What it is doing while it works, and what it left you with when it
         # stopped. Never both: a busy session has no line of its own.
-        **own_line(sid, status, ask_from(said), said=said,
+        **own_line(sid, status, ask_from(said), root=lines_root, said=said,
                    doing=_text(raw.get("doing"))),
     })
     return row

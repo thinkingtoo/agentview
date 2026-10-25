@@ -33,7 +33,7 @@ def round(providers=None, now=None, seen_path=None, finished_path=None, lines_ro
         # feel broken would have written a line every time.
         with log.timed("roster", 1.5):
             rows, answered, failed = fleet.live(providers, now=now, seen_path=seen_path,
-                                                finished_path=finished_path)
+                                                finished_path=finished_path, lines_root=lines_root)
             data = fleet.roster(providers, rows=rows, answered=answered, now=now,
                                 paste_root=paste_root)
         flags = data["flags"]

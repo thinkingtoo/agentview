@@ -134,6 +134,12 @@ class Forgetting(Base):
         self.round(Broken(), Fake([minimal()]))
         self.assertEqual(lines.read("gone", self.lines).get("did"), "old words")
 
+    def test_a_sessions_own_line_is_read_from_the_lines_root_given(self):
+        lines.write("s1", did="halfway through the import", root=self.lines)
+        tile = self.round(Fake([minimal()]))["columns"][0]["sessions"][0]
+        # The tile carries the did in what the filter box searches.
+        self.assertIn("halfway through the import", tile["find"])
+
     def test_lines_of_gone_sessions_go_on_a_round_everyone_answered(self):
         self.round(Fake([minimal()]))
         self.assertEqual(lines.read("gone", self.lines), {})
