@@ -371,6 +371,15 @@ class Import(Dir):
         self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100}})
         self.untouched(before)
 
+    def test_a_forget_with_nothing_to_drop_does_not_let_the_next_load_rebuild(self):
+        before = self.old({"fake:x": 100}, {"read": {"fake:x": 100}, "pinned": ["fake:x"]})
+        self.path.write_text("{broken")
+        marks.forget(set(), self.path)
+        self.assertEqual(len(self.broken()), 1)
+        self.assertEqual(marks.load(self.path), {})
+        self.assertEqual(marks.load(self.path), {})
+        self.untouched(before)
+
     def test_two_broken_files_in_one_second_are_both_kept(self):
         with mock.patch.object(marks.time, "strftime", return_value="T"):
             for junk in ("{one", "{two"):

@@ -148,7 +148,11 @@ def _current(path):
     unreadable and could not be set aside (then the writer leaves it alone)."""
     got, how = _read(path)
     if how == "broken":
-        return {} if _aside(path) else None
+        if not _aside(path):
+            return None
+        # A fresh file at once: with none, the next load would rebuild from
+        # the old files, and a forget that has nothing to drop writes nothing.
+        return _save({}, path)
     return load(path) if how == "missing" else got
 
 
