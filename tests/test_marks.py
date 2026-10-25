@@ -549,6 +549,14 @@ class PersistentReadError(Logged):
         self.assertEqual(self.skipped(), [])
 
 
+    def test_a_broken_file_that_cannot_be_set_aside_logs_once(self):
+        self.path.write_text("{broken")
+        with mock.patch.object(Path, "replace", side_effect=PermissionError("no")):
+            marks.mark("fake:a", 100, True, self.path)
+            marks.pin("fake:a", True, self.path)
+        self.assertEqual(len(self.skipped()), 1)
+
+
 class ImportReadError(Logged):
     """An old file that fails to read for a reason other than "not there" makes
     no `marks.json` this round; the import retries once the read works
@@ -583,6 +591,15 @@ class ImportReadError(Logged):
         marks.mark("fake:c", 300, True, self.path)
         self.assertEqual(marks.load(self.path),
                          {**self.want, "fake:c": {"seen": 300, "read": 300}})
+
+    def test_the_import_recovering_lets_the_next_failure_log_again(self):
+        with failing_open(self.tmp / "seen.json"):
+            marks.mark("fake:c", 300, True, self.path)
+        self.assertEqual(len(self.skipped()), 1)
+        marks.load(self.path)                      # imports; the file exists now
+        with failing_open(self.path):
+            marks.mark("fake:c", 300, True, self.path)
+        self.assertEqual(len(self.skipped()), 2)
 
     def test_a_missing_old_file_still_counts_as_empty(self):
         (self.tmp / "seen.json").unlink()

@@ -38,6 +38,7 @@ import log
 DEFAULT_PROVIDER = "claude"
 
 _LOCK = threading.RLock()
+_NOTE = threading.Lock()
 _unreadable = set()         # stores whose last read failed, so a skip logs once
 
 
@@ -128,7 +129,8 @@ def _read(path):
         return {}, "broken"
     except OSError:
         return {}, "error"
-    _unreadable.discard(str(path))
+    if isinstance(got, dict):
+        _recovered(path)
     return _clean(got), ("ok" if isinstance(got, dict) else "broken")
 
 
@@ -142,7 +144,10 @@ def _build(path):
     if how != "missing":
         return None
     imported = _imported(path)
-    return None if imported is None else _save(_clean(imported), path)
+    if imported is None:
+        return None
+    _recovered(path)
+    return _save(_clean(imported), path)
 
 
 def load(path=None):
@@ -159,11 +164,18 @@ def load(path=None):
         return {} if built is None else built
 
 
+def _recovered(path):
+    with _NOTE:
+        _unreadable.discard(str(path))
+
+
 def _skipped(path):
     """A writer left the store alone because a read failed. One line in the
     log when that starts; nothing more until a read works and fails again."""
-    if str(path) not in _unreadable:
+    with _NOTE:
+        first = str(path) not in _unreadable
         _unreadable.add(str(path))
+    if first:
         log.event("marks_skipped", path=str(path),
                   why="a read of the marks or the files they are built from failed")
 
@@ -195,6 +207,7 @@ def _current(path):
     if how == "broken":
         target = _aside(path)
         if not target:
+            _skipped(path)
             return None
         # A fresh file at once: with none, the next load would rebuild from
         # the old files, and a forget that has nothing to drop writes nothing.
@@ -204,6 +217,7 @@ def _current(path):
                 target.replace(path)
             except OSError:
                 pass
+            _skipped(path)
             return None
         return {}
     if how == "missing":
