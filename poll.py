@@ -38,17 +38,23 @@ def round(providers=None, now=None, seen_path=None, finished_path=None, lines_ro
                                 paste_root=paste_root)
         flags = data["flags"]
         log.note_roster(flags)
+        # A provider whose module did not load is as missing as one that
+        # failed this round.
+        failed = {**provider_registry.broken(), **failed}
         here = {f["key"] for f in flags}
-        # Only the providers that answered get their gone sessions forgotten:
-        # a missed round must not bring back as `ready` everything you had
-        # already read.
-        seen.forget(here, seen_path, answered=answered)
-        finished.forget(here, finished_path, answered=answered)
-        if not failed:
+        # The one decision of what is forgotten. A keyed store drops the gone
+        # sessions of the providers that answered: a missed round must not
+        # bring back as `ready` everything you had already read. Line files
+        # carry no provider, so they go only on a round everyone answered.
+        held = seen.keys(seen_path) | finished.keys(finished_path)
+        droppable = {key for key in held
+                     if key not in here and key.partition(":")[0] in answered}
+        full = not failed
+        seen.forget(droppable, seen_path)
+        finished.forget(droppable, finished_path)
+        if full:
             lines.forget({f["id"] for f in flags}, lines_root)
         paste.sweep(paste_root)
-        broken = provider_registry.broken()
-    failed = {**broken, **failed}
     status = {name: {"ok": True} for name in answered}
     status.update({name: {"ok": False, "error": why} for name, why in failed.items()})
     return {**data, "providers": status}

@@ -63,17 +63,21 @@ def ready(session_id, stamp, marks):
     return marks.get(session_id) != stamp
 
 
-def forget(live, path=None, *, answered=None):
-    """Drop sessions that no longer exist, so the file cannot grow forever.
+def keys(path=None):
+    """Every session the file holds a mark for."""
+    return set(load(path))
 
-    Only for the providers that answered this round. A provider that failed
-    a poll has no sessions in `live`, and forgetting its marks would bring
-    everything you had already read back as `ready` when it returns.
+
+def forget(drop, path=None):
+    """Drop the marks of the sessions in `drop`, so the file cannot grow forever.
+
+    Which sessions are gone is the round's decision (`poll.round`), and never
+    those of a provider that missed the poll: forgetting its marks would bring
+    everything you had already read back as `ready` when it returns. A key not
+    here is nothing.
     """
     marks = load(path)
-    kept = {key: at for key, at in marks.items()
-            if key in live or (answered is not None
-                               and key.partition(":")[0] not in answered)}
+    kept = {key: at for key, at in marks.items() if key not in drop}
     if len(kept) != len(marks):
         save(kept, path)
     return kept

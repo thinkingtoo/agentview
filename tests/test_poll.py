@@ -22,6 +22,7 @@ import finished
 import fleet
 import lines
 import poll
+import providers
 import seen
 from providers.base import Provider
 from test_providers import Fake, minimal
@@ -35,6 +36,13 @@ class Broken(Provider):
 
     def live(self):
         raise RuntimeError("sqlite is locked")
+
+
+class Back(Broken):
+    """The broken provider, answering again with nothing live."""
+
+    def live(self):
+        return []
 
 
 class Slow(Provider):
@@ -146,6 +154,27 @@ class Forgetting(Base):
         # The gone session of the provider that answered is forgotten; a
         # provider not asked this round keeps its marks.
         self.assertEqual(seen.load(self.seen), {"fake:s1": 100, "broken:z": 100})
+
+    def test_lines_are_kept_while_a_provider_is_broken_since_start_up(self):
+        # A provider whose module did not load never answers either, and its
+        # sessions write line files all the same (ADR-0001).
+        providers._broken["providers.gone"] = "ImportError: no module named gone"
+        self.addCleanup(providers._broken.pop, "providers.gone")
+        got = self.round(Fake([minimal()]))
+        self.assertEqual(lines.read("gone", self.lines).get("did"), "old words")
+        self.assertFalse(got["providers"]["providers.gone"]["ok"])
+
+    def test_a_provider_back_with_nothing_live_loses_its_gone_sessions(self):
+        # The round that missed `broken` kept its marks and every line (the
+        # tests above); once it answers with nothing live, its session is gone
+        # from every store, and on this full round so is the gone line file.
+        lines.write("s1", did="still here", root=self.lines)
+        self.round(Broken(), Fake([minimal()]))
+        self.round(Back(), Fake([minimal()]))
+        self.assertEqual(seen.load(self.seen), {"fake:s1": 100})
+        self.assertEqual(finished.load(self.finished), {"read": {"fake:s1": 100}, "pinned": []})
+        self.assertEqual(lines.read("gone", self.lines), {})
+        self.assertEqual(lines.read("s1", self.lines).get("did"), "still here")
 
 
 class Sweeping(Base):

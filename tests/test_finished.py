@@ -16,10 +16,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import finished
 import fleet
 import lines
+import poll
 import seen
 from test_columns import Base, session
 from test_header import idle, moving
 from test_needs_you import asks, waiting
+from test_poll import Broken
+from test_providers import Fake
 from test_stuck_kinds import failure, hung
 
 HOUR = 60
@@ -438,20 +441,19 @@ class Pinned(Finished):
     def test_the_pin_survives_a_poll_that_still_finds_the_session(self):
         s = self.finished("a", 5 * HOUR, name="Femi")
         self.pin("a")
-        self.roster(s)
-        finished.forget({"fake:a"}, answered={"fake"})
+        poll.round(providers=[Fake([s])])
         self.assertEqual(self.names(self.column(s), "sessions"), ["Femi"])
 
     def test_the_pin_survives_a_poll_that_missed_the_provider(self):
         s = self.finished("a", 5 * HOUR, name="Femi")
         self.pin("a")
-        finished.forget(set(), answered=set())
+        poll.round(providers=[Broken()])
         self.assertEqual(self.names(self.column(s), "sessions"), ["Femi"])
 
     def test_the_pin_ends_with_the_session(self):
         s = self.finished("a", 5 * HOUR, name="Femi")
         self.pin("a")
-        finished.forget(set(), answered={"fake"})            # the poll that no longer lists it
+        poll.round(providers=[Fake([])])                     # the poll that no longer lists it
         self.assertEqual(finished.load()["pinned"], [])
         # Resumed later under the same id it is not pinned, and what you read
         # of it before it closed is forgotten with it, as the seen mark is.
