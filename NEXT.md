@@ -16,6 +16,7 @@ done_when: Tickets in .scratch/poll-round/issues are done
   next: After ticket 02, pick the next from the review (what rings is derived in three places, fleet.py split, the dead suggest_project path, request admission, Paste card ownership, seen/finished as one keyed store, provider identity) with Thierry; the report is a scratchpad file and was not kept
   party: agent
   priority: Later
+  summary: Candidate 7 (seen and finished as one keyed store) is now cheap: since ticket 02 both stores have the same forget(drop, path), and the round already reads the keys of both to decide what goes
   last_update: 2026-10-25
 - [x] poll-module: Ticket 01, poll.round, the handler only serialises (merged 7ea4d81)
   party: agent

@@ -63,6 +63,11 @@ def ready(session_id, stamp, marks):
     return marks.get(session_id) != stamp
 
 
+def keys(path=None):
+    """Every session the file holds a mark for."""
+    return set(load(path))
+
+
 def forget(drop, path=None):
     """Drop the marks of the sessions in `drop`, so the file cannot grow forever.
 
