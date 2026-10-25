@@ -33,9 +33,12 @@ import threading
 import time
 from pathlib import Path
 
+import log
+
 DEFAULT_PROVIDER = "claude"
 
 _LOCK = threading.RLock()
+_stuck = set()               # stores whose last read failed, so a skip logs once
 
 
 def store():
@@ -61,11 +64,20 @@ def _clean(got):
     return out
 
 
+_UNREADABLE = object()
+
+
 def _json(path):
+    """The parsed old file; None when it is not there or not JSON; `_UNREADABLE`
+    when the read itself failed, which says nothing about the file."""
     try:
         with path.open(encoding="utf-8") as fh:
             return json.load(fh)
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return _UNREADABLE
+    except ValueError:
         return None
 
 
@@ -76,18 +88,21 @@ def _qualified(key):
 def _imported(path):
     """The records the two old files hold, beside `path`. A bare id gets the
     default provider; where it meets its own prefixed id, the later key in the
-    file wins, as it did in `seen.migrate`. A file that cannot be read adds
-    nothing."""
+    file wins, as it did in `seen.migrate`. A file that is not there or is not
+    JSON adds nothing; one whose read fails makes the import None, so the
+    caller builds nothing this round and the import tries again."""
     out = {}
 
     def put(key, field, value):
         out.setdefault(_qualified(key), {})[field] = value
 
     seen = _json(path.with_name("seen.json"))
+    finished = _json(path.with_name("finished.json"))
+    if _UNREADABLE in (seen, finished):
+        return None
     for key, stop in (seen.items() if isinstance(seen, dict) else ()):
         if isinstance(key, str) and _stamp(stop):
             put(key, "seen", stop)
-    finished = _json(path.with_name("finished.json"))
     finished = finished if isinstance(finished, dict) else {}
     read, pinned = finished.get("read"), finished.get("pinned")
     for key, stop in (read.items() if isinstance(read, dict) else ()):
@@ -113,22 +128,44 @@ def _read(path):
         return {}, "broken"
     except OSError:
         return {}, "error"
+    _stuck.discard(str(path))
     return _clean(got), ("ok" if isinstance(got, dict) else "broken")
+
+
+def _build(path):
+    """Under the lock: the records of `path`, building the file from the old
+    files if it is not there. None when nothing could be settled this round: an
+    old file or the file itself failed to read, or the file is broken."""
+    got, how = _read(path)
+    if how == "ok":
+        return got
+    if how != "missing":
+        return None
+    imported = _imported(path)
+    return None if imported is None else _save(_clean(imported), path)
 
 
 def load(path=None):
     """`{key: record}`. A file that exists and cannot be read is empty, and is
-    not rebuilt from the old files; only a file that does not exist is."""
+    not rebuilt from the old files; only a file that does not exist is, and
+    only when the old files could be read (else it is empty until they can)."""
     path = Path(path or store())
     got, how = _read(path)
     if how != "missing":
         return got
     with _LOCK:
         # Another thread may have built it while this one waited.
-        got, how = _read(path)
-        if how != "missing":
-            return got
-        return _save(_clean(_imported(path)), path)
+        built = _build(path)
+        return {} if built is None else built
+
+
+def _skipped(path):
+    """A writer left the store alone because a read failed. One line in the
+    log when that starts; nothing more until a read works and fails again."""
+    if str(path) not in _stuck:
+        _stuck.add(str(path))
+        log.event("marks_skipped", path=str(path),
+                  why="a read of the marks or the files they are built from failed")
 
 
 def _aside(path):
@@ -149,10 +186,11 @@ def _aside(path):
 
 def _current(path):
     """The records a writer starts from, under the lock; None when the file is
-    unreadable and could not be set aside, or when the read failed (then the
-    writer leaves the file alone)."""
+    unreadable and could not be set aside, or when a read failed (then the
+    writer leaves the file alone and, once, says so in the log)."""
     got, how = _read(path)
     if how == "error":
+        _skipped(path)
         return None
     if how == "broken":
         target = _aside(path)
@@ -168,7 +206,12 @@ def _current(path):
                 pass
             return None
         return {}
-    return load(path) if how == "missing" else got
+    if how == "missing":
+        built = _build(path)
+        if built is None:
+            _skipped(path)
+        return built
+    return got
 
 
 def _save(state, path):

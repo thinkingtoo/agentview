@@ -4,6 +4,8 @@
 
 Decide here, then do: when an old file fails with an `OSError` other than "not found", do not write `marks.json` that round (load gives `{}`, the import retries next round), or one line why not.
 
+**Decision (Ciro, 2026-10-25):** do as the ticket says. `_json` tells "not there / not JSON" (adds nothing) from a failed read; `_imported` returns None for the latter and `_build` (new, under the lock) then writes no `marks.json`. `load` gives `{}` and retries next round. A writer that finds the file missing goes through the same `_build`, so it cannot start the file without the old records either (this covers the reread under the lock). Such a skip is also logged (ticket 03).
+
 **Blocked by:** None (can start immediately)
 
 
