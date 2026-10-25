@@ -6,9 +6,9 @@
 
 **Claimed by:** Tarek 2026-10-25
 
-**Status:** claimed
+**Status:** done
 
 - [x] A test of `poll.round` with fake providers and a temp directory, patching nothing but the config path, that fails on 2a96f6b (no `poll` module) and pins: `answered`/`failed` in the result, a failed provider's seen and finished marks surviving the round, lines forgotten only when nothing failed, the sweep having run, the limit banner of a provider that did not answer absent. Evidence: `tests/test_poll.py`, 11 tests; red on the tree without `poll.py` (ModuleNotFoundError), green at b8a158e and after.
 - [x] The existing suite green locally on the touched files (415 tests across the route and roster files at 728c2a4) and on t-compute over ssh from `git archive` of the head: b8a158e 2271 OK, 728c2a4 2271 OK, 333ab0e 2272 OK, skipped 4 each.
 - [x] Review GO: Matt's `code-review` (standards 4 hard + 6 judgement, spec 3 partial + 5 unasked, all answered in 728c2a4), `/codex-review` round 1 one P2 (lines_root not reaching own_line, fixed in 333ab0e), round 2 clean, GO. Reviews in `/home/tiroir/Projects/agentview-wt/reviews/poll-round-01-codex-{1,2}.md`.
-- [ ] Live check on the restarted service (KillMode drop-in checked first): the page loads and polls, `/api/roster` carries `providers`, `events.jsonl` shows no refusal from the page.
+- [x] Live check on the restarted service (KillMode drop-in checked first): the page loads and polls, `/api/roster` carries `providers`, `events.jsonl` shows no refusal from the page. Evidence: `switchover.conf` KillMode=process present; restart 2026-10-25 10:41:12, pid 3470253, HEAD 7ea4d81, CGroup only server.py. `/api/roster` with Host 127.0.0.1:8765: 200, keys banners/chime/closed/columns/counts/flags/kept/pastes/providers/restore/saved, providers claude ok and codex ok, 19 flags in 6 columns; foreign Host: 403. events.jsonl since the restart: one `refused`, the foreign-Host curl; none from the page.

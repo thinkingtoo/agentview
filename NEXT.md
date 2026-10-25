@@ -2,6 +2,24 @@
 
 <!-- Format: NEXT_MD_FORMAT.md of tiroir-work. Read by /next. -->
 
+## Poll round
+id: poll-round
+goal: One poll is one module (poll.round) that decides once what is forgotten; spec docs/specs/2026-10-25-poll-round.md
+done_when: Tickets in .scratch/poll-round/issues are done
+
+- [ ] one-forget-decision: Ticket 02, the round decides once what is forgotten and the stores drop only what they are told
+  next: Claim .scratch/poll-round/issues/02-one-forget-decision.md; seen.forget and finished.forget lose `answered`, the round computes the droppable keys and the all-answered gate for lines (ADR-0001); test at the round's level first
+  party: agent
+  priority: Next
+  last_update: 2026-10-25
+- [ ] review-candidates: The other seven candidates of the 2026-10-25 architecture review
+  next: After ticket 02, pick the next from the review (what rings is derived in three places, fleet.py split, the dead suggest_project path, request admission, Paste card ownership, seen/finished as one keyed store, provider identity) with Thierry; the report is a scratchpad file and was not kept
+  party: agent
+  priority: Later
+  last_update: 2026-10-25
+- [x] poll-module: Ticket 01, poll.round, the handler only serialises (merged 7ea4d81)
+  party: agent
+
 ## Overview
 id: overview
 goal: The overview says, for every running session, whether it works, waits or needs you, and what to paste
