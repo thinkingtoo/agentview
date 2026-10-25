@@ -100,15 +100,18 @@ def _imported(path):
 
 
 def _read(path):
-    """`(records, how)`: how is "ok", "missing", or "broken" for a file that
-    exists and is not a JSON object."""
+    """`(records, how)`: how is "ok", "missing", "broken" for a file that
+    exists and is not a JSON object, or "error" when the read itself failed
+    (too many open files, an I/O error): that says nothing about the file."""
     try:
         with path.open(encoding="utf-8") as fh:
             got = json.load(fh)
     except FileNotFoundError:
         return {}, "missing"
-    except (OSError, ValueError):
+    except ValueError:
         return {}, "broken"
+    except OSError:
+        return {}, "error"
     return _clean(got), ("ok" if isinstance(got, dict) else "broken")
 
 
@@ -129,7 +132,7 @@ def load(path=None):
 
 def _aside(path):
     """Move a file nobody can read out of the way of the next write, so the
-    write does not destroy it. True when it is gone from `path`."""
+    write does not destroy it. The new name, or None when it did not move."""
     stamp = time.strftime("%Y%m%dT%H%M%S")
     for n in range(100):
         target = path.with_name(f"{path.name}.broken-{stamp}" + (f"-{n}" if n else ""))
@@ -137,26 +140,43 @@ def _aside(path):
             continue
         try:
             path.replace(target)
-            return True
+            return target
         except OSError:
-            return False
-    return False
+            return None
+    return None
 
 
 def _current(path):
     """The records a writer starts from, under the lock; None when the file is
-    unreadable and could not be set aside (then the writer leaves it alone)."""
+    unreadable and could not be set aside, or when the read failed (then the
+    writer leaves the file alone)."""
     got, how = _read(path)
+    if how == "error":
+        return None
     if how == "broken":
-        if not _aside(path):
+        target = _aside(path)
+        if not target:
             return None
         # A fresh file at once: with none, the next load would rebuild from
         # the old files, and a forget that has nothing to drop writes nothing.
-        return _save({}, path)
+        # If even that cannot be written, put the old file back.
+        if not _write({}, path):
+            try:
+                target.replace(path)
+            except OSError:
+                pass
+            return None
+        return {}
     return load(path) if how == "missing" else got
 
 
 def _save(state, path):
+    _write(state, path)
+    return state
+
+
+def _write(state, path):
+    """True when the file was written."""
     path = Path(path)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,8 +189,8 @@ def _save(state, path):
             tmp.unlink(missing_ok=True)
             raise
     except OSError:
-        pass
-    return state
+        return False
+    return True
 
 
 def ready(key, stamp, state):

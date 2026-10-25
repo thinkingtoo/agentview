@@ -380,6 +380,37 @@ class Import(Dir):
         self.assertEqual(marks.load(self.path), {})
         self.untouched(before)
 
+    def test_a_read_error_on_a_healthy_file_is_not_a_broken_file(self):
+        marks.mark("fake:a", 100, True, self.path)
+        real = Path.open
+
+        def flaky(p, *a, **k):
+            if p == self.path:
+                raise OSError(24, "too many open files")
+            return real(p, *a, **k)
+        with mock.patch.object(Path, "open", flaky):
+            marks.forget(set(), self.path)
+            marks.mark("fake:b", 100, True, self.path)
+            marks.pin("fake:a", True, self.path)
+        self.assertEqual(self.broken(), [])
+        self.assertEqual(marks.load(self.path), {"fake:a": {"seen": 100, "read": 100}})
+
+    def test_a_failed_fresh_write_puts_the_broken_file_back_and_does_not_rebuild(self):
+        before = self.old({"fake:x": 100})
+        self.path.write_text("{broken")
+        real = Path.open
+
+        def full(p, *a, **k):
+            if p.name.endswith(".tmp"):
+                raise OSError(28, "no space left")
+            return real(p, *a, **k)
+        with mock.patch.object(Path, "open", full):
+            marks.forget(set(), self.path)
+        self.assertEqual(self.path.read_text(), "{broken")
+        self.assertEqual(self.broken(), [])
+        self.assertEqual(marks.load(self.path), {})
+        self.untouched(before)
+
     def test_two_broken_files_in_one_second_are_both_kept(self):
         with mock.patch.object(marks.time, "strftime", return_value="T"):
             for junk in ("{one", "{two"):
