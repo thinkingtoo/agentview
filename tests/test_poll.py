@@ -5,7 +5,8 @@ Pastes, and hand the handler one dict. A provider that fails or stalls is
 reported and the round goes on without it; nothing of that provider is
 forgotten, and session lines are forgotten only on a round everyone answered.
 Everything here is reached through `poll.round` and what the stores say
-afterwards; no module is patched but the config path.
+afterwards; nothing is patched but the config path (and the live budget, to
+make a stall short).
 """
 import os
 import shutil

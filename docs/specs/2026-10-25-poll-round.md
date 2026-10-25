@@ -24,10 +24,14 @@ settle what is forgotten, sweep the Pastes. Module `poll.py`, entry point
 ## Decisions
 
 1. **Seam.** A new module `poll.py`; `fleet.roster()` stays a query and the
-   round calls it. `fleet.py` does not grow.
-2. **No global.** `fleet.sessions()` returns `(rows, answered, failed)`;
-   `fleet.ROUND` is gone. `fleet.roster()` takes `answered` for `banners_of`
-   (a provider's limit banner shows only when it answered). The handler
+   round calls it. `fleet.py` takes on no new job (it grew by the parameters
+   below, 13 lines).
+2. **No global.** `fleet.live()` returns `(rows, answered, failed)`
+   (`fleet.sessions()` keeps returning the rows alone, for `members` and the
+   tests that call it); `fleet.ROUND` is gone. `fleet.roster()` takes the
+   `rows` and `answered`, and `members` takes `rows`, so the round asks the
+   providers once; `banners_of` takes `answered` (a provider's limit banner
+   shows only when it answered; None means everyone did). The handler
    receives one dict from `poll.round` and serialises it.
 3. **The sweep leaves the query.** `paste.sweep()` moves from `fleet.roster()`
    to the round, after the roster is built.
@@ -45,7 +49,10 @@ settle what is forgotten, sweep the Pastes. Module `poll.py`, entry point
 6. **Dependencies are accepted, not created.**
    `poll.round(providers=None, now=None, seen_path=None, finished_path=None,
    lines_root=None)`, defaults resolving to the existing `store()` functions.
-   A test passes a temp directory and fake providers and patches nothing.
+   A test passes a temp directory and fake providers and patches nothing
+   but the config path (`fleet.CONFIG`, a module global until there is a
+   config module). The Paste store is beside the lines store
+   (`paste.store(lines_root)`), so it needs no parameter of its own.
    `providers.broken()` and `log.note_roster` stay module calls.
 7. **Lock.** The whole round, forget and sweep included, runs under one lock.
    The lock object stays in `fleet` as `fleet.POLL` because `fleet.find` and

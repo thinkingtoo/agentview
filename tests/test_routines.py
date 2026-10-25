@@ -56,12 +56,12 @@ class Seen(unittest.TestCase):
     and through `roster()` for what the page and the chime are given."""
 
     def run_with(self, members, fn):
-        real = fleet.ask
-        fleet.ask = lambda providers=None, **kw: (members, set(), {})
+        real = fleet.live
+        fleet.live = lambda providers=None, **kw: (members, set(), {})
         try:
             return fn()
         finally:
-            fleet.ask = real
+            fleet.live = real
 
     def members(self, members):
         return self.run_with(members, fleet.members)

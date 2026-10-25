@@ -18,14 +18,11 @@ import finished
 import fleet
 import hand
 import jump
-import lines
 import log
 import notes
 import paste
 import poll
 import projects
-import providers
-import seen
 import snapshot
 import subprocess
 import tickets

@@ -341,12 +341,13 @@ def _ask(p):
     return got, None
 
 
-def ask(providers=None, *, now=None, seen_path=None, finished_path=None):
-    """Ask every provider for its live sessions, normalised into rows.
+def live(providers=None, *, now=None, seen_path=None, finished_path=None):
+    """Every provider's live sessions (`Provider.live`), normalised into rows.
 
     Returns `(rows, answered, failed)`: the names of the providers that
     answered, and for each that failed or stalled why, so the page goes on
-    without it. Takes no lock: the round that calls it holds `POLL`.
+    without it. Takes no lock: the round (`poll.round`) holds `POLL` around
+    it; a test calling it, or `roster`, directly has no click to race.
     """
     shelves = config()
     assigned = config_value("assign", {})
@@ -376,8 +377,8 @@ def ask(providers=None, *, now=None, seen_path=None, finished_path=None):
 
 
 def sessions(providers=None, **kw):
-    """The rows of `ask`, for a caller that needs nothing else."""
-    return ask(providers, **kw)[0]
+    """The rows of `live`, for a caller that needs nothing else."""
+    return live(providers, **kw)[0]
 
 
 def _providers():
@@ -767,9 +768,8 @@ def roster(providers=None, *, rows=None, answered=None, now=None,
     """The page's data: `columns` (the overview, one per project), the
     header's `counts`, the `banners`, and `flags`. A query: it writes nothing.
 
-    The round (`poll.round`) passes the `rows` it asked for and who
-    `answered`; given only `providers`, the asking is done here, which is what
-    a test wants.
+    The round (`poll.round`) passes the `rows` it got and who `answered`;
+    given only `providers`, they are asked here, which is what a test wants.
 
     `flags` is for what rings and what is forgotten: one row per session on
     the machine, routines and finished sessions too, with the raw flag the
@@ -777,7 +777,7 @@ def roster(providers=None, *, rows=None, answered=None, now=None,
     does not.
     """
     if rows is None:
-        rows, answered, _ = ask(providers, now=now, seen_path=seen_path, finished_path=finished_path)
+        rows, answered, _ = live(providers, now=now, seen_path=seen_path, finished_path=finished_path)
     everyone = members(rows=rows)
     kept, pastes = place_pastes(everyone, paste.waiting(paste_root))
     columns = columns_of(everyone)
