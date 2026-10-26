@@ -7,17 +7,14 @@ id: poll-round
 goal: One poll is one module (poll.round) that decides once what is forgotten; spec docs/specs/2026-10-25-poll-round.md
 done_when: Tickets in .scratch/poll-round/issues are done
 
-- [ ] keyed-store: Review candidate 7, seen and finished as one keyed store (Thierry's pick, 2026-10-25)
-  next: Build ticket .scratch/marks/issues/01-one-marks-store.md (spec docs/specs/2026-10-25-marks.md, grilled with Thierry 2026-10-25)
-  party: agent
-  priority: Next
-  last_update: 2026-10-25
 - [ ] review-candidates: The other seven candidates of the 2026-10-25 architecture review
-  next: After keyed-store, pick the next from the review (what rings is derived in three places, fleet.py split, the dead suggest_project path, request admission, Paste card ownership, provider identity) with Thierry; the report is a scratchpad file and was not kept
+  next: Pick the next from the review (what rings is derived in three places, fleet.py split, the dead suggest_project path, request admission, Paste card ownership, provider identity) with Thierry; the report is a scratchpad file and was not kept
   party: agent
   priority: Later
   last_update: 2026-10-25
 - [x] poll-module: Ticket 01, poll.round, the handler only serialises (merged 7ea4d81)
+  party: agent
+- [x] keyed-store: seen, read and pinned as one marks store, tickets marks/01-04 done
   party: agent
 - [x] one-forget-decision: Ticket 02, the round decides once what is forgotten (merged 0346f81)
   party: agent
