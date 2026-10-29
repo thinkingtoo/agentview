@@ -371,11 +371,26 @@ header button { white-space: nowrap; }
   header { position:static; gap:8px 10px; padding:10px 12px; }
   .spacer { display:none; }
   .q, .q:focus { width:100%; }
-  main, main.ov { padding:12px 12px 40px; flex-direction:column; align-items:stretch; overflow-x:visible; }
-  .ov-col { flex:none; max-width:none; }
+  /* One project per screen width; a swipe snaps to the next. */
+  main, main.ov { padding:12px 0 40px; gap:0; scroll-snap-type:x mandatory; overscroll-behavior-x:contain; }
+  .ov-col { flex:0 0 100%; max-width:none; padding:0 12px; scroll-snap-align:start; }
   #banners { margin:0 -12px -10px; }
   .banner { padding:6px 12px; }
+  /* Where the swipe is: the project on screen, and a dot per project in its state's colour. */
+  #pager:not(:empty) { position:sticky; top:0; z-index:4; display:flex; align-items:center; gap:10px;
+                       padding:8px 12px; background:var(--bg); border-bottom:1px solid var(--line); }
+  #pager .here { font-weight:650; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; }
+  #pager .of { color:var(--faint); font-size:12px; flex:none; }
+  #pager .dots { display:flex; gap:2px; margin-left:auto; flex:none; }
+  #pager .dots button { width:16px; height:22px; padding:0; border:0; background:none; }
+  #pager .dots button::after { content:""; display:block; width:7px; height:7px; margin:auto; border-radius:50%;
+                               background:var(--faint); opacity:.45; }
+  #pager .dots button.st-needs::after { background:var(--wait); opacity:1; }
+  #pager .dots button.st-error::after, #pager .dots button.st-hung::after { background:var(--bad); opacity:1; }
+  #pager .dots button.st-moving::after { background:var(--busy); opacity:.8; }
+  #pager .dots button.on::after { width:9px; height:9px; opacity:1; outline:2px solid var(--ink); outline-offset:1px; }
 }
+@media (min-width: 601px) { #pager { display:none; } }
 </style>
 </head>
 <body>
@@ -403,6 +418,7 @@ header button { white-space: nowrap; }
 </header>
 <div id="closedlist" hidden></div>
 <div id="found" hidden></div>
+<nav id="pager" aria-label="projects"></nav>
 <main id="main" class="ov"><div class="empty">loading…</div></main>
 <script>
 let COLUMNS = [];           // the roster's `columns`, which the overview prints as they come
@@ -674,7 +690,35 @@ function overview(cols) {
   const x = main.scrollLeft;          // a repaint every poll must not send you back to the first column
   main.innerHTML = (cols.length ? cols.map(column).join("") : KEPT.length ? "" : nothing()) + keptColumn();
   main.scrollLeft = x;
+  pager();
 }
+
+// On a phone the projects sit side by side, one per screen: the bar under the header
+// names the one on screen and has a dot per project to jump to. On a wide screen it
+// stays empty, the columns are all there to see.
+function pager() {
+  const nav = document.getElementById("pager");
+  const main = document.getElementById("main");
+  const cols = [...main.querySelectorAll(".ov-col")];
+  if (!matchMedia("(max-width: 600px)").matches || cols.length < 2) { nav.innerHTML = ""; return; }
+  const at = Math.min(cols.length - 1, Math.max(0, Math.round(main.scrollLeft / main.clientWidth)));
+  const name = col => col.querySelector(".ov-name, .kept-head")?.textContent.trim() || "";
+  const state = col => (col.querySelector(".ov-head")?.className.match(/\bst-(\w+)/) || [])[1] || "";
+  nav.innerHTML = `<span class="here">${esc(name(cols[at]))}</span><span class="of">${at + 1}/${cols.length}</span>
+    <span class="dots">${cols.map((c, i) => `<button data-to="${i}" class="st-${esc(state(c))}${i === at ? " on" : ""}"
+      aria-label="${esc(name(c))}"></button>`).join("")}</span>`;
+}
+
+document.getElementById("main").addEventListener("scroll", () => {
+  clearTimeout(pager.t);
+  pager.t = setTimeout(pager, 60);
+}, { passive: true });
+
+document.getElementById("pager").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-to]");
+  const main = document.getElementById("main");
+  if (b) main.scrollTo({ left: Number(b.dataset.to) * main.clientWidth, behavior: "smooth" });
+});
 
 // Pastes of sessions that have left the machine stay here, under a card of their
 // own, until each is ticked done. All the roster knows of such a session is its
