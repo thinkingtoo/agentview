@@ -363,6 +363,19 @@
            white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .hit mark { background:color-mix(in srgb,var(--wait) 32%,transparent); color:inherit; border-radius:2px; }
 header button { white-space: nowrap; }
+/* A phone. The zoom in config.json is for the laptop's screen; here it would leave room
+   for one column of nine. So the page keeps its own scale, the projects stack instead of
+   scrolling sideways, and the header scrolls away instead of holding the first screen. */
+@media (max-width: 600px) {
+  html { zoom: 1; }
+  header { position:static; gap:8px 10px; padding:10px 12px; }
+  .spacer { display:none; }
+  .q, .q:focus { width:100%; }
+  main, main.ov { padding:12px 12px 40px; flex-direction:column; align-items:stretch; overflow-x:visible; }
+  .ov-col { flex:none; max-width:none; }
+  #banners { margin:0 -12px -10px; }
+  .banner { padding:6px 12px; }
+}
 </style>
 </head>
 <body>
@@ -1778,6 +1791,8 @@ document.getElementById("count").addEventListener("click", ev => {
   if (!b || b.disabled || !known(COUNT_WORD, b.dataset.count)) return;
   LIGHT = LIGHT === b.dataset.count ? "" : b.dataset.count;
   paint();
+  // The lit tile may be columns away, or on a phone screens below: bring the first one in.
+  document.querySelector("#main .lit")?.scrollIntoView({ block: "center", inline: "center" });
 });
 
 // Any click at all counts as that gesture, so the first one anywhere on the
