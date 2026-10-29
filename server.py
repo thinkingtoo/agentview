@@ -41,6 +41,36 @@ def setting(key, default):
         return default
 
 
+EXTRA_ORIGINS = "AGENTVIEW_EXTRA_ORIGINS"
+DEFAULT_PORT = {"http": 80, "https": 443}
+
+
+def _site(origin):
+    """(scheme, host, port) of an origin written exactly, or None: http or https, a host, no
+    path, query, fragment or user. A left-out port is the scheme's default."""
+    try:
+        parts = urllib.parse.urlsplit(origin.strip())
+        port = parts.port or DEFAULT_PORT.get(parts.scheme)
+    except ValueError:
+        return None
+    if (parts.scheme not in DEFAULT_PORT or not parts.hostname or "@" in parts.netloc
+            or parts.path or parts.query or parts.fragment):
+        return None
+    return parts.scheme, parts.hostname, port
+
+
+def extra_entries():
+    """Each entry of $AGENTVIEW_EXTRA_ORIGINS (commas or spaces between them) with its site,
+    None for one written wrong. Read on every request, so a test can set it."""
+    return [(e, _site(e)) for e in os.environ.get(EXTRA_ORIGINS, "").replace(",", " ").split()]
+
+
+def extra_origins():
+    """The origins in front of this server, such as `tailscale serve`, that may reach it besides
+    127.0.0.1 and localhost. Unset, there are none."""
+    return {site for _, site in extra_entries() if site}
+
+
 def page():
     """The page, with the configured scale baked in.
 
@@ -251,7 +281,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    def _host_ok(self):
+    def _host_local(self):
         """The Host names this server by a loopback name and its own port. A page on a name the
         attacker controls, pointed at this machine by DNS rebinding, sends its own name here."""
         port = self.server.server_port
@@ -260,12 +290,25 @@ class Handler(BaseHTTPRequestHandler):
             names += ["127.0.0.1", "localhost"]
         return self.headers.get("Host", "").lower() in names  # a name is not case-sensitive
 
+    def _host_extra(self):
+        """The extra origins (`extra_origins`) whose host and port the Host names."""
+        host = self.headers.get("Host", "").lower()
+        return {site for site in extra_origins()
+                if host == f"{site[1]}:{site[2]}"
+                or (host == site[1] and site[2] == DEFAULT_PORT[site[0]])}
+
+    def _host_ok(self):
+        return self._host_local() or bool(self._host_extra())
+
     def _origin_ok(self):
         """No Origin is a command line or a same-origin GET. One that is sent must be this server,
-        scheme, host and port compared exactly: a prefix test lets `localhost.attacker.example` in."""
+        scheme, host and port compared exactly: a prefix test lets `localhost.attacker.example` in.
+        Under an extra Host the Origin must be that same extra origin, and nothing else."""
         origin = self.headers.get("Origin")
         if origin is None:
             return True
+        if not self._host_local():
+            return _site(origin) in self._host_extra()
         try:
             parts = urllib.parse.urlsplit(origin)
             return (parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost")
@@ -610,6 +653,9 @@ def main():
     if migrated:
         log.event("migrated", fields=migrated)
     print(f"fleet on http://127.0.0.1:{p}", flush=True)
+    for entry, site in extra_entries():
+        print(f"also     {entry}" if site else f"ignored  {entry} (not scheme://host[:port])",
+              flush=True)
     print(f"log      {log.LOG}", flush=True)
     server.serve_forever()
 

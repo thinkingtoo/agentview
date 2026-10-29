@@ -935,6 +935,28 @@ systemctl --user enable --now agentview-summaries.timer
 Bound to `127.0.0.1` deliberately: the page shows your prompts verbatim, which
 is client work and occasionally a credential someone pasted into an error.
 
+To reach it from another device, put a proxy in front of it, such as
+`tailscale serve --bg --https=8445 http://127.0.0.1:8765`, and name that
+proxy's origin in `AGENTVIEW_EXTRA_ORIGINS` in the unit (`Environment=` in a
+drop-in under `~/.config/systemd/user/agentview.service.d/`), several separated
+by commas or spaces:
+
+```
+AGENTVIEW_EXTRA_ORIGINS=https://tiroir-xps-15-7590.tail23d36e.ts.net:8445
+```
+
+What this opens: **everyone who can reach that name reads every prompt on the
+page and can press every button**: jump, rename, restore, Paste text out of the
+keyring. Behind `tailscale serve` that is every device on the tailnet, and
+anyone a device is shared with. The server still listens on `127.0.0.1` only.
+Each entry is `scheme://host[:port]`, compared exactly: a request passes when
+its Host names an entry's host and port, and an Origin it sends is that same
+entry. A rebound name, another port, a lookalike suffix or `http` for an `https`
+entry is refused as before, and a POST still needs the `X-Fleet` header. An
+entry written wrong opens nothing; the server prints the entries it takes and
+the ones it ignores at start. Unset, nothing beyond `127.0.0.1` and `localhost`
+passes.
+
 ### Restarting the service, and what survives it
 
 `systemctl --user restart agentview` kills every process in the service's
