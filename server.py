@@ -46,15 +46,16 @@ DEFAULT_PORT = {"http": 80, "https": 443}
 
 
 def _site(origin):
-    """(scheme, host, port) of an origin written exactly, or None: http or https, a host, no
-    path, query, fragment or user. A left-out port is the scheme's default."""
+    """(scheme, host, port) of an origin written exactly, or None: http or https, a host name
+    or IPv4 address, no path, query, fragment or user. A left-out port is the scheme's default;
+    port 0 and an IPv6 address (`.hostname` drops its brackets) are refused, not guessed."""
     try:
         parts = urllib.parse.urlsplit(origin.strip())
-        port = parts.port or DEFAULT_PORT.get(parts.scheme)
+        port = DEFAULT_PORT.get(parts.scheme) if parts.port is None else parts.port
     except ValueError:
         return None
     if (parts.scheme not in DEFAULT_PORT or not parts.hostname or "@" in parts.netloc
-            or parts.path or parts.query or parts.fragment):
+            or "[" in parts.netloc or not port or parts.path or parts.query or parts.fragment):
         return None
     return parts.scheme, parts.hostname, port
 

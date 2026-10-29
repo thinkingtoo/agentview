@@ -105,6 +105,14 @@ class ExtraOrigins(unittest.TestCase):
         self.assertEqual(self.request("GET", f"{TS}:8445"), 403)
         self.assertEqual(self.request("GET", ":8445"), 403)
 
+    def test_port_0_and_an_ipv6_entry_open_nothing(self):
+        # `.port` reads 0 as falsy and `.hostname` drops the brackets of an IPv6 address.
+        self.env(f"https://{TS}:0 https://[::1]:8445")
+        for host in (TS, f"{TS}:443", f"{TS}:0", "[::1]:8445", "::1:8445"):
+            with self.subTest(host=host):
+                self.assertEqual(self.request("GET", host), 403)
+        self.assertEqual(server.extra_origins(), set())
+
 
 if __name__ == "__main__":
     unittest.main()

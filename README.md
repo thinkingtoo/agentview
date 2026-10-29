@@ -948,8 +948,10 @@ AGENTVIEW_EXTRA_ORIGINS=https://tiroir-xps-15-7590.tail23d36e.ts.net:8445
 What this opens: **everyone who can reach that name reads every prompt on the
 page and can press every button**: jump, rename, restore, Paste text out of the
 keyring. Behind `tailscale serve` that is every device on the tailnet, and
-anyone a device is shared with. The server still listens on `127.0.0.1` only.
-Each entry is `scheme://host[:port]`, compared exactly: a request passes when
+anyone a device is shared with; `tailscale funnel` in place of `serve` would
+make it the whole internet. The server still listens on `127.0.0.1` only.
+Each entry is `scheme://host[:port]` (a name or an IPv4 address, not IPv6),
+compared exactly: a request passes when
 its Host names an entry's host and port, and an Origin it sends is that same
 entry. A rebound name, another port, a lookalike suffix or `http` for an `https`
 entry is refused as before, and a POST still needs the `X-Fleet` header. An
