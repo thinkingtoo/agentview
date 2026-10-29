@@ -1,0 +1,9 @@
+[Unit]
+Description=agentview push: the projects on push.include, to the hub's FleetView (thinkingtoo/tt-tiroir#173)
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Projects/agentview
+# The keyring is on the session bus, which a user unit already has.
+ExecStart=/usr/bin/python3 %h/Projects/agentview/push.py once
+Nice=10

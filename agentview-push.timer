@@ -1,0 +1,10 @@
+[Unit]
+Description=agentview push: a round every 20 seconds; a roster that has not changed goes again after 5 minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=20s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

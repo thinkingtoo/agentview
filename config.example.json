@@ -30,5 +30,7 @@
   "_chime": "Sound: a two-stroke chime when a session starts waiting on you, a single short tick when one finishes. Either sounds once, for whoever has just changed -- never for the ones already on screen when the page opens.",
   "chime": true,
   "_ticket_repos": "Repos whose tickets open in Claude from /ticket/<owner>/<repo>/<n>, each with the directory its Claude starts in.",
-  "ticket_repos": {}
+  "ticket_repos": {},
+  "_push": "push: what the hub's FleetView gets (push.py). include lists the projects sent, by their key (repo:host/owner/name, track:x, client:..., folder:x); a project not on it never leaves this machine, and an empty list sends nothing. The device token is read from the login keyring (application=agentview, purpose=fleet-push), never from here.",
+  "push": {"include": [], "url": "https://thinkingtoo.tiroir.me/fleet-push"}
 }

@@ -146,6 +146,20 @@ def get(pid, store):
         return bytes(value).decode("utf-8")
 
 
+def lookup(attributes):
+    """The text of the item `attributes` find, or None when there is none: a
+    secret that is not a Paste, such as the hub's device token (`push.py`),
+    which `secret-tool store` put there."""
+    with _Session() as s:
+        unlocked, locked = s.service.SearchItems(attributes, timeout=TIMEOUT)
+        if locked and not unlocked:
+            raise Unavailable(LOCKED)
+        if not unlocked:
+            return None
+        _, _, value, _ = s.interface(unlocked[0], ITEM).GetSecret(s.session, timeout=TIMEOUT)
+        return bytes(value).decode("utf-8")
+
+
 def delete(pid, store):
     """Remove Paste `pid`'s item. False when there was none, which is as good as removed."""
     with _Session() as s:
