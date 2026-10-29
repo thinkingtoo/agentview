@@ -34,10 +34,20 @@ class Leading(unittest.TestCase):
                      member("waiting", "waiting", at=2)])
         self.assertEqual(got, ["waiting", "blocked"])
 
-    def test_a_finished_session_still_beats_a_working_one(self):
-        got = names([member("working", None, status="busy", at=9),
-                     member("finished", "ready", at=1)])
-        self.assertEqual(got, ["finished", "working"])
+    def test_a_working_session_beats_a_finished_one(self):
+        # Under what wants you, the column goes by activity: what is moving now
+        # leads what stopped, however recently it stopped.
+        got = names([member("finished", "ready", at=9),
+                     member("working", None, status="busy", at=1)])
+        self.assertEqual(got, ["working", "finished"])
+
+    def test_finished_and_idle_go_by_when_they_stopped(self):
+        # Ready is no rank of its own: a session that finished hours ago sinks
+        # below one that went idle a minute ago.
+        got = names([member("ready-hours-ago", "ready", at=1),
+                     member("idle-just-now", None, at=9),
+                     member("ready-minutes-ago", "ready", at=5)])
+        self.assertEqual(got, ["idle-just-now", "ready-minutes-ago", "ready-hours-ago"])
 
     def test_ties_break_on_the_most_recent(self):
         got = names([member("older", "ready", at=1), member("newer", "ready", at=5)])

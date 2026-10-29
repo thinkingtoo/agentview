@@ -1273,18 +1273,19 @@ LEAD = projects.LEAD
 
 
 def order_members(members):
-    """What wants you, then what is ready for you, then what is working.
+    """What wants you, then what is working, then the rest by when it stopped.
 
     A session that wrote down what it is blocked on leads with the ones that
     have a dialog open: both are stopped until you speak, and which of them
     you see first is a question of recency, not of what they are called.
+    Ready has no rank of its own: a session that finished hours ago sinks under
+    one that stopped a minute ago. `updatedAt` moves when the status does, not
+    on every write, so two working sessions do not swap places each poll.
     """
     def rank(s):
         if s.get("blocked") or s["flag"] in ("waiting", "stuck"):
             return 0
-        if s["flag"] == "ready":
-            return 1
-        return 2 if s["status"] == "busy" else 3
+        return 1 if s["status"] == "busy" else 2
 
     members.sort(key=lambda s: (rank(s), -s["updatedAt"]))
     return members

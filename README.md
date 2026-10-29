@@ -1216,9 +1216,10 @@ A session registered as a boss by the claude-boss plugin coordinates other
 sessions and does no implementation work itself. On the overview it **leads its
 column** whatever the activity and carries a `boss` tag. The team it dispatches
 to is worked out too (below) but not drawn: a tile belongs to the column of its
-own project, the boss first and the rest by what wants you, then what is ready,
-then what is working, newest first. The team only settles the order of two
-sessions that tie.
+own project, the boss first and the rest by what wants you, then what is
+working, then everything else by when it stopped, newest first (a session that
+finished hours ago sinks under one that went quiet a minute ago). The team only
+settles the order of two sessions that tie.
 
 Neither fact is a guess:
 
