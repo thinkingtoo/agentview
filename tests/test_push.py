@@ -150,6 +150,13 @@ class Projection(unittest.TestCase):
         sent = push.projection(roster(odd, tile()), INCLUDE)["columns"][0]["sessions"]
         self.assertEqual([s["name"] for s in sent], ["Rune"])
 
+    def test_a_column_that_cannot_be_read_is_left_out(self):
+        r = roster()
+        r["columns"] += [{"project": ["x"], "name": "odd", "sessions": []},
+                         {"project": INCLUDE[0], "name": "odd", "sessions": {"a": 1}}]
+        names = [c["name"] for c in push.projection(r, INCLUDE)["columns"]]
+        self.assertEqual(names, ["agentview", "odd"])
+
 
 class Token(unittest.TestCase):
     def test_the_newline_mint_prints_is_taken_off(self):

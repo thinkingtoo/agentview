@@ -95,9 +95,11 @@ def projection(data, include):
     # A column is its project's key, never its display name: two columns may share a name.
     wanted = set(include)
     return {"columns": [{"project": column["project"], "name": say(column.get("name"), NAME_LEN),
-                         "sessions": _sessions(column.get("sessions") or [], flags)}
+                         "sessions": _sessions(column["sessions"] if isinstance(column.get("sessions"), list) else [],
+                                               flags)}
                         for column in data.get("columns") or []
-                        if isinstance(column, dict) and column.get("project") in wanted][:MAX_COLUMNS]}
+                        if isinstance(column, dict) and isinstance(column.get("project"), str)
+                        and column["project"] in wanted][:MAX_COLUMNS]}
 
 
 def _sessions(tiles, flags):
