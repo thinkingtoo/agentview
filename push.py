@@ -46,10 +46,15 @@ TIMEOUT = 10
 TOKEN_ATTRIBUTES = {"application": vault.APPLICATION, "purpose": "fleet-push"}
 
 # Where a tile's line may come from to be sent (`working.line_of`): the session's
-# own words and Claude Code's title. A line read from the prompt or the branch is not.
-LINE_SOURCES = (working.OWN, working.DID, working.TITLE)
+# own words, and Claude Code's title, which Claude Code writes itself. A line read
+# from the prompt or the branch is not, nor another provider's title: Codex's is
+# its first prompt, cut (`providers/codex.py`).
+OWN_SOURCES = (working.OWN, working.DID)
+TITLED = {"claude"}
 FLAGS = ("waiting", "ready", "tool", "stuck")
 PASTE_ID = re.compile(r"[0-9a-f]{16}")       # as `paste.py` makes them
+MAX_BODY = 256 * 1024                        # the hub refuses more (413)
+FIT_MARGIN = 1024                            # for `at` and the separators the estimate leaves out
 HIDDEN = "(hidden: looked like a credential)"
 # The hub's limits (tiroir-fleet re-checks them): characters per field, and how many of each.
 NAME_LEN, LINE_LEN, NEED_LEN = 60, 200, 200
@@ -57,27 +62,53 @@ QUESTION_LEN, LABEL_LEN, HINT_LEN, TITLE_LEN = 300, 60, 200, 120
 MAX_COLUMNS, MAX_SESSIONS, MAX_QUESTIONS, MAX_OPTIONS, MAX_PASTES = 40, 40, 4, 6, 20
 
 
+BREAKS = frozenset("\t\n\v\f\r\x1c\x1d\x1e\x85\u2028\u2029")
+
+
+def _invisible(c):
+    """A control or format character, or half of a surrogate pair: none of them is text to show."""
+    return unicodedata.category(c) in ("Cc", "Cf", "Cs")
+
+
 def say(value, limit):
-    """A string as it may leave: checked whole for a credential shape before it
-    is cut (a cut token no longer looks like one), then without control and
-    format characters, and cut to `limit`."""
+    """A string as it may leave, or `HIDDEN`.
+
+    A line break becomes a space and every other invisible character goes. The
+    credential check looks at the text as it came, as it leaves, and with the
+    breaks taken out as well: a zero-width character or a newline inside a
+    token hides it from the shapes, and taking it out would put it back
+    together after the check. Cut to `limit` last, since a cut token no longer
+    looks like one."""
     if not isinstance(value, str):
         return ""
-    if credentials.looks_secret(value):
+    shown = "".join(" " if c in BREAKS else c for c in value if c in BREAKS or not _invisible(c))
+    joined = "".join(c for c in value if not _invisible(c) and c not in BREAKS)
+    if any(credentials.looks_secret(t) for t in (value, shown, joined)):
         return HIDDEN
-    return "".join(c for c in value if unicodedata.category(c) not in ("Cc", "Cf"))[:limit]
+    return shown[:limit]
 
 
 def projection(data, include):
     """The body the hub gets, from one roster (`poll.round`) and the projects
     named in `push.include`."""
-    flags = {f.get("key"): f for f in data.get("flags", [])}
+    flags = {f.get("key"): f for f in data.get("flags") or [] if isinstance(f, dict)}
     # A column is its project's key, never its display name: two columns may share a name.
     wanted = set(include)
     return {"columns": [{"project": column["project"], "name": say(column.get("name"), NAME_LEN),
-                         "sessions": [_session(t, flags.get(t.get("key"), {}))
-                                      for t in column.get("sessions", [])[:MAX_SESSIONS]]}
-                        for column in data.get("columns", []) if column.get("project") in wanted][:MAX_COLUMNS]}
+                         "sessions": _sessions(column.get("sessions") or [], flags)}
+                        for column in data.get("columns") or []
+                        if isinstance(column, dict) and column.get("project") in wanted][:MAX_COLUMNS]}
+
+
+def _sessions(tiles, flags):
+    """The column's sessions. A tile that cannot be read stays behind; the rest go."""
+    sent = []
+    for t in tiles[:MAX_SESSIONS]:
+        try:
+            sent.append(_session(t, flags.get(t.get("key"), {})))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+    return sent
 
 
 def _session(t, flag):
@@ -94,14 +125,53 @@ def _session(t, flag):
         "name": say(t.get("name"), NAME_LEN),
         "flag": flag.get("flag") if flag.get("flag") in FLAGS else None,
         "blocked": bool(t.get("blocked")),
-        "since": t["stop"],
-        "line": say(t.get("line"), LINE_LEN) if t.get("lineSource") in LINE_SOURCES else "",
-        "need": say(t.get("need"), NEED_LEN),
+        "since": int(t["stop"]),
+        "line": say(t.get("line"), LINE_LEN) if _own_line(t) else "",
+        # Only what the session wrote for you: an ask read out of its last words is transcript.
+        "need": say(t.get("need"), NEED_LEN) if t.get("blocked") is True else "",
         "question": question,
         "pastes": [{"id": p.get("id"), "title": say(p.get("title"), TITLE_LEN), "secret": p.get("secret") is True}
                    for p in t.get("pastes", [])
                    if isinstance(p.get("id"), str) and PASTE_ID.fullmatch(p["id"])][:MAX_PASTES],
     }
+
+
+def _own_line(t):
+    source = t.get("lineSource")
+    return source in OWN_SOURCES or (source == working.TITLE and t.get("provider") in TITLED)
+
+
+def _encoded(value):
+    return json.dumps(value, ensure_ascii=False).encode("utf-8")
+
+
+def fit(columns, limit=MAX_BODY - FIT_MARGIN):
+    """Cut the projection until the body fits the hub's limit: the open
+    questions first, from the last session up, then sessions from the end."""
+    total = len(_encoded({"v": VERSION, "at": 0, "columns": columns}))
+    everyone = [s for c in columns for s in c["sessions"]]
+    for s in reversed(everyone):
+        if total <= limit:
+            return columns
+        if s["question"] is not None:
+            before = len(_encoded(s))
+            s["question"] = None
+            total -= before - len(_encoded(s))
+    for c in reversed(columns):
+        while c["sessions"] and total > limit:
+            total -= len(_encoded(c["sessions"].pop())) + 2
+    while total > limit and columns:
+        columns.pop()
+        total = len(_encoded({"v": VERSION, "at": 0, "columns": columns}))
+    return columns
+
+
+def clean_token(value):
+    """The device token as a header can carry it, or None. `mint` prints it with a newline."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value if value and all(33 <= ord(c) <= 126 for c in value) else None
 
 
 def state_path():
@@ -116,21 +186,33 @@ def _last(state):
         return {}
 
 
+def _digest(columns):
+    return hashlib.sha256(json.dumps(columns, sort_keys=True).encode()).hexdigest()
+
+
+EMPTY = _digest([])
+
+
 def once(*, include, read, post, token, url, state, now):
     """One round. `read` gives the roster, `token` the device token (None when
     there is none), and `post(url, token, body)` the hub's HTTP status. Says
     what it did: sent, unchanged, nothing included, no token, or refused <status>."""
-    if not include:
-        return "nothing included"
-    columns = projection(read(), include)["columns"]
-    digest = hashlib.sha256(json.dumps(columns, sort_keys=True).encode()).hexdigest()
     last = _last(state)
-    if last.get("digest") == digest and now - last.get("sent", 0) < HEARTBEAT_MS:
+    if include:
+        columns = fit(projection(read(), include)["columns"])
+    elif last.get("digest") in (None, EMPTY):
+        return "nothing included"
+    else:
+        # The list was emptied: the hub is told once, or it keeps showing the last cards.
+        columns = []
+    digest = _digest(columns)
+    sent = last.get("sent")
+    if last.get("digest") == digest and isinstance(sent, int) and now - sent < HEARTBEAT_MS:
         return "unchanged"
     secret = token()
     if not secret:
         return "no token"
-    body = json.dumps({"v": VERSION, "at": now, "columns": columns}, ensure_ascii=False).encode("utf-8")
+    body = _encoded({"v": VERSION, "at": now, "columns": columns})
     status = post(url, secret, body)
     if status != 204:
         return f"refused {status}"
@@ -150,15 +232,27 @@ def read_roster():
         port = 8765
     request = urllib.request.Request(f"http://127.0.0.1:{port}/api/roster",
                                      headers={"Host": f"127.0.0.1:{port}"})
-    with urllib.request.urlopen(request, timeout=TIMEOUT) as answer:
+    with _opener().open(request, timeout=TIMEOUT) as answer:
         return json.load(answer)
+
+
+class _Stay(urllib.request.HTTPRedirectHandler):
+    """A redirect is an answer, never followed: a POST replayed elsewhere would take the token along."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def _opener():
+    # No proxy: the roster holds prompts, and the token is the hub's alone.
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), _Stay)
 
 
 def post_body(url, token, body):
     request = urllib.request.Request(url, data=body, method="POST", headers={
         "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as answer:
+        with _opener().open(request, timeout=TIMEOUT) as answer:
             return answer.status
     except urllib.error.HTTPError as err:
         return err.code
@@ -166,10 +260,15 @@ def post_body(url, token, body):
 
 def device_token():
     try:
-        return vault.lookup(TOKEN_ATTRIBUTES)
+        found = vault.lookup(TOKEN_ATTRIBUTES)
     except vault.Unavailable as err:
         log.event("push", outcome="no token", why=str(err))
         return None
+    token = clean_token(found)
+    if found and not token:
+        # Never the value: what is wrong with it is said, not shown.
+        log.event("push", outcome="no token", why="the keyring item is not a token a header can carry")
+    return token
 
 
 def main(argv=None):
@@ -180,11 +279,16 @@ def main(argv=None):
     settings = settings if isinstance(settings, dict) else {}
     include = [p for p in settings.get("include", []) if isinstance(p, str)] \
         if isinstance(settings.get("include"), list) else []
+    url = settings.get("url") or URL
+    if not isinstance(url, str) or not url.startswith("https://"):
+        print("push: push.url must be an https:// address", file=sys.stderr)
+        return 1
     try:
         outcome = once(include=include, read=read_roster, post=post_body, token=device_token,
-                       url=settings.get("url") or URL, state=state_path(), now=int(time.time() * 1000))
+                       url=url, state=state_path(), now=int(time.time() * 1000))
     except (OSError, ValueError) as err:
-        log.error("push", err)
+        # The type only: an error's text can carry what it was given, such as a header.
+        log.event("push", outcome="failed", error=type(err).__name__)
         print(f"push: {type(err).__name__}", file=sys.stderr)
         return 1
     if outcome not in ("sent", "unchanged", "nothing included"):

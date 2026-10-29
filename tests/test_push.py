@@ -123,6 +123,42 @@ class Projection(unittest.TestCase):
         self.assertIsNone(push.projection(r, INCLUDE)["columns"][0]["sessions"][0]["flag"])
 
 
+    def test_a_token_broken_by_an_invisible_character_is_still_hidden(self):
+        # Stripping the character would put the token back together after the check.
+        for mark in ("\u200b", "\u00ad", "\u2060", "\ufeff", "\x00", "\n"):
+            broken = TOKEN[:10] + mark + TOKEN[10:]
+            body = push.projection(roster(tile(line="sent " + broken)), INCLUDE)
+            self.assertEqual(body["columns"][0]["sessions"][0]["line"], push.HIDDEN, repr(mark))
+            self.assertNotIn(TOKEN, json.dumps(body, ensure_ascii=False))
+
+    def test_a_codex_title_is_its_first_prompt_and_is_not_sent(self):
+        t = tile(provider="codex", key="codex:abc", line=PROMPT[:80], lineSource="title")
+        self.assertEqual(push.projection(roster(t), INCLUDE)["columns"][0]["sessions"][0]["line"], "")
+
+    def test_an_ask_read_from_the_transcript_is_not_sent(self):
+        # Only a line the session wrote itself blocks; the rest is lifted from what it said.
+        t = tile(blocked=False, need="Shall I read /home/tiroir/secret-client/contract.pdf?")
+        self.assertEqual(push.projection(roster(t), INCLUDE)["columns"][0]["sessions"][0]["need"], "")
+
+    def test_a_lone_surrogate_does_not_stop_the_push(self):
+        body = push.projection(roster(tile(line="cut \ud83d")), INCLUDE)
+        json.dumps(body, ensure_ascii=False).encode("utf-8")
+
+    def test_a_tile_that_cannot_be_read_is_left_out_and_the_rest_goes(self):
+        odd = tile(name="Odd", key="claude:odd", stuck={"source": "question", "context": None}, pastes=None)
+        del odd["stop"]
+        sent = push.projection(roster(odd, tile()), INCLUDE)["columns"][0]["sessions"]
+        self.assertEqual([s["name"] for s in sent], ["Rune"])
+
+
+class Token(unittest.TestCase):
+    def test_the_newline_mint_prints_is_taken_off(self):
+        self.assertEqual(push.clean_token("tok-123\n"), "tok-123")
+
+    def test_a_token_a_header_cannot_carry_is_refused(self):
+        for bad in ("tok\nen", "tok en", "tök", "", None):
+            self.assertIsNone(push.clean_token(bad), repr(bad))
+
 
 class Hub:
     """The hub as `once` sees it: what was posted, and what it answers."""
@@ -173,6 +209,26 @@ class Once(unittest.TestCase):
         hub = Hub()
         self.assertEqual(self.once(hub, 1_000_000, include=[]), "nothing included")
         self.assertEqual((hub.got, self.tokens), ([], []))
+
+    def test_emptying_the_list_clears_the_hub_once(self):
+        self.once(Hub(), 1_000_000)
+        hub = Hub()
+        self.assertEqual(self.once(hub, 1_020_000, include=[]), "sent")
+        self.assertEqual(hub.got[0][2]["columns"], [])
+        self.assertEqual(self.once(hub, 1_040_000, include=[]), "nothing included")
+        self.assertEqual(len(hub.got), 1)
+
+    def test_a_body_too_big_for_the_hub_is_cut_to_fit(self):
+        big = {"questions": [{"question": "q" * 300, "header": "h" * 60, "multi": False,
+                              "options": [{"label": "l" * 60, "description": "d" * 200}] * 6}] * 4}
+        tiles = [tile(key=f"claude:{i}", name=f"S{i}", stuck={"source": "question", "context": big},
+                      line="x" * 200) for i in range(40)]
+        data = {"columns": [roster(*tiles, project=f"repo:x/{c}")["columns"][0] for c in range(8)],
+                "flags": roster(*tiles)["flags"]}
+        hub = Hub()
+        self.assertEqual(self.once(hub, 1_000_000, include=[f"repo:x/{c}" for c in range(8)], data=data), "sent")
+        self.assertLessEqual(len(json.dumps(hub.got[0][2], ensure_ascii=False).encode()), push.MAX_BODY)
+        self.assertTrue(hub.got[0][2]["columns"])
 
     def test_without_a_token_nothing_is_sent(self):
         hub = Hub()

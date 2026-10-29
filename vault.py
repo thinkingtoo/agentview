@@ -156,6 +156,9 @@ def lookup(attributes):
             raise Unavailable(LOCKED)
         if not unlocked:
             return None
+        if len(unlocked) > 1:
+            # Which of two is meant cannot be told; an old one would be sent as readily as the new.
+            raise Unavailable("the keyring holds more than one such item")
         _, _, value, _ = s.interface(unlocked[0], ITEM).GetSecret(s.session, timeout=TIMEOUT)
         return bytes(value).decode("utf-8")
 
