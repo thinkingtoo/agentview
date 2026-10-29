@@ -145,10 +145,29 @@ class Projection(unittest.TestCase):
         json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     def test_a_tile_that_cannot_be_read_is_left_out_and_the_rest_goes(self):
+        # A question without its context cannot be read; a missing stop no longer drops a tile (since is None).
         odd = tile(name="Odd", key="claude:odd", stuck={"source": "question", "context": None}, pastes=None)
-        del odd["stop"]
         sent = push.projection(roster(odd, tile()), INCLUDE)["columns"][0]["sessions"]
         self.assertEqual([s["name"] for s in sent], ["Rune"])
+
+    def test_a_stamp_the_hub_refuses_is_sent_as_none(self):
+        # The hub answers 400 for the whole push on a since outside 0 <= ms < 10**14 (#173).
+        for stop in (-1, 10 ** 14, float("inf"), float("nan"), True, "1793314847423"):
+            with self.subTest(stop=stop):
+                sent = push.projection(roster(tile(stop=stop)), INCLUDE)["columns"][0]["sessions"]
+                self.assertEqual([(s["name"], s["since"]) for s in sent], [("Rune", None)])
+
+    def test_the_edges_of_the_range_are_kept(self):
+        for stop, since in ((0, 0), (10 ** 14 - 1, 10 ** 14 - 1), (1793314847423.9, 1793314847423)):
+            with self.subTest(stop=stop):
+                self.assertEqual(push.projection(roster(tile(stop=stop)), INCLUDE)["columns"][0]["sessions"][0]["since"],
+                                 since)
+
+    def test_a_tile_without_stop_is_sent_with_since_none(self):
+        t = tile()
+        del t["stop"]
+        sent = push.projection(roster(t), INCLUDE)["columns"][0]["sessions"]
+        self.assertEqual([(s["name"], s["since"]) for s in sent], [("Rune", None)])
 
     def test_a_column_that_cannot_be_read_is_left_out(self):
         r = roster()

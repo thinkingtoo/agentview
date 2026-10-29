@@ -55,6 +55,7 @@ FLAGS = ("waiting", "ready", "tool", "stuck")
 PASTE_ID = re.compile(r"[0-9a-f]{16}")       # as `paste.py` makes them
 MAX_BODY = 256 * 1024                        # the hub refuses more (413)
 FIT_MARGIN = 1024                            # for `at` and the separators the estimate leaves out
+MS_MAX = 10 ** 14                            # the hub refuses an epoch-ms field outside [0, MS_MAX) (400)
 HIDDEN = "(hidden: looked like a credential)"
 # The hub's limits (tiroir-fleet re-checks them): characters per field, and how many of each.
 NAME_LEN, LINE_LEN, NEED_LEN = 60, 200, 200
@@ -127,7 +128,7 @@ def _session(t, flag):
         "name": say(t.get("name"), NAME_LEN),
         "flag": flag.get("flag") if flag.get("flag") in FLAGS else None,
         "blocked": bool(t.get("blocked")),
-        "since": int(t["stop"]),
+        "since": _since(t.get("stop")),
         "line": say(t.get("line"), LINE_LEN) if _own_line(t) else "",
         # Only what the session wrote for you: an ask read out of its last words is transcript.
         "need": say(t.get("need"), NEED_LEN) if t.get("blocked") is True else "",
@@ -136,6 +137,13 @@ def _session(t, flag):
                    for p in t.get("pastes", [])
                    if isinstance(p.get("id"), str) and PASTE_ID.fullmatch(p["id"])][:MAX_PASTES],
     }
+
+
+def _since(stop):
+    """The tile's stop as epoch ms, or None: one stamp the hub refuses would refuse the whole push."""
+    if isinstance(stop, bool) or not isinstance(stop, (int, float)) or stop != stop:
+        return None
+    return int(stop) if 0 <= stop < MS_MAX else None
 
 
 def _own_line(t):
