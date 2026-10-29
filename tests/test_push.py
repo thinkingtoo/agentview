@@ -145,8 +145,8 @@ class Projection(unittest.TestCase):
         json.dumps(body, ensure_ascii=False).encode("utf-8")
 
     def test_a_tile_that_cannot_be_read_is_left_out_and_the_rest_goes(self):
+        # A question without its context cannot be read; a missing stop no longer drops a tile (since is None).
         odd = tile(name="Odd", key="claude:odd", stuck={"source": "question", "context": None}, pastes=None)
-        del odd["stop"]
         sent = push.projection(roster(odd, tile()), INCLUDE)["columns"][0]["sessions"]
         self.assertEqual([s["name"] for s in sent], ["Rune"])
 
