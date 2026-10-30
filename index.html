@@ -1112,6 +1112,25 @@ async function copyText(text) {
   } catch (e) { return false; }
 }
 
+// A Paste's text is fetched on the click, and mobile Safari lets a page write the
+// clipboard only inside the tap itself: once an await has passed, both ways above
+// fail. A ClipboardItem takes the text as a promise, so the write starts inside the
+// tap and the fetch finishes behind it. Call it before the first await.
+async function copyFetched(textPromise) {
+  if (window.ClipboardItem && navigator.clipboard?.write) {
+    const blob = textPromise.then(t => {
+      if (t === null) throw new Error("the Paste could not be read");
+      return new Blob([t], { type: "text/plain" });
+    });
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+      return true;
+    } catch (e) { /* no promised items here, or refused: the old way */ }
+  }
+  const text = await textPromise;
+  return text !== null && copyText(text);
+}
+
 // Registered before the tile's own click below, and it stops there: a click on
 // copy is not a click on the tile, so it neither jumps nor marks it seen.
 document.getElementById("main").addEventListener("click", async ev => {
@@ -1189,8 +1208,7 @@ document.getElementById("main").addEventListener("click", async ev => {
     return show();
   }
   if (ev.target.closest(".pcopy")) {
-    const text = await pasteText(id);
-    const ok = text !== null && await copyText(text);
+    const ok = await copyFetched(pasteText(id));
     // Told only once it is on the clipboard: the Paste is marked copied then, and not before.
     if (ok) { try { await pastePost("/api/paste_copied", id); } catch (e) { /* the clipboard has it */ } }
     PASTE_COPIED = { id, until: Date.now() + 1500, ok };
