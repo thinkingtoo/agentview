@@ -883,6 +883,18 @@ def _str(rec, key):
     return got if isinstance(got, str) else ""
 
 
+# A session under Remote Control has a `bridgeSessionId` in its peer file, and
+# null or no field when it has none. Claude Code links it as claude.ai/code/<id>,
+# which the Claude app on a phone opens itself.
+BRIDGE_ID = re.compile(r"session_[A-Za-z0-9]{1,80}")
+
+
+def remote_of(rec):
+    """Where the session is on claude.ai, or "" when it is not under Remote Control."""
+    bridge = _str(rec, "bridgeSessionId")
+    return f"https://claude.ai/code/{bridge}" if BRIDGE_ID.fullmatch(bridge) else ""
+
+
 def reach(rec, proc="/proc", running=None, rivals=()):
     """How a click gets to this session: `canJump`, `jobId`, `attach`, `noJump`.
 
@@ -1087,6 +1099,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # exists. Working out which one costs subprocesses, so that waits
         # until you actually click.
         **reach(rec, proc, running, rivals),
+        "remote": remote_of(rec),
         "title": summary["title"],
         "prompt": summary["prompt"],
         "branch": summary["branch"],

@@ -1157,6 +1157,13 @@ tile says which way before you click:
 | `attach ↗` | a background session nobody is attached to | opens a new WezTerm tab running `claude attach <job id>` |
 | `no terminal` (greyed, the reason on hover) | nothing could be raised: a headless session, an attach in a window no route reaches, or an attach on a name two background sessions share | nothing; the click only marks it read |
 
+On a phone (a touch screen with no hover), a session under Remote Control
+opens where it is on the web instead: the click goes to
+`https://claude.ai/code/<bridgeSessionId>`, from the session's peer file, and
+the Claude app takes the link over when it is installed. Such a session says
+`open ↗` on a phone even when the laptop has no terminal for it. One without
+Remote Control is reached the laptop's way, as in the table.
+
 The page never opens a second copy of a running session. `claude attach` is
 found by its command line, whether it was given the job id, the session id or
 part of the name, and a click after the first one, or a second click while the

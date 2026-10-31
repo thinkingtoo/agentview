@@ -493,6 +493,16 @@ def _text(value):
     return value if isinstance(value, str) else ""
 
 
+WEB_LINK = re.compile(r"https://[\w.-]+(?:/[\w./~%-]*)?")
+
+
+def web_link(value):
+    """A provider's link to the session on the web, or "": the page puts it in
+    an href, so it is a plain https address or nothing."""
+    text = _text(value)
+    return text if len(text) <= 300 and WEB_LINK.fullmatch(text) else ""
+
+
 def extras_of(value):
     """Badges the page shows without knowing what they mean.
 
@@ -645,6 +655,8 @@ def normalize(p, raw, shelves, assigned, thresholds, now, state, lines_root=None
         "lastTool": tool_of(raw.get("lastTool"), now),
         # A provider that cannot jump has no terminal to attach to: the field is emptied.
         "attach": row["attach"] if "jump" in caps else "",
+        # Where the session is on the web, for a phone; only an https link is one.
+        "remote": web_link(raw.get("remote")),
         "extras": extras_of(raw.get("extras")),
         # What it is doing while it works, and what it left you with when it
         # stopped. Never both: a busy session has no line of its own.
@@ -1239,11 +1251,13 @@ def jump_of(m):
     """How the tile reaches its session: a pane that already shows it, a new
     tab that attaches to it, or nothing -- and then why, so the tile can say
     so before anyone clicks."""
-    if m["canJump"]:
-        return {"via": "pane"}
-    if m.get("attach"):
-        return {"via": "attach"}
-    return {"via": "none", "reason": m.get("noJump") or "no terminal"}
+    way = ({"via": "pane"} if m["canJump"] else {"via": "attach"} if m.get("attach")
+           else {"via": "none", "reason": m.get("noJump") or "no terminal"})
+    # A session under Remote Control can also be opened where it is on the
+    # web: the page uses that on a phone, where a laptop's terminal is no use.
+    if m.get("remote"):
+        way["remote"] = m["remote"]
+    return way
 
 
 def need_of(m):

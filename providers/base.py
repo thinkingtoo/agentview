@@ -20,7 +20,11 @@ the last thing the agent said -- the core shapes it), `waitingFor`,
 `startedAt`, `kind`, `tmux`, `bg`, `routine`, `boss`, `track` (a boss's
 track: the name of its tracker), `team`, `paths`, `doing`, `quietFor`,
 `toolFor`, `canJump`, `attach`, `noJump`, `extras`, `asking`, `failure`,
-`lastTool`, `procsUnknown`, `shellCpuAgo`, `turnOver`, `run`, `ancestors`.
+`lastTool`, `procsUnknown`, `shellCpuAgo`, `turnOver`, `run`, `ancestors`,
+`remote`.
+
+`remote` is an https link to the same conversation on the web (Claude Code's
+Remote Control), or absent; the page opens it instead of a terminal on a phone.
 
 `canJump` says a pane shows the session. `attach` is what to attach to when no
 pane does but a new tab can show it (a background session; the provider's own

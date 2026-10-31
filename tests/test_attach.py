@@ -446,6 +446,48 @@ class Tile(test_columns.Base):
         self.assertEqual(got["jump"], {"via": "none", "reason": "no terminal"})
 
 
+REMOTE = "https://claude.ai/code/session_01AbCdEf"
+
+
+class Remote(test_columns.Base):
+    """A session under Remote Control carries its claude.ai link in `jump`,
+    beside the way to its terminal, for the page to open on a phone."""
+
+    def test_the_link_rides_along_with_the_pane(self):
+        self.assertEqual(self.tile(session("a", canJump=True, remote=REMOTE))["jump"],
+                         {"via": "pane", "remote": REMOTE})
+
+    def test_a_session_with_no_terminal_still_has_its_link(self):
+        self.assertEqual(self.tile(session("a", remote=REMOTE))["jump"],
+                         {"via": "none", "reason": "no terminal", "remote": REMOTE})
+
+    def test_only_a_plain_https_link_goes_into_the_page(self):
+        for bad in ("javascript:alert(1)", "http://claude.ai/code/x", 'https://a.b/"onclick=x', 7):
+            with self.subTest(bad=bad):
+                self.assertNotIn("remote", self.tile(session("a", remote=bad))["jump"])
+
+
+class RemoteFromThePeerFile(FakeRegistry):
+    """The Claude provider reads the link from `bridgeSessionId`."""
+
+    def test_a_bridge_session_is_linked_on_claude_ai(self):
+        self.background(bridgeSessionId="session_01AbCdEf")
+        (got,) = self.provider.live()
+        self.assertEqual(got["remote"], REMOTE)
+
+    def test_none_null_or_odd_is_no_link(self):
+        self.background()
+        peer = self.cfg / "sessions" / "10.json"
+        rec = json.loads(peer.read_text())
+        for value in (None, "", "cse_01AbCdEf", "session_01/../x", "session_01\n", 7):
+            with self.subTest(value=value):
+                peer.write_text(json.dumps({**rec, "bridgeSessionId": value}))
+                (got,) = self.provider.live()
+                self.assertEqual(got["remote"], "")
+        peer.write_text(json.dumps(rec))
+        (got,) = self.provider.live()
+        self.assertEqual(got["remote"], "")
+
 class ClickServer(FakeRegistry):
     """A server of its own, for a click to land on: port 0, throwaway stores, a
     fake registry behind the real Claude provider, and nowhere a terminal could
