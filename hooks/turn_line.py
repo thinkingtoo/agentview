@@ -31,7 +31,9 @@ import lines          # noqa: E402  -- after the path is set
 WRITER = HERE / "team-line"
 PASTE = HERE / "paste"
 
-ASK = """Before this turn ends, run this once, as your last action:
+ASK = """Before this turn ends, run this once, as your last action. When the turn ends on \
+an AskUserQuestion, run it right before that call: a rejected question ends the turn \
+and no Stop hook follows.
 
 {writer} {sid} --did '<one short sentence: where the work stands>' --n <number> \
 --ask '<the one thing you are blocked on -- only when the number is 1>'
@@ -39,7 +41,9 @@ ASK = """Before this turn ends, run this once, as your last action:
 It feeds the dashboard that shows every running session. Write both fields in \
 the language of this conversation, in plain text (single quotes, no backticks). \
 A command the user must run goes inside double quotes, or after "$ " at the end \
-of the ask, within the single-quoted text. A single quote in either field is \
+of the ask, within the single-quoted text. The command comes last and must fit whole \
+in the ask, which is cut at 160 characters: if the sentence and the command together \
+pass that, drop the sentence. A single quote in either field is \
 written as '\\''. --n is how many things are left for the user when this turn ends: a decision, \
 a command for them to run, a mail for them to send, a sign-in. Count them even \
 when you have other work, since nothing moves on them once you stop. An offer \
