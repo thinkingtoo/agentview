@@ -18,7 +18,7 @@ SHAPES = [
     # The digit is looked for within a bound: an unbounded look-ahead rescans the rest of the text at every "sk-".
     re.compile(_LEAD + r"sk-(?=[A-Za-z0-9_-]{0,200}\d)[A-Za-z0-9_-]{20,}"),    # OpenAI, Anthropic
     re.compile(_LEAD + r"gh[pousr]_[A-Za-z0-9]{30,}"),                       # GitHub tokens
-    re.compile(_LEAD + r"ghs_[0-9]{1,20}_[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{8,}"),   # GitHub installation token since 2026-04-27: ghs_APPID_JWT (the dot keeps snake_case names out)
+    re.compile(_LEAD + r"ghs_[0-9]{1,20}_[A-Za-z0-9_-]{20,2000}\.[A-Za-z0-9_-]{8,}"),   # GitHub installation token since 2026-04-27: ghs_APPID_JWT (the dot keeps snake_case names out)
     re.compile(_LEAD + r"github_pat_[A-Za-z0-9_]{30,}"),
     re.compile(_LEAD + r"xox[abeoprs]-[A-Za-z0-9-]{10,}"),                   # Slack
     re.compile(_LEAD + r"(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Za-z0-9])"),         # AWS access key id
