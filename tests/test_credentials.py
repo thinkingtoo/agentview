@@ -23,6 +23,9 @@ def caught():
         "openai old": "sk-" + A + "12",
         "github classic": "gh" + "p_" + A,
         "github oauth": "gh" + "o_" + A,
+        "github installation 2026": "gh" + "s_" + "3641077" + "_" + A * 3 + "." + A * 3 + "." + A * 6,
+        "github installation 2026, JWT look": "gh" + "s_" + "3641077" + "_" + "ey" + "JhbGciOiJub25lIiwidHlwIjoiSldUIn0" + "." + "ey" + "JpYXQiOjE3NjIyNDAwMDB9" + "." + A * 6,
+        "github installation 2026, header only": "gh" + "s_" + "3641077" + "_" + "ey" + "JhbGciOiJub25lIiwidHlwIjoiSldUIn0" + "." + A,
         "github fine grained": "github_" + "pat_" + "11ABCDEFG0" + A + "_" + A,
         "slack": "xox" + "b-123456789012-1234567890123-" + A[:24],
         "aws key id": "AK" + "IA" + "ABCDEFGH23456723",
@@ -103,6 +106,8 @@ PROSE = [
     "tokens: 12.5k/200k used",
     "cd $PWD; PWD=/home/alice/Projects/maple",
     "Maak een token aan: https://github.com/settings/tokens",
+    "ghs_3 and ghs_12_ and gho_users_list_all_the_things and ghs_2026_10 and ghs_3641077_short and the app 3641077_ghs",
+    "test_ghs_12_installation_token_is_caught and def test_ghp_1_token_with_a_long_name_here(): and ghr_2_refresh_token_rotation_policy_doc",
     "password=$DB_PASSWORD and token=${TOKEN} and pwd=$(pwd)",
     "The password is in the vault and the wachtwoord is verlopen.",
     "curl -u thierry https://example.com and --token $TOKEN and --password-stdin",
@@ -124,7 +129,7 @@ class NotCaught(unittest.TestCase):
     def test_a_hundred_kilobytes_of_one_kind_of_character_is_scanned_in_linear_time(self):
         import time
         for text in ("1" * 100_000, "_" * 100_000, "a1" * 50_000, "token" * 20_000, "password=" + "a1" * 50_000,
-                     "sk-" + "1" * 100_000, "Bearer " + "a" * 100_000, "://" + "a" * 100_000,
+                     "sk-" + "1" * 100_000, "ghs_1_" * 16_000, "ghs_" + "1" * 100_000, "Bearer " + "a" * 100_000, "://" + "a" * 100_000,
                      "sk-" * 33_000, "Bearer " * 14_000, "://a:" * 20_000, "password=" * 11_000, "sk-a" * 25_000,
                      "AKIA" * 25_000, "eyJ" * 33_000, "-----BEGIN " * 9_000, "_eyJ" * 25_000, ("-eyJ" + "a" * 10) * 7_000):
             started = time.monotonic()
