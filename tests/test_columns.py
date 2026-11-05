@@ -41,6 +41,9 @@ class Base(unittest.TestCase):
         # ones about CI put their own answer here.
         self.addCleanup(setattr, fleet, "CI_STATE", fleet.CI_STATE)
         fleet.CI_STATE = lambda repo, branch: {"status": "unknown"}
+        # Nor the live tmux server: a tile asks it which panes are concierges.
+        self.addCleanup(setattr, fleet, "_pane_roles", fleet._pane_roles)
+        fleet._pane_roles = lambda now=None: frozenset()
 
     def roster(self, *sessions, provider=None):
         fleet.CONFIG.write_text(json.dumps(self.config))

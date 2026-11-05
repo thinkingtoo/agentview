@@ -14,6 +14,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -1080,6 +1081,38 @@ def pill_of(m, tile):
             "find": tile["find"]}
 
 
+_ROLES = {"at": 0.0, "panes": frozenset()}
+
+
+def _pane_roles(now=None):
+    """The tmux pane ids (`%29`) of the panes claude-boss stamped `@worker_role concierge`.
+
+    One `list-panes` per five seconds, read for the tag beside a name only: the
+    name itself is the address and is never touched. No tmux, or no server, is
+    no concierge.
+    """
+    now = time.monotonic() if now is None else now
+    if now - _ROLES["at"] < 5:
+        return _ROLES["panes"]
+    _ROLES["at"] = now
+    try:
+        r = subprocess.run(["tmux", "list-panes", "-a", "-F",
+                            "#{pane_id}\t#{@worker_role}"],
+                           capture_output=True, text=True, timeout=2)
+        lines = r.stdout.splitlines() if r.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError):
+        lines = []
+    _ROLES["panes"] = frozenset(l.split("\t")[0] for l in lines if l.endswith("\tconcierge"))
+    return _ROLES["panes"]
+
+
+def is_concierge(m):
+    # Claude Code records the pane as `session:@window_id.%pane_id`; the window
+    # id goes stale when a pane moves, the pane id does not.
+    pane = str(m.get("tmux") or "").rpartition(".")[2]
+    return pane.startswith("%") and pane in _pane_roles()
+
+
 def tile_of(m, suggestion=None, column_says=frozenset()):
     """One session as a tile: today's data, finished for the page to print.
 
@@ -1103,7 +1136,8 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         "pinned": m["pinned"],
         # Put where it is by hand: the page offers the way back.
         "assigned": bool(m.get("assigned")),
-        "tags": [t for t, on in (("boss", m["boss"]), ("codex", m["provider"] == "codex"),
+        "tags": [t for t, on in (("boss", m["boss"]), ("concierge", is_concierge(m)),
+                                 ("codex", m["provider"] == "codex"),
                                  ("exec", bool(m.get("run")))) if on],
         "line": line, "lineSource": source,
         "jump": jump_of(m),
