@@ -1085,7 +1085,7 @@ _ROLES = {"at": 0.0, "panes": frozenset()}
 
 
 def _pane_roles(now=None):
-    """The tmux panes (`session:window.pane`) claude-boss stamped `@worker_role concierge`.
+    """The tmux pane ids (`%29`) of the panes claude-boss stamped `@worker_role concierge`.
 
     One `list-panes` per five seconds, read for the tag beside a name only: the
     name itself is the address and is never touched. No tmux, or no server, is
@@ -1097,7 +1097,7 @@ def _pane_roles(now=None):
     _ROLES["at"] = now
     try:
         r = subprocess.run(["tmux", "list-panes", "-a", "-F",
-                            "#{session_name}:#{window_index}.#{pane_index}\t#{@worker_role}"],
+                            "#{pane_id}\t#{@worker_role}"],
                            capture_output=True, text=True, timeout=2)
         lines = r.stdout.splitlines() if r.returncode == 0 else []
     except (OSError, subprocess.SubprocessError):
@@ -1107,7 +1107,10 @@ def _pane_roles(now=None):
 
 
 def is_concierge(m):
-    return bool(m.get("tmux")) and m["tmux"] in _pane_roles()
+    # Claude Code records the pane as `session:@window_id.%pane_id`; the window
+    # id goes stale when a pane moves, the pane id does not.
+    pane = str(m.get("tmux") or "").rpartition(".")[2]
+    return pane.startswith("%") and pane in _pane_roles()
 
 
 def tile_of(m, suggestion=None, column_says=frozenset()):
@@ -1133,7 +1136,8 @@ def tile_of(m, suggestion=None, column_says=frozenset()):
         "pinned": m["pinned"],
         # Put where it is by hand: the page offers the way back.
         "assigned": bool(m.get("assigned")),
-        "tags": [t for t, on in (("boss", m["boss"]), ("concierge", is_concierge(m)), ("codex", m["provider"] == "codex"),
+        "tags": [t for t, on in (("boss", m["boss"]), ("concierge", is_concierge(m)),
+                                 ("codex", m["provider"] == "codex"),
                                  ("exec", bool(m.get("run")))) if on],
         "line": line, "lineSource": source,
         "jump": jump_of(m),

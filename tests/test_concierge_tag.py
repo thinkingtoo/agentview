@@ -22,23 +22,27 @@ class Tag(Base):
     def setUp(self):
         super().setUp()
         self.addCleanup(setattr, fleet, "_pane_roles", fleet._pane_roles)
-        fleet._pane_roles = lambda now=None: frozenset({"main:0.2"})
+        fleet._pane_roles = lambda now=None: frozenset({"%2"})
 
     def test_a_session_in_a_concierge_pane_is_tagged_and_keeps_its_name(self):
-        t = self.tile(session("a", name="Fatima", tmux="main:0.2"))
+        t = self.tile(session("a", name="Fatima", tmux="main:@1.%2"))
         self.assertIn("concierge", t["tags"])
         self.assertEqual(t["name"], "Fatima")
 
     def test_a_worker_in_another_pane_is_not(self):
-        t = self.tile(session("a", name="Greta", tmux="main:0.3"))
+        t = self.tile(session("a", name="Greta", tmux="main:@1.%3"))
         self.assertNotIn("concierge", t["tags"])
         self.assertEqual(t["name"], "Greta")
+
+    def test_a_moved_window_does_not_hide_the_pane(self):
+        t = self.tile(session("a", name="Fatima", tmux="main:@9.%2"))
+        self.assertIn("concierge", t["tags"])
 
     def test_a_session_with_no_pane_is_not(self):
         self.assertNotIn("concierge", self.tile(session("a", name="Greta"))["tags"])
 
     def test_no_tag_reaches_the_name_the_page_sends_messages_to(self):
-        rows = self.members(session("a", name="Fatima", tmux="main:0.2"))
+        rows = self.members(session("a", name="Fatima", tmux="main:@1.%2"))
         self.assertEqual(rows[0]["name"], "Fatima")
         self.assertNotIn("[", rows[0]["name"])
 
@@ -54,16 +58,20 @@ class RealTmux(unittest.TestCase):
         sh.write_text('set -e\n'
                       'tmux -f /dev/null new-session -d -s t -x 80 -y 24 sleep 60\n'
                       'tmux display-message -p -t t:0.0 "#{socket_path}"\n'
-                      'tmux set-option -p -t t:0.0 @worker_role concierge\n')
+                      'tmux set-option -p -t t:0.0 @worker_role concierge\n'
+                      'tmux display-message -p -t t:0.0 "#{session_name}:#{window_id}.#{pane_id}"\n')
         out = subprocess.run(["bash", str(sh)], capture_output=True, text=True, timeout=30, env=env)
         self.addCleanup(subprocess.run, ["tmux", "kill-server"], env=env, capture_output=True)
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertTrue(out.stdout.strip().startswith(tmp), out.stdout)
+        sock, recorded = out.stdout.split()
+        self.assertTrue(sock.startswith(tmp), out.stdout)
+        self.addCleanup(fleet._ROLES.update, at=fleet._ROLES["at"], panes=fleet._ROLES["panes"])
         old = dict(os.environ)
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old)))
         os.environ.pop("TMUX", None)
         os.environ["TMUX_TMPDIR"] = tmp
-        self.assertEqual(fleet._pane_roles(now=1e9 + 100), frozenset({"t:0.0"}))
+        self.assertEqual(fleet._pane_roles(now=fleet._ROLES["at"] + 100), frozenset({recorded.rpartition(".")[2]}))
+        self.assertTrue(fleet.is_concierge({"tmux": recorded}))
 
 
 if __name__ == "__main__":
