@@ -20,9 +20,9 @@
 
 **Blocked by:** None.
 
-**Claimed by:** none
+**Claimed by:** Astrid 2026-11-11
 
-**Status:** needs-triage
+**Status:** ready-for-agent
 
 - [ ] A test: line with `n` 1 and a command, an AskUserQuestion answered after it in the same turn, a second question open: no guessed command
 - [ ] The first question of a turn still offers its command (paste/12's tests stay green)
