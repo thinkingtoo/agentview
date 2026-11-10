@@ -8,9 +8,9 @@
 
 **Claimed by:** Tarek 2026-11-11
 
-**Status:** in review (PR #12)
+**Status:** done
 
-- [ ] The rule is said once, and the tests pin the merged sentence
+- [x] The rule is said once, and the tests pin the merged sentence (PR #12 merged as eeb5caf; text 2047 characters; `python3 -m unittest tests.test_turn_hook` on t-compute at 019b3e3: "Ran 26 tests in 5.110s / OK")
 
 ## Comments
 
