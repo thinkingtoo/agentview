@@ -224,6 +224,44 @@ class Tracks(Cards):
         got = self.track()
         self.assertEqual((got["context"]["source"], got["context"]["line"]), ("own", "Mine"))
 
+    def test_the_card_gets_the_done_when_boxes_in_the_goal_files_order(self):
+        got = self.track(boxes=("[x] cart", "[ ] **receipt** by [mail](https://example.com)", "[X] refund"))
+        self.assertEqual(got["track"]["boxes"], [{"text": "cart", "done": True},
+                                                 {"text": "receipt by mail", "done": False},
+                                                 {"text": "refund", "done": True}])
+
+    def test_the_boxes_and_the_goal_page_come_with_the_card_whether_or_not_your_line_beats_the_goal(self):
+        fleet.GOAL_PAGE = lambda track, now: {"url": f"http://127.0.0.1:27419/claude/pm/{track}.goal.md", "why": ""}
+        for lines, source in (({}, "goal"), ({"track:checkout": "Mine"}, "own")):
+            with self.subTest(source=source):
+                self.config = {"project_lines": lines}
+                got = self.track()
+                self.assertEqual(got["context"]["source"], source)
+                self.assertEqual(got["track"]["boxes"], [{"text": "cart", "done": True},
+                                                         {"text": "receipt", "done": False},
+                                                         {"text": "refund", "done": False}])
+                self.assertEqual(got["track"]["goal"],
+                                 {"url": "http://127.0.0.1:27419/claude/pm/checkout.goal.md", "why": ""})
+
+    def test_a_box_wrapped_over_lines_is_one_box_and_a_blank_line_or_a_list_ends_it(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n## Outcome\nCustomers pay.\n\n## Done when\n"
+            "- [x] the cart keeps a card\n  for the next visit\n- [ ] a receipt\n  - a sub-item, not the box\n"
+            "- [ ] a refund\n\n  a paragraph after a blank line\n")
+        self.assertEqual(self.track(nogoal=True)["track"]["boxes"],
+                         [{"text": "the cart keeps a card for the next visit", "done": True},
+                          {"text": "a receipt", "done": False}, {"text": "a refund", "done": False}])
+
+    def test_markup_in_a_box_is_kept_as_the_text_it_is(self):
+        got = self.track(boxes=(f"[ ] {HOSTILE_IN_A_FILE}",))
+        self.assertEqual(got["track"]["boxes"], [{"text": HOSTILE_IN_A_FILE, "done": False}])
+
+    def test_the_goal_page_is_asked_only_for_a_track(self):
+        asked = []
+        fleet.GOAL_PAGE = lambda track, now: asked.append(track)
+        self.claude(sess("p", self.loom, name="Femi"))
+        self.assertEqual(asked, [])
+
     def test_only_a_goal_of_that_track_is_ever_read(self):
         # An identity comes from the page; a path in it must not walk out of the folder.
         (self.disk / "secret.goal.md").write_text("## Outcome\nNot for the card.\n")
@@ -358,7 +396,10 @@ class Tracks(Cards):
         # First sight: no box ticked while watched, so no pace (tests/test_pace.py has the rest).
         self.assertEqual(got["progress"].pop("eta")["text"], "ETA after the next box")
         self.assertEqual(got, {"status": "PAUSED",
-                               "progress": {"done": 1, "total": 3, "text": "1 of 3", "met": False}})
+                               "progress": {"done": 1, "total": 3, "text": "1 of 3", "met": False},
+                               "boxes": [{"text": "cart", "done": True}, {"text": "receipt", "done": False},
+                                         {"text": "refund", "done": False}],
+                               "goal": None})
 
     def test_a_met_track_shows_done_whatever_its_boxes_say(self):
         got = self.track(status="MET 2026-10-16 \u2014 all done", boxes=("[ ] a", "[ ] b"))["track"]
@@ -371,7 +412,7 @@ class Tracks(Cards):
 
     def test_a_track_with_no_boxes_shows_a_status_and_no_progress(self):
         got = self.track(boxes=())["track"]
-        self.assertEqual(got, {"status": "OPEN", "progress": None})
+        self.assertEqual(got, {"status": "OPEN", "progress": None, "boxes": [], "goal": None})
 
     def test_only_the_boxes_under_done_when_count_in_any_style_and_not_in_code(self):
         (self.pm / "checkout.goal.md").write_text(

@@ -40,7 +40,7 @@ A short line under a project's name that reminds the person what the project is 
 _Avoid_: description, summary
 
 **Project card**:
-The top of a project's column: its name, what it is about (the context line), for a track its status and how many of its boxes are ticked, and its movement.
+The top of a project's column: its name, what it is about (the context line), for a track its status, how many of its boxes are ticked (the boxes themselves on hover or a click) and a link to its goal page, and its movement.
 _Avoid_: header, title bar
 
 **Working-on line**:

@@ -22,6 +22,7 @@ from pathlib import Path
 import ask_commands
 import ci_state
 import context
+import goal_page
 import jump
 import lines
 import marks
@@ -1001,6 +1002,8 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
     progress = (track or {}).get("progress")
     if progress and not progress["met"]:
         progress["eta"] = pace.eta(project["raw"], progress["done"], progress["total"], time.time())
+    if track is not None:
+        track["goal"] = GOAL_PAGE(project["raw"], time.time())
     # The column of no project has no name to repeat.
     column_says = working.repeats(None if project is NO_PROJECT else name, about)
     made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says))
@@ -1556,6 +1559,9 @@ def activity_of(m, stuck):
         return work_word(" ".join(t["label"] for t in jobs)) or "waiting"
     return "thinking"
 
+
+# Where a track's goal opens as a page: a seam, so a test reaches no sheaf.
+GOAL_PAGE = goal_page.of
 
 # Waiting on CI (ticket 22). The state of a branch's latest Actions run comes
 # from the vendored claude-boss module, which only ever reads its cache here

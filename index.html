@@ -125,6 +125,15 @@
   .ov-bar { flex:1 1 0; max-width:90px; height:5px; border-radius:3px; background:var(--line); overflow:hidden; }
   .ov-bar i { display:block; height:100%; background:var(--busy); }
   .ov-eta { white-space:nowrap; }
+  .ov-count { font:inherit; color:inherit; background:none; border:0; padding:0; cursor:pointer; }
+  .ov-count:hover, .ov-count.on { color:var(--accent); }
+  .ov-goal { color:var(--faint); text-decoration:none; white-space:nowrap; }
+  .ov-goal:hover { color:var(--accent); }
+  .ov-goal.none { font-style:italic; }
+  .ov-goal.none:hover { color:var(--faint); }
+  .ov-boxes { list-style:none; margin:6px 0 0; padding:0; font-weight:400; font-size:12px; color:var(--ink);
+              display:flex; flex-direction:column; gap:3px; overflow-wrap:anywhere; }
+  .ov-boxes li.done { color:var(--dim); }
   .ov-notes { margin-left:auto; color:var(--faint); text-decoration:none; }
   .ov-notes:hover, .ov-notes.on { color:var(--accent); }
   .ov-hits { margin-top:6px; font-weight:400; font-size:12px; color:var(--dim); display:flex; flex-direction:column; gap:5px; }
@@ -822,11 +831,43 @@ function contextOf(c) {
 
 // A track's progress, as the server counted it, and when it will be done at
 // the pace the server measured; the hover says what that pace rests on.
+// "N of M" lists the Done when boxes on hover and unfolds them on a click.
 function progressOf(c) {
-  const p = c.track?.progress;
-  return p ? `<span class="ov-bar" aria-hidden="true"><i style="width:${
-    p.total ? Math.round(Math.min(p.done, p.total) / p.total * 100) : 100}%"></i></span><span>${esc(p.text)}</span>${
-    p.eta ? `<span class="ov-eta" title="${esc(p.eta.why)}">${esc(p.eta.text)}</span>` : ""}` : "";
+  const p = c.track?.progress, boxes = c.track?.boxes || [];
+  if (!p) return "";
+  const count = boxes.length
+    ? `<button class="ov-count ${BOXES.has(c.project) ? "on" : ""}" aria-expanded="${BOXES.has(c.project)}"
+        title="${esc(boxes.map(boxLine).join("\n"))}">${esc(p.text)}</button>`
+    : `<span>${esc(p.text)}</span>`;
+  return `<span class="ov-bar" aria-hidden="true"><i style="width:${
+    p.total ? Math.round(Math.min(p.done, p.total) / p.total * 100) : 100}%"></i></span>${count}${
+    p.eta ? `<span class="ov-eta" title="${esc(p.eta.why)}">${esc(p.eta.text)}</span>` : ""}`;
+}
+
+// The goal file's page on the sheaf hub, in a new tab. The hub listens on the
+// laptop's 127.0.0.1 only, and signs a browser in with a SameSite=Strict
+// cookie, which a page on another site (`localhost` is one) does not send. So
+// only a page at 127.0.0.1 links; any other (the phone, over tailscale) says
+// where the goal opens instead. Without a hub the server says why.
+const ON_THE_LAPTOP = location.hostname === "127.0.0.1";
+function goalLinkOf(c) {
+  const g = c.track?.goal;
+  if (!g) return "";
+  if (typeof g.url !== "string" || !g.url.startsWith("http://127.0.0.1:"))
+    return `<span class="ov-goal none" title="${esc(g.why || "no goal page")}">no goal page</span>`;
+  if (!ON_THE_LAPTOP)
+    return `<span class="ov-goal none" title="the goal page opens from agentview at http://127.0.0.1 on the laptop: the sheaf hub listens there only">goal on the laptop</span>`;
+  return `<a class="ov-goal" href="${esc(g.url)}" target="_blank" rel="noopener" title="the goal file, to read and edit">goal ↗</a>`;
+}
+
+// The Done when boxes, ticked and not, in the goal file's order: on hover of
+// "N of M", and under the row once it is clicked (until it is clicked again).
+const BOXES = new Set();      // projects whose boxes are unfolded
+const boxLine = b => `${b.done ? "☑" : "☐"} ${b.text}`;
+function boxesOf(c) {
+  const boxes = c.track?.boxes || [];
+  return boxes.length && BOXES.has(c.project) ? `<ul class="ov-boxes">${boxes.map(b =>
+    `<li class="${b.done ? "done" : ""}">${esc(boxLine(b))}</li>`).join("")}</ul>` : "";
 }
 
 function notesLinkOf(c) {
@@ -837,8 +878,8 @@ function notesLinkOf(c) {
 // The row under the context line: progress, the notes link, and whatever the
 // last click on that link found.
 function footOf(c) {
-  const bar = progressOf(c), note = notesLinkOf(c);
-  return bar || note ? `<div class="ov-prog">${bar}${note}</div>${hitsOf(c)}` : "";
+  const bar = progressOf(c), goal = goalLinkOf(c), note = notesLinkOf(c);
+  return bar || goal || note ? `<div class="ov-prog">${bar}${goal}${note}</div>${boxesOf(c)}${hitsOf(c)}` : "";
 }
 
 // Notes are looked up when the link is clicked, and only then.
@@ -1395,6 +1436,15 @@ document.getElementById("main").addEventListener("click", ev => {
     if (!document.hasFocus()) return;
     finish(true);
   });
+});
+
+// "N of M" on a track's card unfolds its Done when boxes, and folds them again.
+document.getElementById("main").addEventListener("click", ev => {
+  const count = ev.target.closest(".ov-count");
+  if (!count) return;
+  const project = count.closest("section")?.dataset.project;
+  if (BOXES.has(project)) BOXES.delete(project); else BOXES.add(project);
+  if (!busyWithUser()) paint();
 });
 
 // The notes link on a card: one search of your notes, when it is clicked and
