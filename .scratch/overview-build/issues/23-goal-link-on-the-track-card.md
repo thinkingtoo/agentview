@@ -26,4 +26,4 @@
 - **The poll never waits for sheaf.** `sheaf status` took 1.4–1.8 s at load 20; it runs in one background thread at a time, and the card says "asking sheaf" until the first answer.
 - **Fixtures.** Every goal text in the tests is invented; no real goal file is copied into the repo.
 
-**Leire 2026-11-11, review:** PR #6. Matt's code review, then three Opus rounds standing in for Codex, which was out of tokens; each finding's fix is in the commits. GO on 378d63f. The page branches have no page test; that is ticket 24.
+**Leire 2026-11-11, review:** PR #6. Matt's code review, then three Opus rounds standing in for Codex, which was out of tokens; each finding's fix is in the commits. GO on 378d63f. The page branches have no page test; that is ticket 25.

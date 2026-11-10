@@ -1,4 +1,4 @@
-# 24: Page tests for the goal link's branches on a track card
+# 25: Page tests for the goal link's branches on a track card
 
 **What to build:** `tests/ui_smoke.py` checks for the track card from ticket 23: "goal ↗" with its href and `target=_blank` on a page at 127.0.0.1; "goal on the laptop" on any other host (`localhost`, a tailscale name); "no goal page" with the server's reason in the hover when `track.goal.url` is null; "N of M" unfolding and folding the Done when boxes, the unfold surviving a repaint; and box text and the goal's reason given as markup (`<svg onload=...>`) shown as text. Use a fake roster body, as the smoke does for other cards.
 
