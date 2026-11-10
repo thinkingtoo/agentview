@@ -170,18 +170,6 @@ def reads_as_slash_command(words, prompted):
     return first[1:] in SLASH_BUILTINS and bool(rest)
 
 
-def remote_command(rest):
-    """`ssh maple-box docker stop 8617f9d7515d`: what follows the host runs on
-    it, so it is judged as a command of its own, as after `sudo`. A host name
-    is no sign (`maple-box` is prose too) and an id holds letters, so without
-    this the command it runs would not count. Only the plain shape: a host,
-    then a command that is neither Claude's `!` nor a slash command."""
-    if len(rest) < 2 or rest[0].startswith("-") or rest[0] == "!":
-        return False
-    remote = rest[1:]
-    return remote[0] != "!" and not slash_command(remote[0]) and reads_as_command(" ".join(remote))
-
-
 class Hit(NamedTuple):
     start: int
     end: int
@@ -216,12 +204,30 @@ def reads_as_command(text):
         return reads_as_command(" ".join(rest))
     if first in WRAPPERS:
         return reads_as_command(" ".join(rest))
-    if first == "ssh" and remote_command(rest):
+    if first == "ssh" and reads_as_remote_command(rest):
         return True
     if first in KNOWN and any(ARGUMENT_SIGN.search(w) for w in rest):
         return True
     return (first in SUBCOMMANDS and rest[0] in SUBCOMMANDS[first]
             and (len(rest) == 1 or first not in ONE_WORD_AFTER))
+
+
+# A host as a session writes one: letters with a hyphen, a digit, a dot or an @
+# in them (`maple-box`, `web2`, `root@maple`). A plain word in that place ("ssh
+# and git push", "ssh maple git status") cannot be told from the sentence's own,
+# and a mark stuck to it ("ssh maple-box, git status") is a list or a label.
+HOST = re.compile(r"(?=.*[A-Za-z])(?=.*[-\d.@])[A-Za-z0-9][\w.@-]*[A-Za-z0-9]")
+
+
+def reads_as_remote_command(rest):
+    """`ssh maple-box docker stop 8617f9d7515d`: what follows the host runs on
+    it, so it is judged as a command of its own, as after `sudo`. A host name
+    is no sign (`maple-box` is prose too) and an id holds letters, so without
+    this the command it runs would not count. Only the plain shape: a host,
+    then a command that does not start with Claude's `!`."""
+    if len(rest) < 2 or not HOST.fullmatch(rest[0]):
+        return False
+    return rest[1] != "!" and reads_as_command(" ".join(rest[1:]))
 
 
 # A program of the project's own, which no list knows: lowercase words joined by
