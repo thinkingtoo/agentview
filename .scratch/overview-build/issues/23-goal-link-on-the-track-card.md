@@ -8,7 +8,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Claimed by:** none
+**Claimed by:** Leire 2026-11-10
 
 **Status:** needs-triage
 
