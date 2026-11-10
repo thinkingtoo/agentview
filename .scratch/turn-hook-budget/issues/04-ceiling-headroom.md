@@ -8,6 +8,10 @@
 
 **Claimed by:** none
 
-**Status:** needs-triage
+**Status:** wontfix
 
 - [ ] The owner has kept 2150 or set a lower ceiling, and the test says which
+
+## Decision, 2026-11-11
+
+"Noor, boss: not changed. The 2150 ceiling is the size the owner approved on 2026-10-22; the floor was lowered to 2000 by ticket 02 and the test still fails on any growth past 2150. Tightening the ceiling to today's 2047 would make every wording fix a test change. Reopen if the owner wants the ceiling to track the text."
