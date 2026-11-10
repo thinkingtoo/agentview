@@ -845,16 +845,18 @@ function progressOf(c) {
 }
 
 // The goal file's page on the sheaf hub, in a new tab. The hub listens on the
-// laptop's 127.0.0.1 only, so a page reached any other way (the phone, over
-// tailscale) says where it opens instead; without a hub the server says why.
-const ON_THE_LAPTOP = ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
+// laptop's 127.0.0.1 only, and signs a browser in with a SameSite=Strict
+// cookie, which a page on another site (`localhost` is one) does not send. So
+// only a page at 127.0.0.1 links; any other (the phone, over tailscale) says
+// where the goal opens instead. Without a hub the server says why.
+const ON_THE_LAPTOP = location.hostname === "127.0.0.1";
 function goalLinkOf(c) {
   const g = c.track?.goal;
   if (!g) return "";
   if (typeof g.url !== "string" || !g.url.startsWith("http://127.0.0.1:"))
     return `<span class="ov-goal none" title="${esc(g.why || "no goal page")}">no goal page</span>`;
   if (!ON_THE_LAPTOP)
-    return `<span class="ov-goal none" title="the goal page opens on the laptop: the sheaf hub listens there only">goal on the laptop</span>`;
+    return `<span class="ov-goal none" title="the goal page opens from agentview at http://127.0.0.1 on the laptop: the sheaf hub listens there only">goal on the laptop</span>`;
   return `<a class="ov-goal" href="${esc(g.url)}" target="_blank" rel="noopener" title="the goal file, to read and edit">goal ↗</a>`;
 }
 

@@ -95,10 +95,12 @@ is about, the whole text (up to 1,500 characters). The first of these that exist
    without a hub the card says "no goal page" and the hover says why, and so
    it does for a goal in a folder sheaf has never opened a file of (open the
    goal once with `sheaf open FILE`). The hub
-   listens on the laptop's 127.0.0.1 only, so on a page reached any other way,
-   the phone over tailscale for one, the card says "goal on the laptop" and
-   still shows the boxes. A browser never signed in to the hub gets sheaf's
-   "Not signed in" page, which says how to sign it in.
+   listens on the laptop's 127.0.0.1 only and its sign-in cookie only goes
+   with a page on that same name, so on agentview reached any other way, the
+   phone over tailscale or `localhost` for two, the card says "goal on the
+   laptop" and still shows the boxes. A browser never signed in to the hub
+   (another Chrome profile, or after the hub's key changed) gets sheaf's "Not
+   signed in" page, which says how to sign it in.
 3. **A repository's own words**: the first prose paragraph of its README, else of
    `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, which
    includes a language switcher with its current language in plain text,
