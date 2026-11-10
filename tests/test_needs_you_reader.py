@@ -123,7 +123,36 @@ class Asking(mp.Provider):
     def test_an_answer_to_another_tool_is_not_an_answered_question(self):
         self.open([tool(90, "Bash", {"command": "make test"}), answered(80),
                    tool(30, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2")])
-        self.assertIsNone(self.live()[0].get("answeredAt"))
+        row = self.live()[0]
+        self.assertIn("answeredAt", row)
+        self.assertIsNone(row["answeredAt"])
+
+    def test_an_answer_read_after_its_question_is_still_an_answered_question(self):
+        # Ticket paste/14: the question is absorbed on one read, its answer on
+        # a later one, so the call it answers must still be known then.
+        self.open([text(100), tool(90, "AskUserQuestion", {"questions": QUESTIONS})])
+        with self.transcript.open("a") as fh:
+            fh.write(json.dumps(answered(80)) + "\n")
+            fh.write(json.dumps(tool(30, "AskUserQuestion", {"questions": QUESTIONS},
+                                     "toolu_2", "msg_2")) + "\n")
+        got = self.live()[0]["answeredAt"]
+        self.assertAlmostEqual(got / 1000, time.time() - 80, delta=5)
+
+    def test_a_subagent_answering_its_own_question_is_not_an_answered_question(self):
+        # A subagent's records never speak for the session it works for.
+        self.open([{**tool(90, "AskUserQuestion", {"questions": QUESTIONS}), "isSidechain": True},
+                   {**answered(80), "isSidechain": True},
+                   tool(30, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2")])
+        self.assertIsNone(self.live()[0]["answeredAt"])
+
+    def test_an_older_answer_read_after_a_newer_one_does_not_move_the_moment_back(self):
+        self.open([tool(90, "AskUserQuestion", {"questions": QUESTIONS}),
+                   tool(70, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2"),
+                   answered(60, "toolu_2")])
+        with self.transcript.open("a") as fh:
+            fh.write(json.dumps(answered(85, "toolu_1")) + "\n")
+        got = self.live()[0]["answeredAt"]
+        self.assertAlmostEqual(got / 1000, time.time() - 60, delta=5)
 
     def test_a_pending_bash_call_under_a_permission_prompt_is_the_tool_and_its_command(self):
         got = self.open([said(60), tool(30, "Bash", {"command": "git push origin feature/maple-notes",

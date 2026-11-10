@@ -157,6 +157,18 @@ class Guess(Base):
                                   answeredAt=int((time.time() + 60) * 1000))
         self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
 
+    def test_a_line_written_the_moment_the_last_answer_came_offers_nothing(self):
+        # Ticket paste/14: the same millisecond counts as before the answer.
+        at = float(int(time.time()) - 30)
+        lines.begin_turn("a", self.lines)
+        lines.write("a", did="Notes page built.", ask="Type this here: $ bash ~/notes/push-maple.sh",
+                    n=1, root=self.lines, at=at)
+        asking = {"kind": "question", "questions": [{"question": "Publish the notes page?",
+                                                     "header": "", "multi": False, "options": []}]}
+        tile = self.tile(session("a", status="waiting", waitingFor="input needed",
+                                 asking=asking, answeredAt=int(at * 1000)))
+        self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
+
     def test_a_line_written_after_the_last_answer_offers_its_command(self):
         # The session wrote a new line for Q2: that one is Q2's.
         tile = self.question_open("Type this here: $ bash ~/notes/push-maple.sh",
