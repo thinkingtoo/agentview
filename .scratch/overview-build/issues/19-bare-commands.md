@@ -6,7 +6,7 @@
 
 **Claimed by:** Idris 2026-11-10
 
-**Status:** needs-triage
+**Status:** parked
 
 ## What ticket 18 learned (three Opus hunts, inputs in the session scratchpad, not kept)
 
@@ -35,3 +35,11 @@ Corpus: every distinct `team-line --n 1` ask in `~/.claude/projects/*/*.jsonl`, 
 - Of those 8, the rule of `81d0893` offers none. Only 2 are a whole command with nothing after it; the other 6 have a clause after a comma, a second command after "dan", or an elided path (`.../scratchpad/...`) that must never be copied.
 - Since 2026-10-29: zero bare commands in 13 days.
 - So the ticket's "4 more buttons of 19" is a count from the days before the hook told sessions where to put a command. Under the hook as it is, the bare path would add at most 2 buttons in 3 weeks, and three hunts in ticket 18 showed it offers prose on shapes sessions write.
+
+### Decision, 2026-11-11
+
+Not built. Counts (from the measure above): under the current hook, 870 distinct asks, 93 buttons on dev and 93 with the bare path of `81d0893` (+0); 8 bare asks, all on 2026-10-28, none since; 2 of them whole. On the ticket's own corpus (2026-10-17..21): 7 -> 9. Command: `python3 -I /home/tiroir/Projects/agentview-wt/measure-19-dump.py /home/tiroir/Projects/agentview-wt/Idris OUT.jsonl --bare-sha 81d0893`.
+
+"Noor, boss: not built on today's evidence; the owner's rule of 2026-10-21 is 'when the evidence is strong', and under the current hook a bare rule would add about 2 buttons in 3 weeks against a proven prose risk; reopen if bare asks come back"
+
+The ticket 18 guard tests (`RealShapes` in `tests/test_guessed_commands.py`) stay as they are. A side finding went to ticket 24.
