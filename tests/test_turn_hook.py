@@ -72,12 +72,15 @@ class Starting(unittest.TestCase):
         # single quotes); the ceiling leaves room for one more sentence and
         # no more. Ticket paste-04 added the Paste paragraph (about 700 characters):
         # a session must learn from this text alone how to leave a Paste.
+        # c046ff0 (2026-11-01) took it to 2310 with no approval of that size;
+        # on 2026-11-10 (ticket turn-hook-budget 01) its words were cut, every
+        # rule kept, to 2112 under the same 2150 ceiling.
         sid = "00000000-0000-4000-8000-000000000000"
         with _commands_in("/home/alice/Projects/agentview/hooks"):
             said = turn_line.begin({"session_id": sid, "prompt": "go"},
                                    root=self.root)["hookSpecificOutput"]["additionalContext"]
         self.assertLess(len(said), 2150, len(said))
-        self.assertGreater(len(said), 2000, "the budget was 750 before 2026-10-19, 925 before the Paste paragraph and 1700 before ticket 10; if the text got "
+        self.assertGreater(len(said), 2050, "the budget was 750 before 2026-10-19, 925 before the Paste paragraph, 1700 before ticket 10 and 2000 before 2026-11-10; if the text got "
                                           "shorter, tighten the ceiling above to match")
 
     def test_the_session_is_told_how_to_leave_a_paste(self):
@@ -96,6 +99,16 @@ class Starting(unittest.TestCase):
         self.assertIn("A Paste counts in --n", said)
         self.assertIn("It prints the id", said)
         self.assertIn("withdraw", said)
+
+    def test_the_two_rules_of_c046ff0_stay(self):
+        # A rejected AskUserQuestion ends the turn with no Stop hook, and the card cuts the ask
+        # at 160 characters; a trim for the ceiling must not drop either (turn-hook-budget 01).
+        said = turn_line.begin({"session_id": "s1", "prompt": "go"},
+                               root=self.root)["hookSpecificOutput"]["additionalContext"]
+        for fragment in ("If the turn ends on an AskUserQuestion, run it right before that call",
+                         "a rejected question gets no Stop hook", "comes last and whole",
+                         "cut at 160 characters", "drop the sentence if it and the command do not fit"):
+            self.assertIn(fragment, said)
 
     def test_a_refused_paste_is_said_out_loud(self):
         # 2026-10-22 18:42: the classifier refused a `paste create` and the session said nothing, so

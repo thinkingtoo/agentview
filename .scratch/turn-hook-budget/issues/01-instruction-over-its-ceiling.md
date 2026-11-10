@@ -24,9 +24,13 @@ The commits between 2026-10-19 and 2026-10-21 could not be measured the same way
 
 **Blocked by:** None
 
-**Claimed by:** none
+**Claimed by:** Tarek 2026-11-10
 
-**Status:** needs-triage
+**Status:** in review (PR #3)
 
-- [ ] The test passes on origin/dev, by a decision the owner made about the size
+- [ ] The test passes on origin/dev, by a decision the owner made about the size (the 2150 ceiling he approved on 2026-10-22; ticked on merge)
 - [ ] The test's comment records that decision (date and size), as it does for the earlier ones
+
+## Comments
+
+**Tarek, 2026-11-10** (boss dispatch from Noor). No new size was decided. The text was cut back under the 2150 ceiling the owner approved on 2026-10-22, and the ceiling did not move: Noor's dispatch forbids raising it, and any size above it goes back to the owner. The text is now 2112 characters, measured the way the test measures it. Every rule stays: team-line right before an AskUserQuestion that ends the turn, the command last and whole within 160 characters, the fields, the quoting, --n, the Paste rules, the refusal rule and the `$ ` rule. Two examples were dropped: "(then use it)" and "(the mail is sent)". A new test pins the two rules c046ff0 added, so no later trim can drop them silently. The floor moved from 2000 to 2050, and the test comment records the date and the size.
