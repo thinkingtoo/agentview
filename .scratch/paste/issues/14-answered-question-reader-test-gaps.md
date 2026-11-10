@@ -6,7 +6,9 @@
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+**Status:** ready-for-agent
+
+**Claimed by:** Pablo 2026-11-11
 
 - [ ] `test_an_answer_to_another_tool_is_not_an_answered_question` asserts the key is there (`assertIn`) and is None. Today `.get()` would also pass if the key were dropped.
 - [ ] A split read: the `AskUserQuestion` tool_use is absorbed on one scan, and its tool_result is appended and absorbed on a later one. `answeredAt` is set.
