@@ -154,8 +154,8 @@ class Asking(mp.Provider):
             fh.write(json.dumps(answered(85, "toolu_1")) + "\n")
         got = self.live()[0]["answeredAt"]
         self.assertAlmostEqual(got / 1000, time.time() - 60, delta=5)
-        # And it was read: a call forgotten before its answer would pass too.
-        self.assertIn("toolu_1", claude._cache[("state", str(self.transcript))]["done"])
+        # And it was weighed: a call forgotten before its answer came would pass too.
+        self.assertIn("toolu_1", claude._cache[("state", str(self.transcript))]["uses"])
 
     def test_a_pending_bash_call_under_a_permission_prompt_is_the_tool_and_its_command(self):
         got = self.open([said(60), tool(30, "Bash", {"command": "git push origin feature/maple-notes",
