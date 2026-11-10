@@ -6,7 +6,7 @@
 
 **Claimed by:** Idris 2026-11-10
 
-**Status:** parked
+**Status:** wontfix
 
 ## What ticket 18 learned (three Opus hunts, inputs in the session scratchpad, not kept)
 
