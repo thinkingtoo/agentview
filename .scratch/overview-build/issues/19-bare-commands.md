@@ -4,7 +4,9 @@
 
 **Blocked by:** 18
 
-**Status:** needs-triage
+**Claimed by:** Idris 2026-11-10
+
+**Status:** wontfix
 
 ## What ticket 18 learned (three Opus hunts, inputs in the session scratchpad, not kept)
 
@@ -17,3 +19,27 @@ The rule tried in `81d0893` (`ask_commands.py`, `bare_commands`): after a colon 
 A start, from hunt 3: the verb at the start of its clause and imperative (optionally after please/now/then), nothing but an object between it and the colon; brackets only after such a verb too; any shell metacharacter or punctuation-only word outside quotes refuses; one pass over the colons, not one scan per colon.
 
 An alternative that needs no guessing: the hook already asks for the quotes or the `$ `. Most bare commands came before that sentence existed (2026-10-20). Measure how many bare commands sessions still write under the current hook before building this.
+
+## Comments
+
+### Measure first (Idris, 2026-11-11, counts only: the repo is public)
+
+Corpus: every distinct `team-line --n 1` ask in `~/.claude/projects/*/*.jsonl`, clipped as `lines._clip` does, dated by its first appearance: 3,248 distinct asks. Command: `python3 -I /home/tiroir/Projects/agentview-wt/measure-19-dump.py /home/tiroir/Projects/agentview-wt/Idris OUT.jsonl --bare-sha 81d0893` (writes the asks to a private file outside the repo; `dev` = `ask_commands.guess` on `397dc9a`, loaded from the worktree, `bare81` = the bare path at `81d0893`), then the bare-looking asks among those with no guess read by hand.
+
+| Window | Distinct asks | Guessed on dev | Guessed with the bare path of `81d0893` |
+|---|---|---|---|
+| 2026-10-17..21 (the ticket's corpus, before the hook sentence settled) | 222 | 7 | 9 |
+| 2026-10-22..11-11 (under the current hook) | 870 | 93 | 93 |
+
+- Under the current hook, 93 asks carry a command the session marked and the guesser offers. Asks that hold a command written bare: 8, all on 2026-10-28; the 4 traced to their transcript (one per shape) all come from one session.
+- Of those 8, the rule of `81d0893` offers none. Only 2 are a whole command with nothing after it; the other 6 have a clause after a comma, a second command after "dan", or an elided path (`.../scratchpad/...`) that must never be copied.
+- Since 2026-10-29: zero bare commands in 13 days.
+- So the ticket's "4 more buttons of 19" is a count from the days before the hook told sessions where to put a command. Under the hook as it is, the bare path would add at most 2 buttons in 3 weeks, and three hunts in ticket 18 showed it offers prose on shapes sessions write.
+
+### Decision, 2026-11-11
+
+Not built. Counts (from the measure above): under the current hook, 870 distinct asks, 93 buttons on dev and 93 with the bare path of `81d0893` (+0); 8 bare asks, all on 2026-10-28, none since; 2 of them whole. On the ticket's own corpus (2026-10-17..21): 7 -> 9. Command: `python3 -I /home/tiroir/Projects/agentview-wt/measure-19-dump.py /home/tiroir/Projects/agentview-wt/Idris OUT.jsonl --bare-sha 81d0893`.
+
+"Noor, boss: not built on today's evidence; the owner's rule of 2026-10-21 is 'when the evidence is strong', and under the current hook a bare rule would add about 2 buttons in 3 weeks against a proven prose risk; reopen if bare asks come back"
+
+The ticket 18 guard tests (`RealShapes` in `tests/test_guessed_commands.py`) stay as they are. A side finding went to ticket 24.
