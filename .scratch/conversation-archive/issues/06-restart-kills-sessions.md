@@ -8,6 +8,8 @@
 
 **Status:** needs-triage
 
+**Claimed by:** Sinead 2026-11-10
+
 ## Evidence (2026-09-29)
 
 What was observed, and what was not.
@@ -147,3 +149,73 @@ The drop-in also changed the `OOMPolicy` that `systemctl --user show` reports fo
 
   Write one sentence into the README's "Restarting the service" section saying what a stop does (what was observed), then tick the second box and set `Status:` to `resolved`. If the stop lost sessions, say so in the README instead and leave the box and `Status:` open.
 - Inference from the documented behaviour of `KillMode=process`, not tested (only a restart was): while the drop-in exists, `systemctl --user stop agentview` reports the unit stopped and leaves everything running. Observed: the unit's task count and memory include the sessions, since they are in its cgroup.
+
+## Cgroup check, 2026-11-10
+
+Read-only, run by Sinead on 2026-11-10 (the WezTerm and autostart lookups ran just after midnight). Nothing on the live system was changed.
+
+**1. Reboots since the drop-in (2026-09-29): yes, many.** `last` is not installed; `journalctl --list-boots` gives the boots the journal still holds (the oldest kept is 2026-10-12):
+
+```
+$ uptime -s
+2026-11-05 16:00:58
+$ journalctl --list-boots --no-pager
+-11 ... Mon 2026-10-12 18:32:45 CEST
+-10 ... Mon 2026-10-12 21:51:43 CEST
+ -9 ... Tue 2026-10-13 11:32:21 CEST
+ -8 ... Fri 2026-10-16 18:44:20 CEST
+ -7 ... Sun 2026-10-18 16:09:38 CEST
+ -6 ... Sun 2026-10-18 23:08:06 CEST
+ -5 ... Tue 2026-10-20 00:52:48 CEST
+ -4 ... Tue 2026-10-27 17:00:48 CET
+ -3 ... Tue 2026-10-27 19:10:28 CET
+ -2 ... Sun 2026-11-01 12:53:20 CET
+ -1 ... Tue 2026-11-03 11:53:38 CET
+  0 ... Thu 2026-11-05 16:01:02 CET
+```
+
+**2. The drop-in exists and applies.**
+
+```
+$ cat ~/.config/systemd/user/agentview.service.d/switchover.conf
+[Service]
+KillMode=process
+OOMPolicy=continue
+$ ls ~/.config/systemd/user/agentview.service.d/
+extra-origins.conf  switchover.conf
+$ systemctl --user show agentview.service -p KillMode -p OOMPolicy -p ControlGroup -p MainPID -p ActiveEnterTimestamp -p TasksCurrent -p MemoryCurrent
+ActiveEnterTimestamp=Thu 2026-11-05 19:01:51 CET
+MainPID=2594842
+OOMPolicy=continue
+ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/agentview.service
+MemoryCurrent=178057216
+TasksCurrent=6
+KillMode=process
+```
+
+The directory also holds `extra-origins.conf` (2026-10-29), so the `rmdir` in the removal step fails. That is harmless and intended: only `switchover.conf` goes.
+
+**3. The check block, run as written.**
+
+```
+pid 8512 in run-p8509-i25065.scope
+Description=agentview: tmux server
+OOMPolicy=continue
+pid 22119 in app-org.wezfurlong.wezterm@3004c8e51b5349fc8eb3766be6d8ac4a.service
+Description=WezTerm
+OOMPolicy=stop
+```
+
+The `cgroup.procs` line gave no output (grep exit 1). The service's cgroup holds one process:
+
+```
+2594842 python3 Thu Nov  5 19:01:51 2026
+```
+
+Result: **the second half passed and the first half failed on the WezTerm window.** The service's cgroup holds no tmux, wezterm or claude process, so 0 claude sessions are exposed to a restart of `agentview.service`. The tmux server is in an `agentview: tmux server` scope with `OOMPolicy=continue`. The one `wezterm-gui` (pid 22119, started 2026-11-05 16:02:24) is not in an agentview scope. It is in `app-org.wezfurlong.wezterm@….service`, the unit Plasma creates for an app started from its launcher: `KillMode=control-group`, `OOMPolicy=stop`, 733 tasks, 9.07 GB. Its environment has `SYSTEMD_EXEC_PID=8124` and a `DESKTOP_STARTUP_ID` ending in `8124_…`. Pid 8124 is `plasmashell`, and the journal has no `agentview: wezterm window` scope on 2026-11-05. So the window was opened from the Plasma panel or menu 16 seconds after the login restore started (16:02:08), and the restore reused it, as `snapshot.py` does with a running window. `~/.config/autostart` has no WezTerm entry and `ksmserverrc` has `loginMode=emptySession`, so Plasma did not restore the window itself.
+
+Where the 43 `claude` processes are: 39 in `tmux-spawn-<uuid>.scope` (scopes tmux creates for each pane under the scoped server) and 4 in the Plasma WezTerm unit. None is in `agentview.service`.
+
+**4. The login restore ran through `scope.wrap` after every boot since the change.** The event log (`~/.local/state/agentview/events.jsonl` and `.1`) only goes back to 2026-10-31. It has no `scope.*` or restore event: `scope.unavailable` is the only scope event the code writes, and it never appears. The user journal has `app-agentview\x2drestore@autostart.service` starting on 2026-10-12 (×3), 10-13, 10-16, 10-18 (×2), 10-20, 10-27 (×2), 11-01, 11-03 and 11-05. On each of those days it also has `Started run-….scope - agentview: tmux server`, and on every day except 10-13 and 11-05 an `agentview: wezterm window` scope. The run that counts is 2026-11-05: `16:02:08 Started run-p8509-i25065.scope - agentview: tmux server`, followed by `resumed 22 session(s)` at 16:03:10.
+
+**Conclusion.** Yes: the drop-in can be removed today without killing a session. `agentview.service`'s cgroup holds only `server.py`, and every session sits in the scoped tmux server or in Plasma's WezTerm unit, both outside the service. The failed WezTerm line in the check does not depend on the drop-in. The window is outside the service either way, but its Plasma unit has `OOMPolicy=stop`, which is the 2026-09-28 failure mode: one OOM kill there takes down the window and the 4 sessions in its tabs. That needs a separate fix (open WezTerm through agentview, or restart it once through the restore), not the drop-in.
