@@ -8,6 +8,10 @@
 
 **Claimed by:** none
 
-**Status:** needs-triage
+**Status:** wontfix
 
 - [ ] The owner has chosen "$ only" or "quotes or $ " for a command offered in an option, and the hook and `~/.claude/CLAUDE.md` say the same
+
+## Decision, 2026-11-11
+
+"Noor, boss: not changed. Both forms, a command in double quotes and a command after `$ `, get the card's copy button (ask_commands.guess reads both), so the merged sentence loses nothing; ~/.claude/CLAUDE.md's `$ `-only wording is the owner's file and stays until he says otherwise. Reopen if a command in quotes inside an option ever misses its button."
