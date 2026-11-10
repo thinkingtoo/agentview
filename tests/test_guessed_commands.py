@@ -115,16 +115,17 @@ class Guess(Base):
     def test_a_quote_never_closed_is_not_a_command(self):
         self.assertEqual(self.commands('Run "git push origin feature/maple-no'), [])
 
-    def question_open(self, ask, **kw):
+    def question_open(self, ask, n=1, by="session", **kw):
         """The session wrote its line, then opened its question: the order
         the rule asks for, with the command in the ask beside the dialog."""
-        self.line("a", ask, **kw)
+        self.line("a", ask, n=n, by=by)
         asking = {"kind": "question", "questions": [{"question": "Publish the notes page?",
                                                      "header": "", "multi": False, "options": []}]}
-        return self.tile(session("a", status="waiting", waitingFor="input needed", asking=asking))
+        return self.tile(session("a", status="waiting", waitingFor="input needed",
+                                 asking=asking, **kw))
 
     def test_an_open_question_still_offers_the_command_in_the_line(self):
-        # paste/12: the command the owner must type sits in the line written
+        # Ticket paste/12: the command the owner must type sits in the line written
         # right before the question, and the card is the place to copy it.
         tile = self.question_open("Type this here: $ bash ~/notes/push-maple.sh")
         self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]),
@@ -143,11 +144,8 @@ class Guess(Base):
         # its card is where the owner answers, so the command is copied there.
         self.addCleanup(setattr, fleet, "_pane_roles", fleet._pane_roles)
         fleet._pane_roles = lambda now=None: frozenset({"%2"})
-        self.line("a", "Copy the key to the notes box. $ bash ~/notes/copy-key.sh")
-        asking = {"kind": "question", "questions": [{"question": "Copy the key now?",
-                                                     "header": "", "multi": False, "options": []}]}
-        tile = self.tile(session("a", status="waiting", waitingFor="input needed",
-                                 asking=asking, tmux="main:@1.%2"))
+        tile = self.question_open("Copy the key to the notes box. $ bash ~/notes/copy-key.sh",
+                                  tmux="main:@1.%2")
         self.assertEqual((tile["tags"], tile["guessedCommands"]),
                          (["concierge"], ["bash ~/notes/copy-key.sh"]))
 
