@@ -4,16 +4,21 @@
 
 **Blocked by:** None
 
-**Status:** needs-triage
-
 **Claimed by:** Mateus 2026-11-11
 
-- [ ] `python3 -m unittest discover -s tests -p test_push.py` with `TMPDIR` pointed at a fresh empty dir leaves 0 entries there (7 today)
-- [ ] No test's assertions change (diff shows only the cleanup line and the import)
-- [ ] The full suite, run on t-compute with a private `TMPDIR`, leaves 0 entries there; if it does not, name the modules that leave the rest (see below)
+**Status:** done
+
+- [x] `python3 -m unittest discover -s tests -p test_push.py` with `TMPDIR` pointed at a fresh empty dir leaves 0 entries there (7 today)
+- [x] No test's assertions change (diff shows only the cleanup line and the import)
+- [x] The full suite, run on t-compute with a private `TMPDIR`, leaves 0 entries there; if it does not, name the modules that leave the rest (see below)
 
 **Evidence:**
 
 1. Piotr, 2026-11-11, full suite on t-compute at `0d702ac` (`python3 -m unittest discover -s tests`, Python 3.14.4, "Ran 2355 tests in 360.076s", "OK (skipped=4)"), private `TMPDIR`: 13 entries left in it, temp dirs with `push.json`, attributed to `tests/test_push.py`. Nothing was written to `/tmp`.
 2. Rania, 2026-11-11, on origin/dev `02ff8ce`, laptop, `tests.test_push` alone with `PYTHONDONTWRITEBYTECODE=1` and a fresh empty `TMPDIR`: "Ran 27 tests", OK, 7 directories left: 5 hold `push.json`, 2 are empty (the tests where nothing is written: `test_with_nothing_included_nothing_is_read_or_sent` and `test_without_a_token_nothing_is_sent` never reach the state file).
 3. So test_push accounts for 7 of the 13. The other 6 are not located. Run alone the same way, these modules leave 0: `test_archive`, `test_codex`, `test_movement_procs`, `test_reopen`, `test_meaning`, `test_starter_walk` (the files whose `mkdtemp` has no cleanup on the next line; each registers it further down). The full suite was not run on the laptop (load 23 at the time); locating the other 6 needs the full run on t-compute with the entries' names and contents listed, or each module run alone there.
+4. Mateus, 2026-11-11, on t-compute at `a77adf4` (the fix; `git rev-parse HEAD` in the clone), Python 3.14.4, `PYTHONDONTWRITEBYTECODE=1`, private `TMUX_TMPDIR`, `TMUX` unset, `fleet.__file__` = `/home/tcompute/tmp/agentview-noor-2026-11-11-mateus/repo/fleet.py`. Laptop load was 14, so nothing ran there.
+   - `python3 -m unittest discover -s tests -p test_push.py`, fresh empty `TMPDIR`: "Ran 27 tests in 9.818s", "OK", 0 entries left (box 1).
+   - `python3 -m unittest discover -s tests`, another fresh empty `TMPDIR`: "Ran 2359 tests in 314.553s", "OK (skipped=4)", 0 entries left (box 3). The other 6 of Piotr's 13 do not recur at this head, so there is no module to name.
+   - `git diff origin/dev...HEAD -- tests/test_push.py` is `import shutil` and the `addCleanup` line, nothing else (box 2).
+   - Sandbox: no tmux server left on the private socket dir; the one real session (`energy`) was there before and after. `df -i /tmp` IUsed 1596476 before, 1602295 after; no top-level `/tmp` entry owned by tcompute is newer than the clone, the growth is other jobs on the box (`/tmp/pytest-of-tcompute` holds 1481395 inodes). Clone removed.
