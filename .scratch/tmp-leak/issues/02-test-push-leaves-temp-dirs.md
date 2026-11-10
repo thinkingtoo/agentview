@@ -6,6 +6,8 @@
 
 **Status:** needs-triage
 
+**Claimed by:** Mateus 2026-11-11
+
 - [ ] `python3 -m unittest discover -s tests -p test_push.py` with `TMPDIR` pointed at a fresh empty dir leaves 0 entries there (7 today)
 - [ ] No test's assertions change (diff shows only the cleanup line and the import)
 - [ ] The full suite, run on t-compute with a private `TMPDIR`, leaves 0 entries there; if it does not, name the modules that leave the rest (see below)
