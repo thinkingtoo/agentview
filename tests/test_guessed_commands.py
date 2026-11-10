@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import ask_commands
+import fleet
 import lines
 from test_columns import Base, session
 
@@ -114,14 +115,49 @@ class Guess(Base):
     def test_a_quote_never_closed_is_not_a_command(self):
         self.assertEqual(self.commands('Run "git push origin feature/maple-no'), [])
 
-    def test_an_open_dialog_hides_the_line_and_its_commands(self):
-        # The tile shows the question, not the line written a turn ago, so a
-        # command in that line has no place on it.
-        self.line("a", 'Run "make test" for me?')
+    def question_open(self, ask, n=1, by="session", **kw):
+        """The session wrote its line, then opened its question: the order
+        the rule asks for, with the command in the ask beside the dialog."""
+        self.line("a", ask, n=n, by=by)
+        asking = {"kind": "question", "questions": [{"question": "Publish the notes page?",
+                                                     "header": "", "multi": False, "options": []}]}
+        return self.tile(session("a", status="waiting", waitingFor="input needed",
+                                 asking=asking, **kw))
+
+    def test_an_open_question_still_offers_the_command_in_the_line(self):
+        # Ticket paste/12: the command the owner must type sits in the line written
+        # right before the question, and the card is the place to copy it.
+        tile = self.question_open("Type this here: $ bash ~/notes/push-maple.sh")
+        self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]),
+                         ("question", ["bash ~/notes/push-maple.sh"]))
+
+    def test_an_open_question_with_several_things_left_offers_nothing(self):
+        tile = self.question_open('Run "make test", and may I push it?', n=2)
+        self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
+
+    def test_an_open_question_over_a_line_the_hook_read_offers_nothing(self):
+        tile = self.question_open('Should I run "make test" first?', by="read")
+        self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
+
+    def test_an_open_question_over_a_line_from_the_last_turn_offers_nothing(self):
+        # A new prompt forgets the line, so a question opened in the next turn
+        # before a new line is written has no command beside it.
+        self.line("a", "Type this here: $ bash ~/notes/push-maple.sh")
+        lines.begin_turn("a", self.lines)
         asking = {"kind": "question", "questions": [{"question": "Publish the notes page?",
                                                      "header": "", "multi": False, "options": []}]}
         tile = self.tile(session("a", status="waiting", waitingFor="input needed", asking=asking))
         self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
+
+    def test_a_concierge_holding_a_bosss_question_offers_its_command(self):
+        # The concierge writes the boss's command into its own line, then asks:
+        # its card is where the owner answers, so the command is copied there.
+        self.addCleanup(setattr, fleet, "_pane_roles", fleet._pane_roles)
+        fleet._pane_roles = lambda now=None: frozenset({"%2"})
+        tile = self.question_open("Copy the key to the notes box. $ bash ~/notes/copy-key.sh",
+                                  tmux="main:@1.%2")
+        self.assertEqual((tile["tags"], tile["guessedCommands"]),
+                         (["concierge"], ["bash ~/notes/copy-key.sh"]))
 
     def test_several_things_left_quote_nothing_and_so_offer_nothing(self):
         self.assertEqual(self.commands('Run "make test", and may I push it?', n=2), [])
