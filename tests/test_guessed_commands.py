@@ -139,6 +139,16 @@ class Guess(Base):
         tile = self.question_open('Should I run "make test" first?', by="read")
         self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
 
+    def test_an_open_question_over_a_line_from_the_last_turn_offers_nothing(self):
+        # A new prompt forgets the line, so a question opened in the next turn
+        # before a new line is written has no command beside it.
+        self.line("a", "Type this here: $ bash ~/notes/push-maple.sh")
+        lines.begin_turn("a", self.lines)
+        asking = {"kind": "question", "questions": [{"question": "Publish the notes page?",
+                                                     "header": "", "multi": False, "options": []}]}
+        tile = self.tile(session("a", status="waiting", waitingFor="input needed", asking=asking))
+        self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
+
     def test_a_concierge_holding_a_bosss_question_offers_its_command(self):
         # The concierge writes the boss's command into its own line, then asks:
         # its card is where the owner answers, so the command is copied there.
