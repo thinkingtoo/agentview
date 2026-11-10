@@ -243,6 +243,15 @@ class Tracks(Cards):
                 self.assertEqual(got["track"]["goal"],
                                  {"url": "http://127.0.0.1:27419/claude/pm/checkout.goal.md", "why": ""})
 
+    def test_a_box_wrapped_over_lines_is_one_box_and_a_blank_line_or_a_list_ends_it(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n## Outcome\nCustomers pay.\n\n## Done when\n"
+            "- [x] the cart keeps a card\n  for the next visit\n- [ ] a receipt\n  - a sub-item, not the box\n"
+            "- [ ] a refund\n\n  a paragraph after a blank line\n")
+        self.assertEqual(self.track(nogoal=True)["track"]["boxes"],
+                         [{"text": "the cart keeps a card for the next visit", "done": True},
+                          {"text": "a receipt", "done": False}, {"text": "a refund", "done": False}])
+
     def test_markup_in_a_box_is_kept_as_the_text_it_is(self):
         got = self.track(boxes=(f"[ ] {HOSTILE_IN_A_FILE}",))
         self.assertEqual(got["track"]["boxes"], [{"text": HOSTILE_IN_A_FILE, "done": False}])

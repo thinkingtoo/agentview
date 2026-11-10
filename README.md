@@ -87,9 +87,12 @@ is about, the whole text (up to 1,500 characters). The first of these that exist
    the file's order; click it to unfold them under the row, and again to fold
    them. "goal ↗" opens the goal file in a new tab as a sheaf page, to read and
    edit. The link uses a hub that already runs: `sheaf status` is asked every
-   30 seconds for its port, and `sheaf open FILE --no-browser` once per goal
-   per hub for the page's path, in a thread of their own, so the poll never
-   waits for sheaf (until the first answer the hover says "asking sheaf").
+   30 seconds for its port, and the page's path is read from `sheaf list`, or
+   for a goal the hub has not rendered, from `sheaf open FILE --no-browser`
+   once per goal per hub, right after a status of its own. All of it runs in a
+   thread of its own, so the poll never waits for sheaf (until the first answer
+   the hover says "asking sheaf"). A page already rendered keeps its title and
+   theme: only an open records them anew.
    Neither the page nor the poll starts a hub, so without one the card says
    "no goal page" and the hover says why. The hub
    listens on the laptop's 127.0.0.1 only, so on a page reached any other way,

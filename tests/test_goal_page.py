@@ -22,15 +22,25 @@ OPEN = ("  http://127.0.0.1:{port}/claude/pm/{name}\n"
         "  (not opened: the browser is off, by --no-browser, SHEAF_NO_BROWSER or config.toml)\n")
 
 
+LISTED = "  http://127.0.0.1:{port}/claude/pm/{name}\n    {file} \u00b7 1 tab open\n"
+
+
 class Sheaf:
-    """A fake `sheaf`: a hub on `port`, or none when `port` is None."""
-    def __init__(self, port=27419, open_fails=False):
+    """A fake `sheaf`: a hub on `port`, or none when `port` is None; `rendered`
+    are the goal files it lists as rendered since it started."""
+    def __init__(self, port=27419, open_fails=False, rendered=()):
         self.port, self.open_fails, self.asked = port, open_fails, []
+        self.rendered = list(rendered)
 
     def __call__(self, args):
         self.asked.append(args)
         if args[0] == "status":
             return (0, STATUS.format(port=self.port)) if self.port else (1, "  no hub is running\n")
+        if args[0] == "list":
+            if self.port is None:
+                return 0, "  no hub is running\n"
+            return 0, "".join(LISTED.format(port=self.port, name=Path(f).name, file=f) for f in self.rendered) \
+                or "  nothing has been rendered since the hub started\n"
         if args[0] == "open":
             if self.port is None:
                 raise AssertionError("sheaf open with no hub: that starts one")
@@ -102,7 +112,7 @@ class GoalPage(unittest.TestCase):
         self.addCleanup(setattr, goal_page, "SHEAF", was)
         got = goal_page.of("checkout", now=100, start=inline)
         self.assertIsNone(got["url"])
-        self.assertIn("no sheaf hub", got["why"])
+        self.assertEqual(got["why"], goal_page.NO_SHEAF)
 
     def test_the_poll_never_waits_for_sheaf_and_one_refresh_runs_at_a_time(self):
         sheaf, started = Sheaf(), []
@@ -115,21 +125,47 @@ class GoalPage(unittest.TestCase):
         self.assertEqual(got["url"], "http://127.0.0.1:27419/claude/pm/checkout.goal.md")
         self.assertEqual(len(started), 1)
 
-    def test_a_second_goal_asked_for_later_is_opened_without_a_new_status(self):
+    def test_a_second_goal_asked_for_later_is_opened_after_a_status_of_its_own(self):
         (self.pm / "docs.goal.md").write_text("## Done when\n- [ ] one\n")
         sheaf = Sheaf()
         of("checkout", now=100, run=sheaf)
         got = of("docs", now=101, run=sheaf)
         self.assertEqual(got["url"], "http://127.0.0.1:27419/claude/pm/docs.goal.md")
-        self.assertEqual([a[0] for a in sheaf.asked], ["status", "open", "open"])
+        self.assertEqual([a[0] for a in sheaf.asked], ["status", "list", "open", "status", "list", "open"])
+
+    def test_a_hub_stopped_since_the_last_status_is_not_started_for_a_new_goal(self):
+        (self.pm / "docs.goal.md").write_text("## Done when\n- [ ] one\n")
+        sheaf = Sheaf()
+        of("checkout", now=100, run=sheaf)
+        sheaf.port = None                       # `sheaf stop`, well within STATUS_EVERY
+        got = of("docs", now=101, run=sheaf)
+        self.assertEqual(got, {"url": None, "why": goal_page.NO_HUB})
+        self.assertEqual(len(sheaf.opened()), 1)
+
+    def test_a_goal_the_hub_has_rendered_is_read_from_its_list_and_not_opened_again(self):
+        # An open records its settings anew: a title or theme the page was given would go.
+        goal = self.pm / "checkout.goal.md"
+        sheaf = Sheaf(rendered=[str(goal.resolve())])
+        got = of("checkout", now=100, run=sheaf)
+        self.assertEqual(got["url"], "http://127.0.0.1:27419/claude/pm/checkout.goal.md")
+        self.assertEqual(sheaf.opened(), [])
+
+    def test_a_thread_that_cannot_start_leaves_the_poll_answering_and_the_next_poll_trying(self):
+        def no_thread(work):
+            raise RuntimeError("can't start new thread")
+        sheaf = Sheaf()
+        self.assertEqual(goal_page.of("checkout", now=100, run=sheaf, start=no_thread),
+                         {"url": None, "why": goal_page.ASKING})
+        got = of("checkout", now=101, run=sheaf)
+        self.assertEqual(got["url"], "http://127.0.0.1:27419/claude/pm/checkout.goal.md")
 
     def test_the_hub_is_asked_once_a_while_and_a_goal_opened_once_per_hub(self):
         sheaf = Sheaf()
         for now in (100, 110, 120):
             of("checkout", now=now, run=sheaf)
-        self.assertEqual([a[0] for a in sheaf.asked], ["status", "open"])
+        self.assertEqual([a[0] for a in sheaf.asked], ["status", "list", "open"])
         of("checkout", now=100 + goal_page.STATUS_EVERY, run=sheaf)
-        self.assertEqual([a[0] for a in sheaf.asked], ["status", "open", "status"])
+        self.assertEqual([a[0] for a in sheaf.asked], ["status", "list", "open", "status"])
 
     def test_a_hub_that_comes_back_on_another_port_opens_the_goal_again(self):
         sheaf = Sheaf()

@@ -84,6 +84,7 @@ CLOSING_MARKS = re.compile(r"(?:^|\s)#+\s*$")
 # in bold, on a line of its own or with its text after it, not with a heading.
 LABEL = re.compile(r"^\s{0,3}\*\*([^*:\n]+?)(?::\*\*|\*\*\s*:)\s*(.*)$")
 BOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]")
+LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
 STATUS = re.compile(r"^\s*[_*]*status:[_*\s]*([a-z]+)", re.IGNORECASE)
 STATUS_WORDS = ("OPEN", "PAUSED", "MET")
 # The end of a sentence: a full stop, a question or exclamation mark (and any
@@ -291,9 +292,16 @@ def track_card(track):
     lines = list(unfenced(goal_file(track)))
     status = next((m.group(1).upper() for m in map(STATUS.match, lines) if m), "")
     status = status if status in STATUS_WORDS else ""
-    marked = [(line, BOX.match(line)) for line in section(lines, "done when")]
-    boxes = [{"text": plain(clipped(line[b.end():].strip())), "done": b.group(1) != " "}
-             for line, b in marked if b]
+    marked, wrapping = [], False                # [ticked?, its words]; a wrapped box's lines joined
+    for line in section(lines, "done when"):
+        b = BOX.match(line)
+        if b:
+            marked.append([b.group(1) != " ", line[b.end():].strip()])
+        elif wrapping and line[:1].isspace() and line.strip() and not LIST_ITEM.match(line):
+            marked[-1][1] += " " + line.strip()
+            continue
+        wrapping = bool(b)                      # a blank line or anything else ends the box
+    boxes = [{"text": plain(clipped(words)), "done": done} for done, words in marked]
     total, done = len(boxes), sum(1 for b in boxes if b["done"])
     if status == "MET":
         progress = {"done": total, "total": total, "text": "done", "met": True}
