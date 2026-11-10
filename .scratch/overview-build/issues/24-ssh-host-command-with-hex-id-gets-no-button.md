@@ -4,6 +4,8 @@
 
 **Blocked by:** None
 
+**Claimed by:** Rosa 2026-11-11
+
 **Status:** needs-triage
 
 ## The shape (invented placeholders, never a real host)
