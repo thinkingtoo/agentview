@@ -264,7 +264,8 @@ def _shown(got):
     a question that stopped the session from one that offered to do more.
     """
     return {"did": got["did"], "ask": got["ask"], "n": got["n"],
-            "blocked": got["n"] > 0 and got["by"] == "session"}
+            "blocked": got["n"] > 0 and got["by"] == "session",
+            "lineAt": base.milliseconds(got["at"], seconds=True)}
 
 
 def own_line(session_id, status, asked, root=None, said="", doing=""):
@@ -298,7 +299,7 @@ def own_line(session_id, status, asked, root=None, said="", doing=""):
         return {**shown, **now}
     ask, n = asked
     return {"did": lines.kept_did(session_id, root), "ask": ask, "n": n,
-            "blocked": False, **now}
+            "blocked": False, "lineAt": None, **now}
 
 
 # ------------------------------------------------------------ the round
@@ -646,6 +647,9 @@ def normalize(p, raw, shelves, assigned, thresholds, now, state, lines_root=None
         # Held open by you (a session pin: `marks.py`). `pinned` on a column is the project's.
         "pinned": marks.pinned(key, state),
         "asking": asking,
+        # When a question was last answered: a line older than that is not
+        # about the question open now (`guessed_commands_of`).
+        "answeredAt": base.milliseconds(raw.get("answeredAt")),
         # The chime's reading of a provider that cannot say `waiting` (Codex):
         # an open request with no answer rings, as it is Needs you on the tile (a
         # pause is a Limit there, and does not).
@@ -1280,9 +1284,15 @@ def guessed_commands_of(m, stuck):
     (`ask_from`), so a command in them is not the command the session wrote.
     An open question keeps them: the rule is to write the line right before
     asking, with the command to type in it, so that is where it sits (ticket paste/12).
+    Not a line older than the last answer to a question: answering is no new
+    prompt, so that line was the answered question's, and the one open now is
+    about something else (ticket paste/13).
     A permission prompt or another request brings its own words instead.
     """
     if m["n"] != 1 or not m["blocked"] or not (stuck and stuck["source"] in ("line", "question")):
+        return []
+    if (stuck["source"] == "question" and m["answeredAt"]
+            and (m["lineAt"] or 0) <= m["answeredAt"]):
         return []
     return ask_commands.guess(m["ask"])
 

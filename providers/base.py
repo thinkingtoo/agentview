@@ -19,8 +19,8 @@ Optional: `pid`, `name`, `branch`, `title`, `prompt`, `said` (the raw text of
 the last thing the agent said -- the core shapes it), `waitingFor`,
 `startedAt`, `kind`, `tmux`, `bg`, `routine`, `boss`, `track` (a boss's
 track: the name of its tracker), `team`, `paths`, `doing`, `quietFor`,
-`toolFor`, `canJump`, `attach`, `noJump`, `extras`, `asking`, `failure`,
-`lastTool`, `procsUnknown`, `shellCpuAgo`, `turnOver`, `run`, `ancestors`,
+`toolFor`, `canJump`, `attach`, `noJump`, `extras`, `asking`, `answeredAt`,
+`failure`, `lastTool`, `procsUnknown`, `shellCpuAgo`, `turnOver`, `run`, `ancestors`,
 `remote`.
 
 `remote` is an https link to the same conversation on the web (Claude Code's
@@ -60,6 +60,10 @@ no model while the error holds -- so a provider must clear it itself.
 
 `lastTool` is the newest call the session made, answered or not:
 `{"text", "at"}`, said the way `doing` is, with `at` in milliseconds.
+
+`answeredAt` is when the person last answered a question of the session
+(`asking` kind `question`), in milliseconds, or absent. A command in the
+session's line older than that is not offered under the question open now.
 
 `procsUnknown` is True when the provider looked for what runs under a busy
 session and could not tell (the process folder would not answer, or this was

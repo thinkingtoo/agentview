@@ -149,6 +149,21 @@ class Guess(Base):
         tile = self.tile(session("a", status="waiting", waitingFor="input needed", asking=asking))
         self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
 
+    def test_a_second_question_after_the_first_was_answered_offers_nothing(self):
+        # Ticket paste/13: answering a question is no new prompt, so the line
+        # written for Q1 lasts the turn. Q2, opened after Q1 was answered and with
+        # no line of its own, is about something else: its card offers no command.
+        tile = self.question_open("Type this here: $ bash ~/notes/push-maple.sh",
+                                  answeredAt=int((time.time() + 60) * 1000))
+        self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
+
+    def test_a_line_written_after_the_last_answer_offers_its_command(self):
+        # The session wrote a new line for Q2: that one is Q2's.
+        tile = self.question_open("Type this here: $ bash ~/notes/push-maple.sh",
+                                  answeredAt=int((time.time() - 60) * 1000))
+        self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]),
+                         ("question", ["bash ~/notes/push-maple.sh"]))
+
     def test_a_concierge_holding_a_bosss_question_offers_its_command(self):
         # The concierge writes the boss's command into its own line, then asks:
         # its card is where the owner answers, so the command is copied there.
