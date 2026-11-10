@@ -86,15 +86,15 @@ is about, the whole text (up to 1,500 characters). The first of these that exist
    the goal itself. Hover "N of M" for the Done when boxes, ticked and not, in
    the file's order; click it to unfold them under the row, and again to fold
    them. "goal ↗" opens the goal file in a new tab as a sheaf page, to read and
-   edit. The link uses a hub that already runs: `sheaf status` is asked every
-   30 seconds for its port, and the page's path is read from `sheaf list`, or
-   for a goal the hub has not rendered, from `sheaf open FILE --no-browser`
-   once per goal per hub, right after a status of its own. All of it runs in a
-   thread of its own, so the poll never waits for sheaf (until the first answer
-   the hover says "asking sheaf"). A page already rendered keeps its title and
-   theme: only an open records them anew.
-   Neither the page nor the poll starts a hub, so without one the card says
-   "no goal page" and the hover says why. The hub
+   edit. The link uses a hub that already runs and never renders anything:
+   `sheaf status`, asked every 30 seconds in a thread of its own so the poll
+   never waits for sheaf, gives the port, and the page's address comes from
+   the roots sheaf keeps (`roots.json`, read only) by sheaf's own rule. So
+   neither the page nor the poll starts a hub, and a page keeps the title and
+   theme it was given. Until the first answer the hover says "asking sheaf";
+   without a hub the card says "no goal page" and the hover says why, and so
+   it does for a goal in a folder sheaf has never opened a file of (open the
+   goal once with `sheaf open FILE`). The hub
    listens on the laptop's 127.0.0.1 only, so on a page reached any other way,
    the phone over tailscale for one, the card says "goal on the laptop" and
    still shows the boxes. A browser never signed in to the hub gets sheaf's

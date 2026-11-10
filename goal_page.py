@@ -1,27 +1,29 @@
 """Where a track's goal opens as a page: the sheaf hub's URL of
 `<pm>/<track>.goal.md`, where it can be read and edited.
 
-Only a hub that already runs is used. `sheaf status` says whether one does and
-on which port. The path of the page (sheaf names a document by the root it
-lies in, which only sheaf knows) is read from `sheaf list` when sheaf has
-rendered the goal since the hub started: that renders nothing, so a title or a
-theme the page was given stays. Only a goal it has not rendered is opened, with
-`sheaf open FILE --no-browser`, once per goal per hub. `sheaf open` starts a
-hub when none runs, so every round of opens follows a status asked just
-before, in the same refresh, that said one does: the page and the poll never
-start a hub. (A hub that stops in the moment between the two is started again
-by that open; the window is one subprocess wide.)
+Only a hub that already runs is used, and nothing is ever rendered: `sheaf
+status` says whether a hub runs and on which port, and the page's address is
+worked out here from the roots sheaf keeps (`roots.json`, read and never
+written), by sheaf's own rule (SPEC 8.2): the root of a file is the top of its
+git work tree, else the deepest registered root that is no repository and
+holds it. The hub serves any markdown file of a registered root at
+`/<root>/<path>`, with the settings it kept for it. `sheaf open` is never run:
+it starts a hub when none runs, restarts one of an older version, and records
+a page's settings anew, wiping a title or theme it was given.
 
-sheaf takes a second or two to answer on a busy laptop, so the poll never
-waits for it: `of` answers from what was learnt, and a stale answer is
-refreshed by one thread of its own, the next poll showing what it found.
-Without a hub the card gets the reason instead of a link, and sheaf is asked
-again after `STATUS_EVERY` seconds.
+A goal whose root sheaf has not registered has no page yet; the card says so
+and how to give it one. sheaf takes a second or two to answer on a busy
+laptop, so the poll never waits for it: `of` answers from what was learnt, and
+a stale answer is refreshed by one thread of its own, the next poll showing
+what it found. Everything is asked again after `STATUS_EVERY` seconds.
 """
+import json
 import os
 import re
 import subprocess
 import threading
+from pathlib import Path
+from urllib.parse import quote
 
 import projects
 
@@ -29,23 +31,28 @@ SHEAF = "sheaf"
 STATUS_EVERY = 30               # seconds between two looks at the hub
 TIMEOUT = 10
 RUNNING = re.compile(r"hub running on 127\.0\.0\.1:(\d{1,5})\b")
-# The page `sheaf open` prints. sheaf percent-encodes every segment, so a path
-# of anything else is no page of it.
-PAGE = re.compile(r"http://127\.0\.0\.1:\d{1,5}(/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+\.md)\s*$", re.MULTILINE)
-# What `sheaf list` prints of a document: its page, and on the next line its file.
-LISTED = re.compile(r"^\s*http://127\.0\.0\.1:\d{1,5}(/[A-Za-z0-9._~%-]+(?:/[A-Za-z0-9._~%-]+)+\.md)[ \t]*\n"
-                    r"[ \t]+(/.+?) \u00b7 ", re.MULTILINE)
 NO_HUB = "no sheaf hub runs: start one with `sheaf start`"
 NO_SHEAF = "sheaf is not installed"
-MISSING = 127                   # the exit code of a command that is not there
+NO_ROOT = "sheaf has no root holding the goal file yet: open it once with `sheaf open FILE`"
+UNREADABLE = "sheaf gave an answer agentview could not read"
 ASKING = "asking sheaf for its hub"
-NOT_OPENED = "sheaf could not open the goal file"
+MISSING = 127                   # the exit code of a command that is not there
 
 _LOCK = threading.Lock()
 _hub = {"at": None, "port": None, "why": ""}
-_paths = {}                     # (port, goal file) -> (the page's path on that hub or None, when asked)
+_paths = {}                     # goal file -> the page's path on the hub, or None
 _wanted = set()                 # the goal files the cards have asked for
 _busy = [False]                 # a refresh is running
+
+
+def roots_file():
+    """sheaf's `roots.json`, where sheaf keeps it (its `paths.state_dir`)."""
+    home = os.environ.get("SHEAF_HOME")
+    if home:
+        return Path(home).expanduser() / "state" / "roots.json"
+    state = os.environ.get("XDG_STATE_HOME")
+    base = Path(state) if state and os.path.isabs(state) else Path.home() / ".local" / "state"
+    return base / "sheaf" / "roots.json"
 
 
 def forget():
@@ -60,8 +67,8 @@ def _run(args):
     """`(exit code, stdout)` of `sheaf ARGS`; a sheaf missing (`MISSING`) or too
     slow fails."""
     try:
-        done = subprocess.run([SHEAF, *args], capture_output=True, text=True, timeout=TIMEOUT,
-                              stdin=subprocess.DEVNULL)
+        done = subprocess.run([SHEAF, *args], capture_output=True, text=True, errors="replace",
+                              timeout=TIMEOUT, stdin=subprocess.DEVNULL)
     except OSError:
         return MISSING, ""
     except subprocess.SubprocessError:
@@ -69,58 +76,65 @@ def _run(args):
     return done.returncode, done.stdout
 
 
-def _due(key, now):
-    """Whether the page of `key` is to be asked of sheaf: never asked, or asked
-    and refused a while ago."""
-    path, at = _paths.get(key, (None, None))
-    return at is None or (path is None and now - at >= STATUS_EVERY)
+def _roots():
+    """[(name, real path, is a git root)] of what sheaf has registered; [] when
+    there is nothing to read or it is not what sheaf writes."""
+    try:
+        with roots_file().open(encoding="utf-8") as fh:
+            got = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(got, dict):
+        return []
+    return [(name, Path(os.path.realpath(r["path"])), r.get("git") is True) for name, r in got.items()
+            if isinstance(r, dict) and isinstance(r.get("path"), str) and os.path.isabs(r["path"])]
+
+
+def _git_top(folder):
+    for d in (folder, *folder.parents):
+        if (d / ".git").exists():
+            return d
+    return None
+
+
+def _address(goal, roots):
+    """The page's path of `goal` on the hub, by sheaf's rule, or None when no
+    registered root holds it (sheaf would register one on an open)."""
+    real = Path(os.path.realpath(goal))
+    top = _git_top(real.parent)
+    if top is not None:
+        root = next(((name, path) for name, path, _ in roots if path == top), None)
+    else:
+        inside = [(name, path) for name, path, git in roots if not git and path in real.parents]
+        root = max(inside, key=lambda r: len(r[1].parts), default=None)
+    if root is None:
+        return None
+    name, path = root
+    return "/" + "/".join(quote(seg, safe="") for seg in (name, *real.relative_to(path).parts))
 
 
 def _stale(now):
-    if _hub["at"] is None or now - _hub["at"] >= STATUS_EVERY:
-        return True
-    return _hub["port"] is not None and any(_due((_hub["port"], g), now) for g in _wanted)
-
-
-def _status(now, run):
-    code, out = run(["status"])
-    found = RUNNING.search(out) if code == 0 else None
-    with _LOCK:
-        _hub.update(at=now, port=int(found.group(1)) if found else None,
-                    why=NO_SHEAF if code == MISSING else NO_HUB)
-    return _hub["port"]
-
-
-def _listed(run):
-    """{file: page path} of what the hub has rendered since it started."""
-    code, out = run(["list"])
-    return {} if code else {file: path for path, file in LISTED.findall(out)}
+    return _hub["at"] is None or now - _hub["at"] >= STATUS_EVERY or any(g not in _paths for g in _wanted)
 
 
 def _refresh(now, run):
-    """Ask sheaf for its port, and then for the page of each goal not yet
-    found on it. Runs outside the lock: sheaf is slow, and a card must not
-    wait on it."""
+    """Ask sheaf for its port, and read its roots for each goal's page. Runs
+    outside the lock: sheaf is slow, and a card must not wait on it."""
     try:
-        asked = _hub["at"] is None or now - _hub["at"] >= STATUS_EVERY
-        port = _status(now, run) if asked else _hub["port"]
+        code, out = run(["status"])
+        found = RUNNING.search(out) if code == 0 else None
         with _LOCK:
-            due = sorted(g for g in _wanted if port is not None and _due((port, g), now))
-        if not due:
-            return
-        if not asked:                   # an open must follow a status of this very refresh
-            port = _status(now, run)
-            if port is None:
-                return
-        listed = _listed(run)
-        for goal in due:
-            path = listed.get(os.path.realpath(goal))
-            if path is None:
-                code, out = run(["open", goal, "--no-browser"])
-                page = PAGE.search(out) if code == 0 else None
-                path = page.group(1) if page else None
-            with _LOCK:
-                _paths[(port, goal)] = (path, now)
+            wanted = sorted(_wanted)
+        roots = _roots() if found else []
+        paths = {goal: _address(goal, roots) for goal in wanted}
+        with _LOCK:
+            _hub.update(at=now, port=int(found.group(1)) if found else None,
+                        why=NO_SHEAF if code == MISSING else NO_HUB)
+            _paths.update(paths)
+    except Exception:                   # whatever it was, the card says so and waits STATUS_EVERY
+        with _LOCK:
+            _hub.update(at=now, port=None, why=UNREADABLE)
+            _paths.update((goal, None) for goal in _wanted)
     finally:
         with _LOCK:
             _busy[0] = False
@@ -151,14 +165,11 @@ def of(track, now, run=_run, start=_start):
             with _LOCK:
                 _busy[0] = False
     with _LOCK:
-        port = _hub["port"]
-        if _hub["at"] is None:
+        if _hub["at"] is None or goal not in _paths:
             return {"url": None, "why": ASKING}
+        port, path = _hub["port"], _paths[goal]
         if port is None:
             return {"url": None, "why": _hub["why"]}
-        path, at = _paths.get((port, goal), (None, None))
-    if at is None:
-        return {"url": None, "why": ASKING}
     if path is None:
-        return {"url": None, "why": NOT_OPENED}
+        return {"url": None, "why": NO_ROOT}
     return {"url": f"http://127.0.0.1:{port}{path}", "why": ""}
