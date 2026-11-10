@@ -1270,13 +1270,15 @@ def needs_of(m):
 def guessed_commands_of(m, stuck):
     """The commands guessed in the ask the session wrote for the tile, or none.
 
-    Only the session's own line, which is the ask verbatim and shown as its
-    one thing left: an open dialog is shown over it, several things left are
-    only counted, and words read out of the transcript have had their `*`,
-    `_`, backticks and `#` taken out (`ask_from`), so a command in them is
-    not the command the session wrote.
+    Only the session's own line, which is the ask verbatim, with one thing
+    left: several things left are only counted, and words read out of the
+    transcript have had their `*`, `_`, backticks and `#` taken out
+    (`ask_from`), so a command in them is not the command the session wrote.
+    An open question keeps them: the rule is to write the line right before
+    asking, with the command to type in it, so that is where it sits (paste/12).
+    A permission prompt or another request brings its own words instead.
     """
-    if m["n"] != 1 or not (stuck and stuck["source"] == "line"):
+    if m["n"] != 1 or not m["blocked"] or not (stuck and stuck["source"] in ("line", "question")):
         return []
     return ask_commands.guess(m["ask"])
 
