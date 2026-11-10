@@ -170,6 +170,18 @@ def reads_as_slash_command(words, prompted):
     return first[1:] in SLASH_BUILTINS and bool(rest)
 
 
+def remote_command(rest):
+    """`ssh maple-box docker stop 8617f9d7515d`: what follows the host runs on
+    it, so it is judged as a command of its own, as after `sudo`. A host name
+    is no sign (`maple-box` is prose too) and an id holds letters, so without
+    this the command it runs would not count. Only the plain shape: a host,
+    then a command that is neither Claude's `!` nor a slash command."""
+    if len(rest) < 2 or rest[0].startswith("-") or rest[0] == "!":
+        return False
+    remote = rest[1:]
+    return remote[0] != "!" and not slash_command(remote[0]) and reads_as_command(" ".join(remote))
+
+
 class Hit(NamedTuple):
     start: int
     end: int
@@ -204,6 +216,8 @@ def reads_as_command(text):
         return reads_as_command(" ".join(rest))
     if first in WRAPPERS:
         return reads_as_command(" ".join(rest))
+    if first == "ssh" and remote_command(rest):
+        return True
     if first in KNOWN and any(ARGUMENT_SIGN.search(w) for w in rest):
         return True
     return (first in SUBCOMMANDS and rest[0] in SUBCOMMANDS[first]
