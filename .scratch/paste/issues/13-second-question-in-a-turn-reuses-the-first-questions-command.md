@@ -22,7 +22,7 @@
 
 **Claimed by:** Astrid 2026-11-11
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] A test: line with `n` 1 and a command, an AskUserQuestion answered after it in the same turn, a second question open: no guessed command
 - [x] The first question of a turn still offers its command (paste/12's tests stay green)
@@ -55,3 +55,8 @@ Headless Chrome screenshots of the three cards (Q1 on the fix server; Q2 on both
 
 - A transcript big enough that the reader starts from its tail can hold an answer whose `AskUserQuestion` call lies before the tail. Its name is then unknown and the answer is not counted: the card offers the command, as before this ticket.
 - The clocks: `lineAt` is the hook's `time.time()`, `answeredAt` Claude Code's record timestamp, both from the same machine.
+
+### Reviews
+
+- Code review 1 (Matt Pocock's, run by Astrid): no findings.
+- Codex review 1 (Opus fallback, run by Zeynep, Codex out of tokens): no P1 or P2, GO. Its test-only notes are ticket paste/14.
