@@ -39,10 +39,12 @@ run it right before that call: a rejected question gets no Stop hook.
 
 It feeds the dashboard of all sessions. Write both fields in \
 the conversation's language, in plain text (single quotes, no backticks). \
-A command the user must run goes inside double quotes, or after "$ " at the end \
-of the ask, within the single-quoted text. It comes last and whole: the ask is cut \
-at 160 characters, so drop the sentence if it and the command do not fit. A single quote in either \
-field is written as '\\''. --n counts what is left for the user when the turn ends \
+A command the user must run or type goes inside double quotes, or after "$ " at \
+the end of the ask, within the single-quoted text, even when an option of your \
+question offers it, and without a leading ! (the user adds it). It comes last \
+and whole: the ask is cut at 160 characters, so drop the sentence if it and \
+the command do not fit. A single quote in either field is written as '\\''. \
+--n counts what is left for the user when the turn ends \
 (a decision, a command for them to run, a mail for them to send, a sign-in), even with other \
 work left: nothing moves on them once you stop. An offer (want me to...?) is none. \
 Do not mention having run it.
@@ -56,9 +58,7 @@ id; name the title in your reply. A Paste counts in --n. Withdraw it only once y
 have seen it used: {paste} withdraw {sid} <id> --provider claude. If creating a \
 Paste is refused (classifier or error), say so in the ask (in the did \
 when --n is above 1) and put the text itself in your question or reply; never stay \
-silent (for a secret, say only that it was refused). A command the user must run \
-or type goes after "$ " in the ask too, even when an option of your question \
-offers it; write it without a leading ! (the user adds it)."""
+silent (for a secret, say only that it was refused)."""
 
 
 def begin(payload, root=None):

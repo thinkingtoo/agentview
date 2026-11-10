@@ -6,8 +6,12 @@
 
 **Blocked by:** None
 
-**Claimed by:** none
+**Claimed by:** Tarek 2026-11-11
 
-**Status:** needs-triage
+**Status:** in review (PR #12)
 
 - [ ] The rule is said once, and the tests pin the merged sentence
+
+## Comments
+
+**Tarek, 2026-11-11** (boss dispatch from Noor). The two sentences are one, in the first paragraph: a command the user must run or type goes inside double quotes, or after "$ " at the end of the ask, even when an option of the question offers it, and without a leading !. The text went from 2112 to 2047 characters; the 2150 ceiling stayed, the floor went from 2050 to 2000. The sentence test pins the merged sentence and that "$ " is said once. Tests ran on t-compute (26, OK). The bug hunt's two class c findings are tickets 03 and 04.

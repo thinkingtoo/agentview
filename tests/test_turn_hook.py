@@ -74,14 +74,17 @@ class Starting(unittest.TestCase):
         # a session must learn from this text alone how to leave a Paste.
         # c046ff0 (2026-11-01) took it to 2310 with no approval of that size;
         # on 2026-11-10 (ticket turn-hook-budget 01) its words were cut, every
-        # rule kept, to 2112 under the same 2150 ceiling.
+        # rule kept, to 2112 under the same 2150 ceiling. On 2026-11-11 (02) the
+        # "$ " rule, said twice, was said once, to 2047; the floor went back to
+        # 2000, and the ceiling stayed: 2150 is the size the owner approved on
+        # 2026-10-22, and a size above it goes back to them.
         sid = "00000000-0000-4000-8000-000000000000"
         with _commands_in("/home/alice/Projects/agentview/hooks"):
             said = turn_line.begin({"session_id": sid, "prompt": "go"},
                                    root=self.root)["hookSpecificOutput"]["additionalContext"]
         self.assertLess(len(said), 2150, len(said))
-        self.assertGreater(len(said), 2050, "the budget was 750 before 2026-10-19, 925 before the Paste paragraph, 1700 before ticket 10 and 2000 before 2026-11-10; if the text got "
-                                          "shorter, tighten the ceiling above to match")
+        self.assertGreater(len(said), 2000, "the budget was 750 before 2026-10-19, 925 before the Paste paragraph, 1700 before ticket 10, 2000 before 2026-11-10 and 2050 on 2026-11-10 only; if the text got "
+                                          "shorter, lower this floor to match (the 2150 ceiling is the owner's)")
 
     def test_the_session_is_told_how_to_leave_a_paste(self):
         # The only instruction a session gets for text the person must paste elsewhere:
@@ -120,16 +123,6 @@ class Starting(unittest.TestCase):
                          "for a secret, say only that it was refused"):
             self.assertIn(fragment, said)
 
-    def test_a_command_the_person_types_reaches_the_ask_line(self):
-        # A command offered only inside an AskUserQuestion option had no home (ticket 10, cause B).
-        # The copy button never adds the "!" (the person does), so the text says to leave it off.
-        said = turn_line.begin({"session_id": "s1", "prompt": "go"},
-                               root=self.root)["hookSpecificOutput"]["additionalContext"]
-        for fragment in ('must run or type goes after "$ " in the ask too',
-                         "even when an option of your question offers it",
-                         "without a leading ! (the user adds it)"):
-            self.assertIn(fragment, said)
-
     def test_the_size_does_not_depend_on_where_the_checkout_lives(self):
         sizes = set()
         for where in ("/a/hooks/team-line", "/home/alice/Projects/agentview-wt-06/hooks/team-line"):
@@ -148,13 +141,19 @@ class Starting(unittest.TestCase):
         self.assertNotIn("continue", got)
 
     def test_a_command_the_person_must_run_is_asked_for_in_double_quotes_or_after_a_dollar(self):
+        # A command offered only inside an AskUserQuestion option had no home (ticket 10, cause B),
+        # and the copy button never adds the "!" (the person does): both are in this one sentence.
         said = turn_line.begin({"session_id": "s1", "prompt": "go"},
                                root=self.root)["hookSpecificOutput"]["additionalContext"]
-        sentence = ('A command the user must run goes inside double quotes, or after "$ " at '
-                    "the end of the ask, within the single-quoted text.")
+        sentence = ('A command the user must run or type goes inside double quotes, or after "$ " at '
+                    "the end of the ask, within the single-quoted text, even when an option of your "
+                    "question offers it, and without a leading ! (the user adds it).")
         self.assertIn(sentence, said)
         # Straight after the sentence on plain text, which is where a session reads how to quote.
         self.assertIn("in plain text (single quotes, no backticks). " + sentence, said)
+        # Said once: until turn-hook-budget 02 the Paste paragraph said it a second time.
+        self.assertEqual(said.count('"$ "'), 1, said)
+        self.assertEqual(said.count("leading !"), 1, said)
 
     def test_a_single_quote_is_spelled_for_both_fields(self):
         # Both fields sit inside the hook's own single quotes (--did '...' --ask '...'), so a single
