@@ -286,12 +286,14 @@ def goal_file(track):
 
 def track_card(track):
     """What a track's goal file gives the card: (the Outcome paragraph, or "";
-    `{"status", "progress"}`)."""
+    `{"status", "progress", "boxes"}`). The boxes are the Done when list in the
+    file's order, each `{"text", "done"}`, its text as plain as the Outcome's."""
     lines = list(unfenced(goal_file(track)))
     status = next((m.group(1).upper() for m in map(STATUS.match, lines) if m), "")
     status = status if status in STATUS_WORDS else ""
-    boxes = [b.group(1) for b in map(BOX.match, section(lines, "done when")) if b]
-    total, done = len(boxes), sum(1 for b in boxes if b != " ")
+    boxes = [{"text": plain(clipped(line[b.end():].strip())), "done": b.group(1) != " "}
+             for line in section(lines, "done when") for b in [BOX.match(line)] if b]
+    total, done = len(boxes), sum(1 for b in boxes if b["done"])
     if status == "MET":
         progress = {"done": total, "total": total, "text": "done", "met": True}
     elif total:
@@ -302,7 +304,7 @@ def track_card(track):
     outcome = next((plain(clipped(" ".join(p))) for p in paragraphs(said)
                     if not (HEADING.match(p[0]) or HTML_BLOCK.match(p[0]))), "")
     outcome = "" if bare_tag(outcome) else outcome
-    return outcome, {"status": status, "progress": progress}
+    return outcome, {"status": status, "progress": progress, "boxes": boxes}
 
 
 # ------------------------------------------------------------- the repository

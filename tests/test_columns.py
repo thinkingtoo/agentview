@@ -44,6 +44,9 @@ class Base(unittest.TestCase):
         # Nor the live tmux server: a tile asks it which panes are concierges.
         self.addCleanup(setattr, fleet, "_pane_roles", fleet._pane_roles)
         fleet._pane_roles = lambda now=None: frozenset()
+        # Nor sheaf: a track's card asks it for the goal's page.
+        self.addCleanup(setattr, fleet, "GOAL_PAGE", fleet.GOAL_PAGE)
+        fleet.GOAL_PAGE = lambda track: None
 
     def roster(self, *sessions, provider=None):
         fleet.CONFIG.write_text(json.dumps(self.config))

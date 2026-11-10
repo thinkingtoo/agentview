@@ -81,6 +81,19 @@ is about, the whole text (up to 1,500 characters). The first of these that exist
    was ticked, so until one is ticked while agentview watches it says "ETA after
    the next box"; a box unticked starts the count again. The hover says what the
    estimate rests on.
+
+   Whatever line the card shows, your own included, a track's card also has
+   the goal itself. Hover "N of M" for the Done when boxes, ticked and not, in
+   the file's order; click it to unfold them under the row, and again to fold
+   them. "goal ↗" opens the goal file in a new tab as a sheaf page, to read and
+   edit. The link uses a hub that already runs: `sheaf status` is asked every
+   30 seconds for its port, and `sheaf open FILE --no-browser` once per goal
+   per hub for the page's path. Neither the page nor the poll starts a hub, so
+   without one the card says "no goal page" and the hover says why. The hub
+   listens on the laptop's 127.0.0.1 only, so on a page reached any other way,
+   the phone over tailscale for one, the card says "goal on the laptop" and
+   still shows the boxes. A browser never signed in to the hub gets sheaf's
+   "Not signed in" page, which says how to sign it in.
 3. **A repository's own words**: the first prose paragraph of its README, else of
    `AGENTS.md`, else of `CLAUDE.md` (headings, badges, rows of links, which
    includes a language switcher with its current language in plain text,

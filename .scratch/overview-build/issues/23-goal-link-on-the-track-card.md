@@ -16,3 +16,11 @@
 - [ ] The card shows "goal ↗" that opens that URL in a new tab, and the boxes on hover or unfold; a card whose own line overrides the Outcome still gets both -- evidence: a screenshot of a real track card
 - [ ] No hub is started by the page or by the poll; the URL is built from the running hub's port, and without a hub the link says so instead of pointing at nothing -- evidence: test on the no-hub case
 - [ ] README "What a project is about" says what the link and the list are
+
+## Comments
+
+**Leire 2026-11-11, decisions:**
+
+- **On the phone.** The sheaf hub listens on the laptop's 127.0.0.1 only, so the link would open nothing on the phone (tailscale serve) or on any page not served from loopback. There the card shows a greyed "goal on the laptop" with the reason on hover, the same way a tile with no terminal shows "no terminal". The boxes come from the server and show everywhere. The test is the page's own host (`location.hostname` is 127.0.0.1, localhost or [::1]), not the phone check `onPhone()`: a laptop browser reaching the dashboard over tailscale cannot open the hub either.
+- **No hub started.** `sheaf open` starts a hub when none runs, so `goal_page.py` runs it only after `sheaf status` has said one runs, and only once per goal per hub. A hub that stops in the moment between those two calls is started again by that open: the window is one subprocess wide, once per goal per hub. Closing it fully would mean speaking sheaf's private HTTP API with its key; not done.
+- **Fixtures.** Every goal text in the tests is invented; no real goal file is copied into the repo.
