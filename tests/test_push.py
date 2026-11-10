@@ -7,6 +7,7 @@ everything the page has -- prompts, paths, branches, Paste first lines -- and
 look at what would be sent.
 """
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -200,6 +201,7 @@ class Hub:
 class Once(unittest.TestCase):
     def setUp(self):
         self.state = Path(tempfile.mkdtemp()) / "push.json"
+        self.addCleanup(shutil.rmtree, self.state.parent, True)
         self.tokens = []
 
     def token(self):
