@@ -24,10 +24,10 @@ from test_columns import Base, session
 
 
 class Guess(Base):
-    def line(self, sid, ask, n=1, by="session"):
+    def line(self, sid, ask, n=1, by="session", at=None):
         """The session has written its own line for the turn it is in."""
         lines.begin_turn(sid, self.lines)
-        lines.write(sid, did="Notes page built.", ask=ask, n=n, by=by, root=self.lines)
+        lines.write(sid, did="Notes page built.", ask=ask, n=n, by=by, root=self.lines, at=at)
 
     def commands(self, ask, **kw):
         self.line("a", ask, **kw)
@@ -115,10 +115,10 @@ class Guess(Base):
     def test_a_quote_never_closed_is_not_a_command(self):
         self.assertEqual(self.commands('Run "git push origin feature/maple-no'), [])
 
-    def question_open(self, ask, n=1, by="session", **kw):
+    def question_open(self, ask, n=1, by="session", at=None, **kw):
         """The session wrote its line, then opened its question: the order
         the rule asks for, with the command in the ask beside the dialog."""
-        self.line("a", ask, n=n, by=by)
+        self.line("a", ask, n=n, by=by, at=at)
         asking = {"kind": "question", "questions": [{"question": "Publish the notes page?",
                                                      "header": "", "multi": False, "options": []}]}
         return self.tile(session("a", status="waiting", waitingFor="input needed",
@@ -160,13 +160,8 @@ class Guess(Base):
     def test_a_line_written_the_moment_the_last_answer_came_offers_nothing(self):
         # Ticket paste/14: the same millisecond counts as before the answer.
         at = float(int(time.time()) - 30)
-        lines.begin_turn("a", self.lines)
-        lines.write("a", did="Notes page built.", ask="Type this here: $ bash ~/notes/push-maple.sh",
-                    n=1, root=self.lines, at=at)
-        asking = {"kind": "question", "questions": [{"question": "Publish the notes page?",
-                                                     "header": "", "multi": False, "options": []}]}
-        tile = self.tile(session("a", status="waiting", waitingFor="input needed",
-                                 asking=asking, answeredAt=int(at * 1000)))
+        tile = self.question_open("Type this here: $ bash ~/notes/push-maple.sh",
+                                  at=at, answeredAt=int(at * 1000))
         self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]), ("question", []))
 
     def test_a_line_written_after_the_last_answer_offers_its_command(self):

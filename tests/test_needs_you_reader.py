@@ -146,6 +146,7 @@ class Asking(mp.Provider):
         self.assertIsNone(self.live()[0]["answeredAt"])
 
     def test_an_older_answer_read_after_a_newer_one_does_not_move_the_moment_back(self):
+        # Two questions answered out of order: the older answer is read last.
         self.open([tool(90, "AskUserQuestion", {"questions": QUESTIONS}),
                    tool(70, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2"),
                    answered(60, "toolu_2")])
