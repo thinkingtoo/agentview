@@ -418,7 +418,12 @@ so "git status" gets a button and "git history" does not; every other known
 program (`ls`, `rm`, `psql`, `find`, `cd`, `echo`, `ssh`, `python`, `claude`)
 needs a sign no plain sentence has after it: a flag, a path, a dot between
 letters, a bare number, a string, an `@` or `=`. `sudo` and its kind are
-judged by the command after them. A path starts a command only when it names a
+judged by the command after them, and so is what follows `ssh <host>`
+(`ssh maple-box docker stop 8617f9d7515d`) when the host looks like one: a
+hyphen, a digit, a dot or an `@` in it. "ssh and git push" is prose, and so,
+for want of a way to tell, is `ssh maple git status`; a hyphenated word of a
+sentence in the host's place ("ssh follow-up git push") is a known limit.
+A path starts a command only when it names a
 script (`./deploy.sh`) or a flag follows, because a path with spaces in it
 (`~/Google Drive/My Drive`) is a name. `VAR=1 cmd` counts when a command follows it ("N=12 users" does not). After a
 `$` the same evidence is needed, because `$` is also money and maths in a

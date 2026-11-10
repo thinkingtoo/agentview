@@ -907,6 +907,47 @@ class RealShapes(unittest.TestCase):
                 self.assertEqual(ask_commands.guess(ask), [])
 
 
+class SshHost(unittest.TestCase):
+    """`ssh <host>` runs what follows it on the host, so that is judged as a
+    command of its own, as after `sudo` (ticket 24). The host name is no sign:
+    `maple-box` is prose, and a container id holds letters."""
+
+    def test_a_command_run_over_ssh_is_offered_when_what_it_runs_is_a_command(self):
+        for ask, command in (
+                ("Stop the stuck container: $ ssh maple-box docker stop 8617f9d7515d",
+                 "ssh maple-box docker stop 8617f9d7515d"),
+                ("Restart it: $ ssh maple2 sudo systemctl restart maple-notes",
+                 "ssh maple2 sudo systemctl restart maple-notes"),
+                ('Run "ssh maple-box git status" and tell me?', "ssh maple-box git status")):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [command])
+
+    def test_prose_after_ssh_and_a_host_is_still_prose(self):
+        for ask in ("Then $ ssh maple-box and check the logs", "Then $ ssh maple-box docker setup",
+                    "Then $ ssh maple-box git history", "Then $ ssh maple-box docker",
+                    "Then $ ssh maple-box", 'Name it "ssh maple-box notes" or "ssh keys"?',
+                    "Then $ ssh maple-box ! git status"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_the_host_has_to_look_like_a_host_name(self):
+        # Hunt 24-1: a word of the sentence in the host's place ("ssh and git
+        # push") is two steps told in prose, and a mark stuck to the host is a
+        # list or a label. A host that is one plain word gets no button either:
+        # it cannot be told from "and", and a missing button is the safe side.
+        for ask in ('Run "ssh and git push" next?', "Then $ ssh then git pull", "Then $ ssh in git pull",
+                    '"ssh into git status"', 'Run "ssh or git push"?', "$ ssh to make test",
+                    "$ ssh me git log", 'Steps: "ssh maple-box, git status"', 'Try "ssh maple-box: git status"',
+                    "Then $ ssh maple-box: git status", "Then $ ssh maple git status"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_a_hex_id_alone_is_still_no_sign(self):
+        # The narrower of the two rules the ticket weighed: an id counts only
+        # through the command it belongs to, never as a sign by itself.
+        self.assertEqual(ask_commands.guess("Then $ cat 8617f9d7515d"), [])
+
+
 class GuessGrid(unittest.TestCase):
     """The property the buttons rest on, over a grid of realistic lines.
 
