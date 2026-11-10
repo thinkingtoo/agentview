@@ -41,9 +41,10 @@ It feeds the dashboard of all sessions. Write both fields in \
 the conversation's language, in plain text (single quotes, no backticks). \
 A command the user must run or type goes inside double quotes, or after "$ " at \
 the end of the ask, within the single-quoted text, even when an option of your \
-question offers it, and without a leading ! (the user adds it). It comes last and whole: the ask is cut \
-at 160 characters, so drop the sentence if it and the command do not fit. A single quote in either \
-field is written as '\\''. --n counts what is left for the user when the turn ends \
+question offers it, and without a leading ! (the user adds it). It comes last \
+and whole: the ask is cut at 160 characters, so drop the sentence if it and \
+the command do not fit. A single quote in either field is written as '\\''. \
+--n counts what is left for the user when the turn ends \
 (a decision, a command for them to run, a mail for them to send, a sign-in), even with other \
 work left: nothing moves on them once you stop. An offer (want me to...?) is none. \
 Do not mention having run it.
