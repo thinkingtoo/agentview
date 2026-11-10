@@ -26,10 +26,12 @@ The commits between 2026-10-19 and 2026-10-21 could not be measured the same way
 
 **Claimed by:** Tarek 2026-11-10
 
-**Status:** in review (PR #3)
+**Status:** done
 
-- [ ] The test passes on origin/dev, by a decision the owner made about the size (the 2150 ceiling he approved on 2026-10-22; ticked on merge)
-- [ ] The test's comment records that decision (date and size), as it does for the earlier ones
+- [x] The test passes on origin/dev, by a decision the owner made about the size (the 2150 ceiling he approved on 2026-10-22; ticked on merge)
+  Evidence: t-compute, origin/dev 0d702ac, 2026-11-11 (Piotr): `python3 -m unittest tests.test_turn_hook` "Ran 27 tests in 5.486s" / "OK"; full suite `python3 -m unittest discover -s tests` "Ran 2355 tests in 360.076s" / "OK (skipped=4)".
+- [x] The test's comment records that decision (date and size), as it does for the earlier ones
+  Evidence: `tests/test_turn_hook.py` lines 75-77 on 0d702ac: "on 2026-11-10 (ticket turn-hook-budget 01) its words were cut, every rule kept, to 2112 under the same 2150 ceiling".
 
 ## Comments
 
