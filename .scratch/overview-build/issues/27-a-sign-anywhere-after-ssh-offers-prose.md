@@ -2,6 +2,8 @@
 
 **What to build:** no button when the sign that makes `ssh` a command stands in prose after it. `ssh` is in `PROGRAMS`, so any word that matches `ARGUMENT_SIGN` anywhere after it counts, including one at the end of a sentence about ssh.
 
+**Claimed by:** Milos 2026-11-11
+
 **Blocked by:** None
 
 **Status:** needs-triage
