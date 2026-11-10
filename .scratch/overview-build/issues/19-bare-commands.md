@@ -4,6 +4,8 @@
 
 **Blocked by:** 18
 
+**Claimed by:** Idris 2026-11-10
+
 **Status:** needs-triage
 
 ## What ticket 18 learned (three Opus hunts, inputs in the session scratchpad, not kept)
