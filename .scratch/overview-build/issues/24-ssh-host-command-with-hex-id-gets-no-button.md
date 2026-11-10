@@ -49,4 +49,4 @@ Tests: `SshHost` in `tests/test_guessed_commands.py`, red before each change. `t
 
 - Matt's code-review: standards (ticket status and missing results, a long README line, `remote_command` named like a string) fixed; spec: nothing wrong, the quote path is wider than `$` but is the way the ticket names.
 - Codex review 1 (run by Rosa, Opus; Codex out of tokens), NO-GO, class b: any word took the host's place (`"ssh and git push"`, `$ ssh then git pull`) and a mark stuck to the host was kept (`"ssh maple-box, git status"`). Fixed test-first with `HOST`; the cost is no button for a one-word host (`ssh maple git status`), the safe side. The slash-command check was dead (`/` is already a sign) and is gone.
-- Found on origin/dev, not from this branch: ticket 25.
+- Found on origin/dev, not from this branch: ticket 27.

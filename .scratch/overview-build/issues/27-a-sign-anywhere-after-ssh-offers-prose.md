@@ -1,4 +1,4 @@
-# 25: A sign anywhere after `ssh` offers prose
+# 27: A sign anywhere after `ssh` offers prose
 
 **What to build:** no button when the sign that makes `ssh` a command stands in prose after it. `ssh` is in `PROGRAMS`, so any word that matches `ARGUMENT_SIGN` anywhere after it counts, including one at the end of a sentence about ssh.
 
