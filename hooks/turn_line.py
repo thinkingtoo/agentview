@@ -31,36 +31,34 @@ import lines          # noqa: E402  -- after the path is set
 WRITER = HERE / "team-line"
 PASTE = HERE / "paste"
 
-ASK = """Before this turn ends, run this once, as your last action. When the turn ends on \
-an AskUserQuestion, run it right before that call: a rejected question ends the turn \
-and no Stop hook follows.
+ASK = """Run this once, as your last action, or right before an AskUserQuestion that \
+ends the turn (if rejected, no Stop hook follows):
 
 {writer} {sid} --did '<one short sentence: where the work stands>' --n <number> \
 --ask '<the one thing you are blocked on -- only when the number is 1>'
 
-It feeds the dashboard that shows every running session. Write both fields in \
-the language of this conversation, in plain text (single quotes, no backticks). \
+It feeds the dashboard of all sessions. Write both fields in \
+the conversation's language, in plain text (single quotes, no backticks). \
 A command the user must run goes inside double quotes, or after "$ " at the end \
-of the ask, within the single-quoted text. The command comes last and must fit whole \
-in the ask, which is cut at 160 characters: if the sentence and the command together \
-pass that, drop the sentence. A single quote in either field is \
-written as '\\''. --n is how many things are left for the user when this turn ends: a decision, \
-a command for them to run, a mail for them to send, a sign-in. Count them even \
-when you have other work, since nothing moves on them once you stop. An offer \
-(want me to...?) is none. Do not mention having run it.
+of the ask, within the single-quoted text. It comes last and whole: the ask is cut \
+at 160 characters, so drop the sentence if both do not fit. A single quote in either \
+field is written as '\\''. --n counts what is left for the user when the turn ends \
+(a decision, a command for them to run, a mail to send, a sign-in), even with other \
+work left: nothing moves on them once you stop. An offer (want me to...?) is none. \
+Do not mention having run it.
 
 Text the user must paste elsewhere goes on their card, not the clipboard, unless \
-they ask for the clipboard in so many words (then use it). Put it in a file in a \
-private place (the session scratchpad, else a mktemp -d directory; never the repo \
-or /tmp at large), then run {paste} create {sid} <file> --title '<short>' \
---provider claude (add --secret for a password, token or key, then delete the \
-file). It prints the id; name the title in your reply. A Paste counts in --n. \
-Withdraw it only once you have seen it used (the mail is sent): {paste} withdraw \
-{sid} <id> --provider claude. If creating a Paste is refused (by the classifier or by an \
-error), say so in the ask (in the did when --n is above 1) and put the text itself in \
-your question or reply; never stay silent (for a secret, say only that it was refused). A command the user must run or type goes \
-after "$ " in the ask too, even when an option of your question offers it; write it \
-without a leading ! (the user adds it)."""
+they ask for the clipboard in so many words. Put it in a private file \
+(the session scratchpad, else a mktemp -d directory; never the repo or /tmp at \
+large), then run {paste} create {sid} <file> --title '<short>' --provider claude \
+(add --secret for a password, token or key, then delete the file). It prints the \
+id; name the title in your reply. A Paste counts in --n. Withdraw it only once you \
+have seen it used: {paste} withdraw {sid} <id> --provider claude. If creating a \
+Paste is refused (classifier or error), say so in the ask (in the did \
+when --n is above 1) and put the text itself in your question or reply; never stay \
+silent (for a secret, say only that it was refused). A command the user must run \
+or type goes after "$ " in the ask too, even when an option of your question \
+offers it; write it without a leading ! (the user adds it)."""
 
 
 def begin(payload, root=None):

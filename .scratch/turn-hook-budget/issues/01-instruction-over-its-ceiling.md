@@ -26,7 +26,11 @@ The commits between 2026-10-19 and 2026-10-21 could not be measured the same way
 
 **Claimed by:** Tarek 2026-11-10
 
-**Status:** needs-triage
+**Status:** ready-for-human
 
 - [ ] The test passes on origin/dev, by a decision the owner made about the size
 - [ ] The test's comment records that decision (date and size), as it does for the earlier ones
+
+## Comments
+
+**Tarek, 2026-11-10** (boss dispatch from Noor): the owner's side of "Left open" was settled by keeping the approved 2150 ceiling and cutting words, not rules. The text is 2070 characters, measured as the test measures it. Every rule stays: team-line before an AskUserQuestion that ends the turn, the command last and whole within 160 characters, the fields, quoting, the Paste rules, the refusal rule, the `$ ` rule. Two examples were dropped as words, not rules: "(then use it)" after the clipboard request, and "(the mail is sent)" after "seen it used". The floor moved from 2000 to 2050, and the test comment records the date and the size.
