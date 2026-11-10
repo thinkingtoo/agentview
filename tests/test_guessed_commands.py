@@ -949,6 +949,30 @@ class SshHost(unittest.TestCase):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
 
+    def test_a_sign_after_a_word_of_the_sentence_is_not_ssh_s(self):
+        # Ticket 27: the word right after `ssh` decides. A sign further on
+        # belongs to the sentence when that word is prose or a bare number.
+        for ask in ("Then $ ssh in and run ls -la", "Then $ ssh 42 git status",
+                    "Then $ ssh maple-box and run ls -la", 'Run "ssh in and run ls -la"?',
+                    "Then $ ssh maple then cd ~/notes"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_ssh_still_offers_the_shapes_sessions_write(self):
+        for ask, command in (
+                ("Then $ ssh -maple git status", "ssh -maple git status"),
+                ("Then $ ssh -t maple-box", "ssh -t maple-box"),
+                ("$ ssh -t deploy@10.0.0.5 /root/stage-maple/apply.sh",
+                 "ssh -t deploy@10.0.0.5 /root/stage-maple/apply.sh"),
+                ("Roll back? $ ssh maple-box 'bash /root/stage-maple/rollback.sh --yes'",
+                 "ssh maple-box 'bash /root/stage-maple/rollback.sh --yes'"),
+                ('$ ssh maple "cd /srv/maple && bash preflight.sh"', 'ssh maple "cd /srv/maple && bash preflight.sh"'),
+                ("$ ssh maple-box -L 8080:localhost:80", "ssh maple-box -L 8080:localhost:80"),
+                ("$ ssh deploy@10.0.0.5 kill 3412939", "ssh deploy@10.0.0.5 kill 3412939"),
+                ("$ ssh 10.0.0.5 uptime", "ssh 10.0.0.5 uptime")):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [command])
+
     def test_a_hex_id_alone_is_still_no_sign(self):
         # The narrower of the two rules the ticket weighed: an id counts only
         # through the command it belongs to, never as a sign by itself.

@@ -204,8 +204,8 @@ def reads_as_command(text):
         return reads_as_command(" ".join(rest))
     if first in WRAPPERS:
         return reads_as_command(" ".join(rest))
-    if first == "ssh" and reads_as_remote_command(rest):
-        return True
+    if first == "ssh":
+        return reads_as_ssh(rest)
     if first in KNOWN and any(ARGUMENT_SIGN.search(w) for w in rest):
         return True
     return (first in SUBCOMMANDS and rest[0] in SUBCOMMANDS[first]
@@ -217,6 +217,26 @@ def reads_as_command(text):
 # and git push", "ssh maple git status") cannot be told from the sentence's own,
 # and a mark stuck to it ("ssh maple-box, git status") is a list or a label.
 HOST = re.compile(r"(?=.*[A-Za-z])(?=.*[-\d.@])[A-Za-z0-9][\w.@-]*[A-Za-z0-9]")
+# Any one word with a letter and no mark stuck to it (`maple`), which a quote or
+# a flag after it makes a host.
+PLAIN_HOST = re.compile(r"(?=.*[A-Za-z])[\w.-]*\w")
+
+
+def reads_as_ssh(rest):
+    """The word right after `ssh` decides (ticket 27). With a sign of its own
+    (`-t`, `root@maple`, `10.0.0.5`) it is the command's, as before; a bare
+    number is a count in a sentence ("ssh 42 git status"). Otherwise it has to
+    be a host, followed by a quote or a flag (`ssh maple 'df -h'`), or by a
+    command of its own; a sign further on ("ssh in and run ls -la") is the
+    sentence's."""
+    if not rest:
+        return False
+    host = rest[0]
+    if ARGUMENT_SIGN.search(host) and not host.isdigit():
+        return True
+    if len(rest) < 2 or not PLAIN_HOST.fullmatch(host):
+        return False
+    return rest[1][0] in "'\"" or bool(FLAG.match(rest[1])) or reads_as_remote_command(rest)
 
 
 def reads_as_remote_command(rest):
