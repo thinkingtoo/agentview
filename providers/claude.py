@@ -423,7 +423,7 @@ def _blank_state():
             "failure": None, "tool": None, "over": False, "cwds": {},
             "title": "", "prompt": "", "branch": "", "tasks": {},
             "uses": {}, "done": set(), "said": "", "spoke": "", "msg": "",
-            "sent": collections.Counter(),
+            "answered": None, "sent": collections.Counter(),
             "paths": collections.deque(maxlen=400)}
 
 
@@ -505,6 +505,13 @@ def _absorb(state, text):
                                 os.path.normpath(hit.replace("~", home, 1)))
             elif part.get("type") == "tool_result" and part.get("tool_use_id"):
                 state["done"].add(part["tool_use_id"])
+                # When you last answered a question: a line written before
+                # that was written for the question answered, not for the
+                # next one of the same turn (ticket paste/13).
+                answered = _seconds_of(rec.get("timestamp"))
+                if (answered is not None and not rec.get("isSidechain")
+                        and state["uses"].get(part["tool_use_id"], ("", ""))[1] == "AskUserQuestion"):
+                    state["answered"] = max(state["answered"] or 0, answered)
     # Answered calls stop mattering, and neither set may grow without end.
     for tid in [t for t in state["uses"] if t in state["done"]][:-8]:
         state["uses"].pop(tid, None)
@@ -704,6 +711,7 @@ def _view(state, now):
             "sent": [name for name, _ in state["sent"].most_common()],
             "pending": pending,
             "calls": asked,
+            "answeredAt": int(state["answered"] * 1000) if state["answered"] else None,
             "failure": dict(state["failure"]) if state["failure"] else None,
             "lastTool": _last_tool(state["tool"]),
             # Whether its last word was the end of a turn, and the directories
@@ -868,7 +876,8 @@ def scan_session(path, now=None):
 
 EMPTY = {"title": "", "prompt": "", "branch": "", "paths": [], "said": "",
          "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": [],
-         "calls": [], "failure": None, "lastTool": None, "turnOver": False, "cwds": []}
+         "calls": [], "answeredAt": None, "failure": None, "lastTool": None, "turnOver": False,
+         "cwds": []}
 
 
 def _peers(cfg):
@@ -1085,6 +1094,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # thing it said to you. Neither is generated here.
         "waitingFor": rec.get("waitingFor") or "",
         "asking": asking_of(status, rec.get("waitingFor") or "", summary["calls"], rec.get("needs")),
+        "answeredAt": summary["answeredAt"],
         "said": summary["said"],
         "boss": boss,
         # The name of the boss's tracker, which is the project its workers

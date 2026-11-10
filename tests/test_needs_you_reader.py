@@ -8,6 +8,7 @@ copied into this repo.
 """
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -110,6 +111,19 @@ class Asking(mp.Provider):
         got = self.open([tool(30, "AskUserQuestion", {"questions": two})])
         self.assertEqual([q["question"] for q in got["questions"]],
                          ["Publish the notes page under /docs?", "Which folder?"])
+
+    def test_the_moment_the_last_question_was_answered_is_handed_over(self):
+        # Ticket paste/13: the core tells a line written for an answered question
+        # from one written for the question open now.
+        self.open([tool(90, "AskUserQuestion", {"questions": QUESTIONS}), answered(80),
+                   tool(30, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2")])
+        got = self.live()[0]["answeredAt"]
+        self.assertAlmostEqual(got / 1000, time.time() - 80, delta=5)
+
+    def test_an_answer_to_another_tool_is_not_an_answered_question(self):
+        self.open([tool(90, "Bash", {"command": "make test"}), answered(80),
+                   tool(30, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2")])
+        self.assertIsNone(self.live()[0].get("answeredAt"))
 
     def test_a_pending_bash_call_under_a_permission_prompt_is_the_tool_and_its_command(self):
         got = self.open([said(60), tool(30, "Bash", {"command": "git push origin feature/maple-notes",
