@@ -831,15 +831,17 @@ function contextOf(c) {
 
 // A track's progress, as the server counted it, and when it will be done at
 // the pace the server measured; the hover says what that pace rests on.
+// "N of M" lists the Done when boxes on hover and unfolds them on a click.
 function progressOf(c) {
   const p = c.track?.progress, boxes = c.track?.boxes || [];
+  if (!p) return "";
   const count = boxes.length
     ? `<button class="ov-count ${BOXES.has(c.project) ? "on" : ""}" aria-expanded="${BOXES.has(c.project)}"
-        title="${esc(boxes.map(b => `${b.done ? "☑" : "☐"} ${b.text}`).join("\n"))}">${esc(p?.text || "")}</button>`
-    : `<span>${esc(p?.text || "")}</span>`;
-  return p ? `<span class="ov-bar" aria-hidden="true"><i style="width:${
+        title="${esc(boxes.map(boxLine).join("\n"))}">${esc(p.text)}</button>`
+    : `<span>${esc(p.text)}</span>`;
+  return `<span class="ov-bar" aria-hidden="true"><i style="width:${
     p.total ? Math.round(Math.min(p.done, p.total) / p.total * 100) : 100}%"></i></span>${count}${
-    p.eta ? `<span class="ov-eta" title="${esc(p.eta.why)}">${esc(p.eta.text)}</span>` : ""}` : "";
+    p.eta ? `<span class="ov-eta" title="${esc(p.eta.why)}">${esc(p.eta.text)}</span>` : ""}`;
 }
 
 // The goal file's page on the sheaf hub, in a new tab. The hub listens on the
@@ -859,10 +861,11 @@ function goalLinkOf(c) {
 // The Done when boxes, ticked and not, in the goal file's order: on hover of
 // "N of M", and under the row once it is clicked (until it is clicked again).
 const BOXES = new Set();      // projects whose boxes are unfolded
+const boxLine = b => `${b.done ? "☑" : "☐"} ${b.text}`;
 function boxesOf(c) {
   const boxes = c.track?.boxes || [];
   return boxes.length && BOXES.has(c.project) ? `<ul class="ov-boxes">${boxes.map(b =>
-    `<li class="${b.done ? "done" : ""}"><span aria-hidden="true">${b.done ? "☑" : "☐"}</span> ${esc(b.text)}</li>`).join("")}</ul>` : "";
+    `<li class="${b.done ? "done" : ""}">${esc(boxLine(b))}</li>`).join("")}</ul>` : "";
 }
 
 function notesLinkOf(c) {

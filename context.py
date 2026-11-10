@@ -291,8 +291,9 @@ def track_card(track):
     lines = list(unfenced(goal_file(track)))
     status = next((m.group(1).upper() for m in map(STATUS.match, lines) if m), "")
     status = status if status in STATUS_WORDS else ""
+    marked = [(line, BOX.match(line)) for line in section(lines, "done when")]
     boxes = [{"text": plain(clipped(line[b.end():].strip())), "done": b.group(1) != " "}
-             for line in section(lines, "done when") for b in [BOX.match(line)] if b]
+             for line, b in marked if b]
     total, done = len(boxes), sum(1 for b in boxes if b["done"])
     if status == "MET":
         progress = {"done": total, "total": total, "text": "done", "met": True}

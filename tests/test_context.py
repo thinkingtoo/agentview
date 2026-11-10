@@ -231,7 +231,7 @@ class Tracks(Cards):
                                                  {"text": "refund", "done": True}])
 
     def test_the_boxes_and_the_goal_page_come_with_the_card_whether_or_not_your_line_beats_the_goal(self):
-        fleet.GOAL_PAGE = lambda track: {"url": f"http://127.0.0.1:27419/claude/pm/{track}.goal.md", "why": ""}
+        fleet.GOAL_PAGE = lambda track, now: {"url": f"http://127.0.0.1:27419/claude/pm/{track}.goal.md", "why": ""}
         for lines, source in (({}, "goal"), ({"track:checkout": "Mine"}, "own")):
             with self.subTest(source=source):
                 self.config = {"project_lines": lines}
@@ -249,7 +249,7 @@ class Tracks(Cards):
 
     def test_the_goal_page_is_asked_only_for_a_track(self):
         asked = []
-        fleet.GOAL_PAGE = lambda track: asked.append(track)
+        fleet.GOAL_PAGE = lambda track, now: asked.append(track)
         self.claude(sess("p", self.loom, name="Femi"))
         self.assertEqual(asked, [])
 
