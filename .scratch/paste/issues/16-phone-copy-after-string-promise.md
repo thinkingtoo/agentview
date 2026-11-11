@@ -9,3 +9,9 @@
 **Status:** ready-for-human
 
 - [ ] Thierry copies a test Paste from Safari on his phone, over the tailscale serve address, and the text arrives whole -- evidence: his word, with the Paste's title and the time
+
+## Comments
+
+**Runa, 2026-11-11.** If the phone check fails, two ways back are open. Codex review 2 of PR #23 (Opus) suggested both; neither has been tried.
+- Keep the Blob and put a second U+FEFF in front of a text that starts with one. This works only if every engine drops exactly one mark; the probe of ticket 15 never tried two.
+- Choose the item's content by a feature check.
