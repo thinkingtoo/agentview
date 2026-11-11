@@ -16,4 +16,12 @@
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+**Claimed by:** Anton 2026-11-11
+
+**Status:** done
+
+- [x] Paste/12's open point is tested: one roster with a boss and its concierge holding the question, and the command on both cards
+  The test is `test_a_bosss_command_is_on_its_card_and_on_its_concierges_holding_the_question` (case A of paste/12's sandbox table, as a unit test). It replaces `test_a_concierge_holding_a_bosss_question_offers_its_command`. No code changed: `guessed_commands_of` has no concierge path and needs none, so the new test is green on dev.
+  Evidence, red (t-compute, mutation `if m["boss"]: return []` in `guessed_commands_of`, then reverted): the new test `FAIL`s with `(['boss'], 'line', [])`, and the old test (from origin/dev) passes against the same mutation.
+  Evidence, green (t-compute): the same 297-test run as turn-hook-budget 07, "OK".
+

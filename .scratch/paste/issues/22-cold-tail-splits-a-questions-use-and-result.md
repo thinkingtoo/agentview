@@ -19,4 +19,12 @@
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+**Claimed by:** Anton 2026-11-11
+
+**Status:** done
+
+- [x] An answer whose question lies before the cold-start cut still sets `answeredAt`
+  Fix: `providers/claude.py` `_absorb()`. When the call a tool result answers is unknown, the record itself is checked (`_answers`). Claude Code writes `toolUseResult` with `questions` and `answers` beside an AskUserQuestion's result; this was checked on real transcripts on 2026-11-11. A Bash result (`stdout`/`stderr`) does not count.
+  Evidence, red (t-compute, before the fix): `tests.test_needs_you_reader` `FAIL: test_an_answer_whose_question_lies_before_a_cold_start_is_still_an_answered_question`, `AssertionError: unexpectedly None` (and the test asserts that `toolu_1` is absent from `uses`, so the cut did fall between the two records).
+  Evidence, green (t-compute, after): the 297-test run above "OK", plus the 12 other test modules that import `providers.claude` (`test_boss_marker` ... `test_stuck_kinds_reader`), "Ran 341 tests in 19.244s" / "OK". `test_another_tools_result_past_a_cold_start_is_not_an_answered_question` covers the negative case.
+  The shape, counted on 2026-11-11 over the 400 most recent transcripts: AskUserQuestion results in `type: user` records with a timestamp, 122 of 122 carry `toolUseResult` with `answers` and `questions` (concierge-relayed answers included); 9 carry a string (the guard refusing the question). 50 more records hold the same text with no `toolUseResult`, but they are `type: api-request-blob` with no timestamp, which neither the warm nor the cold path counts (`_seconds_of` gives None). A refusal is counted as answered when its call is known and not after a cold cut; the cold behaviour is the right one, and the warm one predates this ticket.

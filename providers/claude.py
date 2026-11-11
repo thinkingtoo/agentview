@@ -508,9 +508,13 @@ def _absorb(state, text):
                 # When you last answered a question: a line written before
                 # that was written for the question answered, not for the
                 # next one of the same turn (ticket paste/13).
+                # A cold start reads only the tail, which may begin between a
+                # question and its answer (ticket paste/22): the answer's own
+                # record says what it answers.
                 answered = _seconds_of(rec.get("timestamp"))
-                if (answered is not None and not rec.get("isSidechain")
-                        and state["uses"].get(part["tool_use_id"], ("", ""))[1] == "AskUserQuestion"):
+                call = state["uses"].get(part["tool_use_id"])
+                asked = call[1] == "AskUserQuestion" if call else _answers(rec)
+                if answered is not None and not rec.get("isSidechain") and asked:
                     state["answered"] = max(state["answered"] or 0, answered)
     # Answered calls stop mattering, and neither set may grow without end.
     for tid in [t for t in state["uses"] if t in state["done"]][:-8]:
@@ -524,6 +528,13 @@ def _absorb(state, text):
         state["done"].discard(tid)
     _prune(state)
     return state
+
+
+def _answers(rec):
+    """Whether a record is the owner's answers to an AskUserQuestion: Claude
+    Code writes them, with the questions, beside the tool result."""
+    result = rec.get("toolUseResult")
+    return isinstance(result, dict) and "answers" in result and "questions" in result
 
 
 def _cold(state, path):
