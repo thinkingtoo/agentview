@@ -11,6 +11,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from providers import base, claude
@@ -156,6 +157,32 @@ class Asking(mp.Provider):
         self.assertAlmostEqual(got / 1000, time.time() - 60, delta=5)
         # And it was weighed: a call forgotten before its answer came would pass too.
         self.assertIn("toolu_1", claude._cache[("state", str(self.transcript))]["uses"])
+
+    def test_an_answer_whose_question_lies_before_a_cold_start_is_still_an_answered_question(self):
+        # Ticket paste/22: read cold (agentview restarted), only the tail of a big transcript is
+        # absorbed. The cut can fall between a question and its answer; the answer's own record
+        # says what it answered, so the line written for that question still counts as answered.
+        reply = {**answered(80), "toolUseResult": {
+            "questions": QUESTIONS, "answers": {QUESTIONS[0]["question"]: "Yes, under /docs"}}}
+        records = [text(100), tool(90, "AskUserQuestion", {"questions": QUESTIONS}), reply,
+                   tool(30, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2")]
+        tail = sum(len(json.dumps(r)) + 1 for r in records[2:])
+        with mock.patch.object(base, "COLD_BYTES", tail):
+            self.open(records)
+        self.assertNotIn("toolu_1", claude._cache[("state", str(self.transcript))]["uses"],
+                         "the cut must fall between the question and its answer")
+        got = self.live()[0]["answeredAt"]
+        self.assertIsNotNone(got)
+        self.assertAlmostEqual(got / 1000, time.time() - 80, delta=5)
+
+    def test_another_tools_result_past_a_cold_start_is_not_an_answered_question(self):
+        reply = {**answered(80), "toolUseResult": {"stdout": "ok", "stderr": "", "interrupted": False}}
+        records = [text(100), tool(90, "Bash", {"command": "make test"}), reply,
+                   tool(30, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2")]
+        tail = sum(len(json.dumps(r)) + 1 for r in records[2:])
+        with mock.patch.object(base, "COLD_BYTES", tail):
+            self.open(records)
+        self.assertIsNone(self.live()[0]["answeredAt"])
 
     def test_a_pending_bash_call_under_a_permission_prompt_is_the_tool_and_its_command(self):
         got = self.open([said(60), tool(30, "Bash", {"command": "git push origin feature/maple-notes",

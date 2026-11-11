@@ -17,4 +17,11 @@
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+**Claimed by:** Anton 2026-11-11
+
+**Status:** done
+
+- [x] The test moves both commands through `_commands_in` and states the real dependency: three times the hooks directory
+  Evidence, red (t-compute, test through `_commands_in`, still subtracting the path once): `tests.test_turn_hook` `FAIL: test_the_size_grows_with_the_hooks_directory_and_nothing_else_of_the_checkout`, `AssertionError: 2 != 1`.
+  Evidence, green (t-compute, subtracting `3 * len(hooks)`): `tests.test_turn_hook tests.test_guessed_commands tests.test_needs_you_reader tests.test_movement_reader tests.test_movement_provider` "Ran 297 tests in 22.409s" / "OK". The test was renamed from `test_the_size_does_not_depend_on_where_the_checkout_lives`, and its comment gives the rule: a hooks directory k characters longer than the ceiling tests' 36 adds 3k. `hooks/turn_line.py` is unchanged.
+
