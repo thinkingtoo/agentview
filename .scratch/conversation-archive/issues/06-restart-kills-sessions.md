@@ -219,3 +219,49 @@ Where the 43 `claude` processes are: 39 in `tmux-spawn-<uuid>.scope` (scopes tmu
 **4. The login restore ran through `scope.wrap` after every boot since the change.** The event log (`~/.local/state/agentview/events.jsonl` and `.1`) only goes back to 2026-10-31. It has no `scope.*` or restore event: `scope.unavailable` is the only scope event the code writes, and it never appears. The user journal has `app-agentview\x2drestore@autostart.service` starting on 2026-10-12 (×3), 10-13, 10-16, 10-18 (×2), 10-20, 10-27 (×2), 11-01, 11-03 and 11-05. On each of those days it also has `Started run-….scope - agentview: tmux server`, and on every day except 10-13 and 11-05 an `agentview: wezterm window` scope. The run that counts is 2026-11-05: `16:02:08 Started run-p8509-i25065.scope - agentview: tmux server`, followed by `resumed 22 session(s)` at 16:03:10.
 
 **Conclusion.** Yes: the drop-in can be removed today without killing a session. `agentview.service`'s cgroup holds only `server.py`, and every session sits in the scoped tmux server or in Plasma's WezTerm unit, both outside the service. The failed WezTerm line in the check does not depend on the drop-in. The window is outside the service either way, but its Plasma unit has `OOMPolicy=stop`, which is the 2026-09-28 failure mode: one OOM kill there takes down the window and the 4 sessions in its tabs. That needs a separate fix (open WezTerm through agentview, or restart it once through the restore), not the drop-in.
+
+## Drop-in removed, 2026-11-11
+
+Ordered by the boss on the owner's decision of about 01:00 on 2026-11-11 ("Yes, remove it"). Run by Teodor.
+
+**Where it stands: stopped at step 3.** Steps 1 and 2 ran. The `rm` of `switchover.conf` was refused by the Claude Code auto-mode classifier ("Irreversible Local Destruction"), so the drop-in is still in place, no `daemon-reload` and no restart were run, and nothing on the live system was changed. The rest waits for the owner.
+
+**1. Before (01:02:12).** The drop-in's text, which is also the rollback:
+
+```
+$ cat ~/.config/systemd/user/agentview.service.d/switchover.conf
+[Service]
+KillMode=process
+OOMPolicy=continue
+$ ls ~/.config/systemd/user/agentview.service.d/
+extra-origins.conf
+switchover.conf
+$ systemctl --user show agentview.service -p KillMode -p OOMPolicy -p ControlGroup -p MainPID -p InvocationID -p ActiveEnterTimestamp
+ActiveEnterTimestamp=Thu 2026-11-05 19:01:51 CET
+InvocationID=141845b7c408445cbddebd485f8e98d4
+MainPID=2594842
+OOMPolicy=continue
+ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/agentview.service
+KillMode=process
+```
+
+**2. The check block, run as written.**
+
+```
+pid 8512 in run-p8509-i25065.scope
+Description=agentview: tmux server
+OOMPolicy=continue
+pid 22119 in app-org.wezfurlong.wezterm@3004c8e51b5349fc8eb3766be6d8ac4a.service
+Description=WezTerm
+OOMPolicy=stop
+```
+
+The `cgroup.procs` line gave no output (grep exit 1). The service's cgroup holds one process, `2594842 python3 Thu Nov  5 19:01:51 2026`. Same result as on 2026-11-10: no tmux, wezterm or claude process in `agentview.service`, so the removal could go ahead; the WezTerm window is still in Plasma's unit with `OOMPolicy=stop`, which is ticket 07 and does not depend on the drop-in.
+
+**3. Not done.** `rm ~/.config/systemd/user/agentview.service.d/switchover.conf` was refused by the classifier. Steps 4 to 6 (daemon-reload, restart snapshot, stop reading, README, boxes) have not run. To do it by hand:
+
+```
+rm ~/.config/systemd/user/agentview.service.d/switchover.conf && systemctl --user daemon-reload && systemctl --user show agentview.service -p KillMode -p OOMPolicy
+```
+
+Expected: `KillMode=control-group`, `OOMPolicy=stop`. Rollback: write the three lines above back into `switchover.conf` and run `systemctl --user daemon-reload`.
