@@ -56,6 +56,12 @@ class Asking(mp.Provider):
         path.write_text(json.dumps(rec))
         return self.live()[0]["asking"]
 
+    def open_cold(self, records, cut):
+        """`open`, read cold: the first sight of the file absorbs only from `records[cut]` on."""
+        tail = sum(len(json.dumps(r)) + 1 for r in records[cut:])
+        with mock.patch.object(base, "COLD_BYTES", tail):
+            return self.open(records)
+
     def test_an_unanswered_question_is_the_question_with_its_options(self):
         got = self.open([text(60), tool(30, "AskUserQuestion", {"questions": QUESTIONS})])
         self.assertEqual(got, {"kind": "question", "questions": [{
@@ -166,9 +172,7 @@ class Asking(mp.Provider):
             "questions": QUESTIONS, "answers": {QUESTIONS[0]["question"]: "Yes, under /docs"}}}
         records = [text(100), tool(90, "AskUserQuestion", {"questions": QUESTIONS}), reply,
                    tool(30, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2")]
-        tail = sum(len(json.dumps(r)) + 1 for r in records[2:])
-        with mock.patch.object(base, "COLD_BYTES", tail):
-            self.open(records)
+        self.open_cold(records, cut=2)
         self.assertNotIn("toolu_1", claude._cache[("state", str(self.transcript))]["uses"],
                          "the cut must fall between the question and its answer")
         got = self.live()[0]["answeredAt"]
@@ -179,9 +183,7 @@ class Asking(mp.Provider):
         reply = {**answered(80), "toolUseResult": {"stdout": "ok", "stderr": "", "interrupted": False}}
         records = [text(100), tool(90, "Bash", {"command": "make test"}), reply,
                    tool(30, "AskUserQuestion", {"questions": QUESTIONS}, "toolu_2", "msg_2")]
-        tail = sum(len(json.dumps(r)) + 1 for r in records[2:])
-        with mock.patch.object(base, "COLD_BYTES", tail):
-            self.open(records)
+        self.open_cold(records, cut=2)
         self.assertIsNone(self.live()[0]["answeredAt"])
 
     def test_a_pending_bash_call_under_a_permission_prompt_is_the_tool_and_its_command(self):

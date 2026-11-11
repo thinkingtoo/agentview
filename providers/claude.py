@@ -513,8 +513,8 @@ def _absorb(state, text):
                 # record says what it answers.
                 answered = _seconds_of(rec.get("timestamp"))
                 call = state["uses"].get(part["tool_use_id"])
-                if (answered is not None and not rec.get("isSidechain")
-                        and (call[1] == "AskUserQuestion" if call else _answers(rec))):
+                asked = call[1] == "AskUserQuestion" if call else _answers(rec)
+                if answered is not None and not rec.get("isSidechain") and asked:
                     state["answered"] = max(state["answered"] or 0, answered)
     # Answered calls stop mattering, and neither set may grow without end.
     for tid in [t for t in state["uses"] if t in state["done"]][:-8]:
