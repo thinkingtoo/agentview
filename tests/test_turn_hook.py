@@ -77,7 +77,9 @@ class Starting(unittest.TestCase):
         # rule kept, to 2112 under the same 2150 ceiling. On 2026-11-11 (02) the
         # "$ " rule, said twice, was said once, to 2047; the floor went back to
         # 2000, and the ceiling stayed: 2150 is the size the owner approved on
-        # 2026-10-22, and a size above it goes back to them.
+        # 2026-10-22, and a size above it goes back to them. On 2026-11-11 (06) the
+        # ceiling had to hold for the longest id the store accepts too (the test
+        # below); three phrasings were cut, every rule kept, to 2009 here.
         sid = "00000000-0000-4000-8000-000000000000"
         with _commands_in("/home/alice/Projects/agentview/hooks"):
             said = turn_line.begin({"session_id": sid, "prompt": "go"},
@@ -85,6 +87,17 @@ class Starting(unittest.TestCase):
         self.assertLess(len(said), 2150, len(said))
         self.assertGreater(len(said), 2000, "the budget was 750 before 2026-10-19, 925 before the Paste paragraph, 1700 before ticket 10, 2000 before 2026-11-10 and 2050 on 2026-11-10 only; if the text got "
                                           "shorter, lower this floor to match (the 2150 ceiling is the owner's)")
+
+    def test_the_ceiling_holds_for_the_longest_id_the_store_accepts(self):
+        # A UUID is what Claude Code sends, but the store accepts 80 characters, and the id is in
+        # the text more than once: at 71 it went past 2150 (turn-hook-budget 06).
+        sid = "x" * 80
+        self.assertTrue(lines.SAFE.fullmatch(sid))
+        self.assertFalse(lines.SAFE.fullmatch(sid + "x"), "the store takes longer ids now: measure with the longest")
+        with _commands_in("/home/alice/Projects/agentview/hooks"):
+            said = turn_line.begin({"session_id": sid, "prompt": "go"},
+                                   root=self.root)["hookSpecificOutput"]["additionalContext"]
+        self.assertLess(len(said), 2150, len(said))
 
     def test_the_session_is_told_how_to_leave_a_paste(self):
         # The only instruction a session gets for text the person must paste elsewhere:
@@ -134,6 +147,13 @@ class Starting(unittest.TestCase):
 
     def test_a_payload_with_no_session_does_nothing(self):
         self.assertEqual(turn_line.begin({"prompt": "go"}, root=self.root), {})
+
+    def test_a_session_id_the_store_refuses_gets_no_instruction(self):
+        # The id is pasted unquoted into a command the session runs: "a b; touch X" would have it
+        # run `touch X --did ...` (turn-hook-budget 05). The store refuses such an id; so does this.
+        for sid in ("a b; touch X", "../x", 5, ["x"]):
+            with self.subTest(sid=sid):
+                self.assertEqual(turn_line.begin({"session_id": sid, "prompt": "go"}, root=self.root), {})
 
     def test_it_never_blocks(self):
         got = turn_line.begin({"session_id": "s1", "prompt": "go"}, root=self.root)

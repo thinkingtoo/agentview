@@ -45,13 +45,13 @@ question offers it, and without a leading ! (the user adds it). It comes last \
 and whole: the ask is cut at 160 characters, so drop the sentence if it and \
 the command do not fit. A single quote in either field is written as '\\''. \
 --n counts what is left for the user when the turn ends \
-(a decision, a command for them to run, a mail for them to send, a sign-in), even with other \
+(a decision, a command to type, a mail to send, a sign-in), even with other \
 work left: nothing moves on them once you stop. An offer (want me to...?) is none. \
 Do not mention having run it.
 
 Text the user must paste elsewhere goes on their card, not the clipboard, unless \
-they ask for the clipboard in so many words. Put it in a private file \
-(the session scratchpad, else a mktemp -d directory; never the repo or /tmp at \
+they ask for the clipboard by name. Put it in a private file \
+(the session scratchpad, else mktemp -d; never the repo or /tmp at \
 large), then run {paste} create {sid} <file> --title '<short>' --provider claude \
 (add --secret for a password, token or key, then delete the file). It prints the \
 id; name the title in your reply. A Paste counts in --n. Withdraw it only once you \
@@ -64,7 +64,8 @@ silent (for a secret, say only that it was refused)."""
 def begin(payload, root=None):
     """Forget the last line, start a turn, and say what to run this turn."""
     sid = payload.get("session_id")
-    if not sid:
+    # The id goes unquoted into commands the session runs: only one the store accepts.
+    if not isinstance(sid, str) or not lines.SAFE.fullmatch(sid):
         return {}
     lines.begin_turn(sid, root)
     return {"hookSpecificOutput": {
