@@ -10,8 +10,8 @@ Fix: start the write inside the tap with `navigator.clipboard.write([new Clipboa
 
 **Claimed by:** Tarek 2026-10-30
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] The clipboard write starts before the fetch resolves -- evidence: Playwright Chromium, iPhone 13 emulation, `fetch` of `/api/paste_text` delayed 600 ms: log `['clipboard.write called', 'fetch resolved']`, clipboard read back `'test copy from Tarek\n'`, button "copied"
 - [x] Copy still works on the desktop -- evidence: same check at 1600x1000, same log and clipboard; tests/test_paste.py 85 passed
-- [ ] Thierry confirms on his phone (Safari is the browser the cause is about; no WebKit here to run it)
+- [x] Thierry confirms on his phone (Safari is the browser the cause is about; no WebKit here to run it) -- evidence: Thierry, 2026-11-11 about 01:00, through the concierge Elias, on the test Paste 'Phone copy test (paste/11)' from Safari on his phone: 'Yes, it copies'.
