@@ -229,12 +229,12 @@ def reads_as_ssh(rest):
     and run ls -la") is the sentence's.
 
     Otherwise that word is the host, and what follows has to say so: a quote
-    with a sign in it (`ssh maple 'df -h'`, not "ssh to 'maple-box'"), or,
-    after a word that looks like a host, a flag (`ssh maple-box -L
-    8080:localhost:80`) or a command of its own, judged as after `sudo`. A
-    host name is no sign (`maple-box` is prose too) and an id holds letters,
-    so without this `ssh maple-box docker stop 8617f9d7515d` would not count.
-    Claude's `!` after the host is not the plain shape."""
+    that holds a command (`ssh maple 'df -h'`, not "ssh to 'maple-box'" or
+    "ssh on '2222'"), or, after a word that looks like a host, a flag
+    (`ssh maple-box -L 8080:localhost:80`) or a command of its own, judged as
+    after `sudo`. A host name is no sign (`maple-box` is prose too) and an id
+    holds letters, so without this `ssh maple-box docker stop 8617f9d7515d`
+    would not count. Claude's `!` after the host is not the plain shape."""
     if not rest:
         return False
     word = rest[0]
@@ -245,10 +245,12 @@ def reads_as_ssh(rest):
     remote = " ".join(rest[1:])
     quoted = SHELL_RUN.match(remote)
     if quoted:
-        # A quoted name is the sentence's ("ssh to 'maple-box'"): what the
-        # quote holds needs a sign, and after a word that is no host name
+        # A quoted name, port or path is the sentence's ("ssh to 'maple-box'",
+        # "ssh on '2222'"): what the quote holds has to read as a command, with
+        # `.` as the shell's `source`, and after a word that is no host name
         # nothing may follow it.
-        return (any(ARGUMENT_SIGN.search(w) for w in quoted.group()[1:-1].split())
+        inside = re.sub(r"^\s*\.\s", "source ", quoted.group()[1:-1])
+        return (reads_as_command(inside)
                 and (HOST.fullmatch(word) is not None or quoted.end() == len(remote)))
     after = rest[1]
     return (HOST.fullmatch(word) is not None and after != "!"

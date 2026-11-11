@@ -959,15 +959,26 @@ class SshHost(unittest.TestCase):
                 self.assertEqual(ask_commands.guess(ask), [])
 
     def test_a_quote_after_the_host_has_to_hold_a_command(self):
-        # Hunt 27-1: a quoted name after ssh is the sentence's ("ssh to
-        # 'maple-box'"). What the quote holds needs a sign, and after a plain
-        # word that is no host name the quote has to end the command.
+        # Hunts 27-1 and 27-2: a quoted name, port or path after ssh is the
+        # sentence's ("ssh to 'maple-box'", "ssh on '2222'"). What the quote
+        # holds has to read as a command, and after a plain word that is no
+        # host name the quote has to end the command.
         for ask in ("Then $ ssh to 'maple-box'", "Next, $ ssh into 'maple'.", "Next: `ssh into 'maple-box'`",
                     "Shall I \"ssh as 'deploy' now\"?", "Then $ ssh into 'maple-box' and check the logs",
                     "$ sudo ssh into 'maple-box' first", "$ ssh maple-box 'now' and then wait",
-                    'Then $ ssh once "it works"', "Then $ ssh into 'maple -v' first"):
+                    'Then $ ssh once "it works"', "Then $ ssh into 'maple -v' first",
+                    "Then $ ssh on '2222'", "Then $ ssh into '.ssh'", "Next: `ssh to '.env'`",
+                    "Run \"ssh on '2222'\" next?", "Then $ ssh in '...'", "Then $ ssh as '~'",
+                    "Then $ ssh in '-v'", "Then $ ssh in 'at 5'", "Then $ sudo ssh to '5'",
+                    "Then $ ssh maple-box 'in 5' minutes", "Then $ ssh maple-box '~' first",
+                    "Then $ ssh maple '42'"):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_a_quoted_command_after_the_host_may_source_a_file(self):
+        # `.` is the shell's `source`, and sessions start a remote line with it.
+        self.assertEqual(ask_commands.guess("$ ssh maple-box '. ~/.config/maple.env; curl -s http://10.0.0.5/'"),
+                         ["ssh maple-box '. ~/.config/maple.env; curl -s http://10.0.0.5/'"])
 
     def test_ssh_still_offers_the_shapes_sessions_write(self):
         for ask, command in (
