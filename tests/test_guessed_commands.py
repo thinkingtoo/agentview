@@ -171,6 +171,17 @@ class Guess(Base):
         self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]),
                          ("question", ["bash ~/notes/push-maple.sh"]))
 
+    def test_a_turn_over_after_an_answered_or_rejected_question_keeps_its_command(self):
+        # Ticket paste/20: the answered-question check is for an open question
+        # only (paste/13). Once the turn is over (source "line") the line stays
+        # whole: a question rejected with Esc gets no Stop hook, and the rule
+        # asks for the line right before the question so that it is the turn's
+        # last line, the one thing still left for the owner, command included.
+        self.line("a", "Type this here: $ bash ~/notes/push-maple.sh")
+        tile = self.tile(session("a", answeredAt=int((time.time() + 60) * 1000)))
+        self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]),
+                         ("line", ["bash ~/notes/push-maple.sh"]))
+
     def test_a_bosss_command_is_on_its_card_and_on_its_concierges_holding_the_question(self):
         # Ticket paste/12's open point (paste/21): the guard refuses a boss's own question while its
         # concierge lives, so the boss writes its line, sends the ASK, and the concierge writes the
@@ -970,8 +981,8 @@ class SshHost(unittest.TestCase):
     def test_a_quote_after_the_host_has_to_hold_a_command(self):
         # Hunts 27-1 and 27-2: a quoted name, port or path after ssh is the
         # sentence's ("ssh to 'maple-box'", "ssh on '2222'"). What the quote
-        # holds has to read as a command, and after a plain word that is no
-        # host name the quote has to end the command.
+        # holds has to read as a command, and end the command or come before
+        # a shell mark.
         for ask in ("Then $ ssh to 'maple-box'", "Next, $ ssh into 'maple'.", "Next: `ssh into 'maple-box'`",
                     "Shall I \"ssh as 'deploy' now\"?", "Then $ ssh into 'maple-box' and check the logs",
                     "$ sudo ssh into 'maple-box' first", "$ ssh maple-box 'now' and then wait",
@@ -993,6 +1004,14 @@ class SshHost(unittest.TestCase):
                 self.assertEqual(ask_commands.guess(ask), [])
         for command in ("ssh maple-box 'git status'; echo done", "ssh maple-box 'git status' && echo done",
                         "ssh maple-box \"cd /srv/maple && bash preflight.sh\"; echo \"exit=$?\""):
+            with self.subTest(command=command):
+                self.assertEqual(ask_commands.guess(f"$ {command}"), [command])
+
+    def test_a_shell_mark_after_the_quote_counts_after_a_plain_host_too(self):
+        # Ticket overview-build/29 (C1): a host of one plain word (`maple`) lost
+        # the button origin/dev gave when a shell mark followed the quote.
+        for command in ("ssh maple 'df -h' | grep sda", 'ssh maple "df -h"; echo done',
+                        "ssh maple 'git status' && echo done", "ssh maple 'df -h' > disk.txt"):
             with self.subTest(command=command):
                 self.assertEqual(ask_commands.guess(f"$ {command}"), [command])
 
