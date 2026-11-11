@@ -250,14 +250,13 @@ def reads_as_ssh(rest):
         # `.` as the shell's `source`, or as a program the lists do not know
         # with a sign after it (`'free -m'`), a count not being one ("'in 5'").
         # After the quote comes nothing, or a shell mark (`; echo done`), never
-        # the sentence ("'git status' and then tell me"); after a word that is
-        # no host name, nothing at all.
+        # the sentence ("'git status' and then tell me").
         inside = re.sub(r"^\s*\.\s", "source ", quoted.group()[1:-1])
         words = inside.split()
         holds_a_command = reads_as_command(inside) or any(
             ARGUMENT_SIGN.search(w) and not w.isdigit() for w in words[1:])
         after_it = remote[quoted.end():].lstrip()
-        ends = not after_it or (HOST.fullmatch(word) is not None and after_it[0] in ";&|>")
+        ends = not after_it or after_it[0] in ";&|>"
         return holds_a_command and ends
     after = rest[1]
     return (HOST.fullmatch(word) is not None and after != "!"
