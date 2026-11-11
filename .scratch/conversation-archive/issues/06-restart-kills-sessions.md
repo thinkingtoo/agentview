@@ -42,11 +42,11 @@ What was observed, and what was not.
 ## Acceptance (once decided)
 
 - [ ] `systemctl --user restart agentview` leaves running every session that was in the service's cgroup beforehand. Checked by listing the `claude` processes in `systemctl --user status agentview` before, and counting them and the `session.gone` events in the log after.
-- [x] `systemctl --user stop agentview` says what happened to the sessions, or leaves them running, and the README says which. (README: a stop kills the cgroup, which holds `server.py` only; inference, not run. See "Drop-in removed, 2026-11-11".)
+- [ ] `systemctl --user stop agentview` says what happened to the sessions, or leaves them running, and the README says which. (README now says what a stop is expected to do, as an inference; not run. See "Drop-in removed, 2026-11-11".)
 - [x] README: the restart rule is written down where the service is documented, whichever fix is chosen. ("Restarting the service, and what survives it", under "Run it".)
 - [x] Until then: the README's "Run it" section says that restarting `agentview` kills every process in the service's cgroup, which can include a tmux server and the sessions in it (check with `systemctl --user status agentview` first), and that server changes are tested on a second server on another port with its own `XDG_STATE_HOME`.
 
-The first two boxes are about the live service and stay open until the last open step under "Live switchover" is done.
+The first two boxes are about the live service and stay open until the last open step under "Live switchover" is done. On 2026-11-11 the drop-in was removed but neither a restart nor a stop was run, so both stay open; `Status:` was set to done on the boss's order (see "Drop-in removed, 2026-11-11").
 
 ## Fix B, built and checked (2026-09-29)
 
@@ -78,7 +78,7 @@ What that shows, and what it does not:
 - Observed, by hand after the run: no unit, scope or process named for the run was left; the real tmux server's 6 sessions and 12 WezTerm tabs were the same before and after; `agentview.service` had the same InvocationID before and after.
 - Not shown: that `restore` and `launch` reach these helpers (`tests/test_scope.py` covers that, with fake leaves); the live service, as it was at the time of the check (the sessions running then were in its old cgroup, so a restart of it would still have killed them; see "Live switchover" below for what was done about that; and reading `restore` says it reuses a tmux server and WezTerm window that are already running and does not move them, so they stay there until they are shut down and started again, for instance by the login restore after a reboot); the login autostart unit, which has not been run since the change; `systemctl stop` on its own (the check restarts, which is a stop followed by a start). The restore process itself (`server.py`, `_restore`) is not in a scope, so a restart in the middle of a restore aborts it. The check for a user manager and the launch are two `systemd-run` calls; if the manager goes away between them that one launch fails (running the command again unwrapped cannot be done safely: `systemd-run --scope` returns the command's own exit status).
 
-`Status:` stays as it is until the last open step under "Live switchover" is done.
+`Status:` stays as it is until the last open step under "Live switchover" is done. (Superseded on 2026-11-11: set to done on the boss's order with the restart and stop checks not run; see "Drop-in removed, 2026-11-11".)
 
 ## Live switchover, way 1 (2026-09-29)
 
@@ -284,8 +284,19 @@ TasksCurrent=5
 KillMode=control-group
 ```
 
-The check block, run as written: the same output as in step 2 (tmux server pid 8512 in `run-p8509-i25065.scope`, `agentview: tmux server`, `OOMPolicy=continue`; `wezterm-gui` pid 22119 in the Plasma unit with `OOMPolicy=stop`, which is ticket 07). The `cgroup.procs` line gave no output (grep exit 1), and the service's cgroup holds only `2594842 python3 Thu Nov  5 19:01:51 2026`. Other readings: 42 `claude` processes on the machine, none of them in the service; 285 `session.gone` events in `events.jsonl`; 9 tmux sessions and 13 WezTerm panes; `GET http://127.0.0.1:8765/` gave 200. MainPID and InvocationID are the same as before the removal, so the service was not restarted by the `daemon-reload`.
+The check block, run as written:
+
+```
+pid 8512 in run-p8509-i25065.scope
+Description=agentview: tmux server
+OOMPolicy=continue
+pid 22119 in app-org.wezfurlong.wezterm@3004c8e51b5349fc8eb3766be6d8ac4a.service
+Description=WezTerm
+OOMPolicy=stop
+```
+
+The `cgroup.procs` line gave no output (grep exit 1), and the service's cgroup holds only `2594842 python3 Thu Nov  5 19:01:51 2026`. The WezTerm window in the Plasma unit with `OOMPolicy=stop` is ticket 07. Other readings: 42 `claude` processes on the machine, none of them in the service; 285 `session.gone` events in `events.jsonl`; 9 tmux sessions and 13 WezTerm panes; `GET http://127.0.0.1:8765/` gave 200. MainPID and InvocationID are the same as before the removal, so the service was not restarted by the `daemon-reload`.
 
 **5. What a restart or a stop would do now.** This was not run. With `KillMode=control-group`, `systemctl --user restart` and `stop` kill every process in the service's cgroup. Right now the cgroup holds `server.py` and nothing else, so either one would end the server only, and the sessions in the scoped tmux server and in the WezTerm window would keep running. That is an inference from systemd's documented behaviour and the cgroup contents above. A restart test, which the first box asks for, has not been done. The README's "Restarting the service, and what survives it" now gives this end state and the check block to run before any restart.
 
-**6. Boxes and status.** The second box is ticked on the README part: the README says what a stop does, as an inference, and gives the check. The first box stays open: no restart was run after the removal, so "leaves running every session" is not observed. The boss set `Status:` to done regardless. A real restart with the comparison snippet under "Live switchover" would close the first box.
+**6. Boxes and status.** Both boxes stay open. No restart was run after the removal, so "leaves running every session" was not observed. No stop was run either, so the README states only what a stop is expected to do. The boss set `Status:` to done anyway. A real restart and stop with the comparison snippets under "Live switchover" would close both boxes.
