@@ -16,7 +16,7 @@
 
 **Claimed by:** Mei 2026-11-10
 
-**Status:** ready-for-human
+**Status:** done
 
 - [x] A test on `guessed_commands_of` for the question-sourced case: `n` 1 and a stuck with `source "question"` returns the guessed command; `n` 2 still returns none -- evidence: fails on dev before the change, `tests/test_guessed_commands.py`
 - [x] The concierge case is checked and written into this ticket (what each card shows with the concierge's question open), and fixed if the command is unreachable there
@@ -60,3 +60,5 @@ The real card: two sandbox servers (this branch on a free port, a `git archive d
 | E, concierge in a new turn, no line yet | n 1, command | (forgotten) | | command / none |
 
 In case A, the page from the fix server (headless Chrome screenshot) shows Wren's card with the CONCIERGE and NEEDS YOU tags, "Question", the question with its two options, and under it a COMMAND row with a copy button and `bash ~/maple/push-notes.sh`. The dev server's page shows the same card without the COMMAND row. Bramble's card shows "1 thing left for you" and the same COMMAND row on both.
+
+Live check (Tarek, 2026-11-11 02:15): agentview.service restarted at 02:13:28 from the main checkout at origin/dev 37c3ced, so the live server runs this fix (the served `index.html` equals `37c3ced:index.html` except the server's `{{ZOOM}}` and `{{HOME}}` substitutions); at 02:15 no live session had an open question with `n` 1 and a command in its ask (the one card needing the owner, Dmitri, came from its line with `n` 2), so no live card with the button was seen, and the third box rests on the sandbox screenshot above.
