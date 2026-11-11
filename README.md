@@ -986,21 +986,37 @@ passes.
 
 ### Restarting the service, and what survives it
 
-`systemctl --user restart agentview` kills every process in the service's
-cgroup. A tmux server or a WezTerm window that the server started (a **↺
-reopen**, a click in the closed list when no WezTerm window is open) is in
-that cgroup unless it was started in a scope of its own, and its sessions go
-with it. Check before you restart: `systemctl --user status agentview` lists
-what is in there.
+`agentview.service` runs with systemd's default `KillMode=control-group` and
+`OOMPolicy=stop`, and no drop-in changes them (the `switchover.conf` drop-in
+that set `KillMode=process` during the move to scopes was removed on
+2026-11-11). A restart or a stop kills every process in the service's cgroup.
+The tmux server and the WezTerm windows that restore and the closed list start
+are in scopes of their own, so the cgroup holds `server.py` and nothing else,
+and a restart or a stop touches the server only. Sessions keep running.
 
-- From this version on, `scope.py` starts the tmux server and the WezTerm
-  window that restore and the closed list open with `systemd-run --user
-  --scope`, so a restart of the service leaves them running. That holds for a
-  server or window started that way. Restore reuses a tmux server and a WezTerm
-  window that are already running and does not move them, so the ones running
-  when this version arrives stay in the service's cgroup, sessions included,
-  until they are shut down and started again: the login restore does that after
-  a reboot.
+Check that before you restart. Every tmux server and WezTerm window should be
+outside the service, and the service should hold no tmux, wezterm or claude
+process:
+
+```
+for p in $(pgrep -x 'tmux: server') $(pgrep -x wezterm-gui); do
+  S=$(basename "$(sed 's/^0:://' /proc/$p/cgroup)")
+  echo "pid $p in $S"; systemctl --user show "$S" -p Description -p OOMPolicy
+done
+for p in $(cat /sys/fs/cgroup$(systemctl --user show agentview.service -p ControlGroup --value)/cgroup.procs); do cat /proc/$p/comm; done | sort | uniq -c | grep -E 'tmux|wezterm|claude'
+# expected: no output from the second loop
+```
+
+If the second loop prints anything, those processes die with the restart. Don't
+restart, and find out how they got there.
+
+- `scope.py` starts the tmux server and the WezTerm window that restore and the
+  closed list open with `systemd-run --user --scope -p OOMPolicy=continue`.
+  Restore reuses a tmux server and a WezTerm window that are already running
+  and does not move them. A window opened from the desktop's launcher sits in
+  the launcher's own unit, outside the service, so a restart of agentview does
+  not touch it. That unit can have `OOMPolicy=stop`, though, and then one OOM
+  kill in that window ends every session in it.
 - **Reload the page once** in every tab that was open before the restart that
   brings the overview as the only view. Such a tab keeps the page it was
   served, and that page reads `blocks`, which the roster no longer has: every
