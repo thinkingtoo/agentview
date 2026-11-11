@@ -41,7 +41,7 @@ What was observed, and what was not.
 
 ## Acceptance (once decided)
 
-- [ ] `systemctl --user restart agentview` leaves running every session that was in the service's cgroup beforehand. Checked by listing the `claude` processes in `systemctl --user status agentview` before, and counting them and the `session.gone` events in the log after.
+- [x] `systemctl --user restart agentview` leaves running every session that was in the service's cgroup beforehand. Checked by listing the `claude` processes in `systemctl --user status agentview` before, and counting them and the `session.gone` events in the log after. (Seen 2026-11-11 02:13:28, see "Restart, 2026-11-11": 40 `claude` processes before and after with the same pids and start times, 0 `session.gone` events.)
 - [ ] `systemctl --user stop agentview` says what happened to the sessions, or leaves them running, and the README says which. (README now says what a stop is expected to do, as an inference; not run. See "Drop-in removed, 2026-11-11".)
 - [x] README: the restart rule is written down where the service is documented, whichever fix is chosen. ("Restarting the service, and what survives it", under "Run it".)
 - [x] Until then: the README's "Run it" section says that restarting `agentview` kills every process in the service's cgroup, which can include a tmux server and the sessions in it (check with `systemctl --user status agentview` first), and that server changes are tested on a second server on another port with its own `XDG_STATE_HOME`.
@@ -300,3 +300,39 @@ The `cgroup.procs` line gave no output (grep exit 1), and the service's cgroup h
 **5. What a restart or a stop would do now.** This was not run. With `KillMode=control-group`, `systemctl --user restart` and `stop` kill every process in the service's cgroup. Right now the cgroup holds `server.py` and nothing else, so either one would end the server only, and the sessions in the scoped tmux server and in the WezTerm window would keep running. That is an inference from systemd's documented behaviour and the cgroup contents above. A restart test, which the first box asks for, has not been done. The README's "Restarting the service, and what survives it" now gives this end state and the check block to run before any restart.
 
 **6. Boxes and status.** Both boxes stay open. No restart was run after the removal, so "leaves running every session" was not observed. No stop was run either, so the README states only what a stop is expected to do. The boss set `Status:` to done anyway. A real restart and stop with the comparison snippets under "Live switchover" would close both boxes.
+
+## Restart, 2026-11-11 (Tarek)
+
+The first restart since the drop-in was removed, ordered by the boss (Noor) in close-out part 2b, from the main checkout fast-forwarded to origin/dev 37c3ced. Closes box 1.
+
+**Before (02:12).**
+
+```
+$ systemctl --user show agentview.service -p KillMode -p OOMPolicy -p MainPID -p DropInPaths -p ActiveEnterTimestamp
+DropInPaths=/home/tiroir/.config/systemd/user/agentview.service.d/extra-origins.conf
+ActiveEnterTimestamp=Thu 2026-11-05 19:01:51 CET
+MainPID=2594842
+OOMPolicy=stop
+KillMode=control-group
+```
+
+The README's check block, run as written: `pid 8512 in run-p8509-i25065.scope` (`agentview: tmux server`, `OOMPolicy=continue`) and `pid 22119 in app-org.wezfurlong.wezterm@3004c8e51b5349fc8eb3766be6d8ac4a.service` (`WezTerm`, `OOMPolicy=stop`, ticket 07); the `cgroup.procs` line gave no output. Every pid in the service's cgroup at 02:12:40: `2594842 /usr/bin/python3 /home/tiroir/Projects/agentview/server.py` and `2678953 /usr/bin/python3 /home/tiroir/Projects/agentview/ci_state.py refresh <this repository on GitHub> dev`. The second is the server's own detached CI-cache refresh (ticket overview-build/22), 6 seconds old and already a zombie; six samples from 02:12:47 to 02:13:12 showed `server.py` alone. The restart ran from a command that re-read `cgroup.procs` first and would not restart unless it held exactly one process, `server.py`. It did.
+
+`pgrep -c -f 'claude --'`: 40. Port: `127.0.0.1:8765` held by pid 2594842.
+
+**Restart.** `systemctl --user restart agentview` at 02:13:27.97, exit 0. Journal: stopped and started at 02:13:28, `fleet on http://127.0.0.1:8765`.
+
+**After (02:13).**
+
+```
+ActiveState=active
+DropInPaths=/home/tiroir/.config/systemd/user/agentview.service.d/extra-origins.conf
+ActiveEnterTimestamp=Wed 2026-11-11 02:13:28 CET
+MainPID=2683768
+OOMPolicy=stop
+KillMode=control-group
+```
+
+The service's cgroup holds `2683768 /usr/bin/python3 /home/tiroir/Projects/agentview/server.py` only. `127.0.0.1:8765` is held by pid 2683768; `GET /` gave 200. `pgrep -c -f 'claude --'`: 40. The list of `claude`, tmux server and `wezterm-gui` processes with their start times (`ps -eo pid,lstart,cmd`) is identical before and after; the tmux server (8512, started Thu Nov 5 16:02:08) and the WezTerm window (22119, started 16:02:24) kept their pids and start times. `events.jsonl`: 315 `session.gone` events in all, the last at 02:11:45.630, none since 02:13:20; the new server logged 43 `session.seen`.
+
+**Box 2 stays open.** No `systemctl --user stop agentview` was run, so what a stop does is still the README's inference, not an observation.
