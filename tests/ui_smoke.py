@@ -58,6 +58,8 @@ errors = []        # page errors, console errors and dialogs, from every page
 posted = []        # every body the routed pages POSTed, from every pass
 BOMB = "<img src=x onerror=alert(1)>"
 ATTR = '"><img src=x onerror=alert(1)> x="'        # breaks out of a quoted attribute, if one is not escaped
+SVG = "<svg onload=alert(1)>"
+GOAL_URL = "http://127.0.0.1:7417/goals/kettle.md"         # invented; never opened
 
 
 def check(label, ok, detail=""):
@@ -1197,6 +1199,138 @@ def card_pass(browser):
           col("folder:orchard").locator(".ov-hits").inner_text() == "nothing found")
     check("card: no dialog, no page error", len(errors) == seen, errors[seen:])
     check("card: nothing stray reached the routes", not fake.stray, fake.stray)
+    page.close()
+
+
+def goal_fixture():
+    """Tracks whose goal the server gave as a page, as no page (with its reason),
+    as a page the laptop's hub does not serve, and as no goal file; boxes as
+    context.py gives them, one of them markup. Every goal and box is invented."""
+    def track(boxes, goal, status="OPEN"):
+        done, total = sum(b["done"] for b in boxes), len(boxes)
+        progress = ({"done": total, "total": total, "text": "done", "met": True} if status == "MET"
+                    else {"done": done, "total": total, "text": f"{done} of {total}", "met": False})
+        return {"status": status, "boxes": boxes, "progress": progress, "goal": goal}
+
+    body = roster([("linked", "Linked", [S("g1", "Ilse")]), ("nohub", "No hub", [S("g2", "Femi")]),
+                   ("elsewhere", "Elsewhere", [S("g3", "Odile")]), ("nogoal", "No goal", [S("g4", "Mateo")])])
+    tracks = {
+        "linked": track([{"text": "The kettle whistles at ninety degrees", "done": True},
+                         {"text": "box: " + BOMB + ATTR + SVG, "done": False},
+                         {"text": "The lid stays shut", "done": False}],
+                        {"url": GOAL_URL, "why": ""}),
+        "nohub": track([{"text": "The cups are warm", "done": True}, {"text": "The tray is dry", "done": False}],
+                       {"url": None, "why": "no sheaf hub: " + BOMB + ATTR + SVG}),
+        "elsewhere": track([{"text": "The spoon is found", "done": False}],
+                           {"url": "http://localhost:7417/goals/elsewhere.md", "why": ""}),
+        "nogoal": track([], None, status="MET"),
+    }
+    for c in body["columns"]:
+        c.update(kind="track", track=tracks[c["project"]])
+    return body
+
+
+def one(loc):
+    """The element a locator finds, as the checks read it; {} when there is not
+    exactly one. It never waits, so a missing element fails its check by name."""
+    got = loc.evaluate_all("""els => els.map(e => ({tag: e.tagName, text: e.innerText, cls: e.className,
+        href: e.getAttribute("href"), target: e.getAttribute("target"), rel: e.getAttribute("rel"),
+        title: e.getAttribute("title"), expanded: e.getAttribute("aria-expanded"), html: e.outerHTML}))""")
+    return got[0] if len(got) == 1 else {}
+
+
+def goal_pass(browser):
+    """Ticket 23's row on a track card: "goal ↗" only on a page at 127.0.0.1 (the
+    hub's cookie is not sent to any other host), "goal on the laptop" elsewhere,
+    "no goal page" with the server's reason when it has no page; "N of M" unfolds
+    the Done when boxes and folds them, and the unfold survives a repaint."""
+    fake = Fake(goal_fixture())
+    seen = len(errors)
+    page = new_page(browser, fake)
+    page.goto("http://127.0.0.1/", wait_until="load")      # routed, as every page here: nothing listens
+    page.wait_for_selector(".ov-col")
+    col = lambda project: page.locator(f'.ov-col[data-project="{project}"]')
+    goal = lambda project: one(col(project).locator(".ov-goal"))
+    reason = "no sheaf hub: " + BOMB + ATTR + SVG
+
+    link = goal("linked")
+    check("at 127.0.0.1 the goal is a link: goal ↗, its url, a new tab",
+          link.get("tag") == "A" and link["text"] == "goal ↗" and link["href"] == GOAL_URL
+          and link["target"] == "_blank" and link["rel"] == "noopener", link)
+    nohub = goal("nohub")
+    check("with no goal page the card says so, and the hover is the server's reason",
+          nohub.get("tag") == "SPAN" and nohub["text"] == "no goal page" and nohub["title"] == reason, nohub)
+    elsewhere = goal("elsewhere")
+    check("a goal url the laptop's hub does not serve is no link either",
+          elsewhere.get("tag") == "SPAN" and elsewhere["text"] == "no goal page" and elsewhere["href"] is None
+          and elsewhere["title"] == "no goal page", elsewhere)
+    check("a track the server gave no goal has no goal word at all", col("nogoal").locator(".ov-goal").count() == 0)
+
+    # "N of M": the boxes on hover, unfolded under the row on a click.
+    count = col("linked").locator(".ov-count")
+    boxes = col("linked").locator(".ov-boxes li")
+    other_boxes = col("nohub").locator(".ov-boxes li")
+    lines = ["☑ The kettle whistles at ninety degrees", "☐ box: " + BOMB + ATTR + SVG, "☐ The lid stays shut"]
+    folded = lambda project: one(col(project).locator(".ov-count")).get("expanded") == "false" \
+        and col(project).locator(".ov-boxes").count() == 0
+    unfolded = lambda project: one(col(project).locator(".ov-count")).get("expanded") == "true" \
+        and "on" in one(col(project).locator(".ov-count"))["cls"].split()
+    n_of_m = one(count)
+    check("N of M is a button that lists the boxes on hover, folded at first",
+          n_of_m.get("tag") == "BUTTON" and n_of_m["text"] == "1 of 3" and n_of_m["title"] == "\n".join(lines)
+          and "on" not in n_of_m["cls"].split() and folded("linked") and folded("nohub"), n_of_m)
+    met = one(col("nogoal").locator(".ov-prog > span:not(.ov-bar)"))
+    check("a track with no boxes says done, with nothing to unfold and a full bar",
+          col("nogoal").locator(".ov-count").count() == 0 and met.get("text") == "done"
+          and one(col("nogoal").locator(".ov-bar i")).get("html", "").find("width:100%") > 0, met)
+    count.click()
+    page.wait_for_timeout(150)
+    check("a click unfolds the boxes in order, the ticked one greyed",
+          boxes.all_inner_texts() == lines and col("linked").locator(".ov-boxes li.done").all_inner_texts() == lines[:1]
+          and unfolded("linked"), boxes.all_inner_texts())
+    check("unfolding unfolds that card only", folded("nohub") and folded("elsewhere"))
+    # A repaint from the next poll, where the server has ticked another box.
+    linked = next(c for c in fake.body["columns"] if c["project"] == "linked")["track"]
+    linked["boxes"][2]["done"] = True
+    linked["progress"] |= {"done": 2, "text": "2 of 3"}
+    poll_now(page)
+    check("the unfold survives a repaint, and shows what the poll brought",
+          boxes.count() == 3 and count.inner_text() == "2 of 3" and boxes.nth(2).inner_text() == "☑ The lid stays shut"
+          and unfolded("linked"), boxes.all_inner_texts())
+    count.click()
+    page.wait_for_timeout(150)
+    check("a second click folds them", folded("linked"))
+    poll_now(page)
+    check("and they stay folded through the next poll", folded("linked"))
+    col("nohub").locator(".ov-count").click()
+    page.wait_for_timeout(150)
+    check("another card's N of M unfolds that card, and leaves the first as it was",
+          other_boxes.all_inner_texts() == ["☑ The cups are warm", "☐ The tray is dry"] and unfolded("nohub")
+          and folded("linked"), other_boxes.all_inner_texts())
+    count.click()
+    page.wait_for_timeout(150)
+    check("markup in a box and in the goal's reason is text, and builds nothing",
+          boxes.all_inner_texts()[1:2] == lines[1:2] and goal("nohub").get("title") == reason
+          and page.locator("#main img, #main svg, #main [onerror], #main [onload]").count() == 0, boxes.all_inner_texts())
+    check("unfolding and folding post nothing", fake.posts == [], fake.posts)
+
+    # Any other host: the phone over tailscale, or `localhost`, whose requests
+    # the hub's SameSite=Strict cookie does not follow.
+    for url in ("http://localhost/", "http://laptop.tail-example.ts.net/"):
+        other = new_page(browser, fake)
+        other.goto(url, wait_until="load")
+        other.wait_for_selector(".ov-col")
+        g = lambda project: one(other.locator(f'.ov-col[data-project="{project}"] .ov-goal'))
+        host = urllib.parse.urlsplit(url).hostname
+        there = g("linked")
+        check(f"at {host} the goal says it opens on the laptop, and links nowhere",
+              there.get("text") == "goal on the laptop" and there["href"] is None
+              and "http://127.0.0.1" in (there["title"] or "") and other.locator("#main a.ov-goal").count() == 0, there)
+        check(f"at {host} a missing goal page still says why",
+              g("nohub").get("text") == "no goal page" and g("nohub")["title"] == reason, g("nohub"))
+        other.close()
+    check("goal: no dialog, no page error", len(errors) == seen, errors[seen:])
+    check("goal: nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()
 
 
@@ -2901,6 +3035,7 @@ def main():
         header_pass(browser)
         finished_pass(browser)
         card_pass(browser)
+        goal_pass(browser)
         needs_pass(browser)
         guessed_pass(browser)
         paste_pass(browser)
