@@ -18,4 +18,18 @@ then `goal_page.py:134` `except Exception:` sets `why=UNREADABLE` for all goals.
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+**Claimed by:** Habib 2026-11-11
+
+**Status:** done
+
+## Evidence
+
+- **Red** (dev at 6e34b2f, run on t-compute): `tests/test_goal_page.py` `test_a_root_whose_path_no_file_can_have_is_skipped_and_the_others_still_give_pages` registers `claude` (the goal's git root) beside `odd` at `/a\x00b`:
+
+  ```
+  FAIL: test_a_root_whose_path_no_file_can_have_is_skipped_and_the_others_still_give_pages
+  AssertionError: None != 'http://127.0.0.1:27419/claude/pm/checkout.goal.md'
+  ```
+
+- **Fix:** `goal_page._roots` resolves each root in its own `try`; a `ValueError` from `os.path.realpath` drops that entry only. The docstring says so.
+- **Green:** `python3 -m unittest tests.test_goal_page tests.test_context tests.test_goal_href` on t-compute: `Ran 185 tests ... OK (skipped=1)` (the skip is the node-only href test, node is not on t-compute).

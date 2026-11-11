@@ -83,7 +83,10 @@ CLOSING_MARKS = re.compile(r"(?:^|\s)#+\s*$")
 # `**Outcome:** text` or `**Outcome**: text`: some goal files label a section
 # in bold, on a line of its own or with its text after it, not with a heading.
 LABEL = re.compile(r"^\s{0,3}\*\*([^*:\n]+?)(?::\*\*|\*\*\s*:)\s*(.*)$")
-BOX = re.compile(r"^\s*[-*+]\s+\[([ xX])\]")
+# A Done when box is what claude-boss counts as one (objective.py `BOX_RE`), so
+# the card's "n of m" is the boss's: a dash at the start, one space, a space or
+# a lower-case x in brackets, one space.
+BOX = re.compile(r"^- \[([ x])\] ")
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
 STATUS = re.compile(r"^\s*[_*]*status:[_*\s]*([a-z]+)", re.IGNORECASE)
 STATUS_WORDS = ("OPEN", "PAUSED", "MET")

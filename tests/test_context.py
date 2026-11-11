@@ -225,7 +225,7 @@ class Tracks(Cards):
         self.assertEqual((got["context"]["source"], got["context"]["line"]), ("own", "Mine"))
 
     def test_the_card_gets_the_done_when_boxes_in_the_goal_files_order(self):
-        got = self.track(boxes=("[x] cart", "[ ] **receipt** by [mail](https://example.com)", "[X] refund"))
+        got = self.track(boxes=("[x] cart", "[ ] **receipt** by [mail](https://example.com)", "[x] refund"))
         self.assertEqual(got["track"]["boxes"], [{"text": "cart", "done": True},
                                                  {"text": "receipt by mail", "done": False},
                                                  {"text": "refund", "done": True}])
@@ -414,14 +414,24 @@ class Tracks(Cards):
         got = self.track(boxes=())["track"]
         self.assertEqual(got, {"status": "OPEN", "progress": None, "boxes": [], "goal": None})
 
-    def test_only_the_boxes_under_done_when_count_in_any_style_and_not_in_code(self):
+    def test_only_the_boxes_under_done_when_count_and_not_in_code(self):
         (self.pm / "checkout.goal.md").write_text(
             "# Objective\n_Status: OPEN_\n\n## Outcome\nCustomers pay.\n\n"
-            "## Done when\n- [x] one\n* [X] two\n   - [ ] three, indented\n"
-            "```\n- [ ] four, in a fence\n```\nnot a box\n\n"
-            "## Deliverables\n- [x] five, another section\n")
+            "## Done when\n- [x] one\n- [ ] two\n"
+            "```\n- [ ] three, in a fence\n```\nnot a box\n\n"
+            "## Deliverables\n- [x] four, another section\n")
+        got = self.track(nogoal=True)["track"]
+        self.assertEqual((got["progress"]["done"], got["progress"]["total"]), (1, 2))
+
+    def test_a_box_is_what_the_boss_counts_as_one_and_nothing_else(self):
+        # The boss's own rule, claude-boss objective.py BOX_RE.
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n## Done when\n- [x] one\n- [ ] two\n- [x] \n"
+            "- [x]b\n- [X] capital\n* [x] star\n+ [ ] plus\n  - [x] indented\n-  [ ] two spaces\n"
+            "-\t[ ] tab\n- [x]\n")
         got = self.track(nogoal=True)["track"]
         self.assertEqual((got["progress"]["done"], got["progress"]["total"]), (2, 3))
+        self.assertEqual([b["text"] for b in got["boxes"]], ["one", "two", ""])
 
     def test_a_status_that_is_none_of_the_three_words_has_no_tag(self):
         got = self.track(status="BLOCKED on a thing")["track"]
