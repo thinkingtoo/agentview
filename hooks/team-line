@@ -7,7 +7,8 @@
 `did` is where the work stands. `n` is how many things the session needs from
 you before it can go further, and `ask` carries the words only when that is 1
 -- one blocked question is short enough to answer from the page, and quoting
-the first of four would misrepresent the size of the job.
+the first of four would misrepresent the size of the job. At 0 nothing is
+waiting, so an ask given anyway (a refused Paste) is put at the front of `did`.
 """
 import argparse
 import sys
@@ -28,9 +29,11 @@ def main(argv=None):
     ask = args.ask if args.n == 1 else ""
     did = args.did
     # With nothing waiting, an ask is news, not a question (a refused Paste is
-    # told there): the card shows the did, so that is where it goes.
+    # told there): the card shows the did, so it goes there, first, since the
+    # store cuts the did at its length.
     if args.n == 0 and args.ask:
-        did = f"{did} {args.ask}" if did else args.ask
+        stop = "" if args.ask[-1] in ".!?:;" else "."
+        did = f"{args.ask}{stop} {did}" if did else args.ask
     rec = lines.write(args.session, did=did, ask=ask, n=args.n)
     if rec is None:
         # Failing open is right for the dashboard. Reporting a success that

@@ -1272,6 +1272,7 @@ def goal_pass(browser):
     other_boxes = col("nohub").locator(".ov-boxes li")
     lines = ["☑ The kettle whistles at ninety degrees", "☐ box: " + BOMB + ATTR + SVG, "☐ The lid stays shut"]
     folded = lambda project: one(col(project).locator(".ov-count")).get("expanded") == "false" \
+        and "on" not in one(col(project).locator(".ov-count")).get("cls", "on").split() \
         and col(project).locator(".ov-boxes").count() == 0
     unfolded = lambda project: one(col(project).locator(".ov-count")).get("expanded") == "true" \
         and "on" in one(col(project).locator(".ov-count"))["cls"].split()
@@ -1797,10 +1798,10 @@ def paste_engine_pass(browser):
     page = new_page(browser, fake)
     page.goto("http://localhost/", wait_until="load")
     page.wait_for_selector(".tile .paste")
-    page.locator(".tile button.pcopy").click()
+    copy = page.locator(".tile button.pcopy")
+    copy.click()
     page.wait_for_function("document.querySelector('.tile button.pcopy').textContent !== 'copy'")
-    check(f"{name}: the button says it copied", page.locator(".tile button.pcopy").inner_text() == "copied",
-          page.locator(".tile button.pcopy").inner_text())
+    check(f"{name}: the button says it copied", copy.inner_text() == "copied", copy.inner_text())
     page.evaluate("() => document.body.append(Object.assign(document.createElement('textarea'), {id: 'readback'}))")
     page.focus("#readback")
     page.keyboard.press("Control+V")

@@ -1599,6 +1599,9 @@ sessions with a config in a temp dir, and drives the by-hand controls (pin,
 arrows, rename, merge, move) against it, reading the config back and restarting
 the server; the config you give is only read.
 
+It runs in Chromium, then copies a Paste in WebKit and Firefox as well, so all
+three browsers must be installed for Playwright (`playwright install`).
+
 The movement tests (`tests/test_movement_*.py`) run on invented transcripts, a
 fake `/proc` and fake providers, never on a real session: writes per minute and
 the cold-start window, subagents counted once under their parent, background

@@ -134,10 +134,15 @@ class TheWriter(unittest.TestCase):
         # Ticket paste/19: a refused Paste is said in the ask unless --n is above 1,
         # so at 0 its words must land where the card shows them.
         self.run_writer("s6", "--did", "Mail drafted.", "--n", "0", "--ask", "paste create was refused")
-        self.assertEqual(lines.read("s6")["did"], "Mail drafted. paste create was refused")
+        self.assertEqual(lines.read("s6")["did"], "paste create was refused. Mail drafted.")
         self.assertEqual(lines.read("s6")["ask"], "")
         self.run_writer("s5", "--n", "0", "--ask", "paste create was refused")
         self.assertEqual(lines.read("s5")["did"], "paste create was refused")
+
+    def test_a_long_did_does_not_push_the_ask_out_of_the_line(self):
+        # The store cuts the did at 160 characters: the refusal goes first.
+        self.run_writer("s4", "--did", "w" * 160, "--n", "0", "--ask", "paste create was refused")
+        self.assertTrue(lines.read("s4")["did"].startswith("paste create was refused"), lines.read("s4")["did"])
 
     def test_it_carries_the_turn_it_was_run_in(self):
         turn = lines.begin_turn("s7")
