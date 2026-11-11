@@ -975,6 +975,26 @@ class SshHost(unittest.TestCase):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
 
+    def test_the_sentence_after_a_quoted_remote_command_is_not_part_of_it(self):
+        # Hunt 27-3: only a shell mark may follow the quote.
+        for ask in ("Then $ ssh maple-box 'git status' and then tell me",
+                    "Then $ ssh maple-box 'docker ps' and paste the output",
+                    "$ ssh maple-box 'make test' then report back", "Run \"ssh maple-box 'git status' and wait\" now"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+        for command in ("ssh maple-box 'git status'; echo done", "ssh maple-box 'git status' && echo done",
+                        "ssh maple-box \"cd /srv/maple && bash preflight.sh\"; echo \"exit=$?\""):
+            with self.subTest(command=command):
+                self.assertEqual(ask_commands.guess(f"$ {command}"), [command])
+
+    def test_a_quoted_remote_command_no_list_knows_keeps_its_button(self):
+        # Hunt 27-3: a program and an argument with a sign, as origin/dev offered.
+        for command in ("ssh maple-box 'free -m'", 'ssh maple-box "htop -d 5"', "ssh maple-box 'nvidia-smi -l 1'",
+                        'ssh maple-box "uptime && df -h"', "ssh maple-box 'sudo -u maple ls'",
+                        "ssh maple-box 'maple-sync --now'"):
+            with self.subTest(command=command):
+                self.assertEqual(ask_commands.guess(f"$ {command}"), [command])
+
     def test_a_quoted_command_after_the_host_may_source_a_file(self):
         # `.` is the shell's `source`, and sessions start a remote line with it.
         self.assertEqual(ask_commands.guess("$ ssh maple-box '. ~/.config/maple.env; curl -s http://10.0.0.5/'"),

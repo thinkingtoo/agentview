@@ -247,11 +247,18 @@ def reads_as_ssh(rest):
     if quoted:
         # A quoted name, port or path is the sentence's ("ssh to 'maple-box'",
         # "ssh on '2222'"): what the quote holds has to read as a command, with
-        # `.` as the shell's `source`, and after a word that is no host name
-        # nothing may follow it.
+        # `.` as the shell's `source`, or as a program the lists do not know
+        # with a sign after it (`'free -m'`), a count not being one ("'in 5'").
+        # After the quote comes nothing, or a shell mark (`; echo done`), never
+        # the sentence ("'git status' and then tell me"); after a word that is
+        # no host name, nothing at all.
         inside = re.sub(r"^\s*\.\s", "source ", quoted.group()[1:-1])
-        return (reads_as_command(inside)
-                and (HOST.fullmatch(word) is not None or quoted.end() == len(remote)))
+        words = inside.split()
+        holds_a_command = reads_as_command(inside) or any(
+            ARGUMENT_SIGN.search(w) and not w.isdigit() for w in words[1:])
+        after_it = remote[quoted.end():].lstrip()
+        ends = not after_it or (HOST.fullmatch(word) is not None and after_it[0] in ";&|>")
+        return holds_a_command and ends
     after = rest[1]
     return (HOST.fullmatch(word) is not None and after != "!"
             and (FLAG.match(after) is not None or reads_as_command(" ".join(rest[1:]))))

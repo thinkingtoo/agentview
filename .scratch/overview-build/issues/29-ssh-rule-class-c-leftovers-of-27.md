@@ -2,7 +2,7 @@
 
 **What to build:** decide, for each shape below, whether it is worth a rule. None occurs in the real `--n 1` asks (3263 asks, 2026-11-11).
 
-**Found in:** Codex reviews 1 and 2 of PR #19 (Opus fallback, run by Milos, 2026-11-11), class c.
+**Found in:** Codex reviews 1, 2 and 3 of PR #19 (Opus fallback, run by Milos, 2026-11-11), class c.
 
 **Blocked by:** None.
 
@@ -22,3 +22,8 @@ A flag or a command counts only after a word of `HOST` shape, so these were offe
 
 - A sign right after `ssh` takes the whole sentence behind it: `Then $ ssh root@maple and look at the logs`, `$ ssh 10.0.0.5 and check`, `$ ssh ~ and ls`.
 - A flag after a hyphenated word or a word with a digit: `$ ssh follow-up -ish`, `$ ssh v2 -based`.
+
+## Prose offered by the branch, not by origin/dev
+
+- A plain word before a quoted command reads as a host, by design (`ssh maple 'git status'` is a real shape): `Then $ ssh again 'docker ps'`, `Run "ssh in 'git status'" now`.
+- The `.`-as-`source` reading: `Then $ ssh in '. 5'` is offered; `$ ssh maple '.~/x; ls -la'` (no space after the dot) loses origin/dev's button.
