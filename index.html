@@ -1165,6 +1165,7 @@ async function copyFetched(textPromise) {
       if (t === null) throw new Error("the Paste could not be read");
       return t;
     });
+    checked.catch(() => {});      // a browser that refuses the item never reads it; the old way says so below
     try {
       await navigator.clipboard.write([new ClipboardItem({ "text/plain": checked })]);
       return true;
