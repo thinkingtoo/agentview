@@ -1,6 +1,6 @@
 # 28: Pin the escaping of the goal url in "goal ↗"
 
-**What to build:** a check in `goal_pass` (`tests/ui_smoke.py`) where `track.goal.url` starts with `http://127.0.0.1:` and carries a quote or markup, and the link's `href` reads back exactly as sent, with no attribute or element built from it. A mutation that drops `esc()` around `g.url` in `goalLinkOf` (`index.html`) must fail it.
+**What to build:** a check in `goal_pass` (`tests/ui_smoke.py`) where `track.goal.url` starts with `http://127.0.0.1:` and carries a quote or markup, and the link's `href` reads back exactly as sent, with no attribute or element built from it. A mutation that drops `esc()` around `g.url` in `goalLinkOf` (`index.html`) must fail it. (Built as a node unittest, `tests/test_goal_href.py`, not in `goal_pass`: see Comments.)
 
 **Found in:** Codex review 1 of PR #18 (Opus fallback, run by Tarek, 2026-11-11), class c. The url comes from the hub's port and sheaf's roots (`goal_page.py`), whose paths are `quote()`d, so the risk is low.
 
@@ -14,7 +14,7 @@
 
 ## Comments
 
-**Tarek 2026-11-11, where the check went and evidence.** Not in `goal_pass`: the boss classed the ticket c, with no browser. The check is a unittest, `tests/test_goal_href.py`, that runs the real `esc` and `goalLinkOf` from index.html in node (as `tests/test_announce_sound.py` runs `announce()`), on a page at 127.0.0.1, and parses the link with Python's `html.parser`: it must build one `<a>` and nothing else, and its href must read back exactly as sent. Two urls, both starting `http://127.0.0.1:7417/goals/kettle.md`: one ending in `"><img src=x onerror=alert(1)> x="`, one carrying `&lt;` and `&quot;` as text (an unescaped `&` turns them into `<` and `"`). Run here (load 9.3 on 16 cores), PYTHONDONTWRITEBYTECODE=1, `tests/__pycache__` cleared before each run, index.html restored with `git checkout` and `git status` clean after.
+**Tarek 2026-11-11, where the check went and evidence.** Not in `goal_pass`: the boss classed the ticket c, with no browser. The check is a unittest, `tests/test_goal_href.py`, that runs the real `esc` and `goalLinkOf` from index.html in node (as `tests/test_announce_sound.py` runs `announce()`), on a page at 127.0.0.1, and parses the link with Python's `html.parser`: it must build one `<a>` and nothing else, with only its five attributes (class, href, target, rel, title), and its href must read back exactly as sent. Two urls, both starting `http://127.0.0.1:7417/goals/kettle.md`: one ending in `"><img src=x onerror=alert(1)> x="`, one carrying `&lt;` and `&quot;` as text (an unescaped `&` turns them into `<` and `"`). Run here (load 9.3 on 16 cores), PYTHONDONTWRITEBYTECODE=1, `tests/__pycache__` cleared before each run, index.html restored with `git checkout` and `git status` clean after.
 
 Real code: `PYTHONPATH=tests python3 -m unittest -v tests.test_goal_href`
 

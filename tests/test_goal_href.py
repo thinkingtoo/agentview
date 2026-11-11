@@ -22,19 +22,23 @@ PAGE = ROOT / "index.html"
 HARNESS = """
 const location = {hostname: "127.0.0.1"};      // the laptop: the only page that links
 %s
-%s
 console.log(goalLinkOf({track: {goal: {url: %s, why: ""}}}));
 """
 
 ATTR = '"><img src=x onerror=alert(1)> x="'        # breaks out of a quoted attribute, if one is not escaped
 
 
+def _line(src, opening):
+    start = src.index(opening)
+    return src[start:src.index("\n", start)]
+
+
 def _page_js():
+    """`esc`, `ON_THE_LAPTOP` and `goalLinkOf`, as the page has them."""
     src = PAGE.read_text()
-    start = src.index("const esc = ")
-    esc = src[start:src.index("\n", start)]
-    start = src.index("const ON_THE_LAPTOP")
-    return esc, src[start:src.index("\n}\n", start) + 2]
+    start = src.index("function goalLinkOf(c)")
+    return "\n".join((_line(src, "const esc = "), _line(src, "const ON_THE_LAPTOP"),
+                      src[start:src.index("\n}\n", start) + 2]))
 
 
 class Parsed(html.parser.HTMLParser):
@@ -54,7 +58,7 @@ class Parsed(html.parser.HTMLParser):
 @unittest.skipUnless(shutil.which("node"), "needs node to run the page's JS")
 class GoalHref(unittest.TestCase):
     def link(self, url):
-        proc = subprocess.run(["node", "-e", HARNESS % (*_page_js(), json.dumps(url))],
+        proc = subprocess.run(["node", "-e", HARNESS % (_page_js(), json.dumps(url))],
                               capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         parsed = Parsed()
@@ -68,6 +72,7 @@ class GoalHref(unittest.TestCase):
             with self.subTest(url=url):
                 got = self.link(url)
                 self.assertEqual([tag for tag, _ in got.elements], ["a"], got.elements)
+                self.assertEqual(set(got.elements[0][1]), {"class", "href", "target", "rel", "title"})
                 self.assertEqual(got.elements[0][1]["href"], url)
                 self.assertEqual(got.text, "goal ↗")
 
