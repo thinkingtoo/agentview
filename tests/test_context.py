@@ -424,8 +424,7 @@ class Tracks(Cards):
         self.assertEqual((got["progress"]["done"], got["progress"]["total"]), (1, 2))
 
     def test_a_box_is_what_the_boss_counts_as_one_and_nothing_else(self):
-        # Ticket 32: claude-boss objective.py BOX_RE, `^- \[([ x])\] (.*)$`, so the card's
-        # "n of m" is the boss's. A dash, one space, a lower-case x or a space, one space.
+        # The boss's own rule, claude-boss objective.py BOX_RE.
         (self.pm / "checkout.goal.md").write_text(
             "# Objective\n_Status: OPEN_\n\n## Done when\n- [x] one\n- [ ] two\n- [x] \n"
             "- [x]b\n- [X] capital\n* [x] star\n+ [ ] plus\n  - [x] indented\n-  [ ] two spaces\n"

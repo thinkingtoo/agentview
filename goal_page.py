@@ -131,18 +131,23 @@ def _stale(now):
 def _refresh(now, run):
     """Ask sheaf for its port, and read its roots for each goal's page. Runs
     outside the lock: sheaf is slow, and a card must not wait on it. A sheaf
-    too slow to answer says nothing of the hub: the one found last is kept."""
+    too slow to answer says nothing of the hub: the one found last is kept,
+    for one look only, so a hub that died meanwhile is not linked for ever."""
     try:
         code, out = run(["status"])
         found = RUNNING.search(out) if code == 0 else None
         with _LOCK:
             wanted = sorted(_wanted)
-            port = int(found.group(1)) if found else _hub["port"] if code == TIMED_OUT else None
+            if found:
+                port, why = int(found.group(1)), ""
+            elif code == TIMED_OUT:
+                port, why = (_hub["port"] if _hub["why"] != SLOW else None), SLOW
+            else:
+                port, why = None, NO_SHEAF if code == MISSING else NO_HUB
         roots = _roots() if port is not None else []
         paths = {goal: _address(goal, roots) for goal in wanted}
         with _LOCK:
-            _hub.update(at=now, port=port,
-                        why={MISSING: NO_SHEAF, TIMED_OUT: SLOW}.get(code, NO_HUB))
+            _hub.update(at=now, port=port, why=why)
             _paths.update(paths)
     except Exception:                   # whatever it was, the card says so and waits STATUS_EVERY
         with _LOCK:

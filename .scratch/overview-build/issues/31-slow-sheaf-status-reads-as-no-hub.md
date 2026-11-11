@@ -19,13 +19,13 @@ and `goal_page.py:132` `why=NO_SHEAF if code == MISSING else NO_HUB)`.
 
 **Blocked by:** None.
 
-**Status:** done
-
 **Claimed by:** Habib 2026-11-11
+
+**Status:** done
 
 ## Evidence
 
-- **Decision:** both halves of "give a timeout its own reason, or keep the last known answer". `_run` returns `TIMED_OUT` (124, timeout(1)'s code) for `subprocess.TimeoutExpired`; `_refresh` then keeps the port found last, and with none found says `SLOW`: "sheaf took more than 10 s to say whether its hub runs: asked again in 30 s". `at` is still set, so a slow sheaf is asked once every `STATUS_EVERY`, not on every poll. Other `SubprocessError`s stay NO_HUB.
+- **Decision:** both halves of "give a timeout its own reason, or keep the last known answer". `_run` returns `TIMED_OUT` (124, timeout(1)'s code) for `subprocess.TimeoutExpired`; `_refresh` then keeps the port found last for one look (a second timeout in a row drops it, so a hub that died is not linked for ever), and with none says `SLOW`: "sheaf took more than 10 s to say whether its hub runs: asked again in 30 s". `at` is still set, so a slow sheaf is asked once every `STATUS_EVERY`, not on every poll. Other `SubprocessError`s stay NO_HUB.
 - **Red** (dev at 6e34b2f, run on t-compute), a real script sleeping 5 s run by `_run` with `TIMEOUT` 0.3:
 
   ```

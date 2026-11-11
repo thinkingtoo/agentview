@@ -18,9 +18,9 @@ then `goal_page.py:134` `except Exception:` sets `why=UNREADABLE` for all goals.
 
 **Blocked by:** None.
 
-**Status:** done
-
 **Claimed by:** Habib 2026-11-11
+
+**Status:** done
 
 ## Evidence
 

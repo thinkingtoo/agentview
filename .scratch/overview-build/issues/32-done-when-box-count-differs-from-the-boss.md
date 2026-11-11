@@ -18,9 +18,9 @@ No real `~/.claude/pm/*.goal.md` shows a difference today apart from the bold `*
 
 **Blocked by:** None.
 
-**Status:** done
-
 **Claimed by:** Habib 2026-11-11
+
+**Status:** done
 
 ## Evidence
 
@@ -32,6 +32,7 @@ No real `~/.claude/pm/*.goal.md` shows a difference today apart from the bold `*
 
   applied to each line of `## Done when` (`criteria`, line 181). agentview's `BOX` is now `^- \[([ x])\] `, the same line rule (the box text is the rest of the line in both). `* [x]`, `+ [ ]`, `[X]`, an indented box, `- [x]b`, `-  [ ]`, a tab and `- [x]` with nothing after are no box.
 - **Kept on purpose, not the boss's:** the bold `**Done when:**` label and `## Done when ##` (ticket 23's reading), and a box inside a code fence is no box (pinned by `test_only_the_boxes_under_done_when_count_and_not_in_code`). Boxes inside an HTML comment are counted, as the boss counts them: the card's number is the boss's, though the sheaf page does not show those boxes.
+- **Accepted differences from the boss's section rule** (code review, spec axis): `_section_span` takes only `^##\s+Done when\s*$`, case-sensitive, and ends at any `## ` line, a fenced one included. agentview's `section()` also takes `# `/`### Done when`, `## done when`, `## Done when:` and `## Done when ##`, and a fence hides a `## ` line. Where the boss reads no section at all, the card still shows the boxes; the line rule, which decides "n of m" inside one section, is the same. Not changed here: ticket 23 reads goal files leniently on purpose, and no real file differs.
 - **Real files:** old and new rule compared on all 56 `~/.claude/pm/*.goal.md`: no line counts differently.
 - **Red** (dev at 6e34b2f, run on t-compute), `tests/test_context.py` `test_a_box_is_what_the_boss_counts_as_one_and_nothing_else`:
 

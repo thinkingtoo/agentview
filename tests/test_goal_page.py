@@ -112,7 +112,7 @@ class GoalPage(unittest.TestCase):
                 self.assertEqual(of("checkout", now=100, run=Sheaf())["why"], goal_page.NO_ROOT)
 
     def test_a_root_whose_path_no_file_can_have_is_skipped_and_the_others_still_give_pages(self):
-        # A NUL in a path: os.path.realpath raises ValueError on it (ticket 30).
+        # A NUL in a path: os.path.realpath raises ValueError on it.
         self.registered(claude=(self.home, True), odd=("/a\x00b", False))
         got = of("checkout", now=100, run=Sheaf())
         self.assertEqual(got["url"], "http://127.0.0.1:27419/claude/pm/checkout.goal.md")
@@ -208,16 +208,17 @@ class GoalPage(unittest.TestCase):
             setattr(goal_page, name, value)
 
     def test_a_sheaf_too_slow_to_answer_is_said_as_slow_and_not_as_no_hub(self):
-        # Ticket 31: a timeout read as "no hub runs" while one ran.
         self.slow_sheaf()
         got = goal_page.of("checkout", now=100, start=inline)
         self.assertEqual(got, {"url": None, "why": goal_page.SLOW})
 
-    def test_a_sheaf_too_slow_to_answer_keeps_the_hub_it_found_last(self):
+    def test_a_sheaf_too_slow_to_answer_keeps_the_hub_it_found_last_for_one_look(self):
         of("checkout", now=100, run=Sheaf())
         self.slow_sheaf()
         got = goal_page.of("checkout", now=100 + goal_page.STATUS_EVERY, start=inline)
         self.assertEqual(got, {"url": "http://127.0.0.1:27419/claude/pm/checkout.goal.md", "why": ""})
+        got = goal_page.of("checkout", now=100 + 2 * goal_page.STATUS_EVERY, start=inline)
+        self.assertEqual(got, {"url": None, "why": goal_page.SLOW})
 
     def test_a_root_sheaf_forgot_takes_the_link_away_at_the_next_look(self):
         sheaf = Sheaf()
