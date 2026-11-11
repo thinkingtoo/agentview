@@ -26,6 +26,6 @@
 
 ### Evidence
 
-- **Test** (`tests/test_goal_href.py`, `test_a_url_whose_host_is_not_127_0_0_1_is_not_linked`): `http://127.0.0.1:x@evil.example/p.md`, `http://127.0.0.1:7417@evil.example/p.md`, `http://127.0.0.1:7417.evil.example/p.md` and `http://127.0.0.1:[/p.md` each give one `<span>` "no goal page". `_page_js()` now also takes `onTheHub` out of the page.
+- **Test** (`tests/test_goal_href.py`, `test_a_url_whose_host_is_not_127_0_0_1_or_that_does_not_parse_is_not_linked`): `http://127.0.0.1:x@evil.example/p.md`, `http://127.0.0.1:7417@evil.example/p.md`, `http://127.0.0.1:7417.evil.example/p.md` and `http://127.0.0.1:[/p.md` each give one `<span>` "no goal page". `_page_js()` now also takes `onTheHub` out of the page.
 - **Red** before the fix (4 failures, one per url), e.g. `AssertionError: Lists differ: ['a'] != ['span']` with `'href': 'http://127.0.0.1:7417.evil.example/p.md'`.
 - **Green:** `test_goal_href` 2 OK (run here: t-compute has no `node`, and the test skips without it; laptop load 11.8). The first test (a quote or markup in a 127.0.0.1 url stays in the href) still passes, so a real hub url still links.

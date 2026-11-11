@@ -33,12 +33,16 @@ def _line(src, opening):
     return src[start:src.index("\n", start)]
 
 
+def _function(src, opening):
+    start = src.index(opening)
+    return src[start:src.index("\n}\n", start) + 2]
+
+
 def _page_js():
     """`esc`, `ON_THE_LAPTOP`, `onTheHub` and `goalLinkOf`, as the page has them."""
     src = PAGE.read_text()
-    start = src.index("function onTheHub(url)")
-    end = src.index("\n}\n", src.index("function goalLinkOf(c)")) + 2
-    return "\n".join((_line(src, "const esc = "), _line(src, "const ON_THE_LAPTOP"), src[start:end]))
+    return "\n".join((_line(src, "const esc = "), _line(src, "const ON_THE_LAPTOP"),
+                      _function(src, "function onTheHub(url)"), _function(src, "function goalLinkOf(c)")))
 
 
 class Parsed(html.parser.HTMLParser):
@@ -76,16 +80,17 @@ class GoalHref(unittest.TestCase):
                 self.assertEqual(got.elements[0][1]["href"], url)
                 self.assertEqual(got.text, "goal ↗")
 
-    def test_a_url_whose_host_is_not_127_0_0_1_is_not_linked(self):
-        # Ticket overview-build/33: the guard checked a prefix. In the first url
-        # `127.0.0.1:x` is userinfo and the host is evil.example; the last two
-        # parse to no url at all.
+    def test_a_url_whose_host_is_not_127_0_0_1_or_that_does_not_parse_is_not_linked(self):
+        # Ticket overview-build/33: the guard checked a prefix. In the first two
+        # urls what precedes `@` is userinfo and the host is evil.example; the
+        # last two parse to no url at all.
         for url in ("http://127.0.0.1:x@evil.example/p.md", "http://127.0.0.1:7417@evil.example/p.md",
                     "http://127.0.0.1:7417.evil.example/p.md", "http://127.0.0.1:[/p.md"):
             with self.subTest(url=url):
                 got = self.link(url)
                 self.assertEqual([tag for tag, _ in got.elements], ["span"], got.elements)
                 self.assertEqual(got.text, "no goal page")
+
 
 if __name__ == "__main__":
     unittest.main()
