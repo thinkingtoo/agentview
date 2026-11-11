@@ -220,17 +220,44 @@ class GoalPage(unittest.TestCase):
         got = goal_page.of("checkout", now=100 + 2 * goal_page.STATUS_EVERY, start=inline)
         self.assertEqual(got, {"url": None, "why": goal_page.SLOW})
 
+    def sheaf_says(self, code, err):
+        """A `sheaf` that fails with `code`, nothing on stdout and `err` on stderr, run for
+        real by `_run`."""
+        said = self.disk / "sheaf-says"
+        said.write_text(f"#!/bin/sh\nprintf '%s\\n' '{err}' >&2\nexit {code}\n")
+        said.chmod(0o755)
+        self.addCleanup(setattr, goal_page, "SHEAF", goal_page.SHEAF)
+        goal_page.SHEAF = str(said)
+
     def test_a_hub_that_does_not_answer_sheaf_in_time_is_not_said_as_no_hub(self):
-        # sheaf 1.0.3 `status`: exit 1 and nothing on stdout when its hub is silent past
-        # sheaf's own 3 s (the "no hub is running" line is printed only when none listens).
-        silent = lambda args: (1, "")
-        self.assertEqual(of("checkout", now=100, run=silent), {"url": None, "why": goal_page.UNSURE})
-        goal_page.forget()
+        # sheaf 1.0.3 `status` on a hub silent past sheaf's own 3 s (HubSilent): exit 1,
+        # the line on stderr; "no hub is running" is printed only when none listens.
         of("checkout", now=100, run=Sheaf())
-        got = of("checkout", now=100 + goal_page.STATUS_EVERY, run=silent)
+        self.sheaf_says(1, "  ! the sheaf hub on 127.0.0.1:27419 did not answer within 3 s; "
+                           "try again, or run `sheaf restart`")
+        got = goal_page.of("checkout", now=100 + goal_page.STATUS_EVERY, start=inline)
         self.assertEqual(got, {"url": "http://127.0.0.1:27419/claude/pm/checkout.goal.md", "why": ""})
-        got = of("checkout", now=100 + 2 * goal_page.STATUS_EVERY, run=silent)
+        got = goal_page.of("checkout", now=100 + 2 * goal_page.STATUS_EVERY, start=inline)
         self.assertEqual(got, {"url": None, "why": goal_page.UNSURE})
+
+    def test_a_hub_that_hung_up_on_sheaf_is_silent_too(self):
+        self.sheaf_says(1, "  ! the sheaf hub on 127.0.0.1:27419 proved itself and then ended the "
+                           "connection, twice, and nothing was sent; try again, or run `sheaf restart`")
+        self.assertEqual(goal_page.of("checkout", now=100, start=inline), {"url": None, "why": goal_page.UNSURE})
+
+    def test_a_status_that_fails_otherwise_drops_the_link_and_is_not_said_as_no_hub(self):
+        for err in ("  ! something else holds 127.0.0.1:27419, not your sheaf hub",
+                    "sheaf: SHEAF_PORT is not a port: x", ""):
+            with self.subTest(err=err):
+                goal_page.forget()
+                of("checkout", now=100, run=Sheaf())
+                self.sheaf_says(1, err)
+                got = goal_page.of("checkout", now=100 + goal_page.STATUS_EVERY, start=inline)
+                self.assertEqual(got, {"url": None, "why": goal_page.FAILED})
+
+    def test_a_status_that_says_neither_way_is_not_said_as_no_hub(self):
+        self.assertEqual(of("checkout", now=100, run=lambda args: (0, "  all fine\n")),
+                         {"url": None, "why": goal_page.FAILED})
 
     def test_a_root_sheaf_forgot_takes_the_link_away_at_the_next_look(self):
         sheaf = Sheaf()

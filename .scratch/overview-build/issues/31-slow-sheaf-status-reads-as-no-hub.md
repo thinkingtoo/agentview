@@ -45,4 +45,14 @@ and `goal_page.py:132` `why=NO_SHEAF if code == MISSING else NO_HUB)`.
 
   With the fix and the new condition removed again (mutation): `AssertionError: {'url': None, 'why': 'no sheaf hub runs: start one with `sheaf start`'} != {'url': None, 'why': 'sheaf could not tell whether its hub runs[48 chars]0 s'}`. Green with the fix: `tests.test_goal_page tests.test_context tests.test_goal_href`, `Ran 186 tests ... OK (skipped=1)`.
 - **Left, class c, from the same hunt:** "one look" is one refresh, and a goal newly asked for starts one at once, so a kept link can go a few seconds after a timeout instead of `STATUS_EVERY` later (and the "asked again in 30 s" is then early). `TIMED_OUT = 124` would misread a sheaf that ever exits 124 (sheaf 1.0.3 exits 0, 1 or 2 only). Neither is wrong today on a single card.
+- **Bug hunt round 2 (Opus), class b, fixed:** round 1's fix read every exit 1 without "no hub is running" as a busy hub, so a stranger on the hub's port (sheaf's plain `Impostor`, "something else holds 127.0.0.1:PORT, not your sheaf hub"), a config error (`main`'s `ConfigError`) or a traceback kept the old link for one look and said "too busy". Now `_run` reads stderr: only sheaf's `HubSilent`/`HubHungUp` texts ("the sheaf hub on 127.0.0.1:PORT did not answer", "... proved itself and then ended") give `SILENT`, which keeps the last hub for one look, else `UNSURE`. "No hub" is said only when sheaf prints `no hub is running`; any other failure, an exit 0 that `RUNNING` cannot read included, is `FAILED` ("`sheaf status` failed: run it to see why") and drops the link. Texts read in the installed sheafmd 1.0.3 (`hub/client.py` `Impostor`, `HubSilent`, `HubHungUp`; `cli.py` `_hub_failure`, `main`); a sandboxed real `sheaf status` (own `SHEAF_HOME`, free port) printed `  no hub is running` on stdout, and with `SHEAF_PORT=x` exit 1, stdout empty, stderr `sheaf: SHEAF_PORT='x' is not a port number`. Red, before the fix (t-compute):
+
+  ```
+  ERROR: test_a_status_that_fails_otherwise_drops_the_link_and_is_not_said_as_no_hub (err='  ! something else holds 127.0.0.1:27419, not your sheaf hub')
+  AttributeError: module 'goal_page' has no attribute 'FAILED'
+  ERROR: test_a_status_that_says_neither_way_is_not_said_as_no_hub
+  AttributeError: module 'goal_page' has no attribute 'FAILED'
+  ```
+
+  Green: `Ran 189 tests ... OK (skipped=1)`. Mutations: dropping the stderr check fails the two silent-hub tests; saying NO_HUB for any failure fails the two FAILED tests.
 

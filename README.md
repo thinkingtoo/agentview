@@ -97,7 +97,8 @@ is about, the whole text (up to 1,500 characters). The first of these that exist
    theme it was given. Until the first answer the hover says "asking sheaf";
    without a hub the card says "no goal page" and the hover says why (a sheaf
    that takes over 10 seconds to answer, or whose hub is too busy to answer
-   it, is said as such, the link it gave before kept for one more look), and
+   it, is said as such, the link it gave before kept for one more look; a
+   `sheaf status` that fails otherwise says to run it to see why), and
    so it does for a goal in a folder sheaf has never opened a file of (open
    the goal once with `sheaf open FILE`). The hub
    listens on the laptop's 127.0.0.1 only and its sign-in cookie only goes

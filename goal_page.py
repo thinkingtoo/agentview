@@ -32,15 +32,20 @@ STATUS_EVERY = 30               # seconds between two looks at the hub
 TIMEOUT = 10
 RUNNING = re.compile(r"hub running on 127\.0\.0\.1:(\d{1,5})\b")
 NONE_RUNS = "no hub is running"   # what `sheaf status` prints when nothing listens on its port
+# What it says on stderr when its hub runs and did not answer it in time, or hung up on it
+# (sheaf's HubSilent and HubHungUp): a hub too busy, not a stranger on its port.
+HUB_SILENT = re.compile(r"the sheaf hub on 127\.0\.0\.1:\d+ (?:did not answer|proved itself and then ended)")
 NO_HUB = "no sheaf hub runs: start one with `sheaf start`"
 NO_SHEAF = "sheaf is not installed"
 NO_ROOT = "sheaf has no root holding the goal file yet: open it once with `sheaf open FILE`"
 UNREADABLE = "sheaf gave an answer agentview could not read"
 SLOW = f"sheaf took more than {TIMEOUT} s to say whether its hub runs: asked again in {STATUS_EVERY} s"
-UNSURE = f"sheaf could not tell whether its hub runs (a hub too busy to answer it): asked again in {STATUS_EVERY} s"
+UNSURE = f"sheaf's hub did not answer sheaf in time: asked again in {STATUS_EVERY} s"
+FAILED = "`sheaf status` failed: run it to see why"
 ASKING = "asking sheaf for its hub"
 MISSING = 127                   # the exit code of a command that is not there
 TIMED_OUT = 124                 # timeout(1)'s, for a sheaf that did not answer in TIMEOUT
+SILENT = 125                    # for a sheaf whose hub did not answer it (`HUB_SILENT`)
 
 _LOCK = threading.Lock()
 _hub = {"at": None, "port": None, "why": ""}
@@ -69,7 +74,8 @@ def forget():
 
 def _run(args):
     """`(exit code, stdout)` of `sheaf ARGS`; a sheaf missing (`MISSING`), too
-    slow (`TIMED_OUT`) or failing otherwise fails."""
+    slow (`TIMED_OUT`), with a hub that did not answer it (`SILENT`) or failing
+    otherwise fails."""
     try:
         done = subprocess.run([SHEAF, *args], capture_output=True, text=True, errors="replace",
                               timeout=TIMEOUT, stdin=subprocess.DEVNULL)
@@ -79,6 +85,8 @@ def _run(args):
         return TIMED_OUT, ""
     except subprocess.SubprocessError:
         return 1, ""
+    if done.returncode == 1 and HUB_SILENT.search(done.stderr):
+        return SILENT, ""
     return done.returncode, done.stdout
 
 
@@ -133,9 +141,9 @@ def _stale(now):
 def _refresh(now, run):
     """Ask sheaf for its port, and read its roots for each goal's page. Runs
     outside the lock: sheaf is slow, and a card must not wait on it. A sheaf
-    too slow to answer, or failing without saying no hub runs (its hub did
-    not answer it), says nothing of the hub: the one found last is kept, for
-    one look only, so a hub that died meanwhile is not linked for ever."""
+    too slow to answer, or whose hub did not answer it, says nothing of the
+    hub: the one found last is kept, for one look only, so a hub that died
+    meanwhile is not linked for ever. Only sheaf saying so is "no hub"."""
     try:
         code, out = run(["status"])
         found = RUNNING.search(out) if code == 0 else None
@@ -143,11 +151,12 @@ def _refresh(now, run):
             wanted = sorted(_wanted)
             if found:
                 port, why = int(found.group(1)), ""
-            elif code == TIMED_OUT or (code == 1 and NONE_RUNS not in out):
+            elif code in (TIMED_OUT, SILENT):
                 kept = _hub["why"] not in (SLOW, UNSURE)
                 port, why = (_hub["port"] if kept else None), SLOW if code == TIMED_OUT else UNSURE
             else:
-                port, why = None, NO_SHEAF if code == MISSING else NO_HUB
+                port = None
+                why = NO_SHEAF if code == MISSING else NO_HUB if NONE_RUNS in out else FAILED
         roots = _roots() if port is not None else []
         paths = {goal: _address(goal, roots) for goal in wanted}
         with _LOCK:
