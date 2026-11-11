@@ -23,3 +23,7 @@
   Evidence, green (t-compute, after): `tests.test_turn_hook` "Ran 28 tests in 2.736s" / "OK".
   Sizes after the fix (id length: test path / live path `/home/tiroir/Projects/agentview/hooks`): 36: 2009 / 2012; 71: 2114 / 2117; 80: 2141 / 2144.
   Cut, no rule dropped: "a command for them to run, a mail for them to send" became "a command to type, a mail to send"; "the clipboard in so many words" became "the clipboard by name"; "else a mktemp -d directory" became "else mktemp -d". The new test also fails if `SAFE` ever accepts an 81st character, so it keeps measuring the longest id.
+
+## Comments
+
+**Nadia, 2026-11-11.** The fit also depends on where the hooks directory lives: its path is in the text three times. With an 80-character id the live path leaves 6 characters, and a worktree path two characters longer gives 2171. That is ticket 07 (the size test holds `PASTE` fixed), not changed here.

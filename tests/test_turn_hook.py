@@ -154,6 +154,7 @@ class Starting(unittest.TestCase):
         for sid in ("a b; touch X", "../x", 5, ["x"]):
             with self.subTest(sid=sid):
                 self.assertEqual(turn_line.begin({"session_id": sid, "prompt": "go"}, root=self.root), {})
+        self.assertEqual(list(self.root.iterdir()), [], "no turn is started for such an id")
 
     def test_it_never_blocks(self):
         got = turn_line.begin({"session_id": "s1", "prompt": "go"}, root=self.root)
