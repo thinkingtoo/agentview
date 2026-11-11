@@ -75,7 +75,9 @@ is about, the whole text (up to 1,500 characters). The first of these that exist
    `**Outcome:**` label) in `~/.claude/pm/<track>.goal.md`. Under the name, the
    `_Status:` word (OPEN, PAUSED, MET), and under the line "N of M" from the boxes under
    `## Done when` (or `**Done when:**`); a MET track says "done" whatever its
-   boxes say. An open track also says its ETA: the boxes ticked since agentview
+   boxes say. A box is a line the boss counts as one, `- [ ] ` or `- [x] `
+   at its start, so the card's count is the boss's: `* [x]`, `[X]`, an
+   indented box or `- [x]done` with no space is not one. An open track also says its ETA: the boxes ticked since agentview
    first saw the track, over the time since, carried to the boxes left (`pace.py`,
    kept in `~/.claude/agentview/pace.json`). The goal file never says when a box
    was ticked, so until one is ticked while agentview watches it says "ETA after
@@ -92,7 +94,9 @@ is about, the whole text (up to 1,500 characters). The first of these that exist
    the roots sheaf keeps (`roots.json`, read only) by sheaf's own rule. So
    neither the page nor the poll starts a hub, and a page keeps the title and
    theme it was given. Until the first answer the hover says "asking sheaf";
-   without a hub the card says "no goal page" and the hover says why, and so
+   without a hub the card says "no goal page" and the hover says why (a sheaf
+   that takes over 10 seconds to answer is said as slow, and a link it gave
+   before stays), and so
    it does for a goal in a folder sheaf has never opened a file of (open the
    goal once with `sheaf open FILE`). The hub
    listens on the laptop's 127.0.0.1 only and its sign-in cookie only goes

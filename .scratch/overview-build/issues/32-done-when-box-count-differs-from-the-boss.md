@@ -18,4 +18,27 @@ No real `~/.claude/pm/*.goal.md` shows a difference today apart from the bold `*
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+**Status:** done
+
+**Claimed by:** Habib 2026-11-11
+
+## Evidence
+
+- **The boss's rule**, claude-boss 0.22.0 `skills/boss/objective.py:178`, which `boss-goal check` and `verify` count through `obj criteria`:
+
+  ```python
+  BOX_RE = re.compile(r"^- \[([ x])\] (.*)$")
+  ```
+
+  applied to each line of `## Done when` (`criteria`, line 181). agentview's `BOX` is now `^- \[([ x])\] `, the same line rule (the box text is the rest of the line in both). `* [x]`, `+ [ ]`, `[X]`, an indented box, `- [x]b`, `-  [ ]`, a tab and `- [x]` with nothing after are no box.
+- **Kept on purpose, not the boss's:** the bold `**Done when:**` label and `## Done when ##` (ticket 23's reading), and a box inside a code fence is no box (pinned by `test_only_the_boxes_under_done_when_count_and_not_in_code`). Boxes inside an HTML comment are counted, as the boss counts them: the card's number is the boss's, though the sheaf page does not show those boxes.
+- **Real files:** old and new rule compared on all 56 `~/.claude/pm/*.goal.md`: no line counts differently.
+- **Red** (dev at 6e34b2f, run on t-compute), `tests/test_context.py` `test_a_box_is_what_the_boss_counts_as_one_and_nothing_else`:
+
+  ```
+  FAIL: test_a_box_is_what_the_boss_counts_as_one_and_nothing_else
+  AssertionError: Tuples differ: (7, 11) != (2, 3)
+  ```
+
+- **Tests changed with the rule:** `[X] refund` became `[x] refund` in the order test; the "any style" test lost `* [X]` and the indented box and is now `test_only_the_boxes_under_done_when_count_and_not_in_code`. `pace.py` restarts its count when the total changes; no real file changes total.
+- **Green:** same run as ticket 30, `Ran 185 tests ... OK (skipped=1)`. README says the rule.
