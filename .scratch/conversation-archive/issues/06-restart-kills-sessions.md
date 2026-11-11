@@ -6,7 +6,7 @@
 
 **Blocked by:** None
 
-**Status:** needs-triage
+**Status:** done
 
 **Claimed by:** Sinead 2026-11-10
 
@@ -42,11 +42,11 @@ What was observed, and what was not.
 ## Acceptance (once decided)
 
 - [ ] `systemctl --user restart agentview` leaves running every session that was in the service's cgroup beforehand. Checked by listing the `claude` processes in `systemctl --user status agentview` before, and counting them and the `session.gone` events in the log after.
-- [ ] `systemctl --user stop agentview` says what happened to the sessions, or leaves them running, and the README says which.
+- [ ] `systemctl --user stop agentview` says what happened to the sessions, or leaves them running, and the README says which. (README now says what a stop is expected to do, as an inference; not run. See "Drop-in removed, 2026-11-11".)
 - [x] README: the restart rule is written down where the service is documented, whichever fix is chosen. ("Restarting the service, and what survives it", under "Run it".)
 - [x] Until then: the README's "Run it" section says that restarting `agentview` kills every process in the service's cgroup, which can include a tmux server and the sessions in it (check with `systemctl --user status agentview` first), and that server changes are tested on a second server on another port with its own `XDG_STATE_HOME`.
 
-The first two boxes are about the live service and stay open until the last open step under "Live switchover" is done.
+The first two boxes are about the live service and stay open until the last open step under "Live switchover" is done. On 2026-11-11 the drop-in was removed but neither a restart nor a stop was run, so both stay open; `Status:` was set to done on the boss's order (see "Drop-in removed, 2026-11-11").
 
 ## Fix B, built and checked (2026-09-29)
 
@@ -78,7 +78,7 @@ What that shows, and what it does not:
 - Observed, by hand after the run: no unit, scope or process named for the run was left; the real tmux server's 6 sessions and 12 WezTerm tabs were the same before and after; `agentview.service` had the same InvocationID before and after.
 - Not shown: that `restore` and `launch` reach these helpers (`tests/test_scope.py` covers that, with fake leaves); the live service, as it was at the time of the check (the sessions running then were in its old cgroup, so a restart of it would still have killed them; see "Live switchover" below for what was done about that; and reading `restore` says it reuses a tmux server and WezTerm window that are already running and does not move them, so they stay there until they are shut down and started again, for instance by the login restore after a reboot); the login autostart unit, which has not been run since the change; `systemctl stop` on its own (the check restarts, which is a stop followed by a start). The restore process itself (`server.py`, `_restore`) is not in a scope, so a restart in the middle of a restore aborts it. The check for a user manager and the launch are two `systemd-run` calls; if the manager goes away between them that one launch fails (running the command again unwrapped cannot be done safely: `systemd-run --scope` returns the command's own exit status).
 
-`Status:` stays as it is until the last open step under "Live switchover" is done.
+`Status:` stays as it is until the last open step under "Live switchover" is done. (Superseded on 2026-11-11: set to done on the boss's order with the restart and stop checks not run; see "Drop-in removed, 2026-11-11".)
 
 ## Live switchover, way 1 (2026-09-29)
 
@@ -219,3 +219,84 @@ Where the 43 `claude` processes are: 39 in `tmux-spawn-<uuid>.scope` (scopes tmu
 **4. The login restore ran through `scope.wrap` after every boot since the change.** The event log (`~/.local/state/agentview/events.jsonl` and `.1`) only goes back to 2026-10-31. It has no `scope.*` or restore event: `scope.unavailable` is the only scope event the code writes, and it never appears. The user journal has `app-agentview\x2drestore@autostart.service` starting on 2026-10-12 (×3), 10-13, 10-16, 10-18 (×2), 10-20, 10-27 (×2), 11-01, 11-03 and 11-05. On each of those days it also has `Started run-….scope - agentview: tmux server`, and on every day except 10-13 and 11-05 an `agentview: wezterm window` scope. The run that counts is 2026-11-05: `16:02:08 Started run-p8509-i25065.scope - agentview: tmux server`, followed by `resumed 22 session(s)` at 16:03:10.
 
 **Conclusion.** Yes: the drop-in can be removed today without killing a session. `agentview.service`'s cgroup holds only `server.py`, and every session sits in the scoped tmux server or in Plasma's WezTerm unit, both outside the service. The failed WezTerm line in the check does not depend on the drop-in. The window is outside the service either way, but its Plasma unit has `OOMPolicy=stop`, which is the 2026-09-28 failure mode: one OOM kill there takes down the window and the 4 sessions in its tabs. That needs a separate fix (open WezTerm through agentview, or restart it once through the restore), not the drop-in.
+
+## Drop-in removed, 2026-11-11
+
+Ordered by the boss on the owner's decision of about 01:00 on 2026-11-11 ("Yes, remove it"). Run by Teodor.
+
+**The owner's answers, both relayed by the concierge (Elias):** "Yes, remove it" (q2, the decision) and "Done, I ran it" (q3, after running the removal by hand). The `rm` was not done by an agent: the Claude Code auto-mode classifier refused it to Teodor ("Irreversible Local Destruction"), so the owner ran it himself.
+
+**1. Before (01:02:12).** The drop-in's text, which is also the rollback:
+
+```
+$ cat ~/.config/systemd/user/agentview.service.d/switchover.conf
+[Service]
+KillMode=process
+OOMPolicy=continue
+$ ls ~/.config/systemd/user/agentview.service.d/
+extra-origins.conf
+switchover.conf
+$ systemctl --user show agentview.service -p KillMode -p OOMPolicy -p ControlGroup -p MainPID -p InvocationID -p ActiveEnterTimestamp
+ActiveEnterTimestamp=Thu 2026-11-05 19:01:51 CET
+InvocationID=141845b7c408445cbddebd485f8e98d4
+MainPID=2594842
+OOMPolicy=continue
+ControlGroup=/user.slice/user-1000.slice/user@1000.service/app.slice/agentview.service
+KillMode=process
+```
+
+**2. The check block, run as written.**
+
+```
+pid 8512 in run-p8509-i25065.scope
+Description=agentview: tmux server
+OOMPolicy=continue
+pid 22119 in app-org.wezfurlong.wezterm@3004c8e51b5349fc8eb3766be6d8ac4a.service
+Description=WezTerm
+OOMPolicy=stop
+```
+
+The `cgroup.procs` line gave no output (grep exit 1). The service's cgroup holds one process, `2594842 python3 Thu Nov  5 19:01:51 2026`. Same result as on 2026-11-10: no tmux, wezterm or claude process in `agentview.service`, so the removal could go ahead; the WezTerm window is still in Plasma's unit with `OOMPolicy=stop`, which is ticket 07 and does not depend on the drop-in.
+
+**3. Removal, by the owner.** He ran `rm ~/.config/systemd/user/agentview.service.d/switchover.conf` and `systemctl --user daemon-reload`. The boss (Noor) checked it read-only afterwards: only `extra-origins.conf` left in the directory, `KillMode=control-group`, `OOMPolicy=stop`, `DropInPaths` naming `extra-origins.conf` only, service active, MainPID 2594842 unchanged.
+
+Rollback, if ever needed: write these three lines back into `switchover.conf` and run `systemctl --user daemon-reload`:
+
+```
+[Service]
+KillMode=process
+OOMPolicy=continue
+```
+
+**4. After-readings (01:12:27, Teodor, read-only).** No restart, no stop and no kill were run. The boss's order of 2026-11-11 limited this step to read-only readings.
+
+```
+$ ls ~/.config/systemd/user/agentview.service.d/
+extra-origins.conf
+$ systemctl --user show agentview.service -p KillMode -p OOMPolicy -p DropInPaths -p MainPID -p InvocationID -p ActiveState -p ActiveEnterTimestamp -p TasksCurrent
+ActiveState=active
+DropInPaths=/home/tiroir/.config/systemd/user/agentview.service.d/extra-origins.conf
+ActiveEnterTimestamp=Thu 2026-11-05 19:01:51 CET
+InvocationID=141845b7c408445cbddebd485f8e98d4
+MainPID=2594842
+OOMPolicy=stop
+TasksCurrent=5
+KillMode=control-group
+```
+
+The check block, run as written:
+
+```
+pid 8512 in run-p8509-i25065.scope
+Description=agentview: tmux server
+OOMPolicy=continue
+pid 22119 in app-org.wezfurlong.wezterm@3004c8e51b5349fc8eb3766be6d8ac4a.service
+Description=WezTerm
+OOMPolicy=stop
+```
+
+The `cgroup.procs` line gave no output (grep exit 1), and the service's cgroup holds only `2594842 python3 Thu Nov  5 19:01:51 2026`. The WezTerm window in the Plasma unit with `OOMPolicy=stop` is ticket 07. Other readings: 42 `claude` processes on the machine, none of them in the service; 285 `session.gone` events in `events.jsonl`; 9 tmux sessions and 13 WezTerm panes; `GET http://127.0.0.1:8765/` gave 200. MainPID and InvocationID are the same as before the removal, so the service was not restarted by the `daemon-reload`.
+
+**5. What a restart or a stop would do now.** This was not run. With `KillMode=control-group`, `systemctl --user restart` and `stop` kill every process in the service's cgroup. Right now the cgroup holds `server.py` and nothing else, so either one would end the server only, and the sessions in the scoped tmux server and in the WezTerm window would keep running. That is an inference from systemd's documented behaviour and the cgroup contents above. A restart test, which the first box asks for, has not been done. The README's "Restarting the service, and what survives it" now gives this end state and the check block to run before any restart.
+
+**6. Boxes and status.** Both boxes stay open. No restart was run after the removal, so "leaves running every session" was not observed. No stop was run either, so the README states only what a stop is expected to do. The boss set `Status:` to done anyway. A real restart and stop with the comparison snippets under "Live switchover" would close both boxes.
