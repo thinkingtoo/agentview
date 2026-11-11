@@ -31,11 +31,13 @@ SHEAF = "sheaf"
 STATUS_EVERY = 30               # seconds between two looks at the hub
 TIMEOUT = 10
 RUNNING = re.compile(r"hub running on 127\.0\.0\.1:(\d{1,5})\b")
+NONE_RUNS = "no hub is running"   # what `sheaf status` prints when nothing listens on its port
 NO_HUB = "no sheaf hub runs: start one with `sheaf start`"
 NO_SHEAF = "sheaf is not installed"
 NO_ROOT = "sheaf has no root holding the goal file yet: open it once with `sheaf open FILE`"
 UNREADABLE = "sheaf gave an answer agentview could not read"
 SLOW = f"sheaf took more than {TIMEOUT} s to say whether its hub runs: asked again in {STATUS_EVERY} s"
+UNSURE = f"sheaf could not tell whether its hub runs (a hub too busy to answer it): asked again in {STATUS_EVERY} s"
 ASKING = "asking sheaf for its hub"
 MISSING = 127                   # the exit code of a command that is not there
 TIMED_OUT = 124                 # timeout(1)'s, for a sheaf that did not answer in TIMEOUT
@@ -131,8 +133,9 @@ def _stale(now):
 def _refresh(now, run):
     """Ask sheaf for its port, and read its roots for each goal's page. Runs
     outside the lock: sheaf is slow, and a card must not wait on it. A sheaf
-    too slow to answer says nothing of the hub: the one found last is kept,
-    for one look only, so a hub that died meanwhile is not linked for ever."""
+    too slow to answer, or failing without saying no hub runs (its hub did
+    not answer it), says nothing of the hub: the one found last is kept, for
+    one look only, so a hub that died meanwhile is not linked for ever."""
     try:
         code, out = run(["status"])
         found = RUNNING.search(out) if code == 0 else None
@@ -140,8 +143,9 @@ def _refresh(now, run):
             wanted = sorted(_wanted)
             if found:
                 port, why = int(found.group(1)), ""
-            elif code == TIMED_OUT:
-                port, why = (_hub["port"] if _hub["why"] != SLOW else None), SLOW
+            elif code == TIMED_OUT or (code == 1 and NONE_RUNS not in out):
+                kept = _hub["why"] not in (SLOW, UNSURE)
+                port, why = (_hub["port"] if kept else None), SLOW if code == TIMED_OUT else UNSURE
             else:
                 port, why = None, NO_SHEAF if code == MISSING else NO_HUB
         roots = _roots() if port is not None else []

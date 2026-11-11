@@ -36,3 +36,13 @@ and `goal_page.py:132` `why=NO_SHEAF if code == MISSING else NO_HUB)`.
   ```
 
 - **Green:** same run as ticket 30, `Ran 185 tests ... OK (skipped=1)`. README says it in the goal link paragraph.
+- **Bug hunt round 1 (Opus), class b, fixed:** sheaf's own health check gives up on its hub after 3 s (`hub/client.py:43` `TIMEOUT = 3.0`), long before agentview's 10 s. `cmd_status` then exits 1 with stdout empty (`cli.py:433`, `return _hub_failure(e)`, the message on stderr); only a hub that is really not there prints `  no hub is running` (`cli.py:435`). Read in the installed sheafmd. That case was still said as NO_HUB. Now an exit 1 without that line is handled like a timeout: the hub found last is kept for one look, else `UNSURE` ("sheaf could not tell whether its hub runs ..."). Red, `test_a_hub_that_does_not_answer_sheaf_in_time_is_not_said_as_no_hub`, run on t-compute before the fix:
+
+  ```
+  ERROR: test_a_hub_that_does_not_answer_sheaf_in_time_is_not_said_as_no_hub
+  AttributeError: module 'goal_page' has no attribute 'UNSURE'
+  ```
+
+  With the fix and the new condition removed again (mutation): `AssertionError: {'url': None, 'why': 'no sheaf hub runs: start one with `sheaf start`'} != {'url': None, 'why': 'sheaf could not tell whether its hub runs[48 chars]0 s'}`. Green with the fix: `tests.test_goal_page tests.test_context tests.test_goal_href`, `Ran 186 tests ... OK (skipped=1)`.
+- **Left, class c, from the same hunt:** "one look" is one refresh, and a goal newly asked for starts one at once, so a kept link can go a few seconds after a timeout instead of `STATUS_EVERY` later (and the "asked again in 30 s" is then early). `TIMED_OUT = 124` would misread a sheaf that ever exits 124 (sheaf 1.0.3 exits 0, 1 or 2 only). Neither is wrong today on a single card.
+

@@ -220,6 +220,18 @@ class GoalPage(unittest.TestCase):
         got = goal_page.of("checkout", now=100 + 2 * goal_page.STATUS_EVERY, start=inline)
         self.assertEqual(got, {"url": None, "why": goal_page.SLOW})
 
+    def test_a_hub_that_does_not_answer_sheaf_in_time_is_not_said_as_no_hub(self):
+        # sheaf 1.0.3 `status`: exit 1 and nothing on stdout when its hub is silent past
+        # sheaf's own 3 s (the "no hub is running" line is printed only when none listens).
+        silent = lambda args: (1, "")
+        self.assertEqual(of("checkout", now=100, run=silent), {"url": None, "why": goal_page.UNSURE})
+        goal_page.forget()
+        of("checkout", now=100, run=Sheaf())
+        got = of("checkout", now=100 + goal_page.STATUS_EVERY, run=silent)
+        self.assertEqual(got, {"url": "http://127.0.0.1:27419/claude/pm/checkout.goal.md", "why": ""})
+        got = of("checkout", now=100 + 2 * goal_page.STATUS_EVERY, run=silent)
+        self.assertEqual(got, {"url": None, "why": goal_page.UNSURE})
+
     def test_a_root_sheaf_forgot_takes_the_link_away_at_the_next_look(self):
         sheaf = Sheaf()
         of("checkout", now=100, run=sheaf)

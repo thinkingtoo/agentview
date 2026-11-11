@@ -96,9 +96,10 @@ is about, the whole text (up to 1,500 characters). The first of these that exist
    neither the page nor the poll starts a hub, and a page keeps the title and
    theme it was given. Until the first answer the hover says "asking sheaf";
    without a hub the card says "no goal page" and the hover says why (a sheaf
-   that takes over 10 seconds to answer is said as slow, the link it gave
-   before kept for one more look), and so it does for a goal in a folder
-   sheaf has never opened a file of (open the goal once with `sheaf open FILE`). The hub
+   that takes over 10 seconds to answer, or whose hub is too busy to answer
+   it, is said as such, the link it gave before kept for one more look), and
+   so it does for a goal in a folder sheaf has never opened a file of (open
+   the goal once with `sheaf open FILE`). The hub
    listens on the laptop's 127.0.0.1 only and its sign-in cookie only goes
    with a page on that same name, so on agentview reached any other way, the
    phone over tailscale or `localhost` for two, the card says "goal on the
