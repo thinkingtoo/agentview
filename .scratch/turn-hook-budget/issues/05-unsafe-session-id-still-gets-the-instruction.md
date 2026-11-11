@@ -23,4 +23,10 @@ The context then reads `.../team-line a b; touch X --did '...'`; a session follo
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+**Claimed by:** Nadia 2026-11-11
+
+**Status:** done
+
+- [x] `begin()` returns `{}` for an id `lines.SAFE` refuses, and starts no turn for it
+  Evidence, red (t-compute, before the fix): `tests.test_turn_hook` "Ran 28 tests", `FAIL: test_a_session_id_the_store_refuses_gets_no_instruction` for sid='a b; touch X', '../x', 5 and ['x'], each `AssertionError: {'hookSpecificOutput': ...} != {}`.
+  Evidence, green (t-compute, after): `tests.test_turn_hook` "Ran 28 tests in 2.736s" / "OK". Fix: `hooks/turn_line.py` `begin()`, `if not isinstance(sid, str) or not lines.SAFE.fullmatch(sid): return {}`.
