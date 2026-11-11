@@ -26,7 +26,12 @@ def main(argv=None):
     args = p.parse_args(argv)
     # Words only when there is one thing to say. Anything else is a count.
     ask = args.ask if args.n == 1 else ""
-    rec = lines.write(args.session, did=args.did, ask=ask, n=args.n)
+    did = args.did
+    # With nothing waiting, an ask is news, not a question (a refused Paste is
+    # told there): the card shows the did, so that is where it goes.
+    if args.n == 0 and args.ask:
+        did = f"{did} {args.ask}" if did else args.ask
+    rec = lines.write(args.session, did=did, ask=ask, n=args.n)
     if rec is None:
         # Failing open is right for the dashboard. Reporting a success that
         # did not happen is not.

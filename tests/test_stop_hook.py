@@ -130,6 +130,15 @@ class TheWriter(unittest.TestCase):
         self.run_writer("s8", "--did", "x", "--n", "1", "--ask", "the only one")
         self.assertEqual(lines.read("s8")["ask"], "the only one")
 
+    def test_an_ask_with_nothing_waiting_is_kept_in_the_did(self):
+        # Ticket paste/19: a refused Paste is said in the ask unless --n is above 1,
+        # so at 0 its words must land where the card shows them.
+        self.run_writer("s6", "--did", "Mail drafted.", "--n", "0", "--ask", "paste create was refused")
+        self.assertEqual(lines.read("s6")["did"], "Mail drafted. paste create was refused")
+        self.assertEqual(lines.read("s6")["ask"], "")
+        self.run_writer("s5", "--n", "0", "--ask", "paste create was refused")
+        self.assertEqual(lines.read("s5")["did"], "paste create was refused")
+
     def test_it_carries_the_turn_it_was_run_in(self):
         turn = lines.begin_turn("s7")
         self.run_writer("s7", "--did", "x", "--n", "0")

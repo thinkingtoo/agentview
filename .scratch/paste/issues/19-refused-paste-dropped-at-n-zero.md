@@ -12,4 +12,26 @@
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+**Status:** done
+
+**Claimed by:** Samir 2026-11-11
+
+## Evidence
+
+**Samir, 2026-11-11.** Fixed in `team-line`, not in the wording: the same rule is also written in `~/.claude/CLAUDE.md`, and sessions already follow it. With `--n 0` nothing is waiting, so an ask is news, not a question; `team-line` now appends it to the did, which the card shows. `--n 1` and above are unchanged (the ask is kept at 1 and dropped above, as before). The card never shows an ask at 0 anyway (`fleet.py` reads it only when `n == 1`).
+
+Red, `tests.test_stop_hook` on t-compute, before the fix:
+
+```
+FAIL: test_an_ask_with_nothing_waiting_is_kept_in_the_did (tests.test_stop_hook.TheWriter...)
+AssertionError: 'Mail drafted.' != 'Mail drafted. paste create was refused'
+Ran 14 tests in 0.556s
+FAILED (failures=1)
+```
+
+Green after it, with the tests that read lines and the hook text (`tests.test_stop_hook tests.test_lines tests.test_turn_hook tests.test_announce_sound`):
+
+```
+Ran 113 tests in 12.849s
+OK (skipped=3)
+```

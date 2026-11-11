@@ -31,8 +31,8 @@ Nothing here reaches a real session, and nothing here can launch anything:
     back, to click on cards another tab has since merged away or moved.
   * The config file given is only read: its hash is taken before and after.
 
-Playwright is needed (`pip install playwright`); the chromium it drives must
-already be installed.
+Playwright is needed (`pip install playwright`); the chromium, webkit and
+firefox it drives must already be installed (`playwright install`).
 """
 import copy
 import datetime
@@ -1641,12 +1641,17 @@ class PasteFake(Fake):
         return super().handle(route)
 
 
+# A Paste with every character a copy has lost or could lose: a leading byte-order
+# mark (ticket 15), a tab, quotes, a backslash, markup and runs of line breaks.
+PASTE_FULL = f"\ufeffHoi Sven,\n\n\tHe said \"it's fine\" \\ {BOMB}\n\n\nGroeten\n"
+
+
 def paste_pass(browser):
     """Spec Paste, ticket 01: a Paste sits on its card as title + first line +
     copy + done, a click on the title opens the whole text, copy puts the exact
     text on the clipboard and keeps the Paste, done removes it, and none of it
     jumps or marks the tile."""
-    full = f"\ufeffHoi Sven,\n\n\tHe said \"it's fine\" \\ {BOMB}\n\n\nGroeten\n"
+    full = PASTE_FULL
     texts = {"p1": full, "p2": "policy line 1\nline 2", "p3": "third"}
     maple = ("maple", "maple", [S("q1", "Vera", "idle", line="Notes drafted"), S("q2", "Mei", "idle", line="Tests green")])
     body = roster([maple])
@@ -1656,6 +1661,15 @@ def paste_pass(browser):
         {"id": "p3", "title": "Third", "first": "third", "secret": False, "copied": False}]
     fake = PasteFake(body, texts)
     page = new_page(browser, fake, clipboard=True)
+    # Ticket 17: mobile Safari may close the tap's window at the first await, and Chromium does
+    # not, so the fetch alone cannot show one. A click listener runs synchronously up to its
+    # first await: count the listeners on the stack, and `write` must see one.
+    page.add_init_script("""window.__inTap = 0;
+      const add = EventTarget.prototype.addEventListener;
+      EventTarget.prototype.addEventListener = function (type, fn, ...rest) {
+        if (type !== 'click' || typeof fn !== 'function') return add.call(this, type, fn, ...rest);
+        return add.call(this, type, function (...a) {
+          window.__inTap++; try { return fn.apply(this, a); } finally { window.__inTap--; } }, ...rest); };""")
     page.goto("http://localhost/", wait_until="load")
     page.wait_for_selector(".tile")
     t = lambda sid: page.locator(f'.tile[data-sid="{sid}"]')
@@ -1687,13 +1701,14 @@ def paste_pass(browser):
 
     # Which way the text went, and when: the fallbacks copy the same text, so the clipboard alone
     # cannot tell, and Chromium with the permission granted copies after the fetch as well as before it.
-    page.evaluate("""() => { window.__ways = []; window.__fetched = false;
+    page.evaluate("""() => { window.__ways = []; window.__inTapWrites = []; window.__fetched = false;
       const fetch = window.fetch;
       window.fetch = (...a) => fetch(...a).then(r => {
         if (String(a[0]).startsWith('/api/paste_text')) window.__fetched = true; return r; });
       for (const way of ['write', 'writeText']) { const real = navigator.clipboard[way].bind(navigator.clipboard);
         navigator.clipboard[way] = (...a) => {
-          window.__ways.push(way + (window.__fetched ? ' after the fetch' : '')); return real(...a); }; } }""")
+          window.__ways.push(way + (window.__fetched ? ' after the fetch' : ''));
+          window.__inTapWrites.push(window.__inTap > 0); return real(...a); }; } }""")
     rows.nth(0).locator("button.pcopy").click()
     page.wait_for_timeout(400)
     # Ticket 15: a Blob in the ClipboardItem lost the leading byte-order mark.
@@ -1701,6 +1716,8 @@ def paste_pass(browser):
           page.evaluate("navigator.clipboard.readText()") == full, page.evaluate("navigator.clipboard.readText()"))
     check("and it went through the ClipboardItem, started before the text came back, not a fallback",
           page.evaluate("window.__ways") == ["write"], page.evaluate("window.__ways"))
+    check("and the write was called inside the tap, before any await",
+          page.evaluate("window.__inTapWrites") == [True], page.evaluate("window.__inTapWrites"))
     check("the button says it copied", rows.nth(0).locator("button.pcopy").inner_text() == "copied")
     check("copy told the server and nothing else: no jump, no seen mark",
           fake.of("/api/paste_copied") == [{"id": "p1"}] and fake.of("/api/jump") == [] and fake.of("/api/seen") == [],
@@ -1764,6 +1781,34 @@ def paste_pass(browser):
     check("the one console error is the 404 of the Paste that is gone", len(expected) == 1, errors)
     for e in expected:
         errors.remove(e)
+
+
+def paste_engine_pass(browser):
+    """Ticket 18: the copy of a Paste in an engine other than Chromium. WebKit is
+    the nearest to the phone. Neither WebKit nor Firefox takes the clipboard
+    permissions, and both refuse a read outside a gesture, so the text is read
+    back the way a person would: Control+V into a textarea."""
+    name = browser.browser_type.name
+    maple = ("maple", "maple", [S("q1", "Vera", "idle", line="Notes drafted")])
+    body = roster([maple])
+    body["columns"][0]["sessions"][0]["pastes"] = [
+        {"id": "p1", "title": "Message to Sven", "first": "Hoi Sven,", "secret": False, "copied": False}]
+    fake = PasteFake(body, {"p1": PASTE_FULL})
+    page = new_page(browser, fake)
+    page.goto("http://localhost/", wait_until="load")
+    page.wait_for_selector(".tile .paste")
+    page.locator(".tile button.pcopy").click()
+    page.wait_for_function("document.querySelector('.tile button.pcopy').textContent !== 'copy'")
+    check(f"{name}: the button says it copied", page.locator(".tile button.pcopy").inner_text() == "copied",
+          page.locator(".tile button.pcopy").inner_text())
+    page.evaluate("() => document.body.append(Object.assign(document.createElement('textarea'), {id: 'readback'}))")
+    page.focus("#readback")
+    page.keyboard.press("Control+V")
+    page.wait_for_function("document.getElementById('readback').value !== ''")
+    got = page.eval_on_selector("#readback", "e => e.value")
+    check(f"{name}: copy puts the whole text on the clipboard, byte-order mark included", got == PASTE_FULL, repr(got))
+    check(f"{name}: and told the server", fake.of("/api/paste_copied") == [{"id": "p1"}], fake.posts)
+    page.close()
 
 
 def paste_stay_pass(browser):
@@ -3066,6 +3111,10 @@ def main():
         separator_pass(browser)
         chime_pass(browser)
         browser.close()
+        for engine in (pw.webkit, pw.firefox):
+            other = engine.launch()
+            paste_engine_pass(other)
+            other.close()
 
     # No routed request may have carried a session the machine really has.
     sent = json.dumps(posted)
