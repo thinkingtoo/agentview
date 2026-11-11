@@ -136,13 +136,16 @@ class Starting(unittest.TestCase):
                          "for a secret, say only that it was refused"):
             self.assertIn(fragment, said)
 
-    def test_the_size_does_not_depend_on_where_the_checkout_lives(self):
+    def test_the_size_grows_with_the_hooks_directory_and_nothing_else_of_the_checkout(self):
+        # The hooks directory is in the text three times: team-line once, paste twice (create and
+        # withdraw). Moving team-line alone hid two of them (turn-hook-budget 07). So a checkout
+        # whose hooks directory is k characters longer than the ceiling tests' 36 adds 3k.
         sizes = set()
-        for where in ("/a/hooks/team-line", "/home/alice/Projects/agentview-wt-06/hooks/team-line"):
-            with mock.patch.object(turn_line, "WRITER", Path(where)):
+        for hooks in ("/a/hooks", "/home/alice/Projects/agentview-wt-06/hooks"):
+            with _commands_in(hooks):
                 said = turn_line.begin({"session_id": "s1", "prompt": "go"},
                                        root=self.root)["hookSpecificOutput"]["additionalContext"]
-            sizes.add(len(said) - len(where))
+            sizes.add(len(said) - 3 * len(hooks))
         self.assertEqual(len(sizes), 1)
 
     def test_a_payload_with_no_session_does_nothing(self):

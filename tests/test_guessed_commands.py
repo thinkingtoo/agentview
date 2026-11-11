@@ -182,15 +182,24 @@ class Guess(Base):
         self.assertEqual((tile["stuck"]["source"], tile["guessedCommands"]),
                          ("line", ["bash ~/notes/push-maple.sh"]))
 
-    def test_a_concierge_holding_a_bosss_question_offers_its_command(self):
-        # The concierge writes the boss's command into its own line, then asks:
-        # its card is where the owner answers, so the command is copied there.
-        self.addCleanup(setattr, fleet, "_pane_roles", fleet._pane_roles)
+    def test_a_bosss_command_is_on_its_card_and_on_its_concierges_holding_the_question(self):
+        # Ticket paste/12's open point (paste/21): the guard refuses a boss's own question while its
+        # concierge lives, so the boss writes its line, sends the ASK, and the concierge writes the
+        # command into its own line and opens the question. Both cards offer it.
         fleet._pane_roles = lambda now=None: frozenset({"%2"})
-        tile = self.question_open("Copy the key to the notes box. $ bash ~/notes/copy-key.sh",
-                                  tmux="main:@1.%2")
-        self.assertEqual((tile["tags"], tile["guessedCommands"]),
-                         (["concierge"], ["bash ~/notes/copy-key.sh"]))
+        ask = "Copy the key to the notes box. $ bash ~/notes/copy-key.sh"
+        self.line("b", ask)
+        self.line("a", ask)
+        asking = {"kind": "question", "questions": [{"question": "Copy the key now?",
+                                                     "header": "", "multi": False, "options": []}]}
+        tiles = {t["name"]: t for t in self.roster(
+            session("b", name="Ilse", boss=True),
+            session("a", name="Wren", status="waiting", waitingFor="input needed",
+                    asking=asking, tmux="main:@1.%2"))["columns"][0]["sessions"]}
+        self.assertEqual([(t["tags"], t["stuck"]["source"], t["guessedCommands"])
+                          for t in (tiles["Ilse"], tiles["Wren"])],
+                         [(["boss"], "line", ["bash ~/notes/copy-key.sh"]),
+                          (["concierge"], "question", ["bash ~/notes/copy-key.sh"])])
 
     def test_several_things_left_quote_nothing_and_so_offer_nothing(self):
         self.assertEqual(self.commands('Run "make test", and may I push it?', n=2), [])
