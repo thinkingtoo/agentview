@@ -949,6 +949,72 @@ class SshHost(unittest.TestCase):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
 
+    def test_a_sign_after_a_word_of_the_sentence_is_not_ssh_s(self):
+        # Ticket 27: the word right after `ssh` decides. A sign further on
+        # belongs to the sentence when that word is prose or a bare number.
+        for ask in ("Then $ ssh in and run ls -la", "Then $ ssh 42 git status",
+                    "Then $ ssh maple-box and run ls -la", 'Run "ssh in and run ls -la"?',
+                    "Then $ ssh maple then cd ~/notes", "Then $ ssh in -t", "Then $ ssh in --help"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_a_quote_after_the_host_has_to_hold_a_command(self):
+        # Hunts 27-1 and 27-2: a quoted name, port or path after ssh is the
+        # sentence's ("ssh to 'maple-box'", "ssh on '2222'"). What the quote
+        # holds has to read as a command, and after a plain word that is no
+        # host name the quote has to end the command.
+        for ask in ("Then $ ssh to 'maple-box'", "Next, $ ssh into 'maple'.", "Next: `ssh into 'maple-box'`",
+                    "Shall I \"ssh as 'deploy' now\"?", "Then $ ssh into 'maple-box' and check the logs",
+                    "$ sudo ssh into 'maple-box' first", "$ ssh maple-box 'now' and then wait",
+                    'Then $ ssh once "it works"', "Then $ ssh into 'maple -v' first",
+                    "Then $ ssh on '2222'", "Then $ ssh into '.ssh'", "Next: `ssh to '.env'`",
+                    "Run \"ssh on '2222'\" next?", "Then $ ssh in '...'", "Then $ ssh as '~'",
+                    "Then $ ssh in '-v'", "Then $ ssh in 'at 5'", "Then $ sudo ssh to '5'",
+                    "Then $ ssh maple-box 'in 5' minutes", "Then $ ssh maple-box '~' first",
+                    "Then $ ssh maple '42'"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
+    def test_the_sentence_after_a_quoted_remote_command_is_not_part_of_it(self):
+        # Hunt 27-3: only a shell mark may follow the quote.
+        for ask in ("Then $ ssh maple-box 'git status' and then tell me",
+                    "Then $ ssh maple-box 'docker ps' and paste the output",
+                    "$ ssh maple-box 'make test' then report back", "Run \"ssh maple-box 'git status' and wait\" now"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+        for command in ("ssh maple-box 'git status'; echo done", "ssh maple-box 'git status' && echo done",
+                        "ssh maple-box \"cd /srv/maple && bash preflight.sh\"; echo \"exit=$?\""):
+            with self.subTest(command=command):
+                self.assertEqual(ask_commands.guess(f"$ {command}"), [command])
+
+    def test_a_quoted_remote_command_no_list_knows_keeps_its_button(self):
+        # Hunt 27-3: a program and an argument with a sign, as origin/dev offered.
+        for command in ("ssh maple-box 'free -m'", 'ssh maple-box "htop -d 5"', "ssh maple-box 'nvidia-smi -l 1'",
+                        'ssh maple-box "uptime && df -h"', "ssh maple-box 'sudo -u maple ls'",
+                        "ssh maple-box 'maple-sync --now'"):
+            with self.subTest(command=command):
+                self.assertEqual(ask_commands.guess(f"$ {command}"), [command])
+
+    def test_a_quoted_command_after_the_host_may_source_a_file(self):
+        # `.` is the shell's `source`, and sessions start a remote line with it.
+        self.assertEqual(ask_commands.guess("$ ssh maple-box '. ~/.config/maple.env; curl -s http://10.0.0.5/'"),
+                         ["ssh maple-box '. ~/.config/maple.env; curl -s http://10.0.0.5/'"])
+
+    def test_ssh_still_offers_the_shapes_sessions_write(self):
+        for ask, command in (
+                ("Then $ ssh -maple git status", "ssh -maple git status"),
+                ("Then $ ssh -t maple-box", "ssh -t maple-box"),
+                ("$ ssh -t deploy@10.0.0.5 /root/stage-maple/apply.sh",
+                 "ssh -t deploy@10.0.0.5 /root/stage-maple/apply.sh"),
+                ("Roll back? $ ssh maple-box 'bash /root/stage-maple/rollback.sh --yes'",
+                 "ssh maple-box 'bash /root/stage-maple/rollback.sh --yes'"),
+                ('$ ssh maple "cd /srv/maple && bash preflight.sh"', 'ssh maple "cd /srv/maple && bash preflight.sh"'),
+                ("$ ssh maple-box -L 8080:localhost:80", "ssh maple-box -L 8080:localhost:80"),
+                ("$ ssh deploy@10.0.0.5 kill 3412939", "ssh deploy@10.0.0.5 kill 3412939"),
+                ("$ ssh 10.0.0.5 uptime", "ssh 10.0.0.5 uptime")):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [command])
+
     def test_a_hex_id_alone_is_still_no_sign(self):
         # The narrower of the two rules the ticket weighed: an id counts only
         # through the command it belongs to, never as a sign by itself.
