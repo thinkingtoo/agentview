@@ -1157,14 +1157,16 @@ async function copyText(text) {
 // clipboard only inside the tap itself: once an await has passed, both ways above
 // fail. A ClipboardItem takes the text as a promise, so the write starts inside the
 // tap and the fetch finishes behind it. Call it before the first await.
+// The promise gives the string, not a Blob: Chromium, Firefox and WebKit all decode a
+// text/plain Blob as UTF-8 and drop a leading byte-order mark (paste/15).
 async function copyFetched(textPromise) {
   if (window.ClipboardItem && navigator.clipboard?.write) {
-    const blob = textPromise.then(t => {
+    const promised = textPromise.then(t => {
       if (t === null) throw new Error("the Paste could not be read");
-      return new Blob([t], { type: "text/plain" });
+      return t;
     });
     try {
-      await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+      await navigator.clipboard.write([new ClipboardItem({ "text/plain": promised })]);
       return true;
     } catch (e) { /* no promised items here, or refused: the old way */ }
   }
