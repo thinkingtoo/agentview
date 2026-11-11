@@ -228,13 +228,13 @@ def reads_as_ssh(rest):
     a count in a sentence ("ssh 42 git status"), and a sign further on ("ssh in
     and run ls -la") is the sentence's.
 
-    Otherwise that word is the host, and what follows has to say so: a quoted
-    command after any plain word (`ssh maple 'df -h'`), or, after a word that
-    looks like a host, a flag (`ssh maple-box -L 8080:localhost:80`) or a
-    command of its own, judged as after `sudo`. A host name is no sign
-    (`maple-box` is prose too) and an id holds letters, so without this
-    `ssh maple-box docker stop 8617f9d7515d` would not count. Claude's `!`
-    after the host is not the plain shape."""
+    Otherwise that word is the host, and what follows has to say so: a quote
+    with a sign in it (`ssh maple 'df -h'`, not "ssh to 'maple-box'"), or,
+    after a word that looks like a host, a flag (`ssh maple-box -L
+    8080:localhost:80`) or a command of its own, judged as after `sudo`. A
+    host name is no sign (`maple-box` is prose too) and an id holds letters,
+    so without this `ssh maple-box docker stop 8617f9d7515d` would not count.
+    Claude's `!` after the host is not the plain shape."""
     if not rest:
         return False
     word = rest[0]
@@ -242,9 +242,15 @@ def reads_as_ssh(rest):
         return True
     if len(rest) < 2 or not PLAIN_WORD.fullmatch(word):
         return False
+    remote = " ".join(rest[1:])
+    quoted = SHELL_RUN.match(remote)
+    if quoted:
+        # A quoted name is the sentence's ("ssh to 'maple-box'"): what the
+        # quote holds needs a sign, and after a word that is no host name
+        # nothing may follow it.
+        return (any(ARGUMENT_SIGN.search(w) for w in quoted.group()[1:-1].split())
+                and (HOST.fullmatch(word) is not None or quoted.end() == len(remote)))
     after = rest[1]
-    if SHELL_QUOTE.match(after):
-        return True
     return (HOST.fullmatch(word) is not None and after != "!"
             and (FLAG.match(after) is not None or reads_as_command(" ".join(rest[1:]))))
 

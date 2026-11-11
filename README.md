@@ -424,10 +424,10 @@ hyphen, a digit, a dot or an `@` in it. "ssh and git push" is prose, and so,
 for want of a way to tell, is `ssh maple git status`; a hyphenated word of a
 sentence in the host's place ("ssh follow-up git push") is a known limit.
 For `ssh` the sign has to be the word right after it (`ssh -t`,
-`ssh root@maple`), a quote after the host (`ssh maple 'df -h'`), or a flag
-after a word that looks like a host: in "ssh in and run ls -la" the flag is
-the sentence's. A quote after any plain word (`ssh once "it works"`) is the
-known limit there.
+`ssh root@maple`), a quote with a sign in it after the host
+(`ssh maple 'df -h'`, not "ssh to 'maple-box'"), or a flag after a word that
+looks like a host: in "ssh in and run ls -la" the flag is the sentence's. So
+`ssh maple -p 2222` gets no button, the safe side.
 A path starts a command only when it names a
 script (`./deploy.sh`) or a flag follows, because a path with spaces in it
 (`~/Google Drive/My Drive`) is a name. `VAR=1 cmd` counts when a command follows it ("N=12 users" does not). After a

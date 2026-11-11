@@ -958,6 +958,17 @@ class SshHost(unittest.TestCase):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
 
+    def test_a_quote_after_the_host_has_to_hold_a_command(self):
+        # Hunt 27-1: a quoted name after ssh is the sentence's ("ssh to
+        # 'maple-box'"). What the quote holds needs a sign, and after a plain
+        # word that is no host name the quote has to end the command.
+        for ask in ("Then $ ssh to 'maple-box'", "Next, $ ssh into 'maple'.", "Next: `ssh into 'maple-box'`",
+                    "Shall I \"ssh as 'deploy' now\"?", "Then $ ssh into 'maple-box' and check the logs",
+                    "$ sudo ssh into 'maple-box' first", "$ ssh maple-box 'now' and then wait",
+                    'Then $ ssh once "it works"', "Then $ ssh into 'maple -v' first"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
     def test_ssh_still_offers_the_shapes_sessions_write(self):
         for ask, command in (
                 ("Then $ ssh -maple git status", "ssh -maple git status"),
