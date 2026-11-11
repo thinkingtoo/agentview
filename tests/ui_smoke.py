@@ -1685,10 +1685,22 @@ def paste_pass(browser):
     page.wait_for_timeout(200)
     check("a second click on the title closes it", page.locator(".ptext").count() == 0)
 
+    # Which way the text went, and when: the fallbacks copy the same text, so the clipboard alone
+    # cannot tell, and Chromium with the permission granted copies after the fetch as well as before it.
+    page.evaluate("""() => { window.__ways = []; window.__fetched = false;
+      const fetch = window.fetch;
+      window.fetch = (...a) => fetch(...a).then(r => {
+        if (String(a[0]).startsWith('/api/paste_text')) window.__fetched = true; return r; });
+      for (const way of ['write', 'writeText']) { const real = navigator.clipboard[way].bind(navigator.clipboard);
+        navigator.clipboard[way] = (...a) => {
+          window.__ways.push(way + (window.__fetched ? ' after the fetch' : '')); return real(...a); }; } }""")
     rows.nth(0).locator("button.pcopy").click()
     page.wait_for_timeout(400)
+    # Ticket 15: a Blob in the ClipboardItem lost the leading byte-order mark.
     check("copy puts the whole text on the clipboard, every character and line break",
           page.evaluate("navigator.clipboard.readText()") == full, page.evaluate("navigator.clipboard.readText()"))
+    check("and it went through the ClipboardItem, started before the text came back, not a fallback",
+          page.evaluate("window.__ways") == ["write"], page.evaluate("window.__ways"))
     check("the button says it copied", rows.nth(0).locator("button.pcopy").inner_text() == "copied")
     check("copy told the server and nothing else: no jump, no seen mark",
           fake.of("/api/paste_copied") == [{"id": "p1"}] and fake.of("/api/jump") == [] and fake.of("/api/seen") == [],
