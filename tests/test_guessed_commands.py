@@ -954,7 +954,7 @@ class SshHost(unittest.TestCase):
         # belongs to the sentence when that word is prose or a bare number.
         for ask in ("Then $ ssh in and run ls -la", "Then $ ssh 42 git status",
                     "Then $ ssh maple-box and run ls -la", 'Run "ssh in and run ls -la"?',
-                    "Then $ ssh maple then cd ~/notes"):
+                    "Then $ ssh maple then cd ~/notes", "Then $ ssh in -t", "Then $ ssh in --help"):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
 

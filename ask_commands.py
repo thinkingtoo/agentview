@@ -217,37 +217,36 @@ def reads_as_command(text):
 # and git push", "ssh maple git status") cannot be told from the sentence's own,
 # and a mark stuck to it ("ssh maple-box, git status") is a list or a label.
 HOST = re.compile(r"(?=.*[A-Za-z])(?=.*[-\d.@])[A-Za-z0-9][\w.@-]*[A-Za-z0-9]")
-# Any one word with a letter and no mark stuck to it (`maple`), which a quote or
-# a flag after it makes a host.
-PLAIN_HOST = re.compile(r"(?=.*[A-Za-z])[\w.-]*\w")
+# Any one word with a letter and no mark stuck to it (`maple`, but also `in`):
+# a host only when a quoted command follows it.
+PLAIN_WORD = re.compile(r"(?=.*[A-Za-z])[\w.-]*\w")
 
 
 def reads_as_ssh(rest):
-    """The word right after `ssh` decides (ticket 27). With a sign of its own
-    (`-t`, `root@maple`, `10.0.0.5`) it is the command's, as before; a bare
-    number is a count in a sentence ("ssh 42 git status"). Otherwise it has to
-    be a host, followed by a quote or a flag (`ssh maple 'df -h'`), or by a
-    command of its own; a sign further on ("ssh in and run ls -la") is the
-    sentence's."""
+    """The word right after `ssh` decides. With a sign of its own (`-t`,
+    `root@maple`, `10.0.0.5`) it is the command's, as before; a bare number is
+    a count in a sentence ("ssh 42 git status"), and a sign further on ("ssh in
+    and run ls -la") is the sentence's.
+
+    Otherwise that word is the host, and what follows has to say so: a quoted
+    command after any plain word (`ssh maple 'df -h'`), or, after a word that
+    looks like a host, a flag (`ssh maple-box -L 8080:localhost:80`) or a
+    command of its own, judged as after `sudo`. A host name is no sign
+    (`maple-box` is prose too) and an id holds letters, so without this
+    `ssh maple-box docker stop 8617f9d7515d` would not count. Claude's `!`
+    after the host is not the plain shape."""
     if not rest:
         return False
-    host = rest[0]
-    if ARGUMENT_SIGN.search(host) and not host.isdigit():
+    word = rest[0]
+    if ARGUMENT_SIGN.search(word) and not word.isdigit():
         return True
-    if len(rest) < 2 or not PLAIN_HOST.fullmatch(host):
+    if len(rest) < 2 or not PLAIN_WORD.fullmatch(word):
         return False
-    return rest[1][0] in "'\"" or bool(FLAG.match(rest[1])) or reads_as_remote_command(rest)
-
-
-def reads_as_remote_command(rest):
-    """`ssh maple-box docker stop 8617f9d7515d`: what follows the host runs on
-    it, so it is judged as a command of its own, as after `sudo`. A host name
-    is no sign (`maple-box` is prose too) and an id holds letters, so without
-    this the command it runs would not count. Only the plain shape: a host,
-    then a command that does not start with Claude's `!`."""
-    if len(rest) < 2 or not HOST.fullmatch(rest[0]):
-        return False
-    return rest[1] != "!" and reads_as_command(" ".join(rest[1:]))
+    after = rest[1]
+    if SHELL_QUOTE.match(after):
+        return True
+    return (HOST.fullmatch(word) is not None and after != "!"
+            and (FLAG.match(after) is not None or reads_as_command(" ".join(rest[1:]))))
 
 
 # A program of the project's own, which no list knows: lowercase words joined by
