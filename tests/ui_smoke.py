@@ -1691,7 +1691,7 @@ def paste_pass(browser):
         navigator.clipboard[way] = (...a) => { window.__ways.push(way); return real(...a); }; } }""")
     rows.nth(0).locator("button.pcopy").click()
     page.wait_for_timeout(400)
-    # paste/15: a Blob in the ClipboardItem lost the leading byte-order mark.
+    # Ticket 15: a Blob in the ClipboardItem lost the leading byte-order mark.
     check("copy puts the whole text on the clipboard, every character and line break",
           page.evaluate("navigator.clipboard.readText()") == full, page.evaluate("navigator.clipboard.readText()"))
     check("and it went through the ClipboardItem started in the tap, not a fallback",

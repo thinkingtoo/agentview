@@ -12,7 +12,7 @@
 
 **Status:** done
 
-**Cause:** the page, not the check. Ticket paste/11 made `copyFetched` hand the `ClipboardItem` a promise of a `Blob`. Browsers decode a `text/plain` Blob as UTF-8 and drop a leading byte-order mark, so a Paste that starts with U+FEFF reached the clipboard one character short. Every other character, the tab and the line breaks included, arrived intact (30 of 31). Fix: the promise gives the string itself, which `ClipboardItem` accepts.
+**Cause:** the page, not the check. Ticket paste/11 made `copyFetched` hand the `ClipboardItem` a promise of a `Blob`. Browsers decode a `text/plain` Blob as UTF-8 and drop a leading byte-order mark, so a Paste that starts with U+FEFF reached the clipboard one character short. Every other character, the tab and the line breaks included, arrived intact (30 of 31). Fix: the promise gives the string itself, which `ClipboardItem` accepts. Ruled out: the server (`/api/paste_text` decodes with `"utf-8"`, not `"utf-8-sig"`, and keeps the mark) and the page's fetch (`pasteText` decodes with `ignoreBOM: true`; the open text already showed the mark).
 
 - [x] The check passes, or the page bug it shows is fixed -- evidence: `paste_pass` green three runs in a row
 
@@ -26,7 +26,7 @@
 | `ClipboardItem` with a `Blob` (also a promise of one) | U+FEFF dropped, 30/31 | U+FEFF dropped, 30/31 | U+FEFF dropped, 30/31 |
 | `ClipboardItem` with a promise of the string | kept | kept | kept |
 
-WebKit refuses the clipboard outside a gesture, so there both writes ran from a click, the string promise resolved 300 ms after the click (as the fetch does, the paste/11 case), and the clipboard was read back by a Control+V into a textarea. It accepted the late string promise. This is the desktop WebKit build, not iOS Safari: Thierry's phone has not seen this change.
+WebKit refuses the clipboard outside a gesture, so there both writes ran from a click, the string promise resolved 300 ms after the click (as the fetch does, the paste/11 case), and the clipboard was read back by a Control+V into a textarea. It accepted the late string promise. This is the desktop WebKit build, not iOS Safari: Thierry's phone has not seen this change. Ticket 16 asks him to check it there, since a refused string promise would bring the paste/11 bug back.
 
 A new check pins the way the text went: `clipboard.write` and `writeText` are wrapped, and the copy must have called `write` only. Without it the check stays green when the `ClipboardItem` write throws and the `writeText` fallback copies the same text (it happened once here, while fixing).
 
