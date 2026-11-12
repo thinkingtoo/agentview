@@ -6,7 +6,7 @@
 
 **Blocked by:** none
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] The five tests are red before the fix and green after -- evidence: t-compute runs
 - [x] Full suite green at the PR head -- evidence: summary line in the PR
