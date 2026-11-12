@@ -50,7 +50,7 @@ class HammersOnTop(unittest.TestCase):
         """The text of each line in the order the card shows them."""
         html = self.draw(card)[0]["html"]
         import re
-        return re.findall(r"(?:<span class=\"sign\">[^<]*</span> ([^<]*?)(?:</button>|<br>|</span>))", html)
+        return re.findall(r"(?:<span class=\"sign[^\"]*\"[^>]*>[^<]*</span> ([^<]*?)(?:</button>|<br>|</span>))", html)
 
     def test_an_elsewhere_hammer_comes_after_the_worked_rows_and_before_the_rest(self):
         card = {"project": "p", "track": {
@@ -94,6 +94,59 @@ class HammersOnTop(unittest.TestCase):
         html = self.draw(card)[0]["html"]
         self.assertNotIn("<b>", html)
         self.assertNotIn("<i>", html)
+
+    def test_the_live_shape_of_the_codex_down_card_has_its_hammer_first(self):
+        """0 worked rows, 3 planned, 9 done, one elsewhere (2026-11-12, boss-track/16): the old
+        page drew the hammer last, this one first."""
+        card = {"project": "p", "track": {
+            "rows": [row(f"p{i}", "planned") for i in range(3)] + [row(f"d{i}", "done") for i in range(9)],
+            "elsewhere": [{"name": "Otilia", "task": "#29 edge cases"}]}}
+        self.assertEqual(self.order(card)[0], "Otilia: #29 edge cases")
+        self.assertEqual(len(self.order(card)), 13)
+
+
+@unittest.skipUnless(shutil.which("node"), "needs node to run the page's JS")
+class HammersSwing(unittest.TestCase):
+    """A busy worker's hammer swings; any other is still (boss-track/17)."""
+    draw = HammersOnTop.draw
+
+    def swung(self, card):
+        """`{line text: whether its sign carries swing}`, for every line of the card."""
+        import re
+        html = self.draw(card)[0]["html"]
+        return {text: "swing" in cls.split() for cls, text in re.findall(
+            r'<span class="(sign[^"]*)"[^>]*>[^<]*</span> ([^<]*?)(?:</button>|<br>|</span>)', html)}
+
+    def test_a_busy_row_and_a_busy_elsewhere_entry_swing_and_the_rest_are_still(self):
+        card = {"project": "p", "track": {
+            "rows": [dict(row("busy row", "worked"), busy=True), dict(row("quiet row", "worked"), busy=False),
+                     dict(row("asked", "waiting"), busy=False), row("plan", "planned"), row("fin", "done")],
+            "elsewhere": [{"name": "A", "task": "a", "busy": True}, {"name": "B", "task": "b", "busy": False}]}}
+        self.assertEqual(self.swung(card), {
+            "busy row": True, "quiet row": False, "A: a": True, "B: b": False,
+            "asked": False, "plan": False, "fin": False})
+
+    def test_a_redrawn_hammer_carries_on_at_the_clock_phase_of_the_swing(self):
+        card = {"project": "p", "track": {"rows": [dict(row("w", "worked"), busy=True)]}}
+        import re
+        delay = int(re.search(r'animation-delay:-(\d+)ms', self.draw(card)[0]["html"]).group(1))
+        self.assertTrue(0 <= delay < 1200)
+        self.assertIn("1200ms", PAGE.read_text())
+
+    def test_a_roster_without_the_busy_field_swings_nothing(self):
+        card = {"project": "p", "track": {"rows": [row("w", "worked")], "elsewhere": [{"name": "A", "task": "a"}]}}
+        self.assertEqual(self.swung(card), {"w": False, "A: a": False})
+
+    def test_the_waiting_row_never_swings_even_if_the_server_says_busy(self):
+        card = {"project": "p", "track": {"rows": [dict(row("asked", "waiting"), busy=True)]}}
+        self.assertEqual(self.swung(card), {"asked": False})
+
+    def test_the_stylesheet_swings_only_where_motion_is_welcome(self):
+        css = PAGE.read_text()
+        gate = css.index("@media (prefers-reduced-motion: no-preference)")
+        self.assertIn(".sign.swing", css[gate:css.index("</style>", gate)])
+        self.assertNotRegex(css[:gate], r"animation:[^;]*swing")
+        self.assertNotIn(".sign.swing", css[:gate])
 
 
 if __name__ == "__main__":
