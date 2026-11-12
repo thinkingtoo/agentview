@@ -854,6 +854,8 @@ function markClipped(main) {
   for (const el of main.querySelectorAll(".ov-ctx:not(.whole)"))
     el.classList.toggle("clipped", el.scrollHeight > el.clientHeight + 1);
 }
+// A narrower window clips more: measured again, not left to the next poll.
+addEventListener("resize", () => markClipped(document.getElementById("main")));
 
 // A track's progress, as the server counted it, and when it will be done at
 // the pace the server measured; the hover says what that pace rests on.
@@ -918,7 +920,7 @@ function ticketLine(t) {
   if (t.workers?.length) bits.push(`on it: ${t.workers.join(", ")}`);
   return bits.filter(Boolean).join(" · ");
 }
-function rowsHtml(c) {
+function doneWhenOf(c) {
   const rows = rowsOf(c);
   if (!rows.length || FOLDED.has(c.project)) return "";
   return `<ul class="ov-objs">${rows.map(r => {
@@ -942,7 +944,7 @@ function notesLinkOf(c) {
 // last click on that link found.
 function footOf(c) {
   const bar = progressOf(c), goal = goalLinkOf(c), note = notesLinkOf(c);
-  return bar || goal || note ? `<div class="ov-prog">${bar}${goal}${note}</div>${rowsHtml(c)}${hitsOf(c)}` : "";
+  return bar || goal || note ? `<div class="ov-prog">${bar}${goal}${note}</div>${doneWhenOf(c)}${hitsOf(c)}` : "";
 }
 
 // Notes are looked up when the link is clicked, and only then.

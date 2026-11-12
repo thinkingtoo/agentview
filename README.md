@@ -89,8 +89,9 @@ of these that exists:
    estimate rests on.
 
    Whatever line the card shows, your own included, a track's card also has
-   the goal itself: under the row, one line per Done when box, with a sign
-   for where it stands (`objectives.py`), the moving ones first:
+   the goal itself. While a boss of the track runs, under the row, one line
+   per Done when box, with a sign for where it stands (`objectives.py`), the
+   moving ones first:
 
    - 🔨 **worked on**: a worker of the tracker's `Roster` table, whose session
      is in the column, has one of the line's tickets in its task (the column

@@ -202,6 +202,27 @@ class Rows(TrackFixtures):
         row, = self.rows()
         self.assertEqual([t["ref"] for t in row["tickets"]], ["turn-hook/01"])
 
+    def test_a_bold_struck_through_roster_row_is_retired_too(self):
+        self.goal("[ ] paste/12 done")
+        self.ticket("paste/12")
+        self.roster_of(("**~~Mei~~**", "paste/12 copy button"))
+        got = self.rows(self.boss("b", self.loom, "checkout"), self.worker("w", self.loom, "checkout", name="Mei"))
+        self.assertEqual(got[0]["state"], "planned")
+
+    def test_blockers_never_take_the_budget_of_a_rows_own_tickets(self):
+        self.goal(*(f"[ ] paste/{n} done" for n in range(1, 41)))
+        for n in range(1, 41):
+            self.ticket(f"paste/{n}", blocked=str(n + 40))
+        self.assertEqual(sum(len(r["tickets"]) for r in self.rows()), 40)
+
+    def test_a_track_with_no_boss_running_has_no_rows(self):
+        self.goal("[ ] paste/12 done")
+        self.ticket("paste/12")
+        self.config = {"assign": {"claude:s": "track:checkout"}}
+        got = self.claude(sess("s", self.loom, name="Femi"))
+        column = next(c for c in got["columns"] if c["project"] == "track:checkout")
+        self.assertEqual(column["track"]["rows"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

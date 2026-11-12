@@ -9,7 +9,6 @@ is blocked by a ticket still open; planned otherwise.
 """
 import os
 import re
-from pathlib import Path
 
 import context
 import projects
@@ -51,12 +50,8 @@ def refs_in(text):
 def in_scratch(end, base):
     """Whether an opened ticket lies in the checkout's `.scratch`, in no `.git`
     folder, and is markdown: a cloned repository may link a ticket anywhere."""
-    try:
-        target = Path(end.removesuffix(" (deleted)")).relative_to(base)
-    except ValueError:
-        return False
-    return (target.parts[:1] == (".scratch",) and target.suffix == ".md"
-            and ".git" not in {part.casefold() for part in target.parts})
+    target = context.within(end, base)
+    return target is not None and target.parts[:1] == (".scratch",) and target.suffix == ".md"
 
 
 def _find(root, feature, number):
@@ -76,6 +71,8 @@ def _find(root, feature, number):
 
 
 def _ticket(ref, text):
+    """What a row shows of a ticket: its first heading, Status and Blocked by,
+    as the top of the file says them. `workers` is filled in by `rows`."""
     lines = text.splitlines()
     title = next((m.group(1) for m in map(TITLE.match, lines) if m), "")
     status = next((m.group(1).casefold() for m in map(STATUS.match, lines) if m), "")
@@ -106,10 +103,10 @@ class Tickets:
         return self.seen[key]
 
 
-def blockers(ticket):
-    """`(feature, number)` of each ticket a ticket's Blocked by names."""
+def blockers(feature, ticket):
+    """`(feature, number)` of each ticket a ticket's Blocked by names; a bare
+    number is a ticket of its own feature."""
     said = ticket["blocked_by"]
-    feature = ticket["ref"].split("/", 1)[0]
     named = refs_in(said)
     for m in SAME_FEATURE.finditer(REF.sub("", said)):
         if (feature, int(m.group(1))) not in named:
@@ -118,66 +115,42 @@ def blockers(ticket):
 
 
 def is_open(ticket):
+    """Whether something is left to do on a ticket."""
     return ticket["status"] not in CLOSED
 
 
-def _tasks(track):
-    """`{lowercase worker name: its task}` from every Roster table of a
-    track's tracker. The task is the column headed with "task", else the last.
-    A struck-through row is a worker who was retired."""
-    if not projects.TRACK_NAME.match(track):
-        return {}
-    text = context.read(projects.pm_dir() / f"{track}.md", projects.TRACKER_READ)
-    out, in_roster, column = {}, False, None
-    for line in text.splitlines():
-        heading = projects.HEADING.match(line)
-        if heading:
-            in_roster = bool(projects.ROSTER.match(heading.group(1).strip("*_` ").casefold()))
-            column = None
-            continue
-        if not in_roster or not line.lstrip().startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if all(set(c) <= set("-: ") for c in cells):
-            continue
-        if column is None:                      # the header row
-            column = next((i for i, c in enumerate(cells) if "task" in c.casefold()), len(cells) - 1)
-            continue
-        if cells[0].startswith("~~") or column >= len(cells):
-            continue
-        word = projects.FIRST_WORD.match(re.sub(r"[*_`]", "", cells[0]))
-        if word and word.group().strip("-:"):
-            out[word.group().casefold()] = cells[column]
-    return out
-
-
-def _state(done, tickets, tickets_of):
-    """A row's state and whether it awaits its tick."""
+def _state(done, named, tickets):
+    """A row's state, and whether it awaits its tick, from its `(key, ticket)` pairs."""
     if done:
         return "done", False
-    if any(t["workers"] for t in tickets):
+    if any(t["workers"] for _, t in named):
         return "worked", False
-    if tickets and not any(map(is_open, tickets)):
+    if named and not any(is_open(t) for _, t in named):
         return "worked", True
-    for t in filter(is_open, tickets):
-        if any(b and is_open(b) for b in (tickets_of.get(f, n) for f, n in blockers(t))):
+    for (feature, _), t in named:
+        if is_open(t) and any(b and is_open(b) for b in (tickets.get(*k) for k in blockers(feature, t))):
             return "waiting", False
     return "planned", False
 
 
 def rows(track, boxes, sessions, met=False):
     """The rows of a track's card, in ORDER, each state in the goal file's order.
-    A track whose goal says MET has every row done, as its progress says."""
+    A track whose goal says MET has every row done, as its progress says.
+    Every row's own tickets are looked up before any blocker is: on a card that
+    reaches TICKETS_MAX, what a blocker costs comes out of "waiting", never out
+    of a row's own tickets."""
     tickets = Tickets(sessions)
     live = {(m.get("name") or "").casefold(): m.get("name") for m in sessions if m.get("name")}
-    tasks = {live[name]: refs_in(task) for name, task in _tasks(track).items() if name in live}
-    made = []
+    tasks = {live[name]: refs_in(task) for name, task in projects.roster_tasks(track).items() if name in live}
+    named = []
     for box in boxes:
-        named = [t for t in (tickets.get(f, n) for f, n in refs_in(box["text"])) if t]
-        for t in named:
-            key = tuple(t["ref"].split("/"))
-            key = (key[0], int(key[1]))
+        pairs = [(k, t) for k, t in ((k, tickets.get(*k)) for k in refs_in(box["text"])) if t]
+        for key, t in pairs:
             t["workers"] = sorted(name for name, refs in tasks.items() if key in refs)
-        state, awaiting = _state(box["done"] or met, named, tickets)
-        made.append({"text": box["text"], "state": state, "awaiting_tick": awaiting, "tickets": named})
+        named.append(pairs)
+    made = []
+    for box, pairs in zip(boxes, named):
+        state, awaiting = _state(box["done"] or met, pairs, tickets)
+        made.append({"text": box["text"], "state": state, "awaiting_tick": awaiting,
+                     "tickets": [t for _, t in pairs]})
     return sorted(made, key=lambda r: ORDER.index(r["state"]))

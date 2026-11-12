@@ -467,11 +467,19 @@ def inside(end, base):
     more than that file would. A file whose name was removed or replaced while it
     was open is told by the kernel as `<path> (deleted)`: it is judged by the
     path it had."""
+    target = within(end, base)
+    return target is not None and target.name.casefold() in WANTED
+
+
+def within(end, base):
+    """A resolved path relative to `base`, or None when it lies outside it or
+    in a `.git` folder of any case. A file whose name was removed or replaced
+    while it was open is judged by the path it had."""
     try:
         target = Path(end.removesuffix(" (deleted)")).relative_to(base)
     except ValueError:
-        return False
-    return ".git" not in {part.casefold() for part in target.parts} and target.name.casefold() in WANTED
+        return None
+    return None if ".git" in {part.casefold() for part in target.parts} else target
 
 
 def stays_inside(path, base):

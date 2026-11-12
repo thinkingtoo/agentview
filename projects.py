@@ -376,34 +376,49 @@ FIRST_WORD = re.compile(r"[^\s(,/|]+")
 TRACKER_READ = 1_000_000
 
 
-def _roster_names(track):
-    """The workers a running track's tracker lists in a `Roster` table, as
-    lowercase names. A struck-through row is a worker who was retired; a name
-    anywhere else in the file is a mention, not a roster."""
+def roster_tasks(track):
+    """`{lowercase name: task}` for each worker a track's tracker lists in a
+    `Roster` table (a tracker may hold several). The task is the cell of the
+    column whose heading says "task", else the last. A struck-through row is
+    a worker who was retired; a name anywhere else in the file is a mention,
+    not a roster."""
     if not TRACK_NAME.match(track):
-        return set()
+        return {}
     try:
         path = pm_dir() / f"{track}.md"
         if not regular(path):
-            return set()
+            return {}
         with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read(TRACKER_READ)
     except OSError:
-        return set()
-    names, in_roster = set(), False
+        return {}
+    out, in_roster, column = {}, False, None
     for line in text.splitlines():
         heading = HEADING.match(line)
         if heading:
             in_roster = bool(ROSTER.match(heading.group(1).strip("*_` ").casefold()))
+            column = None
             continue
         if not in_roster or not line.lstrip().startswith("|"):
             continue
-        cell = line.strip().strip("|").split("|", 1)[0].strip()
-        cell = re.sub(r"[*_`]", "", cell) if not cell.startswith("~~") else ""
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if all(set(c) <= set("-: ") for c in cells):
+            continue                            # the line under the heading row
+        if column is None:                      # the heading row
+            column = next((i for i, c in enumerate(cells) if "task" in c.casefold()), len(cells) - 1)
+            continue
+        bare = cells[0].strip("*_` ")             # `**~~Mei~~**` is struck through too
+        cell = re.sub(r"[*_`]", "", bare) if not bare.startswith("~~") else ""
         word = FIRST_WORD.match(cell)
         if word and word.group().strip("-:"):
-            names.add(word.group().casefold())
-    return names
+            out[word.group().casefold()] = cells[column] if column < len(cells) else ""
+    return out
+
+
+def _roster_names(track):
+    """The workers a running track's tracker lists in a `Roster` table, as
+    lowercase names."""
+    return set(roster_tasks(track))
 
 
 class Trackers:
