@@ -26,6 +26,7 @@ import goal_page
 import jump
 import lines
 import marks
+import objectives
 import pace
 import paste
 import projects
@@ -1008,6 +1009,7 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
         progress["eta"] = pace.eta(project["raw"], progress["done"], progress["total"], time.time())
     if track is not None:
         track["goal"] = GOAL_PAGE(project["raw"], time.time())
+        track["rows"] = objectives.rows(project["raw"], track["boxes"], rows, met=bool(progress and progress["met"]))
     # The column of no project has no name to repeat.
     column_says = working.repeats(None if project is NO_PROJECT else name, about)
     made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says))

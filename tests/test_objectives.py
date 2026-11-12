@@ -1,0 +1,207 @@
+"""A track's rows: one per Done when line of its goal, each with its state
+(done, worked, waiting, planned) and the tickets it names (ticket boss-track/01).
+
+Everything goes through `roster()` with fake providers, like `test_context`.
+Goal files, trackers, tickets and repositories are built in a temp dir;
+nothing here reads the real `~/.claude/pm` or a real repository. Names and
+texts are invented.
+"""
+import sys
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from test_projects import TrackFixtures, sess
+
+
+class Rows(TrackFixtures):
+    def setUp(self):
+        super().setUp()
+        self.loom = self.repo("loom")          # where the boss and its workers work
+
+    def goal(self, *boxes, track="checkout"):
+        body = "".join(f"- {b}\n" for b in boxes)
+        (self.pm / f"{track}.goal.md").write_text(
+            f"# Objective — {track}\n_Status: OPEN_\n\n## Outcome\nCustomers pay with a saved card.\n\n"
+            f"## Done when\n{body}\n## Deliverables\n- [ ] not a criterion\n")
+
+    def roster_of(self, *rows, track="checkout", heading="Roster"):
+        """`pm/<track>.md` with a roster table of (name, task) rows."""
+        table = "".join(f"| {name} | %31 | {task} |\n" for name, task in rows)
+        (self.pm / f"{track}.md").write_text(
+            f"# PM Tracker — {track}\n\n## {heading}\n| Name | Pane | Current task |\n|---|---|---|\n"
+            f"{table}\n## Open blockers\n- 04:50 paste/12 was merged\n")
+
+    def ticket(self, ref, status="ready-for-agent", blocked="None", title=None, repo=None, slug="a-ticket"):
+        feature, number = ref.split("/")
+        folder = (repo or self.loom) / ".scratch" / feature / "issues"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{number}-{slug}.md"
+        path.write_text(f"# {number}: {title or 'Ticket ' + ref}\n\n**What to build:** a thing.\n\n"
+                        f"**Blocked by:** {blocked}\n\n**Status:** {status}\n")
+        return path
+
+    def rows(self, *sessions, track="checkout"):
+        sessions = sessions or (self.boss("b", self.loom, track),)
+        column = next(c for c in self.claude(*sessions)["columns"] if c["raw"] == track)
+        return column["track"]["rows"]
+
+    def states(self, *sessions):
+        return [(r["text"], r["state"]) for r in self.rows(*sessions)]
+
+    def test_a_ticked_line_is_done_and_an_unticked_line_naming_no_ticket_is_planned(self):
+        self.goal("[x] the cart keeps a card", "[ ] the full suite is green")
+        self.assertEqual(self.states(), [("the full suite is green", "planned"),
+                                         ("the cart keeps a card", "done")])
+
+    def test_a_line_carries_the_tickets_it_names_with_title_status_and_blocked_by(self):
+        self.goal("[ ] `paste/12` at Status done: the copy button shows")
+        self.ticket("paste/12", status="needs-triage", title="The copy button", blocked="None")
+        row, = self.rows()
+        self.assertEqual(row["tickets"], [{"ref": "paste/12", "title": "12: The copy button",
+                                           "status": "needs-triage", "blocked_by": "None", "workers": []}])
+
+    def test_an_unticked_line_whose_tickets_are_all_done_is_worked_on_and_awaits_its_tick(self):
+        self.goal("[ ] paste/12 at Status done", "[ ] paste/13 at Status done")
+        self.ticket("paste/12", status="done")
+        self.ticket("paste/13", status="needs-triage")
+        got = {r["text"]: (r["state"], r["awaiting_tick"]) for r in self.rows()}
+        self.assertEqual(got, {"paste/12 at Status done": ("worked", True),
+                               "paste/13 at Status done": ("planned", False)})
+
+    def test_a_ticked_line_is_done_whatever_its_tickets_say(self):
+        self.goal("[x] paste/12 at Status done")
+        self.ticket("paste/12", status="needs-triage")
+        self.assertEqual(self.states(), [("paste/12 at Status done", "done")])
+
+    def test_resolved_and_wontfix_count_as_done_for_a_ticket(self):
+        self.goal("[ ] paste/12 and paste/13 closed")
+        self.ticket("paste/12", status="resolved")
+        self.ticket("paste/13", status="wontfix")
+        row, = self.rows()
+        self.assertEqual((row["state"], row["awaiting_tick"]), ("worked", True))
+
+    def test_a_line_is_worked_on_when_a_live_worker_of_the_roster_has_its_ticket_in_its_task(self):
+        self.goal("[ ] paste/12 done", "[ ] paste/13 done")
+        self.ticket("paste/12"); self.ticket("paste/13")
+        self.roster_of(("Mei", "paste/12 copy button while a question is open"), ("Odile", "paste/13 the reader"))
+        got = self.rows(self.boss("b", self.loom, "checkout"),
+                        self.worker("w", self.loom, "checkout", name="Mei"))
+        self.assertEqual([(r["text"], r["state"]) for r in got],
+                         [("paste/12 done", "worked"), ("paste/13 done", "planned")])
+        self.assertEqual(got[0]["tickets"][0]["workers"], ["Mei"])
+
+    def test_a_struck_through_roster_row_makes_nothing_worked(self):
+        self.goal("[ ] paste/12 done")
+        self.ticket("paste/12")
+        self.roster_of(("~~Mei~~", "paste/12 copy button"))
+        got = self.rows(self.boss("b", self.loom, "checkout"),
+                        self.worker("w", self.loom, "checkout", name="Mei"))
+        self.assertEqual(got[0]["state"], "planned")
+
+    def test_every_roster_table_of_the_tracker_counts_and_its_task_column_is_found_by_its_heading(self):
+        self.goal("[ ] paste/12 done")
+        self.ticket("paste/12")
+        (self.pm / "checkout.md").write_text(
+            "# PM Tracker\n\n## Roster\n| Name | Pane | Project | Branch | Current task |\n|---|---|---|---|---|\n\n"
+            "## Roster (2026-11-10 ~00:10)\n| Name | Pane | Project | Branch | Current task |\n|---|---|---|---|---|\n"
+            "| Mei | %228 | agentview-wt/Mei | feat/paste-99 | paste/12 copy button |\n")
+        got = self.rows(self.boss("b", self.loom, "checkout"),
+                        self.worker("w", self.loom, "checkout", name="Mei"))
+        self.assertEqual(got[0]["state"], "worked")
+
+    def test_a_line_is_waiting_when_an_open_ticket_of_it_is_blocked_by_an_open_ticket(self):
+        self.goal("[ ] marks/02 done", "[ ] marks/03 done", "[ ] marks/04 done")
+        self.ticket("marks/01", status="needs-triage")
+        self.ticket("marks/02", blocked="01: one marks store")
+        self.ticket("marks/03", blocked="marks/05")             # no such ticket: nothing to wait on
+        self.ticket("marks/04", blocked="02, 03")
+        self.ticket("marks/06", status="done")
+        got = {r["text"]: r["state"] for r in self.rows()}
+        self.assertEqual(got, {"marks/02 done": "waiting", "marks/03 done": "planned", "marks/04 done": "waiting"})
+
+    def test_a_ticket_blocked_only_by_done_tickets_is_not_waiting(self):
+        self.goal("[ ] marks/02 done")
+        self.ticket("marks/01", status="resolved")
+        self.ticket("marks/02", blocked="01")
+        self.assertEqual(self.states(), [("marks/02 done", "planned")])
+
+    def test_rows_go_worked_waiting_planned_done_and_keep_the_goal_order_inside_a_state(self):
+        self.goal("[x] one", "[ ] two", "[ ] marks/02 three", "[ ] four", "[x] five", "[ ] paste/12 six")
+        self.ticket("marks/01"); self.ticket("marks/02", blocked="01"); self.ticket("paste/12", status="done")
+        self.assertEqual(self.states(), [("paste/12 six", "worked"), ("marks/02 three", "waiting"),
+                                         ("two", "planned"), ("four", "planned"),
+                                         ("one", "done"), ("five", "done")])
+
+    def test_a_range_names_every_ticket_in_it_and_is_done_only_when_all_are(self):
+        self.goal("[ ] paste/23 to 26 at Status done", "[ ] paste/30-31 done")
+        for n, status in ((23, "done"), (24, "done"), (25, "needs-triage"), (26, "done"), (30, "done"), (31, "wontfix")):
+            self.ticket(f"paste/{n}", status=status)
+        got = {r["text"]: ([t["ref"] for t in r["tickets"]], r["state"]) for r in self.rows()}
+        self.assertEqual(got, {"paste/23 to 26 at Status done": (["paste/23", "paste/24", "paste/25", "paste/26"], "planned"),
+                               "paste/30-31 done": (["paste/30", "paste/31"], "worked")})
+
+    def test_one_worker_on_one_ticket_of_a_range_makes_the_line_worked(self):
+        self.goal("[ ] paste/23 to 25 done")
+        for n in (23, 24, 25):
+            self.ticket(f"paste/{n}")
+        self.roster_of(("Mei", "paste/24"))
+        got = self.rows(self.boss("b", self.loom, "checkout"), self.worker("w", self.loom, "checkout", name="Mei"))
+        self.assertEqual(got[0]["state"], "worked")
+
+    def test_a_reference_to_no_ticket_file_and_a_path_are_no_tickets(self):
+        self.goal("[ ] paste/99 done in agentview-wt/Mei on origin/dev, see src/12/x and 2026/11")
+        self.ticket("paste/12")
+        row, = self.rows()
+        self.assertEqual((row["tickets"], row["state"]), ([], "planned"))
+
+    def test_tickets_are_read_in_the_main_checkout_of_a_worker_in_a_worktree_and_in_another_repository(self):
+        orchard = self.repo("orchard")
+        tree = self.worktree(orchard, "orchard-wt-mei")
+        self.goal("[ ] paste/12 done", "[ ] cards/03 done")
+        self.ticket("paste/12", title="In loom")
+        self.ticket("cards/03", title="In orchard", repo=orchard)
+        self.ticket("cards/03", title="In the worktree", repo=tree)
+        got = self.rows(self.boss("b", self.loom, "checkout"), self.worker("w", tree, "checkout", name="Mei"))
+        self.assertEqual(sorted(t["title"] for r in got for t in r["tickets"]), ["03: In orchard", "12: In loom"])
+
+    def test_a_ticket_that_links_out_of_its_scratch_folder_is_not_read(self):
+        secret = self.disk / "secret.md"
+        secret.write_text("# 12: a secret title\n**Status:** done\n")
+        (self.loom / "notes.md").write_text("# 13: not a ticket\n**Status:** done\n")
+        folder = self.loom / ".scratch" / "paste" / "issues"
+        folder.mkdir(parents=True)
+        (folder / "12-out.md").symlink_to(secret)
+        (folder / "13-up.md").symlink_to(self.loom / "notes.md")
+        self.goal("[ ] paste/12 done", "[ ] paste/13 done")
+        self.assertEqual([r["tickets"] for r in self.rows()], [[], []])
+
+    def test_a_card_reads_a_bounded_number_of_tickets(self):
+        self.goal(*(f"[ ] paste/{n} done" for n in range(1, 61)))
+        for n in range(1, 61):
+            self.ticket(f"paste/{n}")
+        got = sum(len(r["tickets"]) for r in self.rows())
+        self.assertEqual(got, 40)
+
+    def test_a_worker_of_the_roster_whose_session_is_gone_makes_nothing_worked(self):
+        self.goal("[ ] paste/12 done")
+        self.ticket("paste/12")
+        self.roster_of(("Mei", "paste/12 copy button"))
+        got = self.rows(self.boss("b", self.loom, "checkout"), self.worker("w", self.loom, "checkout", name="Odile"))
+        self.assertEqual((got[0]["state"], got[0]["tickets"][0]["workers"]), ("planned", []))
+
+    def test_a_met_track_has_every_row_done_as_its_progress_says(self):
+        self.goal("[x] one", "[ ] two")
+        (self.pm / "checkout.goal.md").write_text(
+            (self.pm / "checkout.goal.md").read_text().replace("_Status: OPEN_", "_Status: MET 2026-11-11_"))
+        self.assertEqual(self.states(), [("one", "done"), ("two", "done")])
+
+    def test_a_ticket_is_named_as_its_file_numbers_it(self):
+        self.goal("[ ] turn-hook/1 done")
+        self.ticket("turn-hook/01")
+        row, = self.rows()
+        self.assertEqual([t["ref"] for t in row["tickets"]], ["turn-hook/01"])
+
+
+if __name__ == "__main__":
+    unittest.main()
