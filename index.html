@@ -464,6 +464,7 @@ let editing = false;
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const home = "{{HOME}}";        // substituted by the server, like the zoom
 const ZOOM = parseFloat("{{ZOOM}}") || 1;
+const BUILD = "{{BUILD}}";      // the index.html this script came from; the roster names the current one
 
 function mark(m) {
   // A tick reads as done in a way no colour of dot does.
@@ -626,6 +627,15 @@ function busyWithUser() {
   return editing || !!document.querySelector("input.inline, select.pick");
 }
 
+// A restart or deploy leaves open tabs on the old script. Reload once the server
+// serves another page, but never over something typed that a reload would drop:
+// the filter and search boxes live only in memory (folds are in localStorage).
+function staleAndFree(build) {
+  const typing = [document.getElementById("q"), document.getElementById("find")].some(
+    el => el && (el.value || el === document.activeElement));
+  return typeof build === "string" && build !== BUILD && !busyWithUser() && !typing;
+}
+
 async function load() {
   // A save can take seconds -- retitling a Konsole tab means walking D-Bus --
   // and its `load()` lands long after. By then you may be typing in another
@@ -637,7 +647,8 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { flags, columns, counts, banners, chime, providers, restore, saved, closed, pastes, kept } = await r.json();
+    const { flags, columns, counts, banners, chime, providers, restore, saved, closed, pastes, kept, build } = await r.json();
+    if (staleAndFree(build)) return location.reload();
     drawRestore(restore);
     drawClosed(closed);
     drawSave(saved);

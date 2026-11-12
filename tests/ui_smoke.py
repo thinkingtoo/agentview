@@ -52,7 +52,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeout, sync_playwrig
 
 HERE = pathlib.Path(__file__).resolve().parent
 PAGE = (HERE.parent / "index.html").read_text(encoding="utf-8") \
-    .replace("{{ZOOM}}", "1").replace("{{HOME}}", "/home/alice")
+    .replace("{{ZOOM}}", "1").replace("{{HOME}}", "/home/alice").replace("{{BUILD}}", "smoke")
 failures = []
 errors = []        # page errors, console errors and dialogs, from every page
 posted = []        # every body the routed pages POSTed, from every pass

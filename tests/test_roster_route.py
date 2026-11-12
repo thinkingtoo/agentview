@@ -54,7 +54,7 @@ class Poll(unittest.TestCase):
         got = self.poll()
         self.assertEqual([f["key"] for f in got["flags"]], ["fake:a"])
         self.assertEqual([t["key"] for c in got["columns"] for t in c["sessions"]], ["fake:a"])
-        self.assertEqual(sorted(got), ["banners", "chime", "closed", "columns", "counts",
+        self.assertEqual(sorted(got), ["banners", "build", "chime", "closed", "columns", "counts",
                                        "flags", "kept", "pastes", "providers", "restore", "saved"])
         self.assertNotIn("blocks", got)
         self.assertEqual(sorted(got["counts"]), ["moving", "needs", "otherStuck"])
@@ -67,6 +67,23 @@ class Poll(unittest.TestCase):
             with urllib.request.urlopen(base + path, timeout=10) as r:
                 self.assertEqual(r.status, 200, path)
                 self.assertIn(b'<main id="main" class="ov">', r.read(), path)
+
+    def test_the_roster_names_the_build_of_the_page_it_serves(self):
+        # The page compares this with the build baked into its own script and reloads on a difference.
+        base = f"http://127.0.0.1:{self.httpd.server_address[1]}"
+        with urllib.request.urlopen(base + "/", timeout=10) as r:
+            html = r.read().decode()
+        build = self.poll()["build"]
+        self.assertRegex(build, r"^[0-9a-f]{12}$")
+        self.assertIn(f'const BUILD = "{build}";', html)
+        self.assertEqual(self.poll()["build"], build)
+
+    def test_the_build_follows_index_html(self):
+        before = server.build()
+        with mock.patch.object(server, "HERE", Path(tempfile.mkdtemp())) as _:
+            self.addCleanup(shutil.rmtree, server.HERE, True)
+            (server.HERE / "index.html").write_text("<html>other {{ZOOM}} {{HOME}} {{BUILD}}</html>")
+            self.assertNotEqual(server.build(), before)
 
 
 if __name__ == "__main__":

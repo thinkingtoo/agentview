@@ -4,6 +4,7 @@
 Bound to 127.0.0.1 on purpose: the page shows your prompts verbatim, which is
 client work, and occasionally a credential someone pasted into an error.
 """
+import hashlib
 import json
 import os
 import sqlite3
@@ -72,6 +73,12 @@ def extra_origins():
     return {site for _, site in extra_entries() if site}
 
 
+def build():
+    """Which index.html is on disk: the page carries the one it was served with and
+    reloads itself when the roster names another (a restart, or a deploy)."""
+    return hashlib.sha1((HERE / "index.html").read_bytes()).hexdigest()[:12]
+
+
 def page():
     """The page, with the configured scale baked in.
 
@@ -80,7 +87,8 @@ def page():
     """
     html = (HERE / "index.html").read_text(encoding="utf-8")
     return (html.replace("{{ZOOM}}", str(setting("zoom", 1.5)))
-                .replace("{{HOME}}", str(Path.home())))
+                .replace("{{HOME}}", str(Path.home()))
+                .replace("{{BUILD}}", build()))
 
 
 _SNAP = {"files": None, "snap": None, "latest": None, "all": []}
@@ -599,7 +607,8 @@ class Handler(BaseHTTPRequestHandler):
                                    "restore": restorable(live_ids),
                                    "closed": closed_now(live_ids),
                                    "saved": coverage(live_ids),
-                                   "chime": fleet.config_value("chime", True)}),
+                                   "chime": fleet.config_value("chime", True),
+                                   "build": build()}),
                        "application/json")
         elif self.path.startswith("/api/paste_text"):
             # The text of one Paste, on a click, exactly as the session left it.
