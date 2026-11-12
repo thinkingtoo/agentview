@@ -4,6 +4,7 @@
 Bound to 127.0.0.1 on purpose: the page shows your prompts verbatim, which is
 client work, and occasionally a credential someone pasted into an error.
 """
+import hashlib
 import json
 import os
 import sqlite3
@@ -72,15 +73,25 @@ def extra_origins():
     return {site for _, site in extra_entries() if site}
 
 
+def build(raw=None):
+    """Which index.html is on disk: the page carries the one it was served with and
+    reloads itself when the roster names another (a restart, or a deploy).
+    `raw` is the bytes `page()` already read, so the page and its build cannot disagree."""
+    raw = (HERE / "index.html").read_bytes() if raw is None else raw
+    return hashlib.sha1(raw).hexdigest()[:12]
+
+
 def page():
     """The page, with the configured scale baked in.
 
     Substituted server-side rather than applied by script, so the page never
     renders once at the wrong size and then jumps.
     """
-    html = (HERE / "index.html").read_text(encoding="utf-8")
+    raw = (HERE / "index.html").read_bytes()
+    html = raw.decode("utf-8")
     return (html.replace("{{ZOOM}}", str(setting("zoom", 1.5)))
-                .replace("{{HOME}}", str(Path.home())))
+                .replace("{{HOME}}", str(Path.home()))
+                .replace("{{BUILD}}", build(raw)))
 
 
 _SNAP = {"files": None, "snap": None, "latest": None, "all": []}
@@ -599,7 +610,8 @@ class Handler(BaseHTTPRequestHandler):
                                    "restore": restorable(live_ids),
                                    "closed": closed_now(live_ids),
                                    "saved": coverage(live_ids),
-                                   "chime": fleet.config_value("chime", True)}),
+                                   "chime": fleet.config_value("chime", True),
+                                   "build": build()}),
                        "application/json")
         elif self.path.startswith("/api/paste_text"):
             # The text of one Paste, on a click, exactly as the session left it.
