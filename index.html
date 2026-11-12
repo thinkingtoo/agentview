@@ -451,6 +451,12 @@ let SHOWN = [];             // the columns painted now: the filter may hide some
 let CHIME = true;           // does a session that starts waiting ring?
 let WAITING = null;         // who was waiting last poll -- null before the first
 let READY = null;           // and who had already finished, for the same reason
+// A self-reload hands both sets to the new page, so whoever started asking in the gap rings there.
+try {
+  const seen = JSON.parse(sessionStorage.getItem("agentview.seen") || "null");
+  sessionStorage.removeItem("agentview.seen");
+  if (seen && Date.now() - seen.at < 30000) { WAITING = new Set(seen.waiting); READY = new Set(seen.ready); }
+} catch (e) { /* no sessionStorage: the first roster is a silent baseline, as ever */ }
 let SPEAKER = null;         // the audio context, built on your first click
 let MUZZLED = false;        // wanted to ring, and the browser would not have it
 let PROVIDERS = {};         // who answered the last poll, and who did not
@@ -668,7 +674,12 @@ async function load() {
     paint();
     // Only now, after this poll was drawn and announced on the old page: the chime for a session
     // that just started waiting must play first, and the reload waits for it to finish.
-    if (staleAndFree(build) && Date.now() - ANNOUNCED_AT > CHIME_MS) location.reload();
+    if (staleAndFree(build) && Date.now() - ANNOUNCED_AT > CHIME_MS) {
+      try {
+        sessionStorage.setItem("agentview.seen", JSON.stringify({at: Date.now(), waiting: [...WAITING], ready: [...READY]}));
+      } catch (e) { /* the new page then starts from a baseline */ }
+      location.reload();
+    }
   } catch (e) {
     document.getElementById("stamp").textContent = "server unreachable";
     report("poll", e.message, e.stack);
