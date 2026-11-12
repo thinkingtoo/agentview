@@ -21,7 +21,7 @@ Rows are sorted worked, waiting, planned, done; inside a state, the goal file's 
 
 **Status:** done
 
-- [x] A test per state, per sort rule, per reference form (single, range, unresolved), on invented goal files, trackers and tickets in a temp dir -- evidence: `tests/test_objectives.py`, 21 tests through `roster()`; red before (`KeyError: 'rows'`), green after; test_context, test_projects, test_columns, test_goal_page, test_pace, test_fleet green
+- [x] A test per state, per sort rule, per reference form (single, range, unresolved), on invented goal files, trackers and tickets in a temp dir -- evidence: `tests/test_objectives.py`, 20 tests through `roster()`; red before (`KeyError: 'rows'`), green after; test_context, test_projects, test_columns, test_goal_page, test_pace, test_fleet green
 - [x] A ticket file that is a link out of its checkout (to a file outside `.scratch`) is not read -- evidence: `test_a_ticket_that_links_out_of_its_scratch_folder_is_not_read` (a link to a file outside the checkout and one to a file of the checkout outside `.scratch`)
 - [x] The tracker's struck-through roster rows and workers whose session is gone make nothing worked -- evidence: `test_a_struck_through_roster_row_makes_nothing_worked`, `test_a_worker_of_the_roster_whose_session_is_gone_makes_nothing_worked`
 - [x] Reading stays bounded: tickets per card and bytes per ticket have a limit -- evidence: TICKETS_MAX 40 a card (`test_a_card_reads_a_bounded_number_of_tickets`), TICKET_READ 20,000 bytes a ticket
