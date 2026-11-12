@@ -134,27 +134,50 @@ def _state(done, named, tickets):
     return "planned", False
 
 
-def elsewhere(track, made, sessions):
-    """`[{name, task}]` of each live worker the track's roster gives a task
-    that no row's ticket carries, by name. Idle (an empty or "idle" task) and
-    retired (struck-through) roster rows are not read as work. Hammers stay
-    tied to `feature/NN` refs; this only says what the rest are on."""
-    live = {(m.get("name") or "").casefold(): m.get("name") for m in sessions if m.get("name")}
+def working(m):
+    """Whether a session is on a turn now: busy or waiting on a dialog, and not
+    only waiting on a job whose turn is over. Idle never is, and `shell` is idle
+    with a job: the status flips to busy when a turn starts (ticket boss-track/06)."""
+    return m.get("status") in ("busy", "waiting") and not m.get("waits")
+
+
+def workers(track, sessions, is_concierge, owner_of, boss_panes):
+    """`{name: task}` of each session working on a track now: a worker the
+    tracker's Roster table names, with its task, or a worker whose tmux pane
+    claude-boss stamped with one of the track's boss panes (`owner_of(m)`), with
+    the line it last wrote when the table has no task for it. The boss and a
+    concierge, by the pane's mark or a roster task of "concierge", are never one."""
+    table = projects.roster_tasks(track)
+    out = {}
+    for m in sessions:
+        name = m.get("name")
+        if not name or m.get("boss") or is_concierge(m) or not working(m):
+            continue
+        task = table.get(name.casefold()) or (m.get("did") if owner_of(m) in boss_panes else None)
+        if task is not None and task.strip().casefold() != "concierge":
+            out[name] = task
+    return out
+
+
+def elsewhere(made, crew):
+    """`[{name, task}]` of each working session whose task no row's ticket
+    carries, by name. Idle (an empty or "idle" task) is not read as work.
+    Hammers stay tied to `feature/NN` refs; this only says what the rest are on."""
     placed = {w for r in made for t in r["tickets"] for w in t["workers"]}
-    return [{"name": live[name], "task": context.squash(task)}
-            for name, task in sorted(projects.roster_tasks(track).items())
-            if name in live and live[name] not in placed and task.strip().casefold() not in IDLE_TASKS]
+    return [{"name": name, "task": context.squash(task)}
+            for name, task in sorted(crew.items(), key=lambda kv: kv[0].casefold())
+            if name not in placed and task.strip().casefold() not in IDLE_TASKS]
 
 
-def rows(track, boxes, sessions, met=False):
+def rows(boxes, sessions, crew, met=False):
     """The rows of a track's card, in ORDER, each state in the goal file's order.
+    `crew` is `workers`: who is working on the track now, with their tasks.
     A track whose goal says MET has every row done, as its progress says.
     Every row's own tickets are looked up before any blocker is: on a card that
     reaches TICKETS_MAX, what a blocker costs comes out of "waiting", never out
     of a row's own tickets."""
     tickets = Tickets(sessions)
-    live = {(m.get("name") or "").casefold(): m.get("name") for m in sessions if m.get("name")}
-    tasks = {live[name]: refs_in(task) for name, task in projects.roster_tasks(track).items() if name in live}
+    tasks = {name: refs_in(task) for name, task in crew.items()}
     named = []
     for box in boxes:
         pairs = [(k, t) for k, t in ((k, tickets.get(*k)) for k in refs_in(box["text"])) if t]

@@ -44,6 +44,8 @@ class Base(unittest.TestCase):
         # Nor the live tmux server: a tile asks it which panes are concierges.
         self.addCleanup(setattr, fleet, "_pane_roles", fleet._pane_roles)
         fleet._pane_roles = lambda now=None: frozenset()
+        self.addCleanup(setattr, fleet, "_pane_owners", fleet._pane_owners)
+        fleet._pane_owners = lambda now=None: {}
         # Nor sheaf: a track's card asks it for the goal's page.
         self.addCleanup(setattr, fleet, "GOAL_PAGE", fleet.GOAL_PAGE)
         fleet.GOAL_PAGE = lambda track, now: None

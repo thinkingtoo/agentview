@@ -65,7 +65,7 @@ class RealTmux(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         sock, recorded = out.stdout.split()
         self.assertTrue(sock.startswith(tmp), out.stdout)
-        self.addCleanup(fleet._ROLES.update, at=fleet._ROLES["at"], panes=fleet._ROLES["panes"])
+        self.addCleanup(fleet._ROLES.update, at=fleet._ROLES["at"], panes=fleet._ROLES["panes"], owners=fleet._ROLES["owners"])
         old = dict(os.environ)
         self.addCleanup(lambda: (os.environ.clear(), os.environ.update(old)))
         os.environ.pop("TMUX", None)

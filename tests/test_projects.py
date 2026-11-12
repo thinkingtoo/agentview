@@ -193,6 +193,7 @@ class TrackFixtures(Placed):
 
     def worker(self, sid, cwd, track, **over):
         """A worker claude-boss launched into the tmux session of its track."""
+        over.setdefault("status", "busy")        # a worker on the card is on a turn; idle ones are tested as such
         return sess(sid, cwd, tmux=f"boss-{track}:@3.%5", **over)
 
     def tracker(self, track, *workers, prose="", elsewhere=()):
