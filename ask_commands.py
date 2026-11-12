@@ -297,8 +297,9 @@ def reads_as_prompted(text):
 SHELL_RUN = re.compile(r"\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\\n])*`|'[^'\n]*'")
 SHELL_QUOTE = re.compile(r"[\"'`]")
 CLOSERS = (("(", ")"), ("[", "]"), ("{", "}"))
-# A mark that takes the next command or file: the line stops where more was due.
-OPEN_MARK = re.compile(r"(?:^|\s)(?:\||\|\||&&|>|>>|<)$|\|$|&&$")
+# A mark that takes the next command or file, or a backslash that continues the
+# line: the line stops where more was due.
+OPEN_MARK = re.compile(r"(?:^|\s)(?:\d*>>?|&>>?|>&|<<?<?|\|\|?|\|&|&&)$|(?<!\\)\|&?$|&&$|\\$")
 
 
 def cut_or_broken(command):

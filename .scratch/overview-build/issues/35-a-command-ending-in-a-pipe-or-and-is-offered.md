@@ -16,8 +16,8 @@ Also unpinned (same hunt, finding 2): with ticket 29's C1 fix, `holds_a_command`
 
 ## Fix and evidence (Stellan, 2026-11-12)
 
-`cut_or_broken` rejects a command whose last word is `|`, `||`, `&&`, `>`, `>>` or `<`, or that ends in `|` or `&&` (`OPEN_MARK`). Finding 2 is pinned by `test_a_shell_mark_after_a_quoted_name_offers_nothing`.
+`cut_or_broken` rejects a command that ends in an open mark (`OPEN_MARK`): `|`, `||`, `|&`, `&&`, a redirect (`>`, `2>`, `&>`, `>&`, `<`, `<<`) or a backslash continuation; an escaped `\|` is spared. Finding 2 is pinned by `test_a_shell_mark_after_a_quoted_name_offers_nothing`.
 
 - **Red:** `test_a_command_that_ends_in_a_shell_mark_is_not_offered`, 6 subtests failed (`$ ls -la |` offered `ls -la |` and so on), on `Stellan/ask_commands.py`.
-- **Green:** `tests/test_guessed_commands.py` 149 OK, `tests/test_ask.py` 8 OK.
-- **Real asks** (`measure-19-dump.py`, every distinct `team-line --n 1` ask in `~/.claude/projects`, dump in `/dev/shm`, deleted after): 3471 asks; origin/dev 198 buttons, this branch 198, 0 asks differ. The fix loses no real button.
+- **Green:** `tests/test_guessed_commands.py` 158 OK (`test_guessed_commands` + `test_ask`).
+- **Real asks** (`measure-19-dump.py`, every distinct `team-line --n 1` ask in `~/.claude/projects`, dump in `/dev/shm`, deleted after): 3476 asks; origin/dev 198 buttons, this branch 198, 0 asks differ. The fix loses no real button.

@@ -1019,12 +1019,16 @@ class SshHost(unittest.TestCase):
         # Ticket overview-build/35: `$ ls -la |` cut after its mark waits for
         # more when pasted. Half a command is worse than none.
         for ask in ("$ ls -la |", "$ git status &&", "$ ssh maple-box 'df -h' |", "$ make test ||",
-                    "$ cat notes.txt >", "$ git log >>", "$ sort <"):
+                    "$ cat notes.txt >", "$ git log >>", "$ sort <", "$ make test \\",
+                    "$ make test 2>", "$ ls &>", "$ make test |&", "$ cat <<"):
             with self.subTest(ask=ask):
                 self.assertEqual(ask_commands.guess(ask), [])
-        for command in ("ls -la | less", "git status && git diff", "ssh maple-box 'df -h' | tee disk.txt"):
+        for command in ("make 2>&1", "ls <dir>", "ls -la | less", "git status && git diff", "ssh maple-box 'df -h' | tee disk.txt"):
             with self.subTest(command=command):
                 self.assertEqual(ask_commands.guess(f"$ {command}"), [command])
+
+    def test_an_escaped_pipe_at_the_end_is_not_an_open_mark(self):
+        self.assertFalse(ask_commands.cut_or_broken("cut -d\\|"))
 
     def test_a_shell_mark_after_a_quoted_name_offers_nothing(self):
         # Ticket 35, finding 2: after a plain word, a quoted name is no command,
