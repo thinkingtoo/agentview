@@ -629,12 +629,11 @@ function busyWithUser() {
 
 // A restart or deploy leaves open tabs on the old script. Reload once the server
 // serves another page, but never over something typed that a reload would drop:
-// the filter and search boxes, opened Pastes and clicks in flight live only in memory (folds are in localStorage).
+// the filter and search boxes and a save in flight live only in memory (folds are in localStorage).
 function staleAndFree(build) {
   const typing = [document.getElementById("q"), document.getElementById("find")].some(
     el => el && (el.value || el === document.activeElement));
-  const reading = PASTE_OPEN.size > 0 || RESTORING || SAVING;     // a Paste you opened, a click in flight
-  return typeof build === "string" && build !== BUILD && !busyWithUser() && !typing && !reading;
+  return typeof build === "string" && build !== BUILD && !busyWithUser() && !typing && !SAVING;
 }
 
 async function load() {
@@ -649,8 +648,7 @@ async function load() {
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
     const { flags, columns, counts, banners, chime, providers, restore, saved, closed, pastes, kept, build } = await r.json();
-    // Announced first: the reloaded page takes its first roster as the baseline and rings for nothing.
-    if (staleAndFree(build)) { announce(flags || []); return location.reload(); }
+    if (staleAndFree(build)) return location.reload();
     drawRestore(restore);
     drawClosed(closed);
     drawSave(saved);
