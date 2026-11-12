@@ -381,9 +381,36 @@ class Stamped(Panes):
                          self.at("o", "Pia", "%35"), self.at("c", "Cora", "%33"))
         self.assertEqual(got["elsewhere"], [])
 
-    def test_a_stamped_worker_with_no_line_and_no_task_is_shown_nowhere(self):
+    def test_a_busy_stamped_worker_with_no_table_row_and_no_line_is_listed_by_the_best_text_the_server_has(self):
+        """Ticket boss-track/11: the card title, else the first line of the last prompt, else the word working."""
         self.prose_roster()
-        self.assertEqual(self.track({}, self.at("w", "Mei", "%31"))["elsewhere"], [])
+        got = self.track({}, self.at("w", "Mei", "%31", title="Fixing the reader"),
+                         self.at("v", "Odile", "%32", prompt="Review PR 248\nand report back"),
+                         self.at("u", "Anik", "%33"))
+        self.assertEqual(got["elsewhere"], [{"name": "Anik", "task": "working"},
+                                            {"name": "Mei", "task": "Fixing the reader"},
+                                            {"name": "Odile", "task": "Review PR 248"}])
+
+    def test_a_table_cell_that_says_idle_wins_over_the_stamp(self):
+        """Ticket boss-track/11: only an empty cell falls through."""
+        self.roster_of(("Mei", "idle"))
+        self.assertEqual(self.track({"w": "paste/12 the reader"}, self.at("w", "Mei", "%31"))["elsewhere"], [])
+
+    def test_a_table_row_with_an_empty_task_cell_falls_through_to_the_line_and_the_title(self):
+        """Ticket boss-track/11: an empty cell names no task, so the worker's own words are used."""
+        self.roster_of(("Mei", ""), ("Odile", ""))
+        got = self.track({"w": "paste/12 the reader"},
+                         self.at("w", "Mei", "%31"), self.at("v", "Odile", "%32", title="Reader"))
+        self.assertEqual([r["state"] for r in got["rows"]], ["worked", "planned"])
+        self.assertEqual(got["elsewhere"], [{"name": "Odile", "task": "Reader"}])
+
+    def test_the_last_line_wins_over_the_title_and_the_title_over_the_prompt(self):
+        self.prose_roster()
+        got = self.track({"w": "waiting for review of PR 248"},
+                         self.at("w", "Mei", "%31", title="Fixing the reader", prompt="go"),
+                         self.at("v", "Odile", "%32", title="Reader", prompt="go"))
+        self.assertEqual(got["elsewhere"], [{"name": "Mei", "task": "waiting for review of PR 248"},
+                                            {"name": "Odile", "task": "Reader"}])
 
     def test_an_idle_stamped_worker_is_shown_nowhere(self):
         self.prose_roster()

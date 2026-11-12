@@ -141,19 +141,32 @@ def working(m):
     return m.get("status") in ("busy", "waiting") and not m.get("waits")
 
 
+def _own_words(m):
+    """What a working session's row says of its task when the table has none:
+    the line it last wrote, else its card title, else the first line of its last
+    prompt, else "working" so its name still shows (ticket boss-track/11). Never
+    read from a transcript."""
+    prompt = next((l.strip() for l in str(m.get("prompt") or "").splitlines() if l.strip()), "")
+    return (str(m.get("did") or "").strip() or str(m.get("title") or "").strip() or prompt or "working")
+
+
 def workers(track, sessions, is_concierge, owner_of, boss_panes):
     """`{name: task}` of each session working on a track now: a worker the
     tracker's Roster table names, with its task, or a worker whose tmux pane
     claude-boss stamped with one of the track's boss panes (`owner_of(m)`), with
-    the line it last wrote when the table has no task for it. The boss and a
-    concierge, by the pane's mark or a roster task of "concierge", are never one."""
+    the best words its row carries when the table has no task for it
+    (`_own_words`). A stamped working worker is always listed; a table cell that
+    says idle still wins over the stamp. The boss and a concierge, by the pane's
+    mark or a roster task of "concierge", are never one."""
     table = projects.roster_tasks(track)
     out = {}
     for m in sessions:
         name = m.get("name")
         if not name or m.get("boss") or is_concierge(m) or not working(m):
             continue
-        task = table.get(name.casefold()) or (m.get("did") if owner_of(m) in boss_panes else None)
+        task = table.get(name.casefold()) or None     # an empty cell names nobody's task
+        if task is None and owner_of(m) in boss_panes:
+            task = _own_words(m)
         if task is not None and task.strip().casefold() != "concierge":
             out[name] = task
     return out
