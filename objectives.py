@@ -156,8 +156,8 @@ def workers(track, sessions, is_concierge, owner_of, boss_panes):
     claude-boss stamped with one of the track's boss panes (`owner_of(m)`), with
     the best words its row carries when the table has no task for it
     (`_own_words`). A stamped working worker is always listed; a table cell that
-    says idle still wins over the stamp. The boss and a concierge, by the pane's mark or a roster task of "concierge",
-    are never one."""
+    says idle still wins over the stamp. The boss and a concierge, by the pane's
+    mark or a roster task of "concierge", are never one."""
     table = projects.roster_tasks(track)
     out = {}
     for m in sessions:

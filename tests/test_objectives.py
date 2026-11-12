@@ -391,7 +391,13 @@ class Stamped(Panes):
                                             {"name": "Mei", "task": "Fixing the reader"},
                                             {"name": "Odile", "task": "Review PR 248"}])
 
+    def test_a_table_cell_that_says_idle_wins_over_the_stamp(self):
+        """Ticket boss-track/11: only an empty cell falls through."""
+        self.roster_of(("Mei", "idle"))
+        self.assertEqual(self.track({"w": "paste/12 the reader"}, self.at("w", "Mei", "%31"))["elsewhere"], [])
+
     def test_a_table_row_with_an_empty_task_cell_falls_through_to_the_line_and_the_title(self):
+        """Ticket boss-track/11: an empty cell names no task, so the worker's own words are used."""
         self.roster_of(("Mei", ""), ("Odile", ""))
         got = self.track({"w": "paste/12 the reader"},
                          self.at("w", "Mei", "%31"), self.at("v", "Odile", "%32", title="Reader"))
