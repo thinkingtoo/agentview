@@ -48,7 +48,7 @@ import tempfile
 import time
 import urllib.parse
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeout, sync_playwright
 
 HERE = pathlib.Path(__file__).resolve().parent
 PAGE = (HERE.parent / "index.html").read_text(encoding="utf-8") \
@@ -1913,6 +1913,10 @@ def paste_pass(browser):
         errors.remove(e)
 
 
+# Ticket 26: the clipboard calls each engine makes for a copy (read off t-compute, ticket 26).
+WAYS_EXPECTED = {"webkit": ["write"], "firefox": ["write"]}
+
+
 def paste_engine_pass(browser):
     """Ticket 18: the copy of a Paste in an engine other than Chromium. WebKit is
     the nearest to the phone. Neither WebKit nor Firefox takes the clipboard
@@ -1925,18 +1929,41 @@ def paste_engine_pass(browser):
         {"id": "p1", "title": "Message to Sven", "first": "Hoi Sven,", "secret": False, "copied": False}]
     fake = PasteFake(body, {"p1": PASTE_FULL})
     page = new_page(browser, fake)
+    # Ticket 26: which way the text went. A refused ClipboardItem falls back to writeText after
+    # the await and reads back the same, so record the calls as the Chromium pass does.
+    page.add_init_script("""window.__inTap = 0; window.__ways = []; window.__inTapWrites = [];
+      const add = EventTarget.prototype.addEventListener;
+      EventTarget.prototype.addEventListener = function (type, fn, ...rest) {
+        if (type !== 'click' || typeof fn !== 'function') return add.call(this, type, fn, ...rest);
+        return add.call(this, type, function (...a) {
+          window.__inTap++; try { return fn.apply(this, a); } finally { window.__inTap--; } }, ...rest); };
+      for (const way of ['write', 'writeText']) { const real = navigator.clipboard?.[way]?.bind(navigator.clipboard);
+        if (real) navigator.clipboard[way] = (...a) => {
+          window.__ways.push(way); window.__inTapWrites.push(window.__inTap > 0); return real(...a); }; }""")
     page.goto("http://localhost/", wait_until="load")
     page.wait_for_selector(".tile .paste")
     copy = page.locator(".tile button.pcopy")
     copy.click()
-    page.wait_for_function("document.querySelector('.tile button.pcopy').textContent !== 'copy'")
-    check(f"{name}: the button says it copied", copy.inner_text() == "copied", copy.inner_text())
+    # Ticket 25: a copy that never lands is a failed check, not a traceback that skips the closing guards.
+    def waits(js):
+        try:
+            page.wait_for_function(js, timeout=5000)
+            return True
+        except PlaywrightTimeout:
+            return False
+    check(f"{name}: the button says it copied",
+          waits("document.querySelector('.tile button.pcopy').textContent !== 'copy'") and copy.inner_text() == "copied",
+          copy.inner_text())
     page.evaluate("() => document.body.append(Object.assign(document.createElement('textarea'), {id: 'readback'}))")
     page.focus("#readback")
     page.keyboard.press("Control+V")
-    page.wait_for_function("document.getElementById('readback').value !== ''")
+    landed = waits("document.getElementById('readback').value !== ''")
     got = page.eval_on_selector("#readback", "e => e.value")
-    check(f"{name}: copy puts the whole text on the clipboard, byte-order mark included", got == PASTE_FULL, repr(got))
+    check(f"{name}: copy puts the whole text on the clipboard, byte-order mark included",
+          landed and got == PASTE_FULL, "nothing reached the clipboard" if not landed else repr(got))
+    ways, in_tap = page.evaluate("window.__ways"), page.evaluate("window.__inTapWrites")
+    check(f"{name}: and the copy went by {ways or 'the selection'}, written inside the tap: {in_tap}",
+          ways == WAYS_EXPECTED[name] and in_tap == [True] * len(ways), (ways, in_tap))
     check(f"{name}: and told the server", fake.of("/api/paste_copied") == [{"id": "p1"}], fake.posts)
     page.close()
 

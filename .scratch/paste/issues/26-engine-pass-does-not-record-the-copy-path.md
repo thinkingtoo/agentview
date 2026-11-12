@@ -18,4 +18,17 @@ against the fallback in `index.html:1169-1175` (`catch (e) { /* no promised item
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+## Evidence
+
+**Ferran, 2026-11-12.** The engine pass now records `navigator.clipboard.write`/`writeText` and the click-listener depth (as the Chromium pass does) and names the path in the check: `webkit: and the copy went by ['write'], written inside the tap: [True]`.
+
+**Reading: `write` is required in both engines.** On t-compute, Firefox 159 and WPE WebKit (Playwright 1.65.1's build) both copy through exactly one `write`, called inside the tap, with no permissions granted (`WAYS_EXPECTED` in `ui_smoke.py`). Neither takes the fallback today, so requiring `write` loses nothing and a silent fall back is a named failure. Limit: WPE WebKit is not Safari; the phone itself is still paste/16.
+
+Mutation, `write` refused (`throw` in place of `navigator.clipboard.write(...)`): the text still reads back, the old checks stay green, the new one fails in both engines:
+
+```
+webkit: and the copy went by ['writeText'], written inside the tap: [False] FAILED (['writeText'], [False])
+firefox: and the copy went by ['writeText'], written inside the tap: [False] FAILED (['writeText'], [False])
+```
+
+**Status:** done
