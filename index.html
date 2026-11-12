@@ -949,17 +949,19 @@ function ticketLine(t) {
   return bits.filter(Boolean).join(" · ");
 }
 // Live roster workers whose task no row's ticket carries: named with their task, never put on a row.
+// A <li> of its own, put among the rows by doneWhenOf so every hammer sits together on top.
 function elsewhereOf(c) {
   const list = Array.isArray(c.track?.elsewhere) ? c.track.elsewhere : [];
-  return list.length ? `<ul class="ov-objs"><li class="ov-obj st-worked"><span class="ov-obj-note">${
-    list.map(w => `<span class="sign">🔨</span> ${esc(w.name)}: ${esc(w.task)}`).join("<br>")}</span></li></ul>` : "";
+  return list.length ? `<li class="ov-obj st-worked"><span class="ov-obj-note">${
+    list.map(w => `<span class="sign">🔨</span> ${esc(w.name)}: ${esc(w.task)}`).join("<br>")}</span></li>` : "";
 }
 function doneWhenOf(c) {
   const rows = rowsOf(c);
   if (FOLDED.has(c.project)) return "";
-  if (!rows.length) return elsewhereOf(c);
+  const away = elsewhereOf(c);
+  if (!rows.length) return away ? `<ul class="ov-objs">${away}</ul>` : "";
   const seen = new Map();      // a line written twice is two rows: the second is keyed as the second
-  return `<ul class="ov-objs">${rows.map(r => {
+  const lis = rows.map(r => {
     const state = known(SIGN, r.state) ? r.state : "planned";
     const nth = (seen.get(r.text) || 0) + 1;
     seen.set(r.text, nth);
@@ -968,9 +970,13 @@ function doneWhenOf(c) {
     const more = open ? `<div class="ov-obj-more"><span class="full">${esc(r.text)}</span>${
       r.awaiting_tick ? `<span class="tick">its tickets are done, awaiting tick</span>` : ""}${
       (r.tickets || []).map(t => `<span>${esc(ticketLine(t))}</span>`).join("")}</div>` : "";
-    return `<li class="ov-obj st-${state}"><button class="ov-obj-line" aria-expanded="${open}" data-row="${esc(key)}"
-      title="${esc(r.text)}"><span class="sign">${SIGN[state]}</span> ${esc(r.text)}</button>${more}</li>`;
-  }).join("")}</ul>${elsewhereOf(c)}`;
+    return [state, `<li class="ov-obj st-${state}"><button class="ov-obj-line" aria-expanded="${open}" data-row="${esc(key)}"
+      title="${esc(r.text)}"><span class="sign">${SIGN[state]}</span> ${esc(r.text)}</button>${more}</li>`];
+  });
+  // The server sends worked rows first; the elsewhere hammers follow them, ahead of waiting, planned and done.
+  const at = lis.findIndex(([state]) => state !== "worked");
+  lis.splice(at < 0 ? lis.length : at, 0, ["worked", away]);
+  return `<ul class="ov-objs">${lis.map(([, li]) => li).join("")}</ul>`;
 }
 
 function notesLinkOf(c) {
