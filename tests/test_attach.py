@@ -508,6 +508,8 @@ class ClickServer(FakeRegistry):
                             ("log.LOG", tmp / "events.jsonl"),
                             ("jump.open_tab", self.open_tab),
                             ("jump._run", lambda argv, timeout=4: self.fail(f"ran {argv}")),
+                            # The boss stamps are read off tmux; no stamp, no tmux.
+                            ("fleet._read_panes", lambda now=None: None),
                             ("subprocess.run", self.refuse),
                             ("subprocess.Popen", self.refuse),
                             ("server.restorable", lambda live: None),
