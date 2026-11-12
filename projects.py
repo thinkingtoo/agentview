@@ -412,10 +412,9 @@ def roster_tasks(track):
         cell = re.sub(r"[*_`]", "", bare) if not bare.startswith("~~") else ""
         word = FIRST_WORD.match(cell)
         if word and word.group().strip("-:"):
-            task = cells[column] if column < len(cells) else ""
-            name = word.group().casefold()
-            out[name] = f"{out[name]} ; {task}" if out.get(name) else task    # listed twice: both tasks
-    return out
+            out.setdefault(word.group().casefold(), []).append(cells[column] if column < len(cells) else "")
+    # Joined once: a tracker of a megabyte can list one worker thousands of times.
+    return {name: " ; ".join(t for t in tasks if t) for name, tasks in out.items()}
 
 
 def _roster_names(track):
