@@ -9,4 +9,5 @@
 **Status:** needs-triage
 
 - [ ] The list renders in the routed fixture with markup in a name and a task building no element -- evidence: `ui_smoke` check, green on t-compute
+- [ ] The list sits after the worked rows and before the waiting, planned and done rows (ticket 13)
 - [ ] A click on the list leaves every `aria-expanded` unchanged -- evidence: same check, red with the class put back to `ov-obj-line`
