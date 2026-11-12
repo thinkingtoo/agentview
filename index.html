@@ -588,7 +588,7 @@ function arrived(now, before) {
 
 // Sound once per poll, for whoever *started* waiting or finishing. Five
 // sessions landing together is one chime, not five -- and a session goes on
-// waiting without ever ringing twice.
+// waiting without ever ringing twice. Returns whether someone started waiting or finishing.
 function announce(flags) {
   const waiting = new Set(), ready = new Set();
   for (const f of flags) {
@@ -607,9 +607,10 @@ function announce(flags) {
   READY = ready;
   // A question outranks a finished turn. If both land in the same poll you
   // hear the one that wants something from you.
-  if (!CHIME) return;
+  if (!CHIME) return asks || done;
   if (asks) ring();
   else if (done) tick();
+  return asks || done;
 }
 
 function drawSound() {
@@ -630,6 +631,8 @@ function busyWithUser() {
 // A restart or deploy leaves open tabs on the old script. Reload once the server
 // serves another page, but never over something typed that a reload would drop:
 // the filter and search boxes and a save in flight live only in memory (folds are in localStorage).
+let ANNOUNCED_AT = 0;           // when the last chime or tick was asked for
+const CHIME_MS = 2500;          // the longest sound (a 1.8 s decay) plus room
 function staleAndFree(build) {
   const typing = [document.getElementById("q"), document.getElementById("find")].some(
     el => el && (el.value || el === document.activeElement));
@@ -648,7 +651,6 @@ async function load() {
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
     const { flags, columns, counts, banners, chime, providers, restore, saved, closed, pastes, kept, build } = await r.json();
-    if (staleAndFree(build)) return location.reload();
     drawRestore(restore);
     drawClosed(closed);
     drawSave(saved);
@@ -657,13 +659,16 @@ async function load() {
     // Read back on every poll, so editing config.json by hand still works.
     CHIME = chime !== false;
     drawSound();
-    announce(flags || []);
+    if (announce(flags || [])) ANNOUNCED_AT = Date.now();
     COLUMNS = columns || [];
     COUNTS = counts || {};
     PASTES = Number.isInteger(pastes) && pastes > 0 ? pastes : 0;
     KEPT = Array.isArray(kept) ? kept.filter(k => k && typeof k.key === "string" && Array.isArray(k.pastes)) : [];
     BANNERS = Array.isArray(banners) ? banners : [];
     paint();
+    // Only now, after this poll was drawn and announced on the old page: the chime for a session
+    // that just started waiting must play first, and the reload waits for it to finish.
+    if (staleAndFree(build) && Date.now() - ANNOUNCED_AT > CHIME_MS) location.reload();
   } catch (e) {
     document.getElementById("stamp").textContent = "server unreachable";
     report("poll", e.message, e.stack);
