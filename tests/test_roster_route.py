@@ -80,9 +80,10 @@ class Poll(unittest.TestCase):
 
     def test_the_build_follows_index_html(self):
         before = server.build()
-        with mock.patch.object(server, "HERE", Path(tempfile.mkdtemp())) as _:
-            self.addCleanup(shutil.rmtree, server.HERE, True)
-            (server.HERE / "index.html").write_text("<html>other {{ZOOM}} {{HOME}} {{BUILD}}</html>")
+        other = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, other, True)
+        with mock.patch.object(server, "HERE", other):
+            (other / "index.html").write_text("<html>other {{ZOOM}} {{HOME}} {{BUILD}}</html>")
             self.assertNotEqual(server.build(), before)
 
 

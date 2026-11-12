@@ -73,10 +73,12 @@ def extra_origins():
     return {site for _, site in extra_entries() if site}
 
 
-def build():
+def build(raw=None):
     """Which index.html is on disk: the page carries the one it was served with and
-    reloads itself when the roster names another (a restart, or a deploy)."""
-    return hashlib.sha1((HERE / "index.html").read_bytes()).hexdigest()[:12]
+    reloads itself when the roster names another (a restart, or a deploy).
+    `raw` is the bytes `page()` already read, so the page and its build cannot disagree."""
+    raw = (HERE / "index.html").read_bytes() if raw is None else raw
+    return hashlib.sha1(raw).hexdigest()[:12]
 
 
 def page():
@@ -85,10 +87,11 @@ def page():
     Substituted server-side rather than applied by script, so the page never
     renders once at the wrong size and then jumps.
     """
-    html = (HERE / "index.html").read_text(encoding="utf-8")
+    raw = (HERE / "index.html").read_bytes()
+    html = raw.decode("utf-8")
     return (html.replace("{{ZOOM}}", str(setting("zoom", 1.5)))
                 .replace("{{HOME}}", str(Path.home()))
-                .replace("{{BUILD}}", build()))
+                .replace("{{BUILD}}", build(raw)))
 
 
 _SNAP = {"files": None, "snap": None, "latest": None, "all": []}
