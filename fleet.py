@@ -1013,10 +1013,11 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
         # into by hand, with no boss of its own running (a boss of another
         # track moved in does not count), has its boxes and no rows.
         running = project["raw"] in projects.boss_tracks(rows).values()
-        track["rows"] = (objectives.rows(project["raw"], track["boxes"], rows, met=bool(progress and progress["met"]))
+        crew = _crew(project["raw"], rows) if running else {}
+        track["rows"] = (objectives.rows(track["boxes"], rows, crew, met=bool(progress and progress["met"]))
                          if running else [])
         # Workers whose task no row's ticket carries: said by name and task, not guessed onto a row.
-        track["elsewhere"] = objectives.elsewhere(project["raw"], track["rows"], rows) if running else []
+        track["elsewhere"] = objectives.elsewhere(track["rows"], crew) if running else []
     # The column of no project has no name to repeat.
     column_says = working.repeats(None if project is NO_PROJECT else name, about)
     made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says))
@@ -1097,36 +1098,62 @@ def pill_of(m, tile):
             "find": tile["find"]}
 
 
-_ROLES = {"at": 0.0, "panes": frozenset()}
+_ROLES = {"at": 0.0, "panes": frozenset(), "owners": {}}
+
+
+def _read_panes(now=None):
+    """Refresh what claude-boss stamped on the tmux panes: `@worker_role` and `@boss_pane`.
+
+    One `list-panes` per five seconds serves both readers below. No tmux, or
+    no server, is no stamp at all.
+    """
+    now = time.monotonic() if now is None else now
+    if now - _ROLES["at"] < 5:
+        return
+    _ROLES["at"] = now
+    try:
+        r = subprocess.run(["tmux", "list-panes", "-a", "-F",
+                            "#{pane_id}\t#{@worker_role}\t#{@boss_pane}"],
+                           capture_output=True, text=True, timeout=2)
+        lines = r.stdout.splitlines() if r.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError):
+        lines = []
+    cells = [(l.split("\t") + ["", ""])[:3] for l in lines]
+    _ROLES["panes"] = frozenset(pane for pane, role, _ in cells if role == "concierge")
+    _ROLES["owners"] = {pane: boss for pane, _, boss in cells if boss}
 
 
 def _pane_roles(now=None):
     """The tmux pane ids (`%29`) of the panes claude-boss stamped `@worker_role concierge`.
 
-    One `list-panes` per five seconds, read for the tag beside a name only: the
-    name itself is the address and is never touched. No tmux, or no server, is
-    no concierge.
+    Read for the tag beside a name only: the name itself is the address and is never touched.
     """
-    now = time.monotonic() if now is None else now
-    if now - _ROLES["at"] < 5:
-        return _ROLES["panes"]
-    _ROLES["at"] = now
-    try:
-        r = subprocess.run(["tmux", "list-panes", "-a", "-F",
-                            "#{pane_id}\t#{@worker_role}"],
-                           capture_output=True, text=True, timeout=2)
-        lines = r.stdout.splitlines() if r.returncode == 0 else []
-    except (OSError, subprocess.SubprocessError):
-        lines = []
-    _ROLES["panes"] = frozenset(l.split("\t")[0] for l in lines if l.endswith("\tconcierge"))
+    _read_panes(now)
     return _ROLES["panes"]
 
 
-def is_concierge(m):
+def _pane_owners(now=None):
+    """`{pane id: the pane id of the boss that spawned or claimed it}`, from `@boss_pane`."""
+    _read_panes(now)
+    return _ROLES["owners"]
+
+
+def pane_of(m):
     # Claude Code records the pane as `session:@window_id.%pane_id`; the window
     # id goes stale when a pane moves, the pane id does not.
     pane = str(m.get("tmux") or "").rpartition(".")[2]
-    return pane.startswith("%") and pane in _pane_roles()
+    return pane if pane.startswith("%") else ""
+
+
+def is_concierge(m):
+    return pane_of(m) in _pane_roles()
+
+
+def _crew(raw, rows):
+    """Who works on track `raw` now, `{name: task}`, among the rows of its column."""
+    boss_panes = {pane_of(m) for m in rows if projects.boss_tracks([m]).get(m["key"]) == raw} - {""}
+    owners = _pane_owners()
+    return objectives.workers(raw, rows, is_concierge, lambda m: owners.get(pane_of(m)), boss_panes)
 
 
 def tile_of(m, suggestion=None, column_says=frozenset()):

@@ -11,10 +11,12 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import fleet
+import lines
 from test_projects import TrackFixtures, sess
 
 
-class Rows(TrackFixtures):
+class Fixtures(TrackFixtures):
     def setUp(self):
         super().setUp()
         self.loom = self.repo("loom")          # where the boss and its workers work
@@ -49,6 +51,13 @@ class Rows(TrackFixtures):
     def states(self, *sessions):
         return [(r["text"], r["state"]) for r in self.rows(*sessions)]
 
+    def elsewhere(self, *sessions, track="checkout"):
+        sessions = sessions or (self.boss("b", self.loom, track),)
+        column = next(c for c in self.claude(*sessions)["columns"] if c["raw"] == track)
+        return column["track"]["elsewhere"]
+
+
+class Rows(Fixtures):
     def test_a_ticked_line_is_done_and_an_unticked_line_naming_no_ticket_is_planned(self):
         self.goal("[x] the cart keeps a card", "[ ] the full suite is green")
         self.assertEqual(self.states(), [("the full suite is green", "planned"),
@@ -247,11 +256,6 @@ class Rows(TrackFixtures):
         got = self.rows(self.boss("b", self.loom, "checkout"), self.worker("w", self.loom, "checkout", name="Mei"))
         self.assertEqual([r["state"] for r in got], ["worked", "worked"])
 
-    def elsewhere(self, *sessions, track="checkout"):
-        sessions = sessions or (self.boss("b", self.loom, track),)
-        column = next(c for c in self.claude(*sessions)["columns"] if c["raw"] == track)
-        return column["track"]["elsewhere"]
-
     def test_a_live_worker_whose_task_ties_to_no_line_is_shown_with_its_task(self):
         self.goal("[ ] the cart keeps a card", "[ ] paste/12 done")
         self.ticket("paste/12")
@@ -275,6 +279,116 @@ class Rows(TrackFixtures):
         self.roster_of(("Mei", "#09c waiver"))
         got = self.claude(self.worker("w", self.loom, "checkout", name="Mei"))
         self.assertTrue(all(c["track"].get("elsewhere", []) == [] for c in got["columns"] if c.get("track")))
+
+class Panes(Fixtures):
+    """Sessions on tmux panes, with no concierge mark and no stamp until a test lays them."""
+
+    def setUp(self):
+        super().setUp()
+        for name in ("_pane_roles", "_pane_owners"):
+            self.addCleanup(setattr, fleet, name, getattr(fleet, name))
+        fleet._pane_roles = lambda now=None: frozenset()
+        fleet._pane_owners = lambda now=None: {}
+        self.goal("[ ] the cart keeps a card", "[ ] paste/12 done")
+        self.ticket("paste/12")
+
+    def at(self, sid, name, pane, **over):
+        over.setdefault("status", "busy")
+        return sess(sid, self.loom, name=name, tmux=f"boss-checkout:@3.{pane}", **over)
+
+
+class Working(Panes):
+    """Who counts as working (ticket boss-track/06): a busy or waiting session
+    that is no concierge. Idle is never work, and `shell` (idle with a job) neither."""
+
+    def test_an_idle_or_shell_worker_is_on_no_line_and_not_elsewhere(self):
+        self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"), ("Ines", "#18 MERGED, done, idle"))
+        sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle"),
+                    self.at("v", "Odile", "%32", status="idle", bg=True),      # `shell`: idle with a job
+                    self.at("u", "Ines", "%33", status="idle"))
+        self.assertEqual(self.elsewhere(*sessions), [])
+        self.assertEqual([r["state"] for r in self.rows(*sessions)], ["planned", "planned"])
+
+    def test_a_waiting_session_is_working_and_so_is_a_busy_one(self):
+        self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"))
+        sessions = (self.boss("b", self.loom, "checkout"),
+                    self.at("w", "Mei", "%31", status="waiting"), self.at("v", "Odile", "%32"))
+        self.assertEqual([r["state"] for r in self.rows(*sessions)], ["worked", "planned"])
+        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver"}])
+
+    def test_a_concierge_is_never_a_worker_by_its_pane_mark_or_by_its_task(self):
+        self.roster_of(("Mei", "#09c waiver"), ("Odile", "concierge"), ("Ines", "paste/12 the reader"))
+        sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31"),
+                    self.at("v", "Odile", "%32"), self.at("u", "Ines", "%34"))
+        fleet._pane_roles = lambda now=None: frozenset({"%31", "%34"})
+        self.assertEqual(self.elsewhere(*sessions), [])
+        self.assertEqual([r["state"] for r in self.rows(*sessions)], ["planned", "planned"])
+
+    def test_a_card_shaped_on_the_live_one_lists_only_the_busy_worker(self):
+        # insights-bento at 19:2x: a concierge, a worker in `shell`, two merged and idle, one busy.
+        self.roster_of(("Ana", "concierge"), ("Bo", "CTX-OVER; idle"), ("Cy", "#18 MERGED 44273ab, fix round"),
+                       ("Di", "#10 MERGED 38b79b3. Done, idle"), ("Ed", "#15 MERGED 980d907. Done, idle"))
+        fleet._pane_roles = lambda now=None: frozenset({"%31"})
+        got = self.elsewhere(self.boss("b", self.loom, "checkout"),
+                             self.at("a", "Ana", "%31", status="idle"), self.at("b", "Bo", "%32", status="idle", bg=True),
+                             self.at("c", "Cy", "%33"), self.at("d", "Di", "%34", status="idle"),
+                             self.at("e", "Ed", "%35", status="idle"))
+        self.assertEqual(got, [{"name": "Cy", "task": "#18 MERGED 44273ab, fix round"}])
+
+
+class Stamped(Panes):
+    """A track's workers from the tmux stamps (ticket boss-track/07): the panes
+    claude-boss stamped `@boss_pane` with the boss's pane, for a tracker with no
+    table naming them. The fixtures are shaped on an empty table beside a prose roster."""
+
+    def setUp(self):
+        super().setUp()
+        fleet._pane_owners = lambda now=None: {"%31": "%30", "%32": "%30", "%33": "%30", "%35": "%99"}
+
+    def boss_at(self):
+        return sess("b", self.loom, name="Ilse", boss=True, track="checkout", tmux="boss-checkout:@3.%30")
+
+    def prose_roster(self):
+        (self.pm / "checkout.md").write_text(
+            "# PM Tracker - checkout\n\n## Roster\n| Name | Pane | Current task |\n|---|---|---|\n\n"
+            "## Roster (2026-11-12 13:00, the boss)\nMei (%31) ticket 26. Odile (%32) PR 248.\n")
+
+    def track(self, said, *sessions):
+        """The card's track, each session having written `said[id]` as its line."""
+        for sid, did in said.items():
+            lines.write(sid, did=did, root=self.lines)
+        column = next(c for c in self.claude(self.boss_at(), *sessions)["columns"] if c["raw"] == "checkout")
+        return column["track"]
+
+    def test_a_worker_on_a_prose_roster_is_shown_with_what_it_last_said_and_hammers_its_line(self):
+        self.prose_roster()
+        got = self.track({"w": "paste/12 the reader, tests red", "v": "waiting for review of PR 248"},
+                         self.at("w", "Mei", "%31"), self.at("v", "Odile", "%32"))
+        self.assertEqual([r["state"] for r in got["rows"]], ["worked", "planned"])
+        self.assertEqual(got["elsewhere"], [{"name": "Odile", "task": "waiting for review of PR 248"}])
+
+    def test_the_tables_task_wins_over_the_last_line_and_a_session_outside_the_table_needs_a_stamp(self):
+        self.roster_of(("Mei", "paste/12 the reader"))
+        got = self.track({"w": "something else entirely", "u": "ticket 26 in review"},
+                         self.at("w", "Mei", "%31"), self.at("u", "Zoe", "%40"))
+        self.assertEqual([r["state"] for r in got["rows"]], ["worked", "planned"])
+        self.assertEqual(got["elsewhere"], [])
+
+    def test_a_pane_stamped_to_another_boss_and_a_concierge_are_not_workers(self):
+        self.prose_roster()
+        fleet._pane_roles = lambda now=None: frozenset({"%33"})
+        got = self.track({"o": "ticket 1", "c": "ticket 2"},
+                         self.at("o", "Pia", "%35"), self.at("c", "Cora", "%33"))
+        self.assertEqual(got["elsewhere"], [])
+
+    def test_a_stamped_worker_with_no_line_and_no_task_is_shown_nowhere(self):
+        self.prose_roster()
+        self.assertEqual(self.track({}, self.at("w", "Mei", "%31"))["elsewhere"], [])
+
+    def test_an_idle_stamped_worker_is_shown_nowhere(self):
+        self.prose_roster()
+        got = self.track({"w": "paste/12 merged, parked"}, self.at("w", "Mei", "%31", status="idle"))
+        self.assertEqual((got["elsewhere"], [r["state"] for r in got["rows"]]), ([], ["planned", "planned"]))
 
 
 if __name__ == "__main__":
