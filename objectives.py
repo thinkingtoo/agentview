@@ -14,6 +14,7 @@ import context
 import projects
 
 # The order rows are shown in: what moves first, what is finished last.
+IDLE_TASKS = ("", "-", "—", "–", "idle", "free", "none")   # what a roster task says of a worker on nothing
 ORDER = ("worked", "waiting", "planned", "done")
 # What a ticket's Status says when nothing is left to do on it.
 CLOSED = ("done", "resolved", "wontfix")
@@ -131,6 +132,18 @@ def _state(done, named, tickets):
         if is_open(t) and any(b and is_open(b) for b in (tickets.get(*k) for k in blockers(feature, t))):
             return "waiting", False
     return "planned", False
+
+
+def elsewhere(track, made, sessions):
+    """`[{name, task}]` of each live worker the track's roster gives a task
+    that no row's ticket carries, by name. Idle (an empty or "idle" task) and
+    retired (struck-through) roster rows are not read as work. Hammers stay
+    tied to `feature/NN` refs; this only says what the rest are on."""
+    live = {(m.get("name") or "").casefold(): m.get("name") for m in sessions if m.get("name")}
+    placed = {w for r in made for t in r["tickets"] for w in t["workers"]}
+    return [{"name": live[name], "task": context.squash(task)}
+            for name, task in sorted(projects.roster_tasks(track).items())
+            if name in live and live[name] not in placed and task.strip().casefold() not in IDLE_TASKS]
 
 
 def rows(track, boxes, sessions, met=False):

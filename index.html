@@ -920,9 +920,16 @@ function ticketLine(t) {
   if (t.workers?.length) bits.push(`on it: ${t.workers.join(", ")}`);
   return bits.filter(Boolean).join(" · ");
 }
+// Live roster workers whose task no row's ticket carries: named with their task, never put on a row.
+function elsewhereOf(c) {
+  const list = Array.isArray(c.track?.elsewhere) ? c.track.elsewhere : [];
+  return list.length ? `<ul class="ov-objs"><li class="ov-obj st-worked"><span class="ov-obj-line">${
+    list.map(w => `<span class="sign">🔨</span> ${esc(w.name)}: ${esc(w.task)}`).join("<br>")}</span></li></ul>` : "";
+}
 function doneWhenOf(c) {
   const rows = rowsOf(c);
-  if (!rows.length || FOLDED.has(c.project)) return "";
+  if (FOLDED.has(c.project)) return "";
+  if (!rows.length) return elsewhereOf(c);
   const seen = new Map();      // a line written twice is two rows: the second is keyed as the second
   return `<ul class="ov-objs">${rows.map(r => {
     const state = known(SIGN, r.state) ? r.state : "planned";
@@ -935,7 +942,7 @@ function doneWhenOf(c) {
       (r.tickets || []).map(t => `<span>${esc(ticketLine(t))}</span>`).join("")}</div>` : "";
     return `<li class="ov-obj st-${state}"><button class="ov-obj-line" aria-expanded="${open}" data-row="${esc(key)}"
       title="${esc(r.text)}"><span class="sign">${SIGN[state]}</span> ${esc(r.text)}</button>${more}</li>`;
-  }).join("")}</ul>`;
+  }).join("")}</ul>${elsewhereOf(c)}`;
 }
 
 function notesLinkOf(c) {

@@ -247,6 +247,35 @@ class Rows(TrackFixtures):
         got = self.rows(self.boss("b", self.loom, "checkout"), self.worker("w", self.loom, "checkout", name="Mei"))
         self.assertEqual([r["state"] for r in got], ["worked", "worked"])
 
+    def elsewhere(self, *sessions, track="checkout"):
+        sessions = sessions or (self.boss("b", self.loom, track),)
+        column = next(c for c in self.claude(*sessions)["columns"] if c["raw"] == track)
+        return column["track"]["elsewhere"]
+
+    def test_a_live_worker_whose_task_ties_to_no_line_is_shown_with_its_task(self):
+        self.goal("[ ] the cart keeps a card", "[ ] paste/12 done")
+        self.ticket("paste/12")
+        self.roster_of(("Mei", "#09c waiver and token"), ("Odile", "paste/12 the reader"))
+        got = self.elsewhere(self.boss("b", self.loom, "checkout"),
+                             self.worker("w", self.loom, "checkout", name="Mei"),
+                             self.worker("v", self.loom, "checkout", name="Odile"))
+        self.assertEqual(got, [{"name": "Mei", "task": "#09c waiver and token"}])
+
+    def test_a_worker_gone_or_struck_through_or_with_no_task_is_not_shown_elsewhere(self):
+        self.goal("[ ] the cart keeps a card")
+        self.roster_of(("Mei", "#09c waiver"), ("~~Odile~~", "#26 edge cases"), ("Ines", ""), ("Zoe", "idle"))
+        got = self.elsewhere(self.boss("b", self.loom, "checkout"),
+                             self.worker("w", self.loom, "checkout", name="Odile"),
+                             self.worker("v", self.loom, "checkout", name="Ines"),
+                             self.worker("u", self.loom, "checkout", name="Zoe"))
+        self.assertEqual(got, [])
+
+    def test_a_card_that_is_no_running_track_has_nobody_elsewhere(self):
+        self.goal("[ ] the cart keeps a card")
+        self.roster_of(("Mei", "#09c waiver"))
+        got = self.claude(self.worker("w", self.loom, "checkout", name="Mei"))
+        self.assertTrue(all(c["track"].get("elsewhere", []) == [] for c in got["columns"] if c.get("track")))
+
 
 if __name__ == "__main__":
     unittest.main()
