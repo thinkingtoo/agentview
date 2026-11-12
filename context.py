@@ -119,7 +119,7 @@ DESCRIPTION_READ = 20_000   # a repository's file, this far: the first prose of 
                             # where what lies further down is a code line and a theme footer
 
 
-def read(path, limit=READ, base=None):
+def read(path, limit=READ, base=None, judge=None):
     """The start of a text file, or "" when it is no regular file or cannot be
     read: a named pipe would wait for a writer that may never come.
 
@@ -130,7 +130,9 @@ def read(path, limit=READ, base=None):
     what is open is judged, a regular file that `inside` accepts: in `base`,
     in no `.git` folder, and named as a card looks for. What is read is that same descriptor. A
     goal or a tracker, which lies in the owner's own folder, is read by its
-    path. A timeout that reaches this is the caller's and is let through."""
+    path. `judge(end, base)` replaces `inside` for a file a card reads under
+    other names (a ticket). A timeout that reaches this is the caller's and is
+    let through."""
     try:
         if base is None:
             if not projects.regular(path):
@@ -139,7 +141,7 @@ def read(path, limit=READ, base=None):
                 return fh.read(limit)
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC)
         try:
-            if not stat.S_ISREG(os.fstat(fd).st_mode) or not inside(os.readlink(f"/proc/self/fd/{fd}"), base):
+            if not stat.S_ISREG(os.fstat(fd).st_mode) or not (judge or inside)(os.readlink(f"/proc/self/fd/{fd}"), base):
                 return ""
             with open(fd, encoding="utf-8-sig", errors="replace", closefd=False) as fh:
                 return fh.read(limit)
@@ -465,11 +467,19 @@ def inside(end, base):
     more than that file would. A file whose name was removed or replaced while it
     was open is told by the kernel as `<path> (deleted)`: it is judged by the
     path it had."""
+    target = within(end, base)
+    return target is not None and target.name.casefold() in WANTED
+
+
+def within(end, base):
+    """A resolved path relative to `base`, or None when it lies outside it or
+    in a `.git` folder of any case. A file whose name was removed or replaced
+    while it was open is judged by the path it had."""
     try:
         target = Path(end.removesuffix(" (deleted)")).relative_to(base)
     except ValueError:
-        return False
-    return ".git" not in {part.casefold() for part in target.parts} and target.name.casefold() in WANTED
+        return None
+    return None if ".git" in {part.casefold() for part in target.parts} else target
 
 
 def stays_inside(path, base):

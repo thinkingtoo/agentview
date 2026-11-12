@@ -1210,7 +1210,10 @@ def goal_fixture():
         done, total = sum(b["done"] for b in boxes), len(boxes)
         progress = ({"done": total, "total": total, "text": "done", "met": True} if status == "MET"
                     else {"done": done, "total": total, "text": f"{done} of {total}", "met": False})
-        return {"status": status, "boxes": boxes, "progress": progress, "goal": goal}
+        order = {"worked": 0, "waiting": 1, "planned": 2, "done": 3}
+        rows = sorted(({"text": b["text"], "state": "done" if b["done"] or status == "MET" else "planned",
+                        "awaiting_tick": False, "tickets": []} for b in boxes), key=lambda r: order[r["state"]])
+        return {"status": status, "boxes": boxes, "progress": progress, "goal": goal, "rows": rows}
 
     body = roster([("linked", "Linked", [S("g1", "Ilse")]), ("nohub", "No hub", [S("g2", "Femi")]),
                    ("elsewhere", "Elsewhere", [S("g3", "Odile")]), ("nogoal", "No goal", [S("g4", "Mateo")])])
@@ -1266,53 +1269,50 @@ def goal_pass(browser):
           and elsewhere["title"] == "no goal page", elsewhere)
     check("a track the server gave no goal has no goal word at all", col("nogoal").locator(".ov-goal").count() == 0)
 
-    # "N of M": the boxes on hover, unfolded under the row on a click.
+    # The rows: open at first, "N of M" folds them away and back (boss-track/02).
     count = col("linked").locator(".ov-count")
-    boxes = col("linked").locator(".ov-boxes li")
-    other_boxes = col("nohub").locator(".ov-boxes li")
-    lines = ["☑ The kettle whistles at ninety degrees", "☐ box: " + BOMB + ATTR + SVG, "☐ The lid stays shut"]
+    rows = col("linked").locator(".ov-objs .ov-obj-line")
+    other_rows = col("nohub").locator(".ov-objs .ov-obj-line")
+    lines = ["○ box: " + BOMB + ATTR + SVG, "○ The lid stays shut", "✅ The kettle whistles at ninety degrees"]
+    hover = ["☑ The kettle whistles at ninety degrees", "☐ box: " + BOMB + ATTR + SVG, "☐ The lid stays shut"]
     folded = lambda project: one(col(project).locator(".ov-count")).get("expanded") == "false" \
-        and "on" not in one(col(project).locator(".ov-count")).get("cls", "on").split() \
-        and col(project).locator(".ov-boxes").count() == 0
+        and col(project).locator(".ov-objs").count() == 0
     unfolded = lambda project: one(col(project).locator(".ov-count")).get("expanded") == "true" \
-        and "on" in one(col(project).locator(".ov-count"))["cls"].split()
+        and col(project).locator(".ov-objs").count() == 1
     n_of_m = one(count)
-    check("N of M is a button that lists the boxes on hover, folded at first",
-          n_of_m.get("tag") == "BUTTON" and n_of_m["text"] == "1 of 3" and n_of_m["title"] == "\n".join(lines)
-          and "on" not in n_of_m["cls"].split() and folded("linked") and folded("nohub"), n_of_m)
+    check("N of M is a button that lists the boxes on hover, and the rows show without a click",
+          n_of_m.get("tag") == "BUTTON" and n_of_m["text"] == "1 of 3" and n_of_m["title"] == "\n".join(hover)
+          and unfolded("linked") and unfolded("nohub") and rows.all_inner_texts() == lines, rows.all_inner_texts())
+    check("open rows first, the done row last and dimmed",
+          col("linked").locator(".ov-obj.st-done .ov-obj-line").all_inner_texts() == lines[2:], rows.all_inner_texts())
     met = one(col("nogoal").locator(".ov-prog > span:not(.ov-bar)"))
-    check("a track with no boxes says done, with nothing to unfold and a full bar",
+    check("a track with no boxes says done, with no rows and a full bar",
           col("nogoal").locator(".ov-count").count() == 0 and met.get("text") == "done"
+          and col("nogoal").locator(".ov-objs").count() == 0
           and one(col("nogoal").locator(".ov-bar i")).get("html", "").find("width:100%") > 0, met)
     count.click()
     page.wait_for_timeout(150)
-    check("a click unfolds the boxes in order, the ticked one greyed",
-          boxes.all_inner_texts() == lines and col("linked").locator(".ov-boxes li.done").all_inner_texts() == lines[:1]
-          and unfolded("linked"), boxes.all_inner_texts())
-    check("unfolding unfolds that card only", folded("nohub") and folded("elsewhere"))
-    # A repaint from the next poll, where the server has ticked another box.
+    check("a click on N of M folds the rows away, on that card only", folded("linked") and unfolded("nohub"))
     linked = next(c for c in fake.body["columns"] if c["project"] == "linked")["track"]
     linked["boxes"][2]["done"] = True
+    linked["rows"] = [linked["rows"][0], {**linked["rows"][1], "state": "done"}, linked["rows"][2]]
     linked["progress"] |= {"done": 2, "text": "2 of 3"}
     poll_now(page)
-    check("the unfold survives a repaint, and shows what the poll brought",
-          boxes.count() == 3 and count.inner_text() == "2 of 3" and boxes.nth(2).inner_text() == "☑ The lid stays shut"
-          and unfolded("linked"), boxes.all_inner_texts())
+    check("the fold survives a repaint", folded("linked") and count.inner_text() == "2 of 3")
+    page.reload(wait_until="load")
+    page.wait_for_selector(".ov-col")
+    check("the fold survives a reload of the page", folded("linked") and unfolded("nohub"))
     count.click()
     page.wait_for_timeout(150)
-    check("a second click folds them", folded("linked"))
-    poll_now(page)
-    check("and they stay folded through the next poll", folded("linked"))
-    col("nohub").locator(".ov-count").click()
-    page.wait_for_timeout(150)
-    check("another card's N of M unfolds that card, and leaves the first as it was",
-          other_boxes.all_inner_texts() == ["☑ The cups are warm", "☐ The tray is dry"] and unfolded("nohub")
-          and folded("linked"), other_boxes.all_inner_texts())
-    count.click()
-    page.wait_for_timeout(150)
-    check("markup in a box and in the goal's reason is text, and builds nothing",
-          boxes.all_inner_texts()[1:2] == lines[1:2] and goal("nohub").get("title") == reason
-          and page.locator("#main img, #main svg, #main [onerror], #main [onload]").count() == 0, boxes.all_inner_texts())
+    check("a second click opens them again, with what the poll brought",
+          unfolded("linked") and rows.nth(1).inner_text() == "✅ The lid stays shut", rows.all_inner_texts())
+    page.reload(wait_until="load")
+    page.wait_for_selector(".ov-col")
+    check("and they stay open through a reload", unfolded("linked"))
+    check("markup in a row and in the goal's reason is text, and builds nothing",
+          rows.all_inner_texts()[:1] == lines[:1] and goal("nohub").get("title") == reason
+          and other_rows.all_inner_texts() == ["○ The tray is dry", "✅ The cups are warm"]
+          and page.locator("#main img, #main svg, #main [onerror], #main [onload]").count() == 0, rows.all_inner_texts())
     check("unfolding and folding post nothing", fake.posts == [], fake.posts)
 
     # Any other host: the phone over tailscale, or `localhost`, whose requests
@@ -1333,6 +1333,135 @@ def goal_pass(browser):
     check("goal: no dialog, no page error", len(errors) == seen, errors[seen:])
     check("goal: nothing stray reached the routes", not fake.stray, fake.stray)
     page.close()
+
+
+def rows_fixture():
+    """One track with a row in each state, the way objectives.py gives them:
+    tickets with their title, Status, Blocked by and workers. Invented."""
+    body = roster([("kettle", "Kettle", [S("k1", "Ilse"), S("k2", "Mateo")])])
+    t = lambda ref, title, status="ready-for-agent", blocked="None", workers=(): {
+        "ref": ref, "title": title, "status": status, "blocked_by": blocked, "workers": list(workers)}
+    rows = [
+        {"text": "kettle/02 at Status done: the whistle " + BOMB, "state": "worked", "awaiting_tick": False,
+         "tickets": [t("kettle/02", "02: The whistle " + ATTR, workers=["Mateo"])]},
+        {"text": "kettle/05 to 06 done", "state": "worked", "awaiting_tick": True,
+         "tickets": [t("kettle/05", "05: The lid", "done"), t("kettle/06", "06: The handle", "resolved")]},
+        {"text": "kettle/04 done: the base " + " ".join(["holds"] * 60), "state": "waiting", "awaiting_tick": False,
+         "tickets": [t("kettle/04", "04: The base", blocked="03: the plate " + SVG)]},
+        {"text": "The full suite is green", "state": "planned", "awaiting_tick": False, "tickets": []},
+        {"text": "kettle/01 done", "state": "done", "awaiting_tick": False,
+         "tickets": [t("kettle/01", "01: The water", "done")]},
+    ]
+    progress = {"done": 1, "total": 5, "text": "1 of 5", "met": False}
+    body["columns"][0].update(kind="track", track={"status": "OPEN", "boxes": [], "progress": progress,
+                                                   "goal": None, "rows": rows})
+    return body
+
+
+def rows_pass(browser):
+    """boss-track/02: each row has its sign without a click; a click (or a tap
+    on the phone) unfolds its full text and its tickets, a second click folds it."""
+    fake = Fake(rows_fixture())
+    seen = len(errors)
+    for width in (1700, 390):
+        page = new_page(browser, fake, width=width)
+        page.goto("http://127.0.0.1/", wait_until="load")
+        page.wait_for_selector(".ov-col")
+        rows = page.locator(".ov-obj")
+        signs = [r.split(" ", 1)[0] for r in page.locator(".ov-obj-line").all_inner_texts()]
+        check(f"[{width}] a sign per row in the server's order: worked, worked, waiting, planned, done",
+              signs == ["🔨", "🔨", "⏸", "○", "✅"]
+              and [c.split()[1] for c in rows.evaluate_all("els => els.map(e => e.className)")]
+              == ["st-worked", "st-worked", "st-waiting", "st-planned", "st-done"], signs)
+        heights = page.locator(".ov-obj-line").evaluate_all("els => els.map(e => e.getBoundingClientRect().height)")
+        check(f"[{width}] a long row takes one line until it is opened", max(heights) - min(heights) < 2, heights)
+        check(f"[{width}] no row is open at first", page.locator(".ov-obj-more").count() == 0)
+        page.locator(".ov-obj-line").nth(2).click()
+        page.wait_for_timeout(150)
+        more = page.locator(".ov-obj-more")
+        text = more.inner_text() if more.count() == 1 else ""
+        check(f"[{width}] a click opens that row: its whole text, its ticket, title, Status and what blocks it",
+              more.count() == 1 and " ".join(["holds"] * 60) in text and "kettle/04" in text and "04: The base" in text
+              and "ready-for-agent" in text and "blocked by 03: the plate " + SVG in text, text)
+        poll_now(page)
+        check(f"[{width}] an open row stays open through a poll", page.locator(".ov-obj-more").count() == 1)
+        page.locator(".ov-obj-line").nth(0).click()
+        page.wait_for_timeout(150)
+        texts = page.locator(".ov-obj-more").all_inner_texts()
+        check(f"[{width}] a second row opens beside the first, with the worker on its ticket",
+              len(texts) == 2 and any("Mateo" in t and "02: The whistle " + ATTR in t for t in texts), texts)
+        page.locator(".ov-obj-line").nth(1).click()
+        page.wait_for_timeout(150)
+        check(f"[{width}] a row whose tickets are done says it awaits its tick",
+              any("awaiting tick" in t for t in page.locator(".ov-obj-more").all_inner_texts()))
+        page.locator(".ov-obj-line").nth(2).click()
+        page.locator(".ov-obj-line").nth(0).click()
+        page.locator(".ov-obj-line").nth(1).click()
+        page.wait_for_timeout(150)
+        check(f"[{width}] a second click folds each row", page.locator(".ov-obj-more").count() == 0)
+        check(f"[{width}] markup in a row, a title or a Blocked by is text, and builds nothing",
+              page.locator("#main img, #main svg, #main [onerror], #main [onload]").count() == 0)
+        page.close()
+    check("rows: opening and folding post nothing", fake.posts == [], fake.posts)
+    check("rows: no dialog, no page error", len(errors) == seen, errors[seen:])
+    check("rows: nothing stray reached the routes", not fake.stray, fake.stray)
+
+
+def twin_rows_pass(browser):
+    """Two Done when lines with the same words are two rows: a click opens the
+    one clicked, not both (Codex review of boss-track)."""
+    body = rows_fixture()
+    twin = {"text": "The full suite is green", "state": "planned", "awaiting_tick": False, "tickets": []}
+    body["columns"][0]["track"]["rows"] = [twin, dict(twin)]
+    fake = Fake(body)
+    seen = len(errors)
+    page = new_page(browser, fake)
+    page.goto("http://127.0.0.1/", wait_until="load")
+    page.wait_for_selector(".ov-col")
+    page.locator(".ov-obj-line").nth(1).click()
+    page.wait_for_timeout(150)
+    opened = page.locator(".ov-obj-line").evaluate_all("els => els.map(e => e.getAttribute('aria-expanded'))")
+    check("of two rows with the same words, a click opens only the one clicked",
+          opened == ["false", "true"] and page.locator(".ov-obj-more").count() == 1, opened)
+    check("twin rows: no dialog, no page error", len(errors) == seen, errors[seen:])
+    page.close()
+
+
+def about_pass(browser):
+    """boss-track/03: the card's about text shows at most three lines; a click
+    or tap on a clipped one shows it whole instead of opening the editor, "less"
+    clips it again, and a short one still edits on the first click."""
+    long = "Customers pay with a saved card. " + " ".join(["Then the receipt arrives by mail."] * 30)
+    body = roster([("long", "Long", [S("a1", "Ilse")]), ("short", "Short", [S("a2", "Femi")])])
+    body["columns"][0]["context"] = {"source": "goal", "line": "Customers pay with a saved card.", "full": long, "guess": False}
+    body["columns"][1]["context"] = {"source": "readme", "line": "A kettle.", "full": "A kettle.", "guess": False}
+    fake = Fake(body)
+    seen = len(errors)
+    for width in (1700, 390):
+        page = new_page(browser, fake, width=width)
+        page.goto("http://127.0.0.1/", wait_until="load")
+        page.wait_for_selector(".ov-col")
+        ctx = page.locator('.ov-col[data-project="long"] .ov-ctx')
+        lines = lambda: ctx.evaluate("e => Math.round(e.getBoundingClientRect().height / parseFloat(getComputedStyle(e).lineHeight))")
+        check(f"[{width}] a long about text shows three lines, marked clipped",
+              lines() == 3 and "clipped" in (ctx.get_attribute("class") or "").split(), lines())
+        ctx.click()
+        page.wait_for_timeout(150)
+        check(f"[{width}] a click on a clipped text shows it whole and opens no editor",
+              page.locator("input.inline").count() == 0 and lines() > 3 and ctx.locator(".less").count() == 1, lines())
+        poll_now(page)
+        check(f"[{width}] it stays whole through a poll", lines() > 3)
+        ctx.locator(".less").click()
+        page.wait_for_timeout(150)
+        check(f"[{width}] less clips it again, and opens no editor",
+              lines() == 3 and page.locator("input.inline").count() == 0, lines())
+        page.locator('.ov-col[data-project="short"] .ov-ctx').click()
+        page.wait_for_timeout(150)
+        check(f"[{width}] a short text still edits on the first click", page.locator("input.inline").count() == 1)
+        page.keyboard.press("Escape")
+        page.close()
+    check("about: unfolding posts nothing", fake.posts == [], fake.posts)
+    check("about: no dialog, no page error", len(errors) == seen, errors[seen:])
 
 
 def needs_pass(browser):
@@ -3094,6 +3223,9 @@ def main():
         finished_pass(browser)
         card_pass(browser)
         goal_pass(browser)
+        rows_pass(browser)
+        twin_rows_pass(browser)
+        about_pass(browser)
         needs_pass(browser)
         guessed_pass(browser)
         paste_pass(browser)

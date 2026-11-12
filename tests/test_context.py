@@ -399,7 +399,10 @@ class Tracks(Cards):
                                "progress": {"done": 1, "total": 3, "text": "1 of 3", "met": False},
                                "boxes": [{"text": "cart", "done": True}, {"text": "receipt", "done": False},
                                          {"text": "refund", "done": False}],
-                               "goal": None})
+                               "goal": None,
+                               "rows": [{"text": "receipt", "state": "planned", "awaiting_tick": False, "tickets": []},
+                                        {"text": "refund", "state": "planned", "awaiting_tick": False, "tickets": []},
+                                        {"text": "cart", "state": "done", "awaiting_tick": False, "tickets": []}]})
 
     def test_a_met_track_shows_done_whatever_its_boxes_say(self):
         got = self.track(status="MET 2026-10-16 \u2014 all done", boxes=("[ ] a", "[ ] b"))["track"]
@@ -412,7 +415,7 @@ class Tracks(Cards):
 
     def test_a_track_with_no_boxes_shows_a_status_and_no_progress(self):
         got = self.track(boxes=())["track"]
-        self.assertEqual(got, {"status": "OPEN", "progress": None, "boxes": [], "goal": None})
+        self.assertEqual(got, {"status": "OPEN", "progress": None, "boxes": [], "goal": None, "rows": []})
 
     def test_only_the_boxes_under_done_when_count_and_not_in_code(self):
         (self.pm / "checkout.goal.md").write_text(

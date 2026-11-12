@@ -350,7 +350,7 @@ def _tmux_track(tmux):
     return name[len(BOSS_PANE):] if name.startswith(BOSS_PANE) else ""
 
 
-def _boss_tracks(members):
+def boss_tracks(members):
     """`{session key: track}` for each boss that has one. A boss's marker
     names it; the tmux session it runs in is only the fallback, because a
     renamed track keeps its old pane.
@@ -376,34 +376,51 @@ FIRST_WORD = re.compile(r"[^\s(,/|]+")
 TRACKER_READ = 1_000_000
 
 
-def _roster_names(track):
-    """The workers a running track's tracker lists in a `Roster` table, as
-    lowercase names. A struck-through row is a worker who was retired; a name
-    anywhere else in the file is a mention, not a roster."""
+def roster_tasks(track):
+    """`{lowercase name: task}` for each worker a track's tracker lists in a
+    `Roster` table (a tracker may hold several; a worker in more than one has
+    its tasks joined). The task is the cell of the column whose heading says
+    "task", else the last. A struck-through row is
+    a worker who was retired; a name anywhere else in the file is a mention,
+    not a roster."""
     if not TRACK_NAME.match(track):
-        return set()
+        return {}
     try:
         path = pm_dir() / f"{track}.md"
         if not regular(path):
-            return set()
+            return {}
         with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read(TRACKER_READ)
     except OSError:
-        return set()
-    names, in_roster = set(), False
+        return {}
+    out, in_roster, column = {}, False, None
     for line in text.splitlines():
         heading = HEADING.match(line)
         if heading:
             in_roster = bool(ROSTER.match(heading.group(1).strip("*_` ").casefold()))
+            column = None
             continue
         if not in_roster or not line.lstrip().startswith("|"):
             continue
-        cell = line.strip().strip("|").split("|", 1)[0].strip()
-        cell = re.sub(r"[*_`]", "", cell) if not cell.startswith("~~") else ""
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if all(set(c) <= set("-: ") for c in cells):
+            continue                            # the line under the heading row
+        if column is None:                      # the heading row
+            column = next((i for i, c in enumerate(cells) if "task" in c.casefold()), len(cells) - 1)
+            continue
+        bare = cells[0].strip("*_` ")             # `**~~Mei~~**` is struck through too
+        cell = re.sub(r"[*_`]", "", bare) if not bare.startswith("~~") else ""
         word = FIRST_WORD.match(cell)
         if word and word.group().strip("-:"):
-            names.add(word.group().casefold())
-    return names
+            out.setdefault(word.group().casefold(), []).append(cells[column] if column < len(cells) else "")
+    # Joined once: a tracker of a megabyte can list one worker thousands of times.
+    return {name: " ; ".join(t for t in tasks if t) for name, tasks in out.items()}
+
+
+def _roster_names(track):
+    """The workers a running track's tracker lists in a `Roster` table, as
+    lowercase names."""
+    return set(roster_tasks(track))
 
 
 class Trackers:
@@ -543,16 +560,16 @@ def place(members, folder_rule, assigned):
     for the session, then their move of its whole project, then the boss's
     track, then the repository, then the folder, then none.
     """
-    boss_tracks = _boss_tracks(members)
-    live = set(boss_tracks.values())
-    teams = _teams(members, boss_tracks)
+    led = boss_tracks(members)
+    live = set(led.values())
+    teams = _teams(members, led)
     trackers = Trackers(live)
     by_folder = {}      # sessions often share a launch folder; look it up once
     by_key = {}
     for m in members:
         if _is_assigned(assigned, m["key"]):
             continue
-        track = boss_tracks.get(m["key"]) or _worker_track(m, live, teams, trackers)
+        track = led.get(m["key"]) or _worker_track(m, live, teams, trackers)
         if track:
             by_key[m["key"]] = _project("track", track, track)
             continue

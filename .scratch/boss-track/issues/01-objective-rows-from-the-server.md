@@ -1,0 +1,31 @@
+# 01: The server gives a track's card one row per Done when line, with its state
+
+**What to build:** for a track whose boss runs, the server turns each `## Done when` line of `~/.claude/pm/<track>.goal.md` into a row with one of four states, and the tickets the line names:
+
+- **done**: the box is ticked. The box wins: a ticket at Status done does not make its row done, so the rows agree with "N of M".
+- **worked**: a worker listed in a `Roster` table of the tracker `~/.claude/pm/<track>.md`, whose session is in the track's column now, has one of the row's tickets in its task cell. A row whose tickets are all done while its box is not ticked is also worked, with `awaiting_tick`.
+- **waiting**: no ticket of the row is worked on, and an open ticket of the row has a `Blocked by` that names a ticket that exists and is open.
+- **planned**: everything else. A line that names no ticket is only done or planned.
+
+A ticket reference is `<feature>/<NN>` (`paste/12`, `overview-build/23`), or a range (`paste/23 to 26`, `paste/23-26`), looked up as `.scratch/<feature>/issues/<NN>-*.md` in the main checkout of every repository a session of the track works in. A reference that resolves to no file is no ticket. A ticket is done at Status done, resolved or wontfix.
+
+Rows are sorted worked, waiting, planned, done; inside a state, the goal file's order. Each row carries its full text and, per ticket: the reference, the title (the first `# ` heading), the Status, the `Blocked by` text, and the live workers on it.
+
+**Why (Thierry, 2026-11-12, grilling):** "the programmer looks at the agent view and immediately understands what that boss track is about ... There are objectives and for every objective it's either planned, maybe dependent on another issue, maybe done, maybe being worked on ... You don't need to click on it to see the status." Q5: rows are the Done when lines; Q6: the four states; Q9: active first; Q10: ticket references by pattern, ranges included; Q11: roster plus a live session; Q12: the box wins.
+
+**Where:** a new `objectives.py`; `fleet.py` `_column` where the track is built; `context.read` for reading a ticket inside its checkout; `projects.checkouts` for the main checkout.
+
+**Claimed by:** Tarek 2026-11-12
+
+**Blocked by:** None
+
+**Status:** done
+
+- [x] A test per state, per sort rule, per reference form (single, range, unresolved), on invented goal files, trackers and tickets in a temp dir -- evidence: `tests/test_objectives.py`, 20 tests through `roster()`; red before (`KeyError: 'rows'`), green after; test_context, test_projects, test_columns, test_goal_page, test_pace, test_fleet green
+- [x] A ticket file that is a link out of its checkout (to a file outside `.scratch`) is not read -- evidence: `test_a_ticket_that_links_out_of_its_scratch_folder_is_not_read` (a link to a file outside the checkout and one to a file of the checkout outside `.scratch`)
+- [x] The tracker's struck-through roster rows and workers whose session is gone make nothing worked -- evidence: `test_a_struck_through_roster_row_makes_nothing_worked`, `test_a_worker_of_the_roster_whose_session_is_gone_makes_nothing_worked`
+- [x] Reading stays bounded: tickets per card and bytes per ticket have a limit -- evidence: TICKETS_MAX 40 a card (`test_a_card_reads_a_bounded_number_of_tickets`), TICKET_READ 20,000 bytes a ticket
+
+## Comments
+
+**Tarek 2026-11-12, review:** Matt's code review (standards and spec, two fresh agents), then Codex review on the branch at ed1ffb8: three P2, all verified and fixed with a test red before the fix: a row whose tickets are closed awaits its tick even with a worker still on the roster; a boss of another track moved into a track gives it no rows (rows need a running boss of the track itself); two Done when lines with the same words open one at a time on the card. Decisions taken in the build and stated in the README: a MET track shows every row done; rows only while a boss of the track runs; a bare number in a `Blocked by` is a ticket of the same feature.
