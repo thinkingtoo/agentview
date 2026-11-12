@@ -350,7 +350,7 @@ def _tmux_track(tmux):
     return name[len(BOSS_PANE):] if name.startswith(BOSS_PANE) else ""
 
 
-def _boss_tracks(members):
+def boss_tracks(members):
     """`{session key: track}` for each boss that has one. A boss's marker
     names it; the tmux session it runs in is only the fallback, because a
     renamed track keeps its old pane.
@@ -558,16 +558,16 @@ def place(members, folder_rule, assigned):
     for the session, then their move of its whole project, then the boss's
     track, then the repository, then the folder, then none.
     """
-    boss_tracks = _boss_tracks(members)
-    live = set(boss_tracks.values())
-    teams = _teams(members, boss_tracks)
+    led = boss_tracks(members)
+    live = set(led.values())
+    teams = _teams(members, led)
     trackers = Trackers(live)
     by_folder = {}      # sessions often share a launch folder; look it up once
     by_key = {}
     for m in members:
         if _is_assigned(assigned, m["key"]):
             continue
-        track = boss_tracks.get(m["key"]) or _worker_track(m, live, teams, trackers)
+        track = led.get(m["key"]) or _worker_track(m, live, teams, trackers)
         if track:
             by_key[m["key"]] = _project("track", track, track)
             continue

@@ -25,3 +25,7 @@ Rows are sorted worked, waiting, planned, done; inside a state, the goal file's 
 - [x] A ticket file that is a link out of its checkout (to a file outside `.scratch`) is not read -- evidence: `test_a_ticket_that_links_out_of_its_scratch_folder_is_not_read` (a link to a file outside the checkout and one to a file of the checkout outside `.scratch`)
 - [x] The tracker's struck-through roster rows and workers whose session is gone make nothing worked -- evidence: `test_a_struck_through_roster_row_makes_nothing_worked`, `test_a_worker_of_the_roster_whose_session_is_gone_makes_nothing_worked`
 - [x] Reading stays bounded: tickets per card and bytes per ticket have a limit -- evidence: TICKETS_MAX 40 a card (`test_a_card_reads_a_bounded_number_of_tickets`), TICKET_READ 20,000 bytes a ticket
+
+## Comments
+
+**Tarek 2026-11-12, review:** Matt's code review (standards and spec, two fresh agents), then Codex review on the branch at ed1ffb8: three P2, all verified and fixed with a test red before the fix: a row whose tickets are closed awaits its tick even with a worker still on the roster; a boss of another track moved into a track gives it no rows (rows need a running boss of the track itself); two Done when lines with the same words open one at a time on the card. Decisions taken in the build and stated in the README: a MET track shows every row done; rows only while a boss of the track runs; a bare number in a `Blocked by` is a ticket of the same feature.

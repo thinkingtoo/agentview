@@ -123,10 +123,10 @@ def _state(done, named, tickets):
     """A row's state, and whether it awaits its tick, from its `(key, ticket)` pairs."""
     if done:
         return "done", False
+    if named and not any(is_open(t) for _, t in named):
+        return "worked", True                   # a worker still on the roster changes nothing: the tick is the boss's
     if any(t["workers"] for _, t in named):
         return "worked", False
-    if named and not any(is_open(t) for _, t in named):
-        return "worked", True
     for (feature, _), t in named:
         if is_open(t) and any(b and is_open(b) for b in (tickets.get(*k) for k in blockers(feature, t))):
             return "waiting", False

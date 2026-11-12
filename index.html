@@ -912,7 +912,7 @@ const FOLDED = new Set((() => {
 function saveFolded() {
   try { localStorage.setItem(FOLD_KEY, JSON.stringify([...FOLDED])); } catch { /* a private window keeps it for the page */ }
 }
-const OPEN_ROWS = new Set();  // project + "\n" + row text: the rows whose detail is shown
+const OPEN_ROWS = new Set();  // project, which time its text is written, row text: the rows whose detail is shown
 const rowsOf = c => Array.isArray(c.track?.rows) ? c.track.rows : [];
 function ticketLine(t) {
   const bits = [t.ref, t.title, t.status || "no Status"];
@@ -923,9 +923,12 @@ function ticketLine(t) {
 function doneWhenOf(c) {
   const rows = rowsOf(c);
   if (!rows.length || FOLDED.has(c.project)) return "";
+  const seen = new Map();      // a line written twice is two rows: the second is keyed as the second
   return `<ul class="ov-objs">${rows.map(r => {
     const state = known(SIGN, r.state) ? r.state : "planned";
-    const key = c.project + "\n" + r.text;
+    const nth = (seen.get(r.text) || 0) + 1;
+    seen.set(r.text, nth);
+    const key = c.project + "\n" + nth + "\n" + r.text;
     const open = OPEN_ROWS.has(key);
     const more = open ? `<div class="ov-obj-more"><span class="full">${esc(r.text)}</span>${
       r.awaiting_tick ? `<span class="tick">its tickets are done, awaiting tick</span>` : ""}${

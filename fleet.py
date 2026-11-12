@@ -1010,9 +1010,10 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
     if track is not None:
         track["goal"] = GOAL_PAGE(project["raw"], time.time())
         # Rows say where a running track stands: a track you moved sessions
-        # into by hand, with no boss of it running, has its boxes and no rows.
+        # into by hand, with no boss of its own running (a boss of another
+        # track moved in does not count), has its boxes and no rows.
         track["rows"] = (objectives.rows(project["raw"], track["boxes"], rows, met=bool(progress and progress["met"]))
-                         if any(m.get("boss") for m in rows) else [])
+                         if project["raw"] in projects.boss_tracks(rows).values() else [])
     # The column of no project has no name to repeat.
     column_says = working.repeats(None if project is NO_PROJECT else name, about)
     made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says))

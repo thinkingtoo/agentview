@@ -1407,6 +1407,26 @@ def rows_pass(browser):
     check("rows: nothing stray reached the routes", not fake.stray, fake.stray)
 
 
+def twin_rows_pass(browser):
+    """Two Done when lines with the same words are two rows: a click opens the
+    one clicked, not both (Codex review of boss-track)."""
+    body = rows_fixture()
+    twin = {"text": "The full suite is green", "state": "planned", "awaiting_tick": False, "tickets": []}
+    body["columns"][0]["track"]["rows"] = [twin, dict(twin)]
+    fake = Fake(body)
+    seen = len(errors)
+    page = new_page(browser, fake)
+    page.goto("http://127.0.0.1/", wait_until="load")
+    page.wait_for_selector(".ov-col")
+    page.locator(".ov-obj-line").nth(1).click()
+    page.wait_for_timeout(150)
+    opened = page.locator(".ov-obj-line").evaluate_all("els => els.map(e => e.getAttribute('aria-expanded'))")
+    check("of two rows with the same words, a click opens only the one clicked",
+          opened == ["false", "true"] and page.locator(".ov-obj-more").count() == 1, opened)
+    check("twin rows: no dialog, no page error", len(errors) == seen, errors[seen:])
+    page.close()
+
+
 def about_pass(browser):
     """boss-track/03: the card's about text shows at most three lines; a click
     or tap on a clipped one shows it whole instead of opening the editor, "less"
@@ -3204,6 +3224,7 @@ def main():
         card_pass(browser)
         goal_pass(browser)
         rows_pass(browser)
+        twin_rows_pass(browser)
         about_pass(browser)
         needs_pass(browser)
         guessed_pass(browser)

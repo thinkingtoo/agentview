@@ -223,6 +223,21 @@ class Rows(TrackFixtures):
         column = next(c for c in got["columns"] if c["project"] == "track:checkout")
         self.assertEqual(column["track"]["rows"], [])
 
+    def test_a_row_whose_tickets_are_closed_awaits_its_tick_even_with_a_worker_still_on_the_roster(self):
+        self.goal("[ ] paste/12 done")
+        self.ticket("paste/12", status="done")
+        self.roster_of(("Mei", "paste/12 copy button"))
+        row, = self.rows(self.boss("b", self.loom, "checkout"), self.worker("w", self.loom, "checkout", name="Mei"))
+        self.assertEqual((row["state"], row["awaiting_tick"]), ("worked", True))
+
+    def test_a_boss_of_another_track_moved_into_a_track_gives_it_no_rows(self):
+        self.goal("[ ] paste/12 done")
+        self.ticket("paste/12")
+        self.config = {"assign": {"claude:b2": "track:checkout"}}
+        got = self.claude(self.boss("b2", self.loom, "docs", name="Saskia"), sess("s", self.loom, name="Femi"))
+        column = next(c for c in got["columns"] if c["project"] == "track:checkout")
+        self.assertEqual(column["track"]["rows"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
