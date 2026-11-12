@@ -6,11 +6,13 @@
 
 **Where:** `index.html` `progressOf`, `boxesOf`, the "N of M" click handler; README "What a project is about".
 
+**Claimed by:** Tarek 2026-11-12
+
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Every text from a goal, tracker or ticket is printed through `esc()`
-- [ ] A row folds and unfolds on click and on tap (no hover needed)
-- [ ] A fold survives a reload; a track never folded shows its rows
-- [ ] A screenshot of a sandboxed server with invented trackers, kept off the public repo if it shows real text
+- [x] Every text from a goal, tracker or ticket is printed through `esc()` -- evidence: `rows_pass` and `goal_pass` in `tests/ui_smoke.py`: markup in a row, a title and a Blocked by builds no element
+- [x] A row folds and unfolds on click and on tap (no hover needed) -- evidence: `rows_pass` at 1700 and 390 px wide, in Chromium, WebKit and Firefox; red on dev's page, green on the branch
+- [x] A fold survives a reload; a track never folded shows its rows -- evidence: `goal_pass`: fold, repaint, reload, open, reload
+- [x] A screenshot of a sandboxed server with invented trackers, kept off the public repo if it shows real text -- evidence: taken from the routed `rows_fixture` (invented text only), kept in the session scratchpad, not in the repo

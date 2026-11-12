@@ -66,7 +66,10 @@ The name has the card's first row to itself; the state word, a track's status,
 the pin and merge share the second, with "open ↗" at its end: the boss's
 terminal, or the first session's when the project has no boss (the same jump as
 a click on that tile, and its answer shows on that tile). Under them the card says what the project
-is about, the whole text (up to 1,500 characters). The first of these that exists:
+is about, the whole text (up to 1,500 characters), clipped at three lines: a
+click or tap on a clipped text shows it whole instead of opening the editor
+(hover is no help on a phone), and "less" at its end clips it again. The first
+of these that exists:
 
 1. **Your own line**, written in place on the card (click the line) and kept in
    `config.json` as `project_lines`, keyed by the project's identity, so a track
@@ -86,9 +89,30 @@ is about, the whole text (up to 1,500 characters). The first of these that exist
    estimate rests on.
 
    Whatever line the card shows, your own included, a track's card also has
-   the goal itself. Hover "N of M" for the Done when boxes, ticked and not, in
-   the file's order; click it to unfold them under the row, and again to fold
-   them. "goal ↗" opens the goal file in a new tab as a sheaf page, to read and
+   the goal itself: under the row, one line per Done when box, with a sign
+   for where it stands (`objectives.py`), the moving ones first:
+
+   - 🔨 **worked on**: a worker of the tracker's `Roster` table, whose session
+     is in the column, has one of the line's tickets in its task (the column
+     headed "task", else the last); or every ticket the line names is done and
+     the box waits for the boss's tick ("awaiting tick" when the row is open).
+   - ⏸ **waiting**: an open ticket of the line has a `Blocked by` that names a
+     ticket that is still open (`02`, `01, 03` in its own feature, or
+     `paste/12`).
+   - ○ **planned**: anything else not ticked.
+   - ✅ **done**: the box is ticked, or the track is MET. The box wins over its
+     tickets, so the rows and "N of M" always agree.
+
+   A line names a ticket as `<feature>/<NN>` (`paste/12`), or a range
+   (`paste/23 to 26`, `paste/23-26`): `.scratch/<feature>/issues/<NN>-*.md`
+   in the main checkout of every repository the track's sessions work in,
+   only from inside `.scratch` (a ticket linked out of it is not read), at
+   most 40 tickets a card. A line that names no ticket is only done or
+   planned. Click a row for its whole text and, per ticket, its title, Status,
+   what blocks it and who is on it; click again to fold it. Hover "N of M" for
+   the boxes in the file's order; click it to fold all the rows away, and
+   again to bring them back. The rows show until you fold them, and a fold is
+   kept in that browser across reloads. "goal ↗" opens the goal file in a new tab as a sheaf page, to read and
    edit. The link uses a hub that already runs and never renders anything:
    `sheaf status`, asked every 30 seconds in a thread of its own so the poll
    never waits for sheaf, gives the port, and the page's address comes from

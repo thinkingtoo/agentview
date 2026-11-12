@@ -118,6 +118,11 @@
   .ov-tag.paused { color:var(--wait); border-color:color-mix(in srgb,var(--wait) 45%,transparent); }
   .ov-ctx { margin-top:5px; font-weight:400; font-size:13px; line-height:1.4; color:var(--dim); cursor:text;
             overflow-wrap:anywhere; }
+  /* At most three lines; a click on a clipped text shows it whole, "less" clips it again. */
+  .ov-ctx:not(.whole) { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; line-clamp:3; overflow:hidden; }
+  .ov-ctx.clipped { cursor:pointer; }
+  .ov-ctx .less { font-size:12px; color:var(--faint); cursor:pointer; }
+  .ov-ctx .less:hover { color:var(--accent); }
   .ov-ctx.maybe { color:var(--faint); font-style:italic; }
   .ov-ctx .add { font-style:normal; font-size:12px; color:var(--faint); }
   .ov-ctx:hover .add { color:var(--accent); }
@@ -131,9 +136,19 @@
   .ov-goal:hover { color:var(--accent); }
   .ov-goal.none { font-style:italic; }
   .ov-goal.none:hover { color:var(--faint); }
-  .ov-boxes { list-style:none; margin:6px 0 0; padding:0; font-weight:400; font-size:12px; color:var(--ink);
-              display:flex; flex-direction:column; gap:3px; overflow-wrap:anywhere; }
-  .ov-boxes li.done { color:var(--dim); }
+  /* A track's rows, one per Done when line: a sign and one line, the whole of it and its tickets on a click. */
+  .ov-objs { list-style:none; margin:6px 0 0; padding:0; font-weight:400; font-size:12px; color:var(--ink);
+             display:flex; flex-direction:column; gap:3px; }
+  .ov-obj-line { font:inherit; color:inherit; background:none; border:0; padding:0; text-align:left; cursor:pointer;
+                 width:100%; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ov-obj-line .sign { display:inline-block; width:1.2em; }
+  .ov-obj.st-done { color:var(--dim); }
+  .ov-obj.st-worked .sign { color:var(--busy); }
+  .ov-obj.st-waiting .sign { color:var(--wait); }
+  .ov-obj.st-planned .sign { color:var(--faint); }
+  .ov-obj-more { margin:2px 0 4px 1.5em; color:var(--dim); overflow-wrap:anywhere; display:flex; flex-direction:column; gap:2px; }
+  .ov-obj-more .full { color:var(--ink); }
+  .ov-obj-more .tick { color:var(--wait); }
   .ov-notes { margin-left:auto; color:var(--faint); text-decoration:none; }
   .ov-notes:hover, .ov-notes.on { color:var(--accent); }
   .ov-hits { margin-top:6px; font-weight:400; font-size:12px; color:var(--dim); display:flex; flex-direction:column; gap:5px; }
@@ -699,6 +714,7 @@ function overview(cols) {
   const x = main.scrollLeft;          // a repaint every poll must not send you back to the first column
   main.innerHTML = (cols.length ? cols.map(column).join("") : KEPT.length ? "" : nothing()) + keptColumn();
   main.scrollLeft = x;
+  markClipped(main);
   pager();
 }
 
@@ -825,18 +841,29 @@ function contextOf(c) {
   if (!x) return "";
   const mine = x.source === "own" ? x.full : "";
   const add = x.guess ? `${x.full ? " " : ""}<span class="add">add a line</span>` : "";
-  return `<div class="ov-ctx edit ${x.guess ? "maybe" : ""}" data-edit="context" data-value="${esc(mine)}"
-    title="${esc(x.full)}">${esc(x.full)}${add}</div>`;
+  const whole = WHOLE.has(c.project);
+  return `<div class="ov-ctx edit ${x.guess ? "maybe" : ""} ${whole ? "whole" : ""}" data-edit="context" data-value="${esc(mine)}"
+    title="${esc(x.full)}">${esc(x.full)}${add}${whole ? ` <span class="less" role="button">less</span>` : ""}</div>`;
+}
+
+// The about texts shown whole, by project, until "less" is clicked. Which are
+// clipped is measured after each paint: a text clips at three lines of the
+// card's width, which only the browser knows.
+const WHOLE = new Set();
+function markClipped(main) {
+  for (const el of main.querySelectorAll(".ov-ctx:not(.whole)"))
+    el.classList.toggle("clipped", el.scrollHeight > el.clientHeight + 1);
 }
 
 // A track's progress, as the server counted it, and when it will be done at
 // the pace the server measured; the hover says what that pace rests on.
-// "N of M" lists the Done when boxes on hover and unfolds them on a click.
+// "N of M" lists the Done when boxes on hover, and folds the rows away on a click.
 function progressOf(c) {
   const p = c.track?.progress, boxes = c.track?.boxes || [];
   if (!p) return "";
-  const count = boxes.length
-    ? `<button class="ov-count ${BOXES.has(c.project) ? "on" : ""}" aria-expanded="${BOXES.has(c.project)}"
+  const open = !FOLDED.has(c.project);
+  const count = boxes.length || rowsOf(c).length
+    ? `<button class="ov-count ${open ? "on" : ""}" aria-expanded="${open}"
         title="${esc(boxes.map(boxLine).join("\n"))}">${esc(p.text)}</button>`
     : `<span>${esc(p.text)}</span>`;
   return `<span class="ov-bar" aria-hidden="true"><i style="width:${
@@ -868,14 +895,42 @@ function goalLinkOf(c) {
   return `<a class="ov-goal" href="${esc(g.url)}" target="_blank" rel="noopener" title="the goal file, to read and edit">goal ↗</a>`;
 }
 
-// The Done when boxes, ticked and not, in the goal file's order: on hover of
-// "N of M", and under the row once it is clicked (until it is clicked again).
-const BOXES = new Set();      // projects whose boxes are unfolded
+// The Done when boxes, ticked and not, in the goal file's order, on hover of "N of M".
 const boxLine = b => `${b.done ? "☑" : "☐"} ${b.text}`;
-function boxesOf(c) {
-  const boxes = c.track?.boxes || [];
-  return boxes.length && BOXES.has(c.project) ? `<ul class="ov-boxes">${boxes.map(b =>
-    `<li class="${b.done ? "done" : ""}">${esc(boxLine(b))}</li>`).join("")}</ul>` : "";
+
+// A track's rows, one per Done when line, in the server's order: open unless
+// "N of M" folded them, a fold kept in this browser across reloads. A click on
+// a row shows its whole text and its tickets; another click folds it.
+const SIGN = { worked: "🔨", waiting: "⏸", planned: "○", done: "✅" };
+const FOLD_KEY = "agentview.folded-tracks";
+const FOLDED = new Set((() => {
+  try { const v = JSON.parse(localStorage.getItem(FOLD_KEY) || "[]"); return Array.isArray(v) ? v.map(String) : []; }
+  catch { return []; }
+})());
+function saveFolded() {
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify([...FOLDED])); } catch { /* a private window keeps it for the page */ }
+}
+const OPEN_ROWS = new Set();  // project + "\n" + row text: the rows whose detail is shown
+const rowsOf = c => Array.isArray(c.track?.rows) ? c.track.rows : [];
+function ticketLine(t) {
+  const bits = [t.ref, t.title, t.status || "no Status"];
+  if (t.blocked_by && !/^none\b/i.test(t.blocked_by)) bits.push(`blocked by ${t.blocked_by}`);
+  if (t.workers?.length) bits.push(`on it: ${t.workers.join(", ")}`);
+  return bits.filter(Boolean).join(" · ");
+}
+function rowsHtml(c) {
+  const rows = rowsOf(c);
+  if (!rows.length || FOLDED.has(c.project)) return "";
+  return `<ul class="ov-objs">${rows.map(r => {
+    const state = known(SIGN, r.state) ? r.state : "planned";
+    const key = c.project + "\n" + r.text;
+    const open = OPEN_ROWS.has(key);
+    const more = open ? `<div class="ov-obj-more"><span class="full">${esc(r.text)}</span>${
+      r.awaiting_tick ? `<span class="tick">its tickets are done, awaiting tick</span>` : ""}${
+      (r.tickets || []).map(t => `<span>${esc(ticketLine(t))}</span>`).join("")}</div>` : "";
+    return `<li class="ov-obj st-${state}"><button class="ov-obj-line" aria-expanded="${open}" data-row="${esc(key)}"
+      title="${esc(r.text)}"><span class="sign">${SIGN[state]}</span> ${esc(r.text)}</button>${more}</li>`;
+  }).join("")}</ul>`;
 }
 
 function notesLinkOf(c) {
@@ -887,7 +942,7 @@ function notesLinkOf(c) {
 // last click on that link found.
 function footOf(c) {
   const bar = progressOf(c), goal = goalLinkOf(c), note = notesLinkOf(c);
-  return bar || goal || note ? `<div class="ov-prog">${bar}${goal}${note}</div>${boxesOf(c)}${hitsOf(c)}` : "";
+  return bar || goal || note ? `<div class="ov-prog">${bar}${goal}${note}</div>${rowsHtml(c)}${hitsOf(c)}` : "";
 }
 
 // Notes are looked up when the link is clicked, and only then.
@@ -1392,6 +1447,20 @@ function say(key, text, bad) {
   }
 }
 
+// A clipped about text opens whole on a click (or a tap: hover is no help on
+// the phone) instead of opening the editor; "less" clips it again. This runs
+// in the capture phase, before the editor's handler below sees the click.
+document.getElementById("main").addEventListener("click", ev => {
+  const less = ev.target.closest(".ov-ctx .less");
+  const clipped = ev.target.closest(".ov-ctx.clipped");
+  if (!less && !clipped) return;
+  ev.stopPropagation();
+  ev.preventDefault();
+  const project = (less || clipped).closest("section")?.dataset.project;
+  if (less) WHOLE.delete(project); else WHOLE.add(project);
+  if (!busyWithUser()) paint();
+}, true);
+
 // Inline editing. The poll is paused while a field is open, otherwise a
 // refresh would tear the input out from under the cursor.
 document.getElementById("main").addEventListener("click", ev => {
@@ -1449,12 +1518,22 @@ document.getElementById("main").addEventListener("click", ev => {
   });
 });
 
-// "N of M" on a track's card unfolds its Done when boxes, and folds them again.
+// "N of M" on a track's card folds its rows away, and opens them again.
 document.getElementById("main").addEventListener("click", ev => {
   const count = ev.target.closest(".ov-count");
   if (!count) return;
   const project = count.closest("section")?.dataset.project;
-  if (BOXES.has(project)) BOXES.delete(project); else BOXES.add(project);
+  if (FOLDED.has(project)) FOLDED.delete(project); else FOLDED.add(project);
+  saveFolded();
+  if (!busyWithUser()) paint();
+});
+
+// A row opens to its whole text and its tickets, and folds again.
+document.getElementById("main").addEventListener("click", ev => {
+  const line = ev.target.closest(".ov-obj-line");
+  if (!line) return;
+  const key = line.dataset.row;
+  if (OPEN_ROWS.has(key)) OPEN_ROWS.delete(key); else OPEN_ROWS.add(key);
   if (!busyWithUser()) paint();
 });
 

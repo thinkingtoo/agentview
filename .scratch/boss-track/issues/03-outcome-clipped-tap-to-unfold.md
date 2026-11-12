@@ -8,10 +8,12 @@
 
 **Where:** `index.html` `contextOf`, `.ov-ctx` CSS, the `.edit` click handler.
 
+**Claimed by:** Tarek 2026-11-12
+
 **Blocked by:** None
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Clipped at three lines in the card's width, on the laptop and at phone width
-- [ ] A tap on a clipped text unfolds it and does not open the editor; "less" clips it
-- [ ] A short text still edits on the first click
+- [x] Clipped at three lines in the card's width, on the laptop and at phone width -- evidence: `about_pass` at 1700 and 390 px, Chromium, WebKit and Firefox
+- [x] A tap on a clipped text unfolds it and does not open the editor; "less" clips it -- evidence: `about_pass`: no `input.inline` after the click, more than three lines, "less" back to three
+- [x] A short text still edits on the first click -- evidence: `about_pass`: the editor opens on the first click
