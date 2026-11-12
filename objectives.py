@@ -148,9 +148,11 @@ def in_flight(m):
     return working(m) and m.get("status") == "busy"
 
 
-def busy_names(sessions):
-    """The names of the working sessions with a turn in flight."""
-    return {m["name"] for m in sessions if m.get("name") and in_flight(m)}
+def busy_names(sessions, crew, is_concierge):
+    """The names of the crew (`workers`) with a turn in flight. Only the sessions
+    `workers` admits count: a boss or concierge of the same name is no worker."""
+    return {m["name"] for m in sessions
+            if m.get("name") in crew and not m.get("boss") and not is_concierge(m) and in_flight(m)}
 
 
 def _own_words(m):

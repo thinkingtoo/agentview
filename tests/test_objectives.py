@@ -455,6 +455,12 @@ class Busy(Panes):
                 row = self.rows(*sessions)[0]
                 self.assertEqual((row["state"], row["busy"]), ("worked", "busy" in (mei, odile)))
 
+    def test_a_busy_boss_of_the_same_name_does_not_make_a_waiting_worker_busy(self):
+        self.roster_of(("Mei", "#09c waiver"))
+        sessions = (self.boss("b", self.loom, "checkout", name="Mei", status="busy"),
+                    self.at("w", "Mei", "%31", status="waiting"))
+        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": False}])
+
     def test_a_row_nobody_works_on_is_not_busy(self):
         self.assertEqual([r["busy"] for r in self.rows()], [False, False])
 

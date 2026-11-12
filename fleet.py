@@ -1014,7 +1014,7 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
         # track moved in does not count), has its boxes and no rows.
         running = project["raw"] in projects.boss_tracks(rows).values()
         crew = _crew(project["raw"], rows) if running else {}
-        busy = objectives.busy_names(rows)
+        busy = objectives.busy_names(rows, crew, is_concierge)
         track["rows"] = (objectives.rows(track["boxes"], rows, crew, met=bool(progress and progress["met"]), busy=busy)
                          if running else [])
         # Workers whose task no row's ticket carries: said by name and task, not guessed onto a row.
