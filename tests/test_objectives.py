@@ -382,7 +382,7 @@ class Stamped(Panes):
         self.assertEqual(got["elsewhere"], [])
 
     def test_a_busy_stamped_worker_with_no_table_row_and_no_line_is_listed_by_the_best_text_the_server_has(self):
-        """Ticket boss-track/11: the card title, else the first line of the last prompt, else the name alone."""
+        """Ticket boss-track/11: the card title, else the first line of the last prompt, else the word working."""
         self.prose_roster()
         got = self.track({}, self.at("w", "Mei", "%31", title="Fixing the reader"),
                          self.at("v", "Odile", "%32", prompt="Review PR 248\nand report back"),
@@ -390,6 +390,13 @@ class Stamped(Panes):
         self.assertEqual(got["elsewhere"], [{"name": "Anik", "task": "working"},
                                             {"name": "Mei", "task": "Fixing the reader"},
                                             {"name": "Odile", "task": "Review PR 248"}])
+
+    def test_a_table_row_with_an_empty_task_cell_falls_through_to_the_line_and_the_title(self):
+        self.roster_of(("Mei", ""), ("Odile", ""))
+        got = self.track({"w": "paste/12 the reader"},
+                         self.at("w", "Mei", "%31"), self.at("v", "Odile", "%32", title="Reader"))
+        self.assertEqual([r["state"] for r in got["rows"]], ["worked", "planned"])
+        self.assertEqual(got["elsewhere"], [{"name": "Odile", "task": "Reader"}])
 
     def test_the_last_line_wins_over_the_title_and_the_title_over_the_prompt(self):
         self.prose_roster()
