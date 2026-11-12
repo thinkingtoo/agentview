@@ -6,7 +6,7 @@
 
 **Blocked by:** None
 
-**Status:** needs-triage
+**Status:** option 1 done 2026-11-12 (launcher override in place); today's window still to move once (option 3)
 
 ## Evidence
 
@@ -68,3 +68,44 @@ Read-only (Osman, for the boss). Nothing was closed, signalled or written; no un
 3. **Option 1 only if the running window must be saved without closing it**, and only after a throwaway-unit test that the drop-in applies to the running unit. It is the only option that might reach the live window without closing it, and the only one whose key claim is untested.
 
 Whichever is chosen, the README note under "Restarting the service" (a window opened from the launcher shows the launcher's own unit) stays true until option 2 or 3 is done.
+
+## Option 1 done: launcher override, 2026-11-12 (Milos, for the boss)
+
+Thierry wrote the file himself (the agent's write was refused by the auto-mode classifier) and ran `kbuildsycoca6`. It is a copy of `/usr/share/applications/org.wezfurlong.wezterm.desktop` with only `Exec=` changed. `~/.local/share/applications/org.wezfurlong.wezterm.desktop`:
+
+```
+[Desktop Entry]
+Name=WezTerm
+Comment=Wez's Terminal Emulator
+Keywords=shell;prompt;command;commandline;cmd;
+Icon=org.wezfurlong.wezterm
+StartupWMClass=org.wezfurlong.wezterm
+TryExec=wezterm
+Exec=systemd-run --user --scope --quiet --collect -p OOMPolicy=continue "--description=agentview: wezterm window" -- wezterm start --always-new-process --cwd .
+Type=Application
+Categories=System;TerminalEmulator;Utility;
+Terminal=false
+```
+
+- **Why `--always-new-process`.** `wezterm start --help`: without it, `wezterm start` asks a running GUI to start the window. A `wezterm-gui` (pid 22119) was running, so the window would have landed in it, in the Plasma unit, and the scope would have held nothing.
+- **Launch method.** `kioclient exec ~/.local/share/applications/org.wezfurlong.wezterm.desktop` (kioclient 6.6.4). It goes through KIO's application launcher, the code Plasma's menu uses, and it created a Plasma `app-org.wezfurlong.wezterm@<id>.service` unit for the launcher, as the menu does. Not a click in the menu itself.
+
+### Readings (one test window, opened and closed by its own pid)
+
+| | Before (window 22119) | Test window (pid 2000482) |
+|---|---|---|
+| Process | `wezterm-gui start --cwd .` | `wezterm-gui start --always-new-process --cwd .` (a new process, not 22119) |
+| cgroup | `app-org.wezfurlong.wezterm@3004c8e5….service` | `run-p2000482-i94097377.scope` |
+| Description | WezTerm | `agentview: wezterm window` |
+| OOMPolicy | stop | **continue** |
+| KillMode | control-group | control-group |
+| Members | | the `wezterm-gui` and its one `-bash` |
+
+- **Plasma's own unit.** While the test window ran, `app-org.wezfurlong.wezterm@d83a6d31….service` was still listed (`OOMPolicy=stop`, `ExecStart` = the `systemd-run` line) but its cgroup held no process: `systemd-run --scope` had moved out of it, as `scope.py` documents. Not tested whether it ends by itself while the window is open; after the window was closed it was gone.
+- **Closing.** Only pid 2000482 got `SIGTERM`, after checking the scope held just it and its `-bash`. Afterwards: one `wezterm-gui` (22119), its unit still active, the scope and Plasma's launcher unit gone.
+
+### Still open
+
+- **Today's window (22119) is still in the Plasma unit with `OOMPolicy=stop`.** It needs the one-time move (option 3, through the restore). That is Thierry's, at the screen, when the direct `claude` tab is idle.
+- **Only launches from this entry are covered.** A `wezterm` typed in a terminal, or a launch from another entry, is not.
+- **The file is a copy of a package file** and goes stale if the package changes its entry. Recommendation, not built: agentview ships it (an install step plus a README line), or at least the README names the file and the `--always-new-process` reason.
