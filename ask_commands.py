@@ -299,7 +299,8 @@ SHELL_QUOTE = re.compile(r"[\"'`]")
 CLOSERS = (("(", ")"), ("[", "]"), ("{", "}"))
 # A mark that takes the next command or file, or a backslash that continues the
 # line: the line stops where more was due.
-OPEN_MARK = re.compile(r"(?:^|\s)(?:\d*>>?|&>>?|>&|<<?<?|\|\|?|\|&|&&)$|(?<!\\)\|&?$|&&$|\\$")
+OPEN_MARK = re.compile(r"(?:^|\s)(?:\d*>>?&?|&>>?|<<?<?|\|\|?|\|&|&&)$"
+                       r"|(?<!\\)(?:\\\\)*(?:\|&?|&&|\\)$")
 
 
 def cut_or_broken(command):
