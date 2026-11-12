@@ -937,9 +937,11 @@ const boxLine = b => `${b.done ? "☑" : "☐"} ${b.text}`;
 // "N of M" folded them, a fold kept in this browser across reloads. A click on
 // a row shows its whole text and its tickets; another click folds it.
 const SIGN = { worked: "🔨", waiting: "⏸", planned: "○", done: "✅" };
-// The page redraws every poll and a redrawn hammer would start its swing over: each one is set
+// The page redraws every poll and a redrawn hammer would start its swing over: a busy one is set
 // to the clock's phase of the 1200 ms swing in the stylesheet, so the redraw carries on.
-const swingTag = () => ` swing" style="animation-delay:-${Date.now() % 1200}ms`;
+const signOf = (glyph, busy) => busy
+  ? `<span class="sign swing" style="animation-delay:-${Date.now() % 1200}ms">${glyph}</span>`
+  : `<span class="sign">${glyph}</span>`;
 const FOLD_KEY = "agentview.folded-tracks";
 const FOLDED = new Set((() => {
   try { const v = JSON.parse(localStorage.getItem(FOLD_KEY) || "[]"); return Array.isArray(v) ? v.map(String) : []; }
@@ -961,7 +963,7 @@ function ticketLine(t) {
 function elsewhereOf(c) {
   const list = Array.isArray(c.track?.elsewhere) ? c.track.elsewhere : [];
   return list.length ? `<li class="ov-obj st-worked"><span class="ov-obj-note">${
-    list.map(w => `<span class="sign${w.busy === true ? swingTag() : ""}">🔨</span> ${esc(w.name)}: ${esc(w.task)}`).join("<br>")}</span></li>` : "";
+    list.map(w => `${signOf("🔨", w.busy === true)} ${esc(w.name)}: ${esc(w.task)}`).join("<br>")}</span></li>` : "";
 }
 function doneWhenOf(c) {
   const rows = rowsOf(c);
@@ -979,7 +981,7 @@ function doneWhenOf(c) {
       r.awaiting_tick ? `<span class="tick">its tickets are done, awaiting tick</span>` : ""}${
       (r.tickets || []).map(t => `<span>${esc(ticketLine(t))}</span>`).join("")}</div>` : "";
     return [state, `<li class="ov-obj st-${state}"><button class="ov-obj-line" aria-expanded="${open}" data-row="${esc(key)}"
-      title="${esc(r.text)}"><span class="sign${state === "worked" && r.busy === true ? swingTag() : ""}">${SIGN[state]}</span> ${esc(r.text)}</button>${more}</li>`];
+      title="${esc(r.text)}">${signOf(SIGN[state], state === "worked" && r.busy === true)} ${esc(r.text)}</button>${more}</li>`];
   });
   // The server sends worked rows first; the elsewhere hammers follow them, ahead of waiting, planned and done.
   const at = lis.findIndex(([state]) => state !== "worked");

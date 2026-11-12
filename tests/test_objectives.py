@@ -418,10 +418,6 @@ class Stamped(Panes):
         self.assertEqual((got["elsewhere"], [r["state"] for r in got["rows"]]), ([], ["planned", "planned"]))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Busy(Panes):
     """Which hammers swing (ticket boss-track/17): a worker whose turn is in flight.
     A question open (`waiting`) is still; so is a finished turn with a job open
@@ -461,3 +457,7 @@ class Busy(Panes):
 
     def test_a_row_nobody_works_on_is_not_busy(self):
         self.assertEqual([r["busy"] for r in self.rows()], [False, False])
+
+
+if __name__ == "__main__":
+    unittest.main()

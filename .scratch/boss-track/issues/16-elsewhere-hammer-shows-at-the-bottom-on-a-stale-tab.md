@@ -15,4 +15,4 @@
 - Not reproducible on the current page; the stale tab is the cause the evidence leaves. His own tab was not inspectable from here.
 
 - [x] The live shape (no worked row, 3 planned, 9 done, one elsewhere) draws the hammer first -- evidence: `tests/test_hammers_on_top.py` (passes before and after: the code was right, the tab was old)
-- [x] Nothing to change in the page: a reload of the tab shows the hammer on top -- evidence: screenshot after, in the PR
+- [x] Nothing to change in the page: a reload of the tab shows the hammer on top -- evidence: the live DOM read in the personal Chrome (first `<li>` is `st-worked`, top 484 px) and before/after screenshots, reported to the boss

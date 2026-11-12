@@ -145,7 +145,7 @@ def in_flight(m):
     """Whether a session has a turn in flight: busy, and not a finished turn with a
     job open. A question open (`waiting`) is a worker at rest, not at work: its
     hammer stays still (ticket boss-track/17)."""
-    return m.get("status") == "busy" and not m.get("waits")
+    return working(m) and m.get("status") == "busy"
 
 
 def busy_names(sessions):
