@@ -297,14 +297,19 @@ def reads_as_prompted(text):
 SHELL_RUN = re.compile(r"\"(?:\\.|[^\"\\\n])*\"|`(?:\\.|[^`\\\n])*`|'[^'\n]*'")
 SHELL_QUOTE = re.compile(r"[\"'`]")
 CLOSERS = (("(", ")"), ("[", "]"), ("{", "}"))
+# A mark that takes the next command or file, or a backslash that continues the
+# line: the line stops where more was due.
+OPEN_MARK = re.compile(r"(?:^|\s)(?:\d*>>?&?|&>>?|<<?<?|\|\|?|\|&|&&)$"
+                       r"|(?<!\\)(?:\\\\)*(?:\|&?|&&|\\)$")
 
 
 def cut_or_broken(command):
     """Half a command pasted into a terminal is worse than none: the line was
-    cut with an ellipsis, a quote opened in it was never closed, or it holds a
-    bracket that closes something outside it ("(run $ make test)"). The shell
+    cut with an ellipsis, a quote opened in it was never closed, it ends in a
+    pipe, `&&` or redirect that waits for more, or it holds a bracket that
+    closes something outside it ("(run $ make test)"). The shell
     takes an apostrophe inside a word ("it's") for an open quote, so it counts."""
-    return (command.endswith("\u2026")
+    return (command.endswith("\u2026") or OPEN_MARK.search(command) is not None
             or SHELL_QUOTE.search(SHELL_RUN.sub(" ", command)) is not None
             or any(command.count(close) > command.count(open_) for open_, close in CLOSERS))
 

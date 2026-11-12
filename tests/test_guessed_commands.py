@@ -1015,6 +1015,29 @@ class SshHost(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(ask_commands.guess(f"$ {command}"), [command])
 
+    def test_a_command_that_ends_in_a_shell_mark_is_not_offered(self):
+        # Ticket overview-build/35: `$ ls -la |` cut after its mark waits for
+        # more when pasted. Half a command is worse than none.
+        for ask in ("$ ls -la |", "$ git status &&", "$ ssh maple-box 'df -h' |", "$ make test ||",
+                    "$ cat notes.txt >", "$ git log >>", "$ sort <", "$ make test \\",
+                    "$ make test 2>", "$ git status 2>&", "$ echo a \\\\|", "$ ls &>", "$ make test |&", "$ cat <<"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+        for command in ("make 2>&1", "echo \\\\", "ls <dir>", "ls -la | less", "git status && git diff", "ssh maple-box 'df -h' | tee disk.txt"):
+            with self.subTest(command=command):
+                self.assertEqual(ask_commands.guess(f"$ {command}"), [command])
+
+    def test_an_escaped_pipe_at_the_end_is_not_an_open_mark(self):
+        self.assertFalse(ask_commands.cut_or_broken("cut -d\\|"))
+        self.assertFalse(ask_commands.cut_or_broken("cmd \\&&"))
+
+    def test_a_shell_mark_after_a_quoted_name_offers_nothing(self):
+        # Ticket 35, finding 2: after a plain word, a quoted name is no command,
+        # mark or no mark.
+        for ask in ("$ ssh to 'maple-box' | tee x", "$ ssh on '2222'; then"):
+            with self.subTest(ask=ask):
+                self.assertEqual(ask_commands.guess(ask), [])
+
     def test_a_quoted_remote_command_no_list_knows_keeps_its_button(self):
         # Hunt 27-3: a program and an argument with a sign, as origin/dev offered.
         for command in ("ssh maple-box 'free -m'", 'ssh maple-box "htop -d 5"', "ssh maple-box 'nvidia-smi -l 1'",
