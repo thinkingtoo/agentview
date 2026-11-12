@@ -378,8 +378,9 @@ TRACKER_READ = 1_000_000
 
 def roster_tasks(track):
     """`{lowercase name: task}` for each worker a track's tracker lists in a
-    `Roster` table (a tracker may hold several). The task is the cell of the
-    column whose heading says "task", else the last. A struck-through row is
+    `Roster` table (a tracker may hold several; a worker in more than one has
+    its tasks joined). The task is the cell of the column whose heading says
+    "task", else the last. A struck-through row is
     a worker who was retired; a name anywhere else in the file is a mention,
     not a roster."""
     if not TRACK_NAME.match(track):
@@ -411,7 +412,9 @@ def roster_tasks(track):
         cell = re.sub(r"[*_`]", "", bare) if not bare.startswith("~~") else ""
         word = FIRST_WORD.match(cell)
         if word and word.group().strip("-:"):
-            out[word.group().casefold()] = cells[column] if column < len(cells) else ""
+            task = cells[column] if column < len(cells) else ""
+            name = word.group().casefold()
+            out[name] = f"{out[name]} ; {task}" if out.get(name) else task    # listed twice: both tasks
     return out
 
 

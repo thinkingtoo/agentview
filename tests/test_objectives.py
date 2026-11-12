@@ -238,6 +238,15 @@ class Rows(TrackFixtures):
         column = next(c for c in got["columns"] if c["project"] == "track:checkout")
         self.assertEqual(column["track"]["rows"], [])
 
+    def test_a_worker_listed_in_two_roster_tables_keeps_both_tasks(self):
+        self.goal("[ ] paste/12 done", "[ ] paste/13 done")
+        self.ticket("paste/12"); self.ticket("paste/13")
+        (self.pm / "checkout.md").write_text(
+            "# PM Tracker\n\n## Roster\n| Name | Current task |\n|---|---|\n| Mei | paste/12 copy button |\n\n"
+            "## Roster (later)\n| Name | Current task |\n|---|---|\n| Mei | paste/13 the reader |\n")
+        got = self.rows(self.boss("b", self.loom, "checkout"), self.worker("w", self.loom, "checkout", name="Mei"))
+        self.assertEqual([r["state"] for r in got], ["worked", "worked"])
+
 
 if __name__ == "__main__":
     unittest.main()
