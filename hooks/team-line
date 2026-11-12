@@ -26,14 +26,17 @@ def main(argv=None):
     p.add_argument("--n", type=int, default=0)
     args = p.parse_args(argv)
     # Words only when there is one thing to say. Anything else is a count.
-    ask = args.ask if args.n == 1 else ""
+    said = " ".join(args.ask.split())
+    ask = said if args.n == 1 else ""
     did = args.did
     # With nothing waiting, an ask is news, not a question (a refused Paste is
     # told there): the card shows the did, so it goes there, first, since the
     # store cuts the did at its length.
-    if args.n == 0 and args.ask:
-        stop = "" if args.ask[-1] in ".!?:;" else "."
-        did = f"{args.ask}{stop} {did}" if did else args.ask
+    # The count is clamped to 0 by the store, so a negative one is nothing
+    # waiting too. Whitespace goes first: the last character is tested after.
+    if args.n <= 0 and said:
+        stop = "" if said[-1] in ".!?:;\u2026" else "."
+        did = f"{said}{stop} {did}" if did else said
     rec = lines.write(args.session, did=did, ask=ask, n=args.n)
     if rec is None:
         # Failing open is right for the dashboard. Reporting a success that

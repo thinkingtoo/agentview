@@ -139,6 +139,23 @@ class TheWriter(unittest.TestCase):
         self.run_writer("s5", "--n", "0", "--ask", "paste create was refused")
         self.assertEqual(lines.read("s5")["did"], "paste create was refused")
 
+    def test_a_blank_ask_with_nothing_waiting_leaves_the_did_alone(self):
+        # Ticket paste/23: the ask is normalised before it is tested.
+        self.run_writer("s3", "--did", "Mail drafted.", "--n", "0", "--ask", "   ")
+        self.assertEqual(lines.read("s3")["did"], "Mail drafted.")
+
+    def test_a_space_ended_or_ellipsis_ask_gets_no_stray_stop(self):
+        self.run_writer("s2", "--did", "Mail drafted.", "--n", "0", "--ask", "refused ")
+        self.assertEqual(lines.read("s2")["did"], "refused. Mail drafted.")
+        self.run_writer("s1", "--did", "x", "--n", "0", "--ask", "\u00e9\u2026")
+        self.assertEqual(lines.read("s1")["did"], "\u00e9\u2026 x")
+
+    def test_a_negative_count_keeps_the_ask_in_the_did(self):
+        # Ticket paste/24: the count is clamped to 0, so the ask is news here too.
+        self.run_writer("s0", "--did", "x", "--n", "-1", "--ask", "refused")
+        self.assertEqual(lines.read("s0")["did"], "refused. x")
+        self.assertEqual(lines.read("s0")["n"], 0)
+
     def test_a_long_did_does_not_push_the_ask_out_of_the_line(self):
         # The store cuts the did at 160 characters: the refusal goes first.
         self.run_writer("s4", "--did", "w" * 160, "--n", "0", "--ask", "paste create was refused")

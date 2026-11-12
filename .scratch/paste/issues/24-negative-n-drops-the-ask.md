@@ -20,4 +20,4 @@ against the clamp in `lines.py:278` `def _count(value):`, which writes n=0.
 
 **Blocked by:** None.
 
-**Status:** needs-triage
+**Status:** done
