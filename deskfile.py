@@ -25,6 +25,7 @@ import fcntl
 import hashlib
 import os
 import re
+import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,7 +80,7 @@ def sheaf_lock_path(file):
     it too. `<runtime>/locks/<first 12 hex of sha1 of the resolved path>.lock`, as sheaf's
     `source.lock_key` names it."""
     run = os.environ.get("XDG_RUNTIME_DIR")
-    base = Path(run) / "sheaf" if run and os.path.isabs(run) else Path(f"/tmp/sheaf-{os.getuid()}")
+    base = Path(run) / "sheaf" if sys.platform != "darwin" and run and os.path.isabs(run) else Path(f"/tmp/sheaf-{os.getuid()}")
     key = hashlib.sha1(os.fsencode(Path(file).resolve())).hexdigest()[:12]
     return base / "locks" / (key + ".lock")
 
