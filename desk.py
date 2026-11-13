@@ -108,7 +108,8 @@ def history(k=None):
             rec = json.loads(line)
         except ValueError:
             continue
-        if isinstance(rec, dict) and (k is None or rec.get("key") == k):
+        if (isinstance(rec, dict) and isinstance(rec.get("event"), str) and isinstance(rec.get("key"), str)
+                and (k is None or rec["key"] == k)):
             out.append(rec)
     return out
 
@@ -187,7 +188,10 @@ def page(browser=True):
             if not lines.write_atomic(f, deskfile.SKELETON):
                 raise Refused(f"could not write {f}")
     cmd = [SHEAF, "open", str(f)] + ([] if browser else ["--no-browser"])
-    got = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+    try:
+        got = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        raise Refused(f"sheaf open failed: {err}") from None
     if got.returncode != 0:
         raise Refused(f"sheaf open failed: {flatten(got.stderr or got.stdout, 200)}")
     return got.stdout.strip()
@@ -229,10 +233,7 @@ def main(argv=None, out=None, err=None):
                 print(line, file=out)
         else:
             print(page(browser=not a.no_browser), file=out)
-    except Refused as why:
-        print(f"desk: {why}", file=err)
-        return 1
-    except OSError as why:
+    except (Refused, OSError) as why:
         print(f"desk: {why}", file=err)
         return 1
     return 0

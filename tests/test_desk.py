@@ -271,6 +271,57 @@ class Place(Case):
         self.assertTrue(desk.GH is None or os.path.isabs(desk.GH))
 
 
+class Comments(unittest.TestCase):
+    """Sheaf keeps the person's comments inside the file; their text is never structure."""
+
+    def test_a_list_line_in_a_comment_does_not_end_the_item(self):
+        text = ("## Pull requests waiting for your merge\n"
+                "- [ ] Merge a/b#1: first\n  - Pinned commit: " + "a" * 40 + "\n"
+                "<!-- comment:\n- do not merge until Friday\n## Pull requests waiting for your merge\n-->\n"
+                "- [ ] Merge a/b#2: second\n")
+        self.assertEqual(deskfile.drop(text, "a/b#1"), "## Pull requests waiting for your merge\n- [ ] Merge a/b#2: second\n")
+        replaced = deskfile.put(text, "a/b#1", "- [ ] Merge a/b#1: new\n")
+        self.assertNotIn("do not merge", replaced)
+        self.assertEqual([i.key for i in deskfile.parse(replaced)], ["a/b#1", "a/b#2"])
+
+    def test_a_heading_named_in_a_comment_is_not_the_section(self):
+        text = ("# Desk\n\n<!-- Thierry mentioned ## Pull requests waiting for your merge here -->\n"
+                "## Pull requests waiting for your merge\n")
+        got = deskfile.put(text, "a/b#1", "- [ ] Merge a/b#1: x\n")
+        self.assertGreater(got.index("- [ ] Merge a/b#1"), got.index("-->"))
+        self.assertEqual([i.key for i in deskfile.parse(got)], ["a/b#1"])
+
+    def test_a_log_record_without_event_or_key_is_skipped(self):
+        import desk
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "agentview").mkdir()
+        (tmp / "agentview" / "merge-desk.log").write_text(
+            json.dumps({"at": "t1", "event": "ready", "key": "a/b#1", "pinned": SHA}) + "\n"
+            + json.dumps({"at": "t2", "key": "a/b#1"}) + "\n" + json.dumps({"event": "ready"}) + "\n")
+        old = os.environ.get("XDG_STATE_HOME")
+        os.environ["XDG_STATE_HOME"] = str(tmp)
+        self.addCleanup(lambda: os.environ.pop("XDG_STATE_HOME") if old is None else os.environ.update(XDG_STATE_HOME=old))
+        self.assertIn("waiting", desk.status_line("a/b#1"))
+        self.assertEqual(len(desk.status_all()), 1)
+
+    def test_a_write_by_another_writer_between_read_and_replace_is_not_lost(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        f = tmp / "merge-desk.md"
+        deskfile.put_item("o/r#1", "- [ ] Merge o/r#1: w\n", file=f)
+        calls = []
+
+        def change(text):
+            calls.append(1)
+            if len(calls) == 1:        # sheaf ticks the box while we compute
+                f.write_text(text.replace("- [ ]", "- [x]"))
+            return deskfile.put(text, "o/r#2", "- [ ] Merge o/r#2: w\n")
+        deskfile.edit(change, file=f)
+        got = {i.key: i.ticked for i in deskfile.items(f)}
+        self.assertEqual(got, {"o/r#1": True, "o/r#2": False})
+
+
 class Lock(unittest.TestCase):
     def test_two_edits_at_once_lose_neither(self):
         import threading

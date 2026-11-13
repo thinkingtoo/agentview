@@ -12,9 +12,13 @@ sub-lines under it. Its identity is that key, `owner/repo#272` (an Install item:
 its place in the file or its words. A block runs from its task line up to the
 next top-level list item, heading or end of file.
 
-Ticket 02 (hand over, withdraw) calls `put_item` and `drop_item`; the watcher
-(03) reads `items`, and Install items (04) and the tidy (08) go through the same
-two calls, with `section="install"` for the former.
+`put_item` and `drop_item` are the two calls that change an item; the watcher that
+merges ticked items reads `items`, and Install items go through the same two calls
+with `section="install"`.
+
+Lines inside a `<!-- ... -->` comment (sheaf keeps the person's comments in the file,
+and a comment may hold a list line or a heading) are never taken for the start or end
+of an item or a section.
 """
 import contextlib
 import fcntl
@@ -97,10 +101,23 @@ def _read(file):
         return SKELETON
 
 
+def _walk(text):
+    """(offset, line, inside) for each line; `inside` is true when the line starts
+    inside an HTML comment."""
+    offset, inside = 0, False
+    for line in text.splitlines(keepends=True):
+        yield offset, line, inside
+        for mark in re.findall(r"<!--|-->", line):
+            inside = mark == "<!--"
+        offset += len(line)
+
+
 def _spans(text):
     """(key, start, end) of every desk item, as offsets into `text`."""
-    out, offset, open_ = [], 0, None
-    for line in text.splitlines(keepends=True):
+    out, open_ = [], None
+    for offset, line, inside in _walk(text):
+        if inside:
+            continue
         top = TOP_ITEM.match(line) or HEADING.match(line)
         if top and open_ is not None:
             out.append((*open_, offset))
@@ -108,9 +125,9 @@ def _spans(text):
         key = key_of(line)
         if key:
             open_ = (key, offset)
-        offset += len(line)
+    end = len(text)
     if open_ is not None:
-        out.append((*open_, offset))
+        out.append((*open_, end))
     return out
 
 
@@ -137,15 +154,25 @@ def put(text, key, block, section="merge"):
         if k == key:
             return text[:start] + block + text[end:]
     heading = SECTIONS[section]
-    if heading not in text:
+    at = _heading_end(text, heading)
+    if at is None:
         text = text.rstrip("\n") + "\n\n" + heading + "\n"
-    at = text.index(heading) + len(heading) + 1
-    nxt = re.compile(r"^## ", re.M).search(text, at)
-    end = nxt.start() if nxt else len(text)
+        at = len(text)
+    end = next((o for o, line, inside in _walk(text) if o >= at and not inside and line.startswith("## ")),
+               len(text))
+    nxt = end < len(text)
     body = text[at:end]
     tail = body[len(body.rstrip("\n")):]            # the blank line before the next heading
     new = body.rstrip("\n") + ("\n" if body.strip() else "") + block
     return text[:at] + new + (tail if nxt else "") + text[end:]
+
+
+def _heading_end(text, heading):
+    """Offset just after the heading's own line (outside any comment), or None."""
+    for offset, line, inside in _walk(text):
+        if not inside and line.rstrip("\n") == heading:
+            return offset + len(line) if line.endswith("\n") else None
+    return None
 
 
 def drop(text, key):
@@ -159,11 +186,19 @@ def edit(change, file=None):
     """Read the file fresh under the lock, apply `change(text) -> text`, write it whole
     or not at all. Returns what `change` returned about it (the new text)."""
     with locked(file) as f:
-        before = _read(f)
-        after = change(before)
-        if after != before and not lines.write_atomic(f, after):
-            raise OSError(f"could not write {f}")
-        return after
+        # Sheaf writes this file too, with a lock of its own: a tick or a comment that lands
+        # between our read and our replace would be lost, so look again just before replacing.
+        for _ in range(5):
+            before = _read(f)
+            after = change(before)
+            if after == before:
+                return after
+            if _read(f) != before:
+                continue
+            if not lines.write_atomic(f, after):
+                raise OSError(f"could not write {f}")
+            return after
+        raise OSError(f"{f} keeps changing under us; try again")
 
 
 def put_item(key, block, section="merge", file=None):
