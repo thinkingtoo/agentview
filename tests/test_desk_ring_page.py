@@ -1,7 +1,7 @@
 """The page's side of the merge desk's ring, checked against the real `deskRing()` in index.html.
 
 The server decides when the ring is due (`deskring.py`); the page plays it as the ring of a session that
-needs you, unless the chime is muted, and keeps its words for the Merges button's tooltip. The JS is
+needs you, unless the chime is muted, and keeps its words for under the header. The JS is
 extracted from index.html so that the test moves with the page.
 """
 import json
@@ -17,6 +17,7 @@ let CHIME = %s, DESK_RUNG = %s, DESK_RINGING = false, DESK_FAILED = false, ANNOU
 async function ring(){ sounds.push("ring"); return %s; }
 async function fetch(url){ posts.push(url); return {ok: %s}; }
 function paint(){}
+function busyWithUser(){ return false; }
 function setTimeout(){}
 %s
 (async () => {
@@ -57,6 +58,17 @@ class DeskRing(unittest.TestCase):
     def test_a_server_that_cannot_keep_the_day_does_not_make_it_ring_on_every_poll(self):
         out = run("true", '"words"', ok="false")
         self.assertEqual(out, [False, "ring", "words", "/api/desk_rung"])
+
+    def test_a_ring_held_back_does_not_hold_the_stale_reload_off(self):
+        src = PAGE.read_text()
+        body = src[src.index("async function deskRing"):src.index("function drawSound()")]
+        self.assertIn("ANNOUNCED_AT = before", body)
+
+    def test_the_words_never_repaint_over_a_field_being_typed_in(self):
+        src = PAGE.read_text()
+        body = src[src.index("async function deskRing"):src.index("function drawSound()")]
+        self.assertEqual(body.count("paint()"), body.count("if (!busyWithUser()) paint()"))
+        self.assertEqual(body.count("paint()"), 2)
 
     def test_the_stale_reload_is_held_off_before_the_sound(self):
         src = PAGE.read_text()

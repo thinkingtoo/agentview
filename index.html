@@ -650,12 +650,14 @@ async function deskRing(text) {
   // up, or the server could not keep the day, the ring is not played again.
   if (typeof text !== "string" || !text || DESK_RINGING || DESK_RUNG || DESK_FAILED || !CHIME) return false;
   DESK_RINGING = true;
+  const before = ANNOUNCED_AT;
   ANNOUNCED_AT = Date.now();      // before the sound: a stale-build reload waits for it
   try {
-    if (!await ring()) return false;
+    if (!await ring()) { ANNOUNCED_AT = before; return false; }   // held back: nothing sounded, nothing to wait for
     DESK_RUNG = text;
-    setTimeout(() => { DESK_RUNG = ""; paint(); }, 60000);
-    paint();
+    // Like every deferred paint: not over a field the person is typing in.
+    setTimeout(() => { DESK_RUNG = ""; if (!busyWithUser()) paint(); }, 60000);
+    if (!busyWithUser()) paint();
     const r = await fetch("/api/desk_rung", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" }, body: "{}" });
     if (!r.ok) DESK_FAILED = true;
     return r.ok;
