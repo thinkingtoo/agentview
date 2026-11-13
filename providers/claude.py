@@ -427,6 +427,10 @@ def _dispatch(rec):
     body = origin.get("body")
     if origin.get("kind") != "peer" or not isinstance(body, str):
         return ""
+    # A subagent's hand-back is a peer record too (ticket boss-track/24): it carries `senderTaskId`
+    # and its `from` is the agent id. A session's `from` is a `uds:` or `bridge:` address, or `unknown`.
+    if not origin.get("from") or "senderTaskId" in origin:
+        return ""
     return next((l.strip()[:DISPATCH_MAX] for l in body.splitlines() if l.strip()), "")
 
 

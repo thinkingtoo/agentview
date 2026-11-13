@@ -102,10 +102,33 @@ class Summary(unittest.TestCase):
         """Ticket boss-track/22: a dispatch arrives as a meta user record whose `origin` is a peer, not as a typed prompt."""
         def peer(body):
             return {"type": "user", "isMeta": True, "message": {"role": "user", "content": "Another Claude session sent a message:\n<cross-session-message>\n" + body},
-                    "origin": {"kind": "peer", "name": "boss", "body": body}}
+                    "origin": {"kind": "peer", "name": "boss", "body": body, "from": "uds:/run/user/1000/cc-socks/1.sock"}}
         path = self.write([peer("\n  First task: review PR 9\nmore"), {"type": "user", "message": {"content": "a tool"}}, peer("Second task: fix the cart\nand report")])
         summary = claude.scan_cached(path)
         self.assertEqual((summary["dispatch"], summary["prompt"]), ("Second task: fix the cart", ""))
+
+    def test_a_later_subagent_hand_back_leaves_the_sessions_dispatch_in_place(self):
+        """Ticket boss-track/24: the real dispatch stays when a hand-back arrives after it, whatever the hand-back says."""
+        def peer(body, **origin):
+            return {"type": "user", "isMeta": True, "message": {"content": body}, "origin": {"kind": "peer", "name": "x", "body": body, **origin}}
+        session = {"from": "uds:/run/user/1000/cc-socks/610562.sock", "verifiedPeerPid": "610562", "msg_id": "m1"}
+        agent = {"from": "a44e12ae3b804c2f3", "senderTaskId": "a44e12ae3b804c2f3"}
+        path = self.write([peer("Ticket 24: fix the reader", **session),
+                           peer("Review of the diff: all good", handback=True, **agent),
+                           peer("Older report with no handback flag", **agent)])
+        self.assertEqual(claude.scan_cached(path)["dispatch"], "Ticket 24: fix the reader")
+
+    def test_a_message_from_a_session_on_another_machine_is_a_dispatch(self):
+        """Ticket boss-track/24: a bridge sender is a session; only `senderTaskId` marks a subagent."""
+        path = self.write([{"type": "user", "isMeta": True, "message": {"content": "m"},
+                            "origin": {"kind": "peer", "name": "x", "body": "Ticket 7: from t-compute", "from": "bridge:session_01VDEbP8pTMWLUPoRC1kdB", "fromMode": "prompting"}}])
+        self.assertEqual(claude.scan_cached(path)["dispatch"], "Ticket 7: from t-compute")
+
+    def test_a_hand_back_alone_gives_no_dispatch(self):
+        """Ticket boss-track/24: a session whose only peer record is its subagent's has none."""
+        path = self.write([{"type": "user", "isMeta": True, "message": {"content": "r"},
+                            "origin": {"kind": "peer", "name": "general-purpose", "body": "[Subagent hand-back] x", "from": "a1", "senderTaskId": "a1", "handback": True}}])
+        self.assertEqual(claude.scan_cached(path)["dispatch"], "")
 
     def test_a_typed_prompt_or_a_session_with_no_peer_message_has_no_dispatch(self):
         """Ticket boss-track/22: the typed prompt stays in `prompt`."""
