@@ -152,7 +152,7 @@
   /* 🧪 rocks slowly, all the way left, a short hold, all the way right, a short hold (boss-track/23):
      2.4 s a cycle, +-30deg about its middle. Turned that far its box reaches about 0.25em past the left
      of its start, where the lines' clip would cut it; the lines' clip box is grown by 0.3em on the left
-     and given the same back in margin, so nothing moves. On the right it stays short of the name. */
+     and given the same back in margin, so nothing moves. On the right its ink stays short of the name (its box may touch the name's first letter box). */
   @keyframes rock { 0%, 12% { transform:rotate(-30deg); } 50%, 62% { transform:rotate(30deg); } 100% { transform:rotate(-30deg); } }
   @media (prefers-reduced-motion: no-preference) {
     .sign.rock { animation:rock 2400ms ease-in-out infinite; transform-origin:50% 50%; }

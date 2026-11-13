@@ -175,11 +175,14 @@ class HammersSwing(unittest.TestCase):
         stops = [(int(a), float(d)) for a, d in re.findall(r"(\d+)%[^{]*\{\s*transform:rotate\((-?[\d.]+)deg\)", keys)]
         angles = {d for _, d in stops}
         self.assertEqual(angles, {-30.0, 30.0}, keys)
-        self.assertIn("0%, 12%", keys)                    # a hold at the left end
-        self.assertIn("50%, 62%", keys)                                            # a hold at the right end
+        self.assertIn("0%, 12%", keys)      # a hold at the left end
+        self.assertIn("50%, 62%", keys)     # a hold at the right end
+        swing = re.search(r"@keyframes swing \{(.*)\}\s*\n", css).group(1)
+        self.assertNotEqual(keys.split(), swing.split())
         self.assertRegex(css, r"\.sign\.rock \{ animation:rock 2400ms ease-in-out infinite; transform-origin:50% 50%;")
 
     def test_the_lines_clip_leaves_room_to_the_left_of_the_sign_and_moves_nothing(self):
+        """The wide tilt reaches past the sign's left; the clip box grows by what the margin takes back (boss-track/23)."""
         css = PAGE.read_text()
         self.assertRegex(css, r"\.ov-obj-line, \.ov-obj-note \{ padding-left:0\.3em; margin-left:-0\.3em; \}")
         self.assertRegex(css, r"\.ov-obj-line \{ width:calc\(100% \+ 0\.3em\); \}")
@@ -188,6 +191,8 @@ class HammersSwing(unittest.TestCase):
         card = {"project": "p", "track": {"rows": [dict(row("w", "worked"), watching=True)]}}
         delay = int(re.search(r"rock[^>]*animation-delay:-(\d+)ms", self.draw(card)[0]["html"]).group(1))
         self.assertTrue(0 <= delay < 2400)
+        self.assertIn("Date.now() % 2400", PAGE.read_text())
+        self.assertNotIn("Date.now() % 900", PAGE.read_text())
 
     def test_the_stylesheet_swings_only_where_motion_is_welcome(self):
         css = PAGE.read_text()
