@@ -2,7 +2,7 @@
 
 **What to build:** once a day, the open PRs of the repos AgentView knows that are green, mergeable and more than a day old, and that no session handed over, become items marked "found, no recommendation yet". Merged and withdrawn items older than a day leave the page.
 
-**Blocked by:** 03
+**Blocked by:** 03, 04 (both change deskwatch.py; boss, 2026-11-14)
 
 **Status:** ready-for-agent
 
