@@ -850,7 +850,8 @@ def _subagent_files(path, now, cwds=()):
 # descriptions of four days: precision about 100% on samples, 94% of the calls with a wider list.
 # A word that names a review outright counts alone. `opus` and `codex` count when no word of work
 # to do (`REVIEW_VETO`) stands beside them: all 39 descriptions that matched through them alone
-# were reviews. A bare `re-run`, `re-read` or `delta` is no review ("Rerun failing tests").
+# were reviews. A bare `re-run`, `re-read`, `re-check`, `re-gate` or `delta` is no review ("Rerun
+# failing tests"); "Recheck five wording fixes" is a review that this misses.
 REVIEW_WORDS = re.compile(
     r"(?<![A-Za-z])(?:re-?|code-)?review(?:s|ed|ing)?\b|revue|\bbug[ -]hunt|\bdelta (?:check|read)\b|"
     r"\bverdict\b|\b(?:standards|spec) axis\b|\bfinal read\b", re.I)
