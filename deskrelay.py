@@ -22,6 +22,7 @@ watcher (`deskwatch`) merges the commit that was pinned.
 import http.client
 import json
 import re
+import socket
 import subprocess
 import threading
 import urllib.parse
@@ -35,7 +36,9 @@ BODY_MAX = 64 * 1024
 POSTS = ("tick", "comment", "seen")
 GETS = ("doc", "live")
 PAGE_ENTRY = "/desk"
-TIMEOUT = 15                     # connecting, and any wait for the hub's answer
+TIMEOUT = 15                     # connecting, and any wait for the hub's answer to a read
+PRESS_TIMEOUT = 60               # a tick or a comment is saved, committed and rendered before the hub answers
+READ_TIMEOUT = 30                # the phone's own body, once it has said how long it is
 STREAM_TIMEOUT = 70              # the hub's event stream says something every 25 s
 CHUNK = 8192
 LAST_EVENT = re.compile(r"[0-9A-Za-z:._-]{1,64}")
@@ -83,12 +86,12 @@ def _no_constant(name):
     raise ValueError(name)
 
 
-def _post_body(route, data, address):
+def _post_body(data, address):
     if len(data) > BODY_MAX:
         raise Refused(413, "that is too much for the desk")
     try:
         obj = json.loads(data.decode("utf-8"), parse_constant=_no_constant)
-    except (ValueError, UnicodeDecodeError):
+    except (ValueError, UnicodeDecodeError, RecursionError):
         raise Refused(400, "expected JSON") from None
     if not isinstance(obj, dict):
         raise Refused(400, "expected a JSON object")
@@ -124,7 +127,7 @@ def plan(method, target, data, desk):
         if path in [f"/_/{g}" for g in GETS] and _only_doc(query, desk.address):
             return Plan("GET", f"{path}?doc={urllib.parse.quote(desk.address, safe='')}", None, path == "/_/live")
         raise nope
-    return Plan("POST", path, _post_body(path.rpartition("/")[2], data or b"", desk.address), False)
+    return Plan("POST", path, _post_body(data or b"", desk.address), False)
 
 
 class SheafHub:
@@ -205,7 +208,7 @@ def _ask(desk, plan_, cookie, last_event):
         headers.update({"Origin": f"http://{host}", "Content-Type": "application/json"})
     if plan_.stream and last_event and LAST_EVENT.fullmatch(last_event):
         headers["Last-Event-ID"] = last_event
-    conn = http.client.HTTPConnection("127.0.0.1", desk.port, timeout=TIMEOUT)
+    conn = http.client.HTTPConnection("127.0.0.1", desk.port, timeout=PRESS_TIMEOUT if plan_.body is not None else TIMEOUT)
     try:
         conn.request(plan_.method, plan_.target, body=plan_.body, headers=headers)
         res = conn.getresponse()
@@ -237,7 +240,11 @@ def serve(h, method):
                 raise Refused(411, "a POST needs its length") from None
             if not 0 <= length <= BODY_MAX:
                 raise Refused(413, "that is too much for the desk")
-            data = h.rfile.read(length)
+            h.connection.settimeout(READ_TIMEOUT)
+            try:
+                data = h.rfile.read(length)
+            except OSError:
+                raise Refused(408, "the body did not arrive") from None
         plan_ = plan(method, h.path, data, HUB.desk)
         desk = HUB.desk()
         if plan_.target == PAGE_ENTRY:
@@ -247,15 +254,18 @@ def serve(h, method):
             return h.end_headers()
         try:
             conn, res = _relay(plan_, desk, h.headers.get("Last-Event-ID"))
+        except (socket.timeout, TimeoutError):
+            raise Refused(504, "the laptop's sheaf hub is slow to answer: look at the desk before pressing again") from None
         except (OSError, http.client.HTTPException):
-            if hasattr(HUB, "reset"):
-                HUB.reset()
             raise Refused(503, "the laptop's sheaf hub did not answer") from None
     except Refused as why:
+        if why.status == 503:
+            HUB.reset()                         # where the hub is, and its cookie, are asked for again
         log.event("desk-relay-refused", method=method, path=path, status=why.status, why=why.why)
         if why.status in (411, 413):
             h.close_connection = True
-        return h.send_error(why.status, why.why)
+        # The reason is the status line, which is latin-1: what sheaf said may hold more than that
+        return h.send_error(why.status, why.why.encode("ascii", "replace").decode().replace("\n", " "))
     try:
         h.send_response(res.status)
         for name in PASSED:

@@ -1048,6 +1048,8 @@ laptop does, and the watcher merges the commit that was pinned.
   `http://127.0.0.1:<port>`), so the hub's own check is unchanged for everything else. In front of
   that, a POST here needs an Origin that is this server's own or an extra entry, exactly; with no
   Origin it is refused (the desk page cannot send `X-Fleet`, the Origin is its guard).
+- **Local programs:** the hub used to refuse any local program that was not signed in. A program on
+  the laptop that sends a loopback Origin to this server can now press the desk too.
 - **When it does not answer:** the laptop's sheaf hub is not running and cannot be started
   (503), or the relay cannot sign in (503). Nothing is merged while the laptop is off.
 

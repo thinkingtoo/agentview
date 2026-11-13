@@ -91,6 +91,9 @@ class Plan(unittest.TestCase):
                 with self.subTest(route=route, data=data):
                     self.assertIn(self.refused("POST", f"/_/{route}", data), (400, 404))
 
+    def test_a_body_nested_past_the_parser_is_refused_not_dropped(self):
+        self.assertEqual(self.refused("POST", "/_/tick", b"[" * 60000), 400)
+
     def test_a_post_with_a_query_is_refused(self):
         for route in ("tick", "comment", "seen"):
             self.assertEqual(self.refused("POST", f"/_/{route}?doc=other.md", body()), 404)
@@ -167,7 +170,10 @@ class StubHub(BaseHTTPRequestHandler):
 class FakeHub:
     """The laptop's hub as the relay sees it: where it is, and the cookie that signs in."""
     def __init__(self, port):
-        self.port, self.cookies, self.rejected = port, ["sheaf_4242=stale", "sheaf_4242=good"], 0
+        self.port, self.cookies, self.rejected, self.resets = port, ["sheaf_4242=stale", "sheaf_4242=good"], 0, 0
+
+    def reset(self):
+        self.resets += 1
 
     def desk(self):
         return deskrelay.Desk(port=self.port, page=PAGE, address=ADDRESS)
@@ -304,6 +310,31 @@ class Relayed(unittest.TestCase):
         self.stub.server_close()
         res, _ = self.call("GET", PAGE)
         self.assertEqual(res.status, 503)
+        self.assertEqual(self.hub.resets, 1)
+
+    def test_a_reason_sheaf_wrote_in_more_than_latin_1_is_still_answered(self):
+        def locate():
+            raise deskrelay.Refused(503, "sheaf open failed: " + "x" * 190 + "\u2026 and more")
+        self.hub.desk = locate
+        res, _ = self.call("GET", PAGE)
+        self.assertEqual(res.status, 503)
+
+    def test_a_hub_slower_than_the_press_timeout_is_a_504_and_the_hub_is_not_forgotten(self):
+        with mock.patch.object(deskrelay, "PRESS_TIMEOUT", 0.3), \
+                mock.patch.object(StubHub, "do_POST", lambda self: time.sleep(1.5)):
+            res, _ = self.call("POST", "/_/tick", body(action=0, word="Merge"))
+        self.assertEqual(res.status, 504)
+        self.assertEqual(self.hub.resets, 0)
+
+    def test_a_body_that_never_comes_is_given_up_on(self):
+        with mock.patch.object(deskrelay, "READ_TIMEOUT", 0.3):
+            conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+            self.addCleanup(conn.close)
+            conn.putrequest("POST", "/_/tick", skip_host=True)
+            for k, v in (("Host", f"{TS}:8445"), ("Origin", ENTRY), ("Content-Length", "500")):
+                conn.putheader(k, v)
+            conn.endheaders()
+            self.assertEqual(conn.getresponse().status, 408)
 
 
 if __name__ == "__main__":
