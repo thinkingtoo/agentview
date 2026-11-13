@@ -296,7 +296,7 @@ def track_card(track):
     file's order, each `{"text", "done"}`, its text as plain as the Outcome's."""
     # A sheaf comment sits where the words it is about end, in a heading too, and may run over
     # lines that look like boxes or headings: it goes before anything is read (boss-track/27).
-    lines = without_comments("\n".join(unfenced(goal_file(track))), keep_unclosed=True).split("\n")
+    lines = without_sheaf_comments("\n".join(unfenced(goal_file(track)))).split("\n")
     status = next((m.group(1).upper() for m in map(STATUS.match, lines) if m), "")
     status = status if status in STATUS_WORDS else ""
     marked, wrapping = [], False                # [ticked?, its words]; a wrapped box's lines joined
@@ -326,6 +326,7 @@ def track_card(track):
 # ------------------------------------------------------------- the repository
 
 OPENS = re.compile(r"`[^`\n]+`|<!--")
+SHEAF_OPENS = re.compile(r"`[^`\n]+`|<!--\s*(?:sheaf|rd)-comment\b")
 FRONT_MATTER = re.compile(r"\A\s*---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", re.DOTALL)
 INCLUDE = re.compile(r"^\s*@\S+\s*$")
 REFERENCE = re.compile(r"^\s*\[[^\]]+\]:")      # CommonMark wants no space after the colon, footnotes too
@@ -362,11 +363,9 @@ DESCRIBED_BY = (("readme.md", "readme.markdown", "readme.txt", "readme"),
                 ("agents.md",), ("claude.md",))
 
 
-def without_comments(text, keep_unclosed=False):
+def without_comments(text):
     """The text with its HTML comments taken out. One that never closes runs to
-    the end, as it does when the README is shown, unless `keep_unclosed`: a
-    goal file is edited by hand, and a comment left open must not hide its
-    boxes. A code span on a line is
+    the end, as it does when the README is shown. A code span on a line is
     code: a `<!--` inside it opens nothing. The end of a comment is found with
     `find`, not a pattern: a pattern tries every `<!--` against the whole rest
     of the file."""
@@ -383,9 +382,33 @@ def without_comments(text, keep_unclosed=False):
         out.append(text[at:found.start()])
         end = text.find("-->", found.end())
         if end < 0:
-            if keep_unclosed:
-                out.append(text[found.start():])
             return "".join(out)
+        at = end + 3
+
+
+def without_sheaf_comments(text):
+    """The text with sheaf's comment blocks taken out, over as many lines as they
+    run (`<!-- sheaf-comment …-->`, or the older `rd-comment`). sheaf writes one
+    where the words it is about end, in a heading too, and its text may hold lines
+    that look like boxes or headings. Any other comment stays as written: one
+    that never closes must not pair with the `-->` of a block further down. A
+    block that never closes stays too. A code span is code. The end is found with
+    `find`, as in `without_comments`."""
+    out, at = [], 0
+    while True:
+        found = SHEAF_OPENS.search(text, at)
+        if found is None:
+            out.append(text[at:])
+            return "".join(out)
+        if found.group()[0] == "`":                 # a code span goes by as it stands
+            out.append(text[at:found.end()])
+            at = found.end()
+            continue
+        end = text.find("-->", found.end())
+        if end < 0:
+            out.append(text[at:])
+            return "".join(out)
+        out.append(text[at:found.start()])
         at = end + 3
 
 

@@ -287,7 +287,7 @@ class Tracks(Cards):
         self.assertCart(self.raw_goal(f"## Done{self.BLOCK} when"))
 
     def test_a_comment_block_over_several_lines_inside_the_heading_leaves_its_boxes(self):
-        self.assertCart(self.raw_goal("## Done<!-- one\nlines two\n--> when"))
+        self.assertCart(self.raw_goal("## Done<!-- sheaf-comment id=c1 by=\"Ana\" quote=\"Done\"\nlines two\n--> when"))
 
     def test_a_comment_block_on_its_own_line_under_the_heading_leaves_its_boxes(self):
         self.assertCart(self.raw_goal(between=self.BLOCK + "\n"))
@@ -306,9 +306,21 @@ class Tracks(Cards):
         got = self.claude(self.boss("b", self.loom, "checkout"))["columns"][0]["track"]
         self.assertEqual([b["text"] for b in got["boxes"]], ["cart", "receipt"])
 
-    def test_a_comment_that_never_closes_changes_nothing_and_a_code_span_is_code(self):
-        self.assertCart(self.raw_goal(between="Note: <!-- never closed\n"))
-        self.assertCart(self.raw_goal(between="Use `<!--` in a code span.\n"))
+    def test_a_comment_of_the_person_s_own_is_left_as_it_is_whether_it_closes_or_not(self):
+        # Only sheaf's blocks are taken out: a hand-written `<!--` that never closes must not pair
+        # with the `-->` of a sheaf block further down and hide the boxes between them.
+        later = "- [ ] extra" + self.BLOCK + "\n"
+        for note in ("Note: <!-- never closed\n", "Use `<!--` in a code span.\n",
+                     "Use ``<!--`` in a double one.\n", "\n    <!-- an indented example\n\n"):
+            with self.subTest(note=note):
+                track = self.raw_goal(between=note, after=later)
+                self.assertEqual([b["text"] for b in track["boxes"]], ["cart", "receipt", "refund", "extra"])
+
+    def test_the_older_rd_comment_marker_is_a_sheaf_comment_too(self):
+        self.assertCart(self.raw_goal(f"## Done when{self.BLOCK.replace('sheaf-comment', 'rd-comment')}"))
+
+    def test_a_sheaf_comment_that_never_closes_is_left_as_text(self):
+        self.assertCart(self.raw_goal(between="<!-- sheaf-comment id=c9 by=\"Ana\" at=2026-11-13T10:02 status=open\n"))
 
     def test_the_goal_page_is_given_the_session_of_the_tracks_boss_not_a_workers(self):
         asked = []

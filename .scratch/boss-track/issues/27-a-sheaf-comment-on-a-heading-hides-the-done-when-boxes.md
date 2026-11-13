@@ -32,12 +32,14 @@ So agentview loses every row in the same two cases as `boss-goal`.
 
 Two more cases from claude-boss PR 142 (found for multi-line sheaf-comment blocks), checked here with fixtures: **(a)** a `- [ ]` / `- [x]` line inside a multi-line `<!-- … -->` block was counted as a box (it was: the fixture failed); **(b)** a `## ` line inside a block ended the Done when section (it did: the fixture failed). Cases that already passed: the block on its own line, an unclosed `<!--`, a `<!--` in a code span.
 
-`context.track_card` takes the comments out of the goal text before reading it, with the existing `without_comments` (a code span is code), after the fences are out. A comment that never closes is kept as text (`keep_unclosed`), where the README reader lets it run to the end: a goal file is edited by hand, and one open comment must not hide the boxes under it. A comment cut across a heading word (`Done<!-- … --> when`) joins to `Done when`. The Outcome is read from the same lines, so comment text is no longer in it either.
+`context.track_card` takes sheaf's comment blocks out of the goal text before reading it (`without_sheaf_comments`, after the fences are out): the `<!-- sheaf-comment …` and older `rd-comment` openers, to the next `-->`, over as many lines as they run. A code span is code. A comment of any other kind stays as written, as before, and so does a sheaf block that never closes. A comment cut across a heading word (`Done<!-- sheaf-comment … --> when`) joins to `Done when`. The Outcome is read from the same lines, so a block's text is no longer in it either.
+
+First version (Opus round 1, PR 55): it took out every `<!--` (the README reader's `without_comments`). Round 1 showed that a hand-written `<!--` that never closes then pairs with the `-->` of a sheaf block further down and hides every box between them, and that a `<!--` in an indented code block or a double-backtick span did the same. Only sheaf's own blocks are taken out now; `without_comments` is as it was.
 
 - [x] A heading with a trailing, inner or multi-line inner sheaf-comment block opens the same section as without -- evidence: `tests/test_context.py` `Tracks` (three tests)
 - [x] The boxes, progress and rows are those of the file without the block -- evidence: `assertCart` in the same tests
 - [x] (a) a box line inside a multi-line block is no box -- evidence: `test_a_box_line_inside_a_multi_line_comment_is_no_box`
 - [x] (b) a `## ` line inside a block does not end the section -- evidence: `test_a_heading_line_inside_a_multi_line_comment_does_not_end_the_section`
-- [x] A comment after a box's words is not in its text; an unclosed `<!--` and a code span change nothing -- evidence: the last two tests; mutation-checked (`keep_unclosed`, code-span rule)
+- [x] A comment after a box's words is not in its text; a comment of the person's own (unclosed, in a code span, in an indented example) is left as it is and never pairs with a later block; an unclosed sheaf block is left as text -- evidence: the last four tests; mutation-checked (opener pattern, code-span rule, unclosed rule)
 
-**Known limit:** a `<!--` inside an inline code span that spans lines is not a code span for `OPENS` (one line only), as in the README reader.
+**Known limit:** a hand-written comment (not a sheaf block) with box or heading lines inside it still counts them, as before this ticket. A sheaf-comment opener inside a code span that spans lines, or an indented code block, is taken for a block.
