@@ -201,7 +201,8 @@ def drop(text, key):
     return text
 
 
-RESULT = re.compile(r"^  - (?:(?:Already merged|Merged)(?: as [0-9a-f]{7})? at \d\d:\d\d|Not merged: .*)$")
+RESULT = re.compile(r"^  - (?:(?:Already merged|Merged)(?: as [0-9a-f]{7})? at \d\d:\d\d|Not merged: .*"
+                    r"|(?:Already installed|Installed) as [0-9a-f]{7} at \d\d:\d\d.*|Not installed: .*)$")
 
 
 def settle(text, key, result, untick=False, pinned=None):

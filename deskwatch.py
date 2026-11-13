@@ -14,6 +14,9 @@ the result is on the page. A press that has no result (the service was restarted
 settled from GitHub at the next tick, before anything is pressed: merged there means `merged`
 is recorded and nothing is pressed again; still open means `refused`, and the person presses again.
 
+A ticked Install item goes through the same press (`deskinstall.press`): the same lock, the same
+`pressing` record, `installed` instead of `merged`; `deskinstall.scan_if_due` runs after each tick.
+
 One at a time holds across processes: the whole tick is under a lock file that dies with its
 holder. The desk file's own lock is never held across a `gh` call.
 
@@ -32,9 +35,10 @@ import time
 
 import desk
 import deskfile
+import deskinstall
 import log
 
-SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
+SYSTEM_PATH = desk.SYSTEM_PATH
 GH = shutil.which("gh", path=SYSTEM_PATH)
 POLL = 3            # seconds between ticks
 WAIT_MAX = 60       # how long GitHub may answer UNKNOWN
@@ -100,7 +104,7 @@ def record(event, k, **fields):
 
 def last_event(k):
     return next((r for r in reversed(desk.history(k))
-                 if r["event"] in ("ready", "pressing", "merged", "refused")), None)
+                 if r["event"] in ("ready", "pressing", "merged", "installed", "refused")), None)
 
 
 def split(k):
@@ -118,7 +122,7 @@ def finish(k, pinned, event, text, untick=False, **fields):
         if same and page:
             deskfile.edit(lambda t: deskfile.settle(t, k, desk.flatten(text), untick, pinned))
         last = last_event(k)
-        if event == "merged" or not (last and last["event"] == "ready"):   # a newer hand-over already closed this press
+        if event in ("merged", "installed") or not (last and last["event"] == "ready"):   # a newer hand-over already closed this press
             desk.log(event, k, **fields)
 
 
@@ -228,10 +232,13 @@ def recover():
     """Settle each press that began and never recorded a result. Never presses."""
     last = {}
     for rec in desk.history():
-        if rec["event"] in ("ready", "pressing", "merged", "refused", "withdrawn"):
+        if rec["event"] in ("ready", "pressing", "merged", "installed", "refused", "withdrawn"):
             last[rec["key"]] = rec
     for k, rec in last.items():
         if rec["event"] != "pressing":
+            continue
+        if k.startswith("install:"):
+            deskinstall.recover(k, rec)
             continue
         repo, n = split(k)
         try:
@@ -256,19 +263,20 @@ def tick():
             return
         recover()
         every = [i.key for i in deskfile.items()]
-        for k in dict.fromkeys(i.key for i in deskfile.items() if i.ticked and not i.key.startswith("install:")):
+        for k in dict.fromkeys(i.key for i in deskfile.items() if i.ticked):
             if every.count(k) > 1:                              # which of two is meant? press neither
                 if k not in _warned:
                     _warned.add(k)
                     log.error("desk-press", ValueError("two items with one key"), key=k)
                 continue
-            press(k)
+            (deskinstall.press if k.startswith("install:") else press)(k)
 
 
 def run():
     while True:
         try:
             tick()
+            deskinstall.scan_if_due()
         except Exception as exc:        # a watcher that dies leaves ticked boxes unanswered
             log.error("desk-watch", exc)
         time.sleep(POLL)

@@ -25,6 +25,7 @@ import deskfile
 import lines
 
 # Resolved once, when the command starts: under a service PATH is not the shell's.
+SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"   # the system's own folders: where the watcher looks for what it runs
 GH = shutil.which("gh")
 SHEAF = shutil.which("sheaf")
 
@@ -157,7 +158,7 @@ def withdraw(repo, n):
 
 
 def status_line(k):
-    last = next((r for r in reversed(history(k)) if r["event"] in ("ready", "withdrawn", "pressing", "merged", "refused")), None)
+    last = next((r for r in reversed(history(k)) if r["event"] in ("ready", "withdrawn", "pressing", "merged", "installed", "refused")), None)
     if last is None:
         return f"{k}: not on the desk"
     ev = last["event"]
@@ -168,6 +169,8 @@ def status_line(k):
         return f"{k}: being merged now"
     if ev == "merged":
         return f"{k}: merged as {str(last.get('sha', ''))[:7]} at {last.get('at', '?')}"
+    if ev == "installed":
+        return f"{k}: installed as {str(last.get('sha', ''))[:7]} at {last.get('at', '?')}"
     if ev == "refused":
         return f"{k}: refused: {last.get('why', 'no reason given')}"
     return f"{k}: withdrawn at {last.get('at', '?')}"
