@@ -141,6 +141,13 @@ def working(m):
     return m.get("status") in ("busy", "waiting") and not m.get("waits")
 
 
+def watching(m):
+    """Whether a session's turn is over and a job of its own runs on: it waits on
+    the job, and its objective is still its own (ticket boss-track/18). Idle with
+    no job never is."""
+    return bool(m.get("waits"))
+
+
 def in_flight(m):
     """Whether a session has a turn in flight: busy, and not a finished turn with a
     job open. A question open (`waiting`) is a worker at rest, not at work: its
@@ -171,12 +178,14 @@ def workers(track, sessions, is_concierge, owner_of, boss_panes):
     the best words its row carries when the table has no task for it
     (`_own_words`). A stamped working worker is always listed; a table cell that
     says idle still wins over the stamp. The boss and a concierge, by the pane's
-    mark or a roster task of "concierge", are never one."""
+    mark or a roster task of "concierge", are never one. A worker whose turn is
+    over with a job of its own open is listed like a working one (`watching`):
+    its hammer stays still (ticket boss-track/18)."""
     table = projects.roster_tasks(track)
     out = {}
     for m in sessions:
         name = m.get("name")
-        if not name or m.get("boss") or is_concierge(m) or not working(m):
+        if not name or m.get("boss") or is_concierge(m) or not (working(m) or watching(m)):
             continue
         task = table.get(name.casefold()) or None     # an empty cell names nobody's task
         if task is None and owner_of(m) in boss_panes:
