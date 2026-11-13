@@ -229,7 +229,7 @@ def own_lines(sessions, crew, is_concierge):
     name speaks for no worker."""
     return {m["name"]: str(m["did"]).strip() for m in sessions
             if m.get("name") in crew and not m.get("boss") and not is_concierge(m)
-            and (working(m) or watching(m)) and str(m.get("did") or "").strip()}
+            and (working(m) or watching(m) or reviewing(m)) and str(m.get("did") or "").strip()}
 
 
 def elsewhere(made, crew, busy=frozenset(), watch=frozenset(), lines=None, review=frozenset()):

@@ -641,6 +641,13 @@ class Reviewing(Panes):
                     self.at("w", "Mei", "%31", status="idle", reviewing=True))
         self.assertEqual(self.elsewhere(*sessions), [])
 
+    def test_a_reviewing_worker_whose_turn_is_over_prints_its_own_line_not_the_cell(self):
+        self.prose_roster = None
+        self.roster_of(("Mei", "#09c waiver"))
+        lines.write("w", did="Opus review of PR 12 running", root=self.lines)
+        got = self.elsewhere(self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle", reviewing=True))
+        self.assertEqual([e["task"] for e in got], ["Opus review of PR 12 running"])
+
     def test_a_session_with_no_review_is_not_reviewing(self):
         self.roster_of(("Mei", "paste/12 the reader"))
         sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31"))

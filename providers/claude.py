@@ -847,34 +847,42 @@ def _subagent_files(path, now, cwds=()):
 
 
 # A subagent is a review when its description says so (ticket boss-track/20). Measured on 878
-# descriptions of four days: precision about 100% on samples, 94% of the calls. `opus` and `codex`
-# only count beside no word of work to build (`REVIEW_VETO`); none of the 39 that matched through
-# them alone was.
+# descriptions of four days: precision about 100% on samples, 94% of the calls with a wider list.
+# A word that names a review outright counts alone. `opus` and `codex` count when no word of work
+# to do (`REVIEW_VETO`) stands beside them: all 39 descriptions that matched through them alone
+# were reviews. A bare `re-run`, `re-read` or `delta` is no review ("Rerun failing tests").
 REVIEW_WORDS = re.compile(
-    r"(?<![A-Za-z])(?:re-?|code-)?review|revue|\bbug[ -]hunt|\bdelta\b|\bre-?(?:check|run|gate|read)\b|"
-    r"\brecheck\b|\bverdict\b|\b(?:standards|spec) axis\b|\bfinal read\b|\bopus\b|\bcodex\b", re.I)
-REVIEW_VETO = re.compile(r"\b(?:implement\w*|parity|build|port|migrate|write|draft)\b", re.I)
-REVIEW_FRESH_MINUTES = 5     # a running subagent's transcript wrote this recently; a stale meta is an old run
-META_READ = 4096
-REVIEW_MAX = 12              # fresh subagents looked into per session, per poll
+    r"(?<![A-Za-z])(?:re-?|code-)?review(?:s|ed|ing)?\b|revue|\bbug[ -]hunt|\bdelta (?:check|read)\b|"
+    r"\bverdict\b|\b(?:standards|spec) axis\b|\bfinal read\b", re.I)
+REVIEW_BY_WHO = re.compile(r"\bopus\b|\bcodex\b", re.I)
+REVIEW_VETO = re.compile(r"\b(?:implement\w*|parity|build|port|migrate|write|draft|fix (?:the|round))\b", re.I)
+REVIEW_FRESH_MINUTES = 10    # a running subagent's transcript wrote this recently; a stale meta is an old run
+META_READ = 4096             # real meta files are 200 to 450 bytes
+REVIEW_MAX = 12              # the freshest subagents looked into per session, per poll
 
 
 def is_review(description):
-    return bool(REVIEW_WORDS.search(description)) and not REVIEW_VETO.search(description)
+    """Whether a subagent's description is a review's. A review word stands alone; `opus`
+    and `codex` count unless a word of work to do is beside them."""
+    if REVIEW_WORDS.search(description):
+        return True
+    return bool(REVIEW_BY_WHO.search(description)) and not REVIEW_VETO.search(description)
 
 
-def _reviewing(path, now, cwds=()):
-    """Whether a live subagent of the session is a review: its meta file (`description`,
+def _reviewing(files, now):
+    """Whether a live subagent among `files` is a review: its meta file (`description`,
     `finished`) beside its transcript says it is not finished, the transcript wrote in the
     last REVIEW_FRESH_MINUTES, and the description is a review's (`is_review`)."""
-    seen = 0
-    for entry in _subagent_files(path, now, cwds):
+    fresh = []
+    for entry in files:
         try:
-            if (now - entry.stat().st_mtime) / 60 > REVIEW_FRESH_MINUTES:
-                continue
-            seen += 1
-            if seen > REVIEW_MAX:
-                break
+            age = (now - entry.stat().st_mtime) / 60
+        except OSError:
+            continue
+        if age <= REVIEW_FRESH_MINUTES:
+            fresh.append((age, entry))
+    for _, entry in sorted(fresh, key=lambda pair: pair[0])[:REVIEW_MAX]:
+        try:
             with open(entry.path[:-len(".jsonl")] + ".meta.json", "rb") as fh:
                 meta = json.loads(fh.read(META_READ))
         except (OSError, ValueError):
@@ -885,7 +893,7 @@ def _reviewing(path, now, cwds=()):
     return False
 
 
-def _subagents(path, now, cwds=()):
+def _subagents(files, now):
     """The session's subagents: their transcript states, and how many minutes
     ago the newest of them wrote (None when it has none).
 
@@ -895,7 +903,7 @@ def _subagents(path, now, cwds=()):
     shows cannot add to it, and is not even opened.
     """
     states, quiet = [], None
-    for entry in _subagent_files(path, now, cwds):
+    for entry in files:
         try:
             mtime = entry.stat().st_mtime
         except OSError:
@@ -929,11 +937,13 @@ def scan_session(path, now=None):
     archive only wants a title and calls `scan_cached`; looking into a
     subagent folder is for a session that is running."""
     view = scan_cached(path, now)
+    view["reviewing"] = False
     if view["writes"] is None:
         return view
     now = time.time() if now is None else now
-    subs, view["subQuiet"] = _subagents(path, now, view["cwds"])
-    view["reviewing"] = _reviewing(path, now, view["cwds"])
+    files = _subagent_files(path, now, view["cwds"])      # listed once: the scan is the cost
+    subs, view["subQuiet"] = _subagents(files, now)
+    view["reviewing"] = _reviewing(files, now)
     for state in subs:
         view["writes"] = _add(view["writes"], _strip(state, now))
     return view
