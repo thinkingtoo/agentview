@@ -9,6 +9,7 @@ rows, so every hammer is together on top (boss-track/13).
 """
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import unittest
@@ -49,7 +50,6 @@ class HammersOnTop(unittest.TestCase):
     def order(self, card):
         """The text of each line in the order the card shows them."""
         html = self.draw(card)[0]["html"]
-        import re
         return re.findall(r"(?:<span class=\"sign[^\"]*\"[^>]*>[^<]*</span> ([^<]*?)(?:</button>|<br>|</span>))", html)
 
     def test_an_elsewhere_hammer_comes_after_the_worked_rows_and_before_the_rest(self):
@@ -112,7 +112,6 @@ class HammersSwing(unittest.TestCase):
 
     def swung(self, card):
         """`{line text: whether its sign carries swing}`, for every line of the card."""
-        import re
         html = self.draw(card)[0]["html"]
         return {text: "swing" in cls.split() for cls, text in re.findall(
             r'<span class="(sign[^"]*)"[^>]*>[^<]*</span> ([^<]*?)(?:</button>|<br>|</span>)', html)}
@@ -128,7 +127,6 @@ class HammersSwing(unittest.TestCase):
 
     def test_a_redrawn_hammer_carries_on_at_the_clock_phase_of_the_swing(self):
         card = {"project": "p", "track": {"rows": [dict(row("w", "worked"), busy=True)]}}
-        import re
         delay = int(re.search(r'animation-delay:-(\d+)ms', self.draw(card)[0]["html"]).group(1))
         self.assertTrue(0 <= delay < 1200)
         self.assertIn("1200ms", PAGE.read_text())
@@ -140,6 +138,42 @@ class HammersSwing(unittest.TestCase):
     def test_the_waiting_row_never_swings_even_if_the_server_says_busy(self):
         card = {"project": "p", "track": {"rows": [dict(row("asked", "waiting"), busy=True)]}}
         self.assertEqual(self.swung(card), {"asked": False})
+
+    def test_a_watching_row_and_entry_show_the_flask_and_rock_the_hammers_do_not(self):
+        card = {"project": "p", "track": {
+            "rows": [dict(row("w row", "worked"), busy=False, watching=True),
+                     dict(row("b row", "worked"), busy=True, watching=True),      # swinging beats it
+                     dict(row("q row", "worked"), busy=False, watching=False)],
+            "elsewhere": [{"name": "A", "task": "a", "busy": False, "watching": True},
+                          {"name": "B", "task": "b", "busy": False, "watching": False}]}}
+        html = self.draw(card)[0]["html"]
+        got = {text: (cls.split(), glyph) for cls, glyph, text in re.findall(
+            r'<span class="(sign[^"]*)"[^>]*>([^<]*)</span> ([^<]*?)(?:</button>|<br>|</span>)', html)}
+        self.assertEqual(got["w row"], (["sign", "rock"], "🧪"))
+        self.assertEqual(got["A: a"], (["sign", "rock"], "🧪"))
+        self.assertEqual(got["b row"], (["sign", "swing"], "🔨"))
+        self.assertEqual(got["q row"], (["sign"], "🔨"))
+        self.assertEqual(got["B: b"], (["sign"], "🔨"))
+
+    def test_the_waiting_row_never_shows_the_flask(self):
+        card = {"project": "p", "track": {"rows": [dict(row("asked", "waiting"), watching=True)]}}
+        html = self.draw(card)[0]["html"]
+        self.assertIn("⏸", html)
+        self.assertNotIn("🧪", html)
+
+    def test_the_rock_is_gated_on_motion_and_is_no_swing(self):
+        css = PAGE.read_text()
+        gate = css.index("@media (prefers-reduced-motion: no-preference)")
+        self.assertIn(".sign.rock", css[gate:css.index("</style>", gate)])
+        self.assertNotIn(".sign.rock", css[:gate])
+        self.assertNotRegex(css[:gate], r"animation:[^;]*rock")
+        # The left tilt of -6deg pulls the glyph's corner about 0.11em left: it rests at least that far right.
+        keys = re.search(r"@keyframes rock \{(.*)\}\s*\n", css).group(1)
+        shifts = [float(x) for x in re.findall(r"translateX\((-?[\d.]+)(?:em)?\)", keys)]
+        self.assertEqual(len(shifts), 2, keys)
+        self.assertTrue(0.12 <= min(shifts) and max(shifts) <= 0.2, shifts)
+        self.assertNotEqual(re.search(r"@keyframes rock \{(.*?)\n", css).group(1),
+                            re.search(r"@keyframes swing \{(.*?)\n", css).group(1))
 
     def test_the_stylesheet_swings_only_where_motion_is_welcome(self):
         css = PAGE.read_text()

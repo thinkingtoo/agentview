@@ -16,6 +16,9 @@ import lines
 from test_projects import TrackFixtures, sess
 
 
+JOB = dict(turnOver=True, bgTasks=[{"label": "watch", "since": 3.0}])   # a turn over, a job of its own open
+
+
 class Fixtures(TrackFixtures):
     def setUp(self):
         super().setUp()
@@ -263,7 +266,7 @@ class Rows(Fixtures):
         got = self.elsewhere(self.boss("b", self.loom, "checkout"),
                              self.worker("w", self.loom, "checkout", name="Mei"),
                              self.worker("v", self.loom, "checkout", name="Odile"))
-        self.assertEqual(got, [{"name": "Mei", "task": "#09c waiver and token", "busy": True}])
+        self.assertEqual(got, [{"name": "Mei", "task": "#09c waiver and token", "busy": True, "watching": False}])
 
     def test_a_worker_gone_or_struck_through_or_with_no_task_is_not_shown_elsewhere(self):
         self.goal("[ ] the cart keeps a card")
@@ -299,13 +302,13 @@ class Panes(Fixtures):
 
 class Working(Panes):
     """Who counts as working (ticket boss-track/06): a busy or waiting session
-    that is no concierge. Idle is never work, and `shell` (idle with a job) neither."""
+    that is no concierge. Idle is never work. Idle with a job open is no work either,
+    but its worker is listed with the 🧪 sign (ticket boss-track/18, class `Watching`)."""
 
-    def test_an_idle_or_shell_worker_is_on_no_line_and_not_elsewhere(self):
+    def test_an_idle_worker_with_no_job_is_on_no_line_and_not_elsewhere(self):
         self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"), ("Ines", "#18 MERGED, done, idle"))
         sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle"),
-                    self.at("v", "Odile", "%32", status="idle", bg=True),      # `shell`: idle with a job
-                    self.at("u", "Ines", "%33", status="idle"))
+                    self.at("v", "Odile", "%32", status="idle"), self.at("u", "Ines", "%33", status="idle"))
         self.assertEqual(self.elsewhere(*sessions), [])
         self.assertEqual([r["state"] for r in self.rows(*sessions)], ["planned", "planned"])
 
@@ -314,7 +317,7 @@ class Working(Panes):
         sessions = (self.boss("b", self.loom, "checkout"),
                     self.at("w", "Mei", "%31", status="waiting"), self.at("v", "Odile", "%32"))
         self.assertEqual([r["state"] for r in self.rows(*sessions)], ["worked", "planned"])
-        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": False}])
+        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": False, "watching": False}])
 
     def test_a_concierge_is_never_a_worker_by_its_pane_mark_or_by_its_task(self):
         self.roster_of(("Mei", "#09c waiver"), ("Odile", "concierge"), ("Ines", "paste/12 the reader"))
@@ -324,16 +327,17 @@ class Working(Panes):
         self.assertEqual(self.elsewhere(*sessions), [])
         self.assertEqual([r["state"] for r in self.rows(*sessions)], ["planned", "planned"])
 
-    def test_a_card_shaped_on_the_live_one_lists_only_the_busy_worker(self):
-        # insights-bento at 19:2x: a concierge, a worker in `shell`, two merged and idle, one busy.
-        self.roster_of(("Ana", "concierge"), ("Bo", "CTX-OVER; idle"), ("Cy", "#18 MERGED 44273ab, fix round"),
+    def test_a_card_shaped_on_the_live_one_lists_the_busy_worker_and_the_one_watching_a_job(self):
+        # insights-bento at 19:2x: a concierge, a worker with a job open, two merged and idle, one busy.
+        self.roster_of(("Ana", "concierge"), ("Bo", "#09c waiver, tests running"), ("Cy", "#18 MERGED 44273ab, fix round"),
                        ("Di", "#10 MERGED 38b79b3. Done, idle"), ("Ed", "#15 MERGED 980d907. Done, idle"))
         fleet._pane_roles = lambda now=None: frozenset({"%31"})
         got = self.elsewhere(self.boss("b", self.loom, "checkout"),
-                             self.at("a", "Ana", "%31", status="idle"), self.at("b", "Bo", "%32", status="idle", bg=True),
+                             self.at("a", "Ana", "%31", status="idle"), self.at("bo", "Bo", "%32", status="idle", **JOB),
                              self.at("c", "Cy", "%33"), self.at("d", "Di", "%34", status="idle"),
                              self.at("e", "Ed", "%35", status="idle"))
-        self.assertEqual(got, [{"name": "Cy", "task": "#18 MERGED 44273ab, fix round", "busy": True}])
+        self.assertEqual(got, [{"name": "Bo", "task": "#09c waiver, tests running", "busy": False, "watching": True},
+                               {"name": "Cy", "task": "#18 MERGED 44273ab, fix round", "busy": True, "watching": False}])
 
 
 class Stamped(Panes):
@@ -365,7 +369,15 @@ class Stamped(Panes):
         got = self.track({"w": "paste/12 the reader, tests red", "v": "waiting for review of PR 248"},
                          self.at("w", "Mei", "%31"), self.at("v", "Odile", "%32"))
         self.assertEqual([r["state"] for r in got["rows"]], ["worked", "planned"])
-        self.assertEqual(got["elsewhere"], [{"name": "Odile", "task": "waiting for review of PR 248", "busy": True}])
+        self.assertEqual(got["elsewhere"], [{"name": "Odile", "task": "waiting for review of PR 248", "busy": True, "watching": False}])
+
+    def test_a_stamped_worker_watching_a_job_with_no_ref_in_its_words_is_listed_elsewhere_watching(self):
+        # Naya, 2026-11-13: no Roster table, words that name `private-root-4 / #467` and no `feature/NN`.
+        self.prose_roster()
+        got = self.track({"w": "waiting for the full run of #467, then PR"},
+                         self.at("w", "Mei", "%31", status="idle", **JOB))
+        self.assertEqual(got["elsewhere"], [{"name": "Mei", "task": "waiting for the full run of #467, then PR", "busy": False, "watching": True}])
+        self.assertEqual([r["state"] for r in got["rows"]], ["planned", "planned"])
 
     def test_the_tables_task_wins_over_the_last_line_and_a_session_outside_the_table_needs_a_stamp(self):
         self.roster_of(("Mei", "paste/12 the reader"))
@@ -387,9 +399,9 @@ class Stamped(Panes):
         got = self.track({}, self.at("w", "Mei", "%31", title="Fixing the reader"),
                          self.at("v", "Odile", "%32", prompt="Review PR 248\nand report back"),
                          self.at("u", "Anik", "%33"))
-        self.assertEqual(got["elsewhere"], [{"name": "Anik", "task": "working", "busy": True},
-                                            {"name": "Mei", "task": "Fixing the reader", "busy": True},
-                                            {"name": "Odile", "task": "Review PR 248", "busy": True}])
+        self.assertEqual(got["elsewhere"], [{"name": "Anik", "task": "working", "busy": True, "watching": False},
+                                            {"name": "Mei", "task": "Fixing the reader", "busy": True, "watching": False},
+                                            {"name": "Odile", "task": "Review PR 248", "busy": True, "watching": False}])
 
     def test_a_table_cell_that_says_idle_wins_over_the_stamp(self):
         """Ticket boss-track/11: only an empty cell falls through."""
@@ -402,15 +414,15 @@ class Stamped(Panes):
         got = self.track({"w": "paste/12 the reader"},
                          self.at("w", "Mei", "%31"), self.at("v", "Odile", "%32", title="Reader"))
         self.assertEqual([r["state"] for r in got["rows"]], ["worked", "planned"])
-        self.assertEqual(got["elsewhere"], [{"name": "Odile", "task": "Reader", "busy": True}])
+        self.assertEqual(got["elsewhere"], [{"name": "Odile", "task": "Reader", "busy": True, "watching": False}])
 
     def test_the_last_line_wins_over_the_title_and_the_title_over_the_prompt(self):
         self.prose_roster()
         got = self.track({"w": "waiting for review of PR 248"},
                          self.at("w", "Mei", "%31", title="Fixing the reader", prompt="go"),
                          self.at("v", "Odile", "%32", title="Reader", prompt="go"))
-        self.assertEqual(got["elsewhere"], [{"name": "Mei", "task": "waiting for review of PR 248", "busy": True},
-                                            {"name": "Odile", "task": "Reader", "busy": True}])
+        self.assertEqual(got["elsewhere"], [{"name": "Mei", "task": "waiting for review of PR 248", "busy": True, "watching": False},
+                                            {"name": "Odile", "task": "Reader", "busy": True, "watching": False}])
 
     def test_an_idle_stamped_worker_is_shown_nowhere(self):
         self.prose_roster()
@@ -420,15 +432,15 @@ class Stamped(Panes):
 
 class Busy(Panes):
     """Which hammers swing (ticket boss-track/17): a worker whose turn is in flight.
-    A question open (`waiting`) is still; so is a finished turn with a job open
-    (that session is no worker at all, ticket boss-track/08, so it has no hammer to still)."""
+    A question open (`waiting`) is a still hammer; a finished turn with a job open
+    is a worker since ticket boss-track/18, shown with 🧪, never a swinging hammer."""
 
     def test_a_busy_worker_makes_its_row_and_its_elsewhere_entry_busy(self):
         self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"))
         sessions = (self.boss("b", self.loom, "checkout"),
                     self.at("w", "Mei", "%31"), self.at("v", "Odile", "%32"))
         self.assertEqual([r["busy"] for r in self.rows(*sessions)], [True, False])
-        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": True}])
+        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": True, "watching": False}])
 
     def test_a_worker_with_a_question_open_is_worked_but_not_busy(self):
         self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"))
@@ -436,15 +448,14 @@ class Busy(Panes):
                     self.at("w", "Mei", "%31", status="waiting"), self.at("v", "Odile", "%32", status="waiting"))
         rows = self.rows(*sessions)
         self.assertEqual([(r["state"], r["busy"]) for r in rows], [("worked", False), ("planned", False)])
-        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": False}])
+        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": False, "watching": False}])
 
-    def test_a_busy_session_whose_turn_is_over_with_a_job_open_swings_nowhere(self):
+    def test_a_session_whose_turn_is_over_with_a_job_open_is_worked_and_not_busy(self):
         self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"))
-        job = dict(turnOver=True, bgTasks=[{"label": "watch", "since": 3.0}])
         sessions = (self.boss("b", self.loom, "checkout"),
-                    self.at("w", "Mei", "%31", **job), self.at("v", "Odile", "%32", **job))
-        self.assertTrue(all(not r["busy"] for r in self.rows(*sessions)))
-        self.assertEqual(self.elsewhere(*sessions), [])
+                    self.at("w", "Mei", "%31", **JOB), self.at("v", "Odile", "%32", **JOB))
+        self.assertEqual([(r["state"], r["busy"]) for r in self.rows(*sessions)], [("worked", False), ("planned", False)])
+        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": False, "watching": True}])
 
     def test_a_row_with_several_workers_is_busy_when_any_one_is(self):
         self.roster_of(("Mei", "paste/12 the reader"), ("Odile", "paste/12 the copy button"))
@@ -459,10 +470,80 @@ class Busy(Panes):
         self.roster_of(("Mei", "#09c waiver"))
         sessions = (self.boss("b", self.loom, "checkout", name="Mei", status="busy"),
                     self.at("w", "Mei", "%31", status="waiting"))
-        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": False}])
+        self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": False, "watching": False}])
 
     def test_a_row_nobody_works_on_is_not_busy(self):
         self.assertEqual([r["busy"] for r in self.rows()], [False, False])
+
+
+class Watching(Panes):
+    """A worker whose turn is over with a job of its own open keeps the 🧪 sign
+    on its objective (ticket boss-track/18)."""
+
+    def test_idle_with_a_job_open_marks_its_row_watching_and_not_busy(self):
+        self.roster_of(("Mei", "paste/12 the reader"))
+        row = self.rows(self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle", **JOB))[0]
+        self.assertEqual((row["state"], row["busy"], row["watching"], row["tickets"][0]["workers"]),
+                         ("worked", False, True, ["Mei"]))
+
+    def test_a_row_whose_workers_all_watch_jobs_is_worked_not_waiting(self):
+        self.roster_of(("Mei", "paste/12 the reader"), ("Odile", "paste/12 the copy button"))
+        sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle", **JOB),
+                    self.at("v", "Odile", "%32", **JOB))
+        self.assertEqual([(r["state"], r["busy"], r["watching"]) for r in self.rows(*sessions)],
+                         [("worked", False, True), ("planned", False, False)])
+
+    def test_one_busy_worker_beside_a_watching_one_swings_the_row(self):
+        self.roster_of(("Mei", "paste/12 the reader"), ("Odile", "paste/12 the copy button"))
+        sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle", **JOB),
+                    self.at("v", "Odile", "%32"))
+        self.assertTrue(self.rows(*sessions)[0]["busy"])
+
+    def test_a_row_of_a_blocked_ticket_is_worked_when_its_only_worker_watches_a_job(self):
+        self.ticket("paste/13", blocked="paste/12")
+        self.goal("[ ] paste/13 done")
+        self.roster_of(("Mei", "paste/13 the copy button"))
+        sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle", **JOB))
+        self.assertEqual([(r["state"], r["busy"]) for r in self.rows(*sessions)], [("worked", False)])
+        self.assertEqual(self.states(self.boss("b", self.loom, "checkout"))[0][1], "waiting")
+
+    def test_a_watching_worker_whose_roster_cell_says_idle_stays_out(self):
+        self.roster_of(("Mei", "idle"))
+        sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle", **JOB))
+        self.assertEqual(self.elsewhere(*sessions), [])
+        self.assertEqual(self.rows(*sessions)[0]["state"], "planned")
+
+    def test_the_row_is_watching_only_when_every_worker_of_the_row_watches(self):
+        self.roster_of(("Mei", "paste/12 the reader"), ("Odile", "paste/12 the copy button"))
+        for mei, odile, busy, watching in (
+                (dict(status="idle", **JOB), dict(status="idle", **JOB), False, True),
+                (dict(status="idle", **JOB), dict(status="busy"), True, False),         # swinging beats the watching sign
+                (dict(status="idle", **JOB), dict(status="waiting"), False, False)):    # a still hammer beats it
+            with self.subTest(odile=odile["status"]):
+                sessions = (self.boss("b", self.loom, "checkout"),
+                            self.at("w", "Mei", "%31", **mei), self.at("v", "Odile", "%32", **odile))
+                row = self.rows(*sessions)[0]
+                self.assertEqual((row["busy"], row["watching"]), (busy, watching))
+
+    def test_each_elsewhere_entry_carries_its_own_sign(self):
+        self.roster_of(("Mei", "#09c waiver"), ("Odile", "#10 reader"), ("Ines", "#11 copy"))
+        sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle", **JOB),
+                    self.at("v", "Odile", "%32"), self.at("u", "Ines", "%33", status="waiting"))
+        self.assertEqual([(e["name"], e["busy"], e["watching"]) for e in self.elsewhere(*sessions)],
+                         [("Ines", False, False), ("Mei", False, True), ("Odile", True, False)])
+
+    def test_idle_with_no_job_stays_out(self):
+        self.roster_of(("Mei", "paste/12 the reader"))
+        sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle"))
+        self.assertEqual(self.elsewhere(*sessions), [])
+        self.assertEqual(self.rows(*sessions)[0]["state"], "planned")
+
+    def test_a_concierge_and_a_boss_with_a_job_open_stay_out(self):
+        self.roster_of(("Mei", "#09c waiver"), ("Odile", "concierge"))
+        fleet._pane_roles = lambda now=None: frozenset({"%31"})
+        sessions = (self.boss("b", self.loom, "checkout", status="idle", **JOB),
+                    self.at("w", "Mei", "%31", status="idle", **JOB), self.at("v", "Odile", "%32", status="idle", **JOB))
+        self.assertEqual(self.elsewhere(*sessions), [])
 
 
 if __name__ == "__main__":
