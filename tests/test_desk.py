@@ -117,6 +117,13 @@ class Ready(Case):
         self.ready(272, "sweatshop-ai/sheaf", "x", "merge", "--after", "262")
         self.assertIn("; must go after #262", self.text())
 
+    def test_an_item_cannot_go_after_itself(self):
+        self.pr("sweatshop-ai/sheaf", 272)
+        got = self.ready(272, "sweatshop-ai/sheaf", "x", "merge", "--after", "272")
+        self.assertEqual(got.returncode, 1)
+        self.assertIn("is the PR itself", got.stderr)
+        self.assertFalse(self.page.exists())
+
     def test_a_recommendation_outside_the_three_is_refused(self):
         self.pr("sweatshop-ai/sheaf", 272)
         self.assertEqual(self.ready(272, "sweatshop-ai/sheaf", "x", "yes").returncode, 1)

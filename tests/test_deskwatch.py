@@ -243,7 +243,7 @@ class Refused(Case):
         self.tick_box(272)
         deskwatch.tick()
         self.assertEqual(self.merge_calls(), [])
-        self.assertIn("Not merged: #262 must go in first", self.item(272).block)
+        self.assertIn("Not merged: #262 was closed without merging", self.item(272).block)
 
     def test_an_after_pr_gh_cannot_find_refuses_the_press(self):
         self.pr(272)
@@ -252,6 +252,19 @@ class Refused(Case):
         deskwatch.tick()
         self.assertEqual(self.merge_calls(), [])
         self.assertFalse(self.item(272).ticked)
+
+    def test_an_edited_pinned_line_keeps_its_order(self):
+        self.pr(262)
+        self.pr(272)
+        self.hand_over(272, after=262)
+        deskfile.edit(lambda t: t.replace("; must go after #262", "; must go after #262 (Thierry: keep)"))
+        self.assertEqual(self.item(272).after, 262)
+
+    def test_an_order_in_a_comment_is_not_an_order(self):
+        self.pr(272)
+        self.hand_over(272)
+        deskfile.edit(lambda t: t.replace("  - Handed over", "  <!-- - Pinned commit: x; must go after #9 -->\n  - Handed over"))
+        self.assertEqual(self.item(272).after, 0)
 
     def test_a_pr_that_is_not_mergeable_is_refused_with_githubs_word(self):
         self.pr(272, mergeable="CONFLICTING")

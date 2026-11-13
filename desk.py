@@ -134,6 +134,8 @@ def ready(repo, n, what, rec, why="", after=None, by="a session"):
         raise Refused("--what says nothing")
     if after is not None:
         after = check_number(after)
+        if after == n:
+            raise Refused(f"--after {after} is the PR itself")
     state, head, base = pr_head(repo, n)
     if state != "OPEN":
         raise Refused(f"{key(repo, n)} is not open: GitHub says {state}")

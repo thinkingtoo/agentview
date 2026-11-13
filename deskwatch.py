@@ -159,6 +159,8 @@ def check_after(k, repo):
         first = view(repo, it.after)
     except Unsure as why:
         raise NotMerged(f"GitHub could not be asked about #{it.after}: {why}") from None
+    if first["state"] == "CLOSED":
+        raise NotMerged(f"#{it.after} was closed without merging; hand this over again without --after")
     if first["state"] != "MERGED":
         raise NotMerged(f"#{it.after} must go in first")
 
@@ -180,7 +182,8 @@ def check_and_merge(k, pinned):
             raise NotMerged(f"the PR is {pr['state'].lower()}, not open")
         if pr["headRefOid"] != pinned:
             raise NotMerged(f"the branch changed after the review (reviewed {pinned[:7]}, now {pr['headRefOid'][:7]})")
-        check_after(k, repo)
+        if not waited:
+            check_after(k, repo)
         if pr.get("mergeable") != "UNKNOWN":
             break
         if waited < WAIT_MAX // WAIT_STEP:
@@ -192,6 +195,7 @@ def check_and_merge(k, pinned):
     now = item(k)                                           # the person may have taken the press back while we waited
     if not now or not now.ticked or now.pinned != pinned:
         raise TakenBack("the press was taken back before the merge")
+    check_after(k, repo)                                    # handed over again with an order while we waited
     code, out = gh("pr", "merge", str(n), "-R", repo, "--merge", "--match-head-commit", pinned)
     after = view(repo, n)                                   # an unreadable answer leaves the press open
     for _ in range(POST_POLLS if code == 0 else 0):         # accepted, but GitHub may still show it open for a moment
