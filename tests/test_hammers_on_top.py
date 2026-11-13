@@ -8,8 +8,8 @@ done rows a hammer sat below twelve rows. They now sit right after the worked
 rows, so every hammer is together on top (boss-track/13).
 """
 import json
-import re
 import pathlib
+import re
 import shutil
 import subprocess
 import unittest
@@ -50,7 +50,6 @@ class HammersOnTop(unittest.TestCase):
     def order(self, card):
         """The text of each line in the order the card shows them."""
         html = self.draw(card)[0]["html"]
-        import re
         return re.findall(r"(?:<span class=\"sign[^\"]*\"[^>]*>[^<]*</span> ([^<]*?)(?:</button>|<br>|</span>))", html)
 
     def test_an_elsewhere_hammer_comes_after_the_worked_rows_and_before_the_rest(self):
@@ -113,7 +112,6 @@ class HammersSwing(unittest.TestCase):
 
     def swung(self, card):
         """`{line text: whether its sign carries swing}`, for every line of the card."""
-        import re
         html = self.draw(card)[0]["html"]
         return {text: "swing" in cls.split() for cls, text in re.findall(
             r'<span class="(sign[^"]*)"[^>]*>[^<]*</span> ([^<]*?)(?:</button>|<br>|</span>)', html)}
@@ -129,7 +127,6 @@ class HammersSwing(unittest.TestCase):
 
     def test_a_redrawn_hammer_carries_on_at_the_clock_phase_of_the_swing(self):
         card = {"project": "p", "track": {"rows": [dict(row("w", "worked"), busy=True)]}}
-        import re
         delay = int(re.search(r'animation-delay:-(\d+)ms', self.draw(card)[0]["html"]).group(1))
         self.assertTrue(0 <= delay < 1200)
         self.assertIn("1200ms", PAGE.read_text())
@@ -149,7 +146,6 @@ class HammersSwing(unittest.TestCase):
                      dict(row("q row", "worked"), busy=False, watching=False)],
             "elsewhere": [{"name": "A", "task": "a", "busy": False, "watching": True},
                           {"name": "B", "task": "b", "busy": False, "watching": False}]}}
-        import re
         html = self.draw(card)[0]["html"]
         got = {text: (cls.split(), glyph) for cls, glyph, text in re.findall(
             r'<span class="(sign[^"]*)"[^>]*>([^<]*)</span> ([^<]*?)(?:</button>|<br>|</span>)', html)}
@@ -161,7 +157,9 @@ class HammersSwing(unittest.TestCase):
 
     def test_the_waiting_row_never_shows_the_flask(self):
         card = {"project": "p", "track": {"rows": [dict(row("asked", "waiting"), watching=True)]}}
-        self.assertIn("⏸", self.draw(card)[0]["html"])
+        html = self.draw(card)[0]["html"]
+        self.assertIn("⏸", html)
+        self.assertNotIn("🧪", html)
 
     def test_the_rock_is_gated_on_motion_and_is_no_swing(self):
         css = PAGE.read_text()
@@ -169,6 +167,9 @@ class HammersSwing(unittest.TestCase):
         self.assertIn(".sign.rock", css[gate:css.index("</style>", gate)])
         self.assertNotIn(".sign.rock", css[:gate])
         self.assertNotRegex(css[:gate], r"animation:[^;]*rock")
+        # The left tilt of -9deg pulls a 1em glyph's corner 0.14em left: it must start that far right.
+        rests = [float(x) for x in re.findall(r"translateX\(([\d.]+)em\)", re.search(r"@keyframes rock \{(.*?)\n", css).group(1))]
+        self.assertTrue(rests and min(rests) >= 0.14, rests)
         self.assertNotEqual(re.search(r"@keyframes rock \{(.*?)\n", css).group(1),
                             re.search(r"@keyframes swing \{(.*?)\n", css).group(1))
 

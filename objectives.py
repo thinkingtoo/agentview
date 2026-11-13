@@ -165,7 +165,7 @@ def busy_names(sessions, crew, is_concierge):
 
 def watching_names(sessions, crew, is_concierge):
     """The names of the crew (`workers`) whose turn is over with a job of their
-    own open: their sign is 🧪, still (ticket boss-track/18). Same admission as
+    own open: their sign is 🧪, rocking (ticket boss-track/18). Same admission as
     `busy_names`; a session is never both."""
     return {m["name"] for m in sessions
             if m.get("name") in crew and not m.get("boss") and not is_concierge(m) and watching(m)}
@@ -189,7 +189,7 @@ def workers(track, sessions, is_concierge, owner_of, boss_panes):
     says idle still wins over the stamp. The boss and a concierge, by the pane's
     mark or a roster task of "concierge", are never one. A worker whose turn is
     over with a job of its own open is listed like a working one (`watching`):
-    its hammer stays still (ticket boss-track/18)."""
+    its sign is 🧪, never a swinging hammer (ticket boss-track/18)."""
     table = projects.roster_tasks(track)
     out = {}
     for m in sessions:

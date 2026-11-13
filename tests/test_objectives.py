@@ -303,7 +303,7 @@ class Panes(Fixtures):
 class Working(Panes):
     """Who counts as working (ticket boss-track/06): a busy or waiting session
     that is no concierge. Idle is never work. Idle with a job open is no work either,
-    but its worker is listed with a still hammer (ticket boss-track/18, class `Watching`)."""
+    but its worker is listed with the 🧪 sign (ticket boss-track/18, class `Watching`)."""
 
     def test_an_idle_worker_with_no_job_is_on_no_line_and_not_elsewhere(self):
         self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"), ("Ines", "#18 MERGED, done, idle"))
@@ -371,7 +371,7 @@ class Stamped(Panes):
         self.assertEqual([r["state"] for r in got["rows"]], ["worked", "planned"])
         self.assertEqual(got["elsewhere"], [{"name": "Odile", "task": "waiting for review of PR 248", "busy": True, "watching": False}])
 
-    def test_a_stamped_worker_watching_a_job_with_no_ref_in_its_words_is_listed_elsewhere_still(self):
+    def test_a_stamped_worker_watching_a_job_with_no_ref_in_its_words_is_listed_elsewhere_watching(self):
         # Naya, 2026-11-13: no Roster table, words that name `private-root-4 / #467` and no `feature/NN`.
         self.prose_roster()
         got = self.track({"w": "waiting for the full run of #467, then PR"},
@@ -433,7 +433,7 @@ class Stamped(Panes):
 class Busy(Panes):
     """Which hammers swing (ticket boss-track/17): a worker whose turn is in flight.
     A question open (`waiting`) is still; so is a finished turn with a job open
-    (a worker since ticket boss-track/18, whose hammer stays still)."""
+    (a worker since ticket boss-track/18, shown with 🧪, never a swinging hammer)."""
 
     def test_a_busy_worker_makes_its_row_and_its_elsewhere_entry_busy(self):
         self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"))
@@ -450,7 +450,7 @@ class Busy(Panes):
         self.assertEqual([(r["state"], r["busy"]) for r in rows], [("worked", False), ("planned", False)])
         self.assertEqual(self.elsewhere(*sessions), [{"name": "Mei", "task": "#09c waiver", "busy": False, "watching": False}])
 
-    def test_a_session_whose_turn_is_over_with_a_job_open_is_worked_and_still(self):
+    def test_a_session_whose_turn_is_over_with_a_job_open_is_worked_and_not_busy(self):
         self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"))
         sessions = (self.boss("b", self.loom, "checkout"),
                     self.at("w", "Mei", "%31", **JOB), self.at("v", "Odile", "%32", **JOB))
@@ -480,16 +480,18 @@ class Watching(Panes):
     """A worker whose turn is over with a job of its own open keeps a still hammer
     on its objective (ticket boss-track/18)."""
 
-    def test_idle_with_a_job_open_hammers_its_row_and_is_still(self):
+    def test_idle_with_a_job_open_marks_its_row_watching_and_not_busy(self):
         self.roster_of(("Mei", "paste/12 the reader"))
         row = self.rows(self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle", **JOB))[0]
-        self.assertEqual((row["state"], row["busy"], row["tickets"][0]["workers"]), ("worked", False, ["Mei"]))
+        self.assertEqual((row["state"], row["busy"], row["watching"], row["tickets"][0]["workers"]),
+                         ("worked", False, True, ["Mei"]))
 
     def test_a_row_whose_workers_all_watch_jobs_is_worked_not_waiting(self):
         self.roster_of(("Mei", "paste/12 the reader"), ("Odile", "paste/12 the copy button"))
         sessions = (self.boss("b", self.loom, "checkout"), self.at("w", "Mei", "%31", status="idle", **JOB),
                     self.at("v", "Odile", "%32", **JOB))
-        self.assertEqual([(r["state"], r["busy"]) for r in self.rows(*sessions)], [("worked", False), ("planned", False)])
+        self.assertEqual([(r["state"], r["busy"], r["watching"]) for r in self.rows(*sessions)],
+                         [("worked", False, True), ("planned", False, False)])
 
     def test_one_busy_worker_beside_a_watching_one_swings_the_row(self):
         self.roster_of(("Mei", "paste/12 the reader"), ("Odile", "paste/12 the copy button"))
