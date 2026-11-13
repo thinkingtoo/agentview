@@ -39,6 +39,7 @@ GH = shutil.which("gh", path=SYSTEM_PATH)
 POLL = 3            # seconds between ticks
 WAIT_MAX = 60       # how long GitHub may answer UNKNOWN
 WAIT_STEP = 2
+POST_POLLS = 5
 CALL_TIMEOUT = 120
 sleep = time.sleep
 GRACE = 120         # seconds a press may still be completing at GitHub before a restart calls it not merged
@@ -106,8 +107,16 @@ def split(k):
     return repo, n
 
 
-def settle_page(k, text, untick=False):
-    deskfile.edit(lambda t: deskfile.settle(t, k, desk.flatten(text), untick))
+def finish(k, pinned, event, text, untick=False, **fields):
+    """Page and log together, under the desk lock. An item handed over again since the press began
+    is not written on, and a refusal that was never about it is not logged over its `ready`."""
+    with deskfile.locked():
+        cur = item(k)
+        same = bool(cur) and cur.pinned == pinned
+        if same:
+            deskfile.edit(lambda t: deskfile.settle(t, k, desk.flatten(text), untick, pinned))
+        if same or event == "merged":
+            desk.log(event, k, **fields)
 
 
 def merged_text(sha, already=False):
@@ -163,6 +172,13 @@ def check_and_merge(k, pinned):
         raise TakenBack("the press was taken back before the merge")
     code, out = gh("pr", "merge", str(n), "-R", repo, "--merge", "--match-head-commit", pinned)
     after = view(repo, n)                                   # an unreadable answer leaves the press open
+    for _ in range(POST_POLLS if code == 0 else 0):         # accepted, but GitHub may still show it open for a moment
+        if after["state"] != "OPEN":
+            break
+        sleep(WAIT_STEP)
+        after = view(repo, n)
+    if code == 0 and after["state"] == "OPEN":
+        raise Unsure("the merge was accepted but GitHub still shows the PR open")
     if after["state"] == "MERGED":
         if after["headRefOid"] != pinned:
             raise NotMerged(f"the PR is merged, but at {after['headRefOid'][:7]}, not the reviewed {pinned[:7]}")
@@ -185,13 +201,11 @@ def press(k):
     except TakenBack as why:
         record("refused", k, why=str(why))
     except NotMerged as why:
-        settle_page(k, f"Not merged: {why}", untick=True)
-        record("refused", k, why=str(why))
+        finish(k, pinned, "refused", f"Not merged: {why}", True, why=str(why))
     except Unsure as why:
         log.error("desk-press", why, key=k)
     else:
-        settle_page(k, merged_text(sha, already))
-        record("merged", k, sha=sha, pinned=pinned, already=already)
+        finish(k, pinned, "merged", merged_text(sha, already), sha=sha, already=already)
 
 
 def age(rec):
@@ -218,16 +232,13 @@ def recover():
         pinned = rec.get("pinned", "")
         if pr["state"] == "MERGED" and pr["headRefOid"] == pinned:
             sha = merge_sha(pr)
-            settle_page(k, merged_text(sha, already=True))
-            record("merged", k, sha=sha, recovered=True)
+            finish(k, pinned, "merged", merged_text(sha, already=True), sha=sha, recovered=True)
         elif pr["state"] == "MERGED":
             why = f"the PR was merged, but at {pr['headRefOid'][:7]}, not the reviewed {pinned[:7]}"
-            settle_page(k, f"Not merged: {why}", untick=True)
-            record("refused", k, why=why, recovered=True)
+            finish(k, pinned, "refused", f"Not merged: {why}", True, why=why, recovered=True)
         elif age(rec) >= GRACE:             # a merge that reached GitHub before the crash may still be completing
             why = "the press was interrupted before it finished; GitHub shows the PR not merged"
-            settle_page(k, f"Not merged: {why}", untick=True)
-            record("refused", k, why=why, recovered=True)
+            finish(k, pinned, "refused", f"Not merged: {why}", True, why=why, recovered=True)
 
 
 def tick():

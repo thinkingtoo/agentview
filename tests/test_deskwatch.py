@@ -53,6 +53,8 @@ if args[1] == "view":
 if os.path.exists(d + "/merge-fails"):
     print("GraphQL: Pull request is not mergeable", file=sys.stderr)
     sys.exit(1)
+if os.path.exists(d + "/merge-async"):
+    sys.exit(0)                                 # accepted, but GitHub keeps showing the PR open
 sha = args[args.index("--match-head-commit") + 1]
 if sha != pr["headRefOid"]:
     print("head commit changed", file=sys.stderr)
@@ -291,6 +293,35 @@ class Hostile(Case):
         self.assertIn("  - Not merged: my own note, please keep\n", block)
         self.assertNotIn("branch changed", block)
         self.assertRegex(block, r"Merged as 41678e3")
+
+
+class Meanwhile(Case):
+    def test_an_item_handed_over_again_during_the_press_is_not_written_on_nor_logged_over(self):
+        self.pr(272)
+        k = self.hand_over(272, SHA)
+        self.tick_box(272)
+        (self.prs / "unknown-272").write_text("1000")
+
+        def handed_over_again(_):
+            self.pr(272, head=SHA2)
+            self.hand_over(272, SHA2)
+        deskwatch.sleep = handed_over_again
+        deskwatch.tick()
+        self.assertEqual(self.events(k), ["ready", "pressing", "ready"])
+        self.assertEqual(self.item(272).pinned, SHA2)
+        self.assertFalse(self.item(272).ticked)
+        self.assertNotIn("Not merged", self.item(272).block)
+
+    def test_a_merge_gh_accepted_but_github_still_shows_open_is_not_called_refused(self):
+        self.pr(272)
+        k = self.hand_over(272)
+        self.tick_box(272)
+        (self.prs / "merge-async").write_text("")
+        deskwatch.tick()
+        self.assertEqual(self.sleeps, [2] * deskwatch.POST_POLLS)
+        self.assertEqual(self.events(k), ["ready", "pressing"])
+        self.assertTrue(self.item(272).ticked)
+        self.assertEqual(len(self.merge_calls()), 1)
 
 
 class Unknown(Case):

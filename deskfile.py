@@ -204,14 +204,16 @@ def drop(text, key):
 RESULT = re.compile(r"^  - (?:(?:Already merged|Merged)(?: as [0-9a-f]{7})? at \d\d:\d\d|Not merged: .*)$")
 
 
-def settle(text, key, result, untick=False):
+def settle(text, key, result, untick=False, pinned=None):
     """`text` with the result of a press written as the last sub-line of item `key` (the
-    last result sub-line of an earlier press is replaced), and its box unticked when `untick`. Text with
+    last result sub-line of an earlier press is replaced), and its box unticked when `untick`; with `pinned`, only an item still pinned at that commit. Text with
     no such item comes back as it was."""
     for k, start, end in _spans(text):
         if k != key:
             continue
         block = text[start:end]
+        if pinned is not None and parse(block)[0].pinned != pinned:      # the item was handed over again meanwhile
+            return text
         body = block.rstrip("\n")
         tail = block[len(body):] or "\n"
         kept = body.split("\n")
