@@ -40,6 +40,7 @@ POLL = 3            # seconds between ticks
 WAIT_MAX = 60       # how long GitHub may answer UNKNOWN
 WAIT_STEP = 2
 POST_POLLS = 5
+CANNOT = -1         # gh could not be run or timed out: what it did at GitHub is not known
 CALL_TIMEOUT = 120
 sleep = time.sleep
 GRACE = 120         # seconds a press may still be completing at GitHub before a restart calls it not merged
@@ -67,7 +68,7 @@ def gh(*args):
         got = subprocess.run([GH, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL,
                              timeout=CALL_TIMEOUT, env={**os.environ, "PATH": SYSTEM_PATH, "GH_PROMPT_DISABLED": "1"})
     except (OSError, subprocess.TimeoutExpired) as err:
-        return 1, str(err)
+        return CANNOT, str(err)
     return got.returncode, (got.stdout if got.returncode == 0 else got.stdout + got.stderr).strip()
 
 
@@ -113,9 +114,11 @@ def finish(k, pinned, event, text, untick=False, **fields):
     with deskfile.locked():
         cur = item(k)
         same = bool(cur) and cur.pinned == pinned
-        if same:
+        page = fields.pop("page", True)
+        if same and page:
             deskfile.edit(lambda t: deskfile.settle(t, k, desk.flatten(text), untick, pinned))
-        if same or event == "merged":
+        last = last_event(k)
+        if event == "merged" or not (last and last["event"] == "ready"):   # a newer hand-over already closed this press
             desk.log(event, k, **fields)
 
 
@@ -179,6 +182,8 @@ def check_and_merge(k, pinned):
         after = view(repo, n)
     if code == 0 and after["state"] == "OPEN":
         raise Unsure("the merge was accepted but GitHub still shows the PR open")
+    if code == CANNOT and after["state"] == "OPEN":
+        raise Unsure(f"the merge call did not finish: {desk.flatten(out, 120)}")
     if after["state"] == "MERGED":
         if after["headRefOid"] != pinned:
             raise NotMerged(f"the PR is merged, but at {after['headRefOid'][:7]}, not the reviewed {pinned[:7]}")
@@ -199,11 +204,12 @@ def press(k):
             raise NotMerged("the item names no pinned commit")
         sha, already = check_and_merge(k, pinned)
     except TakenBack as why:
-        record("refused", k, why=str(why))
+        finish(k, pinned, "refused", "", False, why=str(why), page=False)
     except NotMerged as why:
         finish(k, pinned, "refused", f"Not merged: {why}", True, why=str(why))
     except Unsure as why:
         log.error("desk-press", why, key=k)
+        record("pressing", k, pinned=pinned, again=True)       # the grace before recovery calls it unmerged starts now
     else:
         finish(k, pinned, "merged", merged_text(sha, already), sha=sha, already=already)
 
@@ -219,7 +225,7 @@ def recover():
     """Settle each press that began and never recorded a result. Never presses."""
     last = {}
     for rec in desk.history():
-        if rec["event"] in ("ready", "pressing", "merged", "refused"):
+        if rec["event"] in ("ready", "pressing", "merged", "refused", "withdrawn"):
             last[rec["key"]] = rec
     for k, rec in last.items():
         if rec["event"] != "pressing":

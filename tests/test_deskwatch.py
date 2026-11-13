@@ -319,9 +319,51 @@ class Meanwhile(Case):
         (self.prs / "merge-async").write_text("")
         deskwatch.tick()
         self.assertEqual(self.sleeps, [2] * deskwatch.POST_POLLS)
-        self.assertEqual(self.events(k), ["ready", "pressing"])
+        self.assertEqual(self.events(k), ["ready", "pressing", "pressing"])      # the second restarts the grace
         self.assertTrue(self.item(272).ticked)
         self.assertEqual(len(self.merge_calls()), 1)
+
+
+class Closing(Case):
+    def test_a_press_whose_item_was_withdrawn_meanwhile_is_still_closed_in_the_log(self):
+        self.pr(272, mergeable="CONFLICTING")
+        k = self.hand_over(272)
+        self.tick_box(272)
+        (self.prs / "unknown-272").write_text("1")
+        deskwatch.sleep = lambda s: desk.withdraw(*k.split("#"))
+        deskwatch.tick()
+        self.assertEqual(self.events(k), ["ready", "pressing", "withdrawn", "refused"])
+        n = len(self.calls())
+        deskwatch.tick()
+        self.assertEqual(len(self.calls()), n)                # nothing is asked of GitHub again
+
+    def test_a_withdrawn_item_ends_an_unsettled_press(self):
+        k = self.hand_over(272)
+        self.tick_box(272)
+        deskwatch.record("pressing", k, pinned=SHA)
+        desk.withdraw(*k.split("#"))
+        deskwatch.tick()
+        self.assertEqual(self.calls(), [])
+
+    def test_a_merge_call_that_timed_out_is_not_called_refused(self):
+        self.pr(272)
+        k = self.hand_over(272)
+        self.tick_box(272)
+        real = deskwatch.gh
+        deskwatch.gh = lambda *a: (deskwatch.CANNOT, "timed out") if a[:2] == ("pr", "merge") else real(*a)
+        self.addCleanup(setattr, deskwatch, "gh", real)
+        deskwatch.tick()
+        self.assertEqual(self.events(k), ["ready", "pressing", "pressing"])
+        self.assertTrue(self.item(272).ticked)
+
+    def test_a_press_taken_back_after_a_new_hand_over_logs_nothing_over_it(self):
+        self.pr(272)
+        k = self.hand_over(272)
+        self.tick_box(272)
+        (self.prs / "unknown-272").write_text("1")
+        deskwatch.sleep = lambda s: self.hand_over(272)
+        deskwatch.tick()
+        self.assertEqual(self.events(k), ["ready", "pressing", "ready"])
 
 
 class Unknown(Case):
