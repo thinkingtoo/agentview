@@ -55,7 +55,7 @@ class Poll(unittest.TestCase):
         self.assertEqual([f["key"] for f in got["flags"]], ["fake:a"])
         self.assertEqual([t["key"] for c in got["columns"] for t in c["sessions"]], ["fake:a"])
         self.assertEqual(sorted(got), ["banners", "build", "chime", "closed", "columns", "counts",
-                                       "flags", "kept", "pastes", "providers", "restore", "saved"])
+                                       "flags", "kept", "merges", "merges_ring", "pastes", "providers", "restore", "saved"])
         self.assertNotIn("blocks", got)
         self.assertEqual(sorted(got["counts"]), ["moving", "needs", "otherStuck"])
         self.assertIsInstance(got["banners"], list)
@@ -85,6 +85,31 @@ class Poll(unittest.TestCase):
         with mock.patch.object(server, "HERE", other):
             (other / "index.html").write_text("<html>other {{ZOOM}} {{HOME}} {{BUILD}}</html>")
             self.assertNotEqual(server.build(), before)
+
+    def _desk(self, *whens):
+        import deskfile
+        f = deskfile.path()
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(deskfile.SKELETON + "\n".join(
+            f"- [ ] Merge o/r#{n}: x\n  - Pinned commit: {'a' * 40}\n  - Handed over by Ciro, {w}.\n"
+            for n, w in enumerate(whens, 1)))
+
+    def test_the_roster_counts_the_desk_and_rings_for_it_once(self):
+        self.assertEqual((self.poll()["merges"], self.poll()["merges_ring"]), (0, None))
+        self._desk("2020-01-01 09:00", "2020-01-02 09:00")
+        first, second = self.poll(), self.poll()
+        self.assertEqual(first["merges"], 2)
+        self.assertIn("merge desk", first["merges_ring"].lower())
+        self.assertEqual((second["merges"], second["merges_ring"]), (2, None))
+
+    def test_the_merges_button_opens_the_desk_page(self):
+        with mock.patch("desk.page", return_value="http://127.0.0.1:1/x") as page:
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{self.httpd.server_address[1]}/api/desk_page", method="POST",
+                data=b"{}", headers={"X-Fleet": "1"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                self.assertEqual(json.load(r), {"ok": True, "url": "http://127.0.0.1:1/x"})
+        page.assert_called_once_with()
 
 
 if __name__ == "__main__":
