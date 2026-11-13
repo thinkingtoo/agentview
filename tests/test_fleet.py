@@ -98,6 +98,20 @@ class Summary(unittest.TestCase):
         self.assertEqual(summary["title"], "")
         self.assertTrue(summary["prompt"].startswith("# Nightly report"))
 
+    def test_the_newest_message_from_a_peer_session_gives_its_first_line(self):
+        """Ticket boss-track/22: a dispatch arrives as a meta user record whose `origin` is a peer, not as a typed prompt."""
+        def peer(body):
+            return {"type": "user", "isMeta": True, "message": {"role": "user", "content": "Another Claude session sent a message:\n<cross-session-message>\n" + body},
+                    "origin": {"kind": "peer", "name": "boss", "body": body}}
+        path = self.write([peer("\n  First task: review PR 9\nmore"), {"type": "user", "message": {"content": "a tool"}}, peer("Second task: fix the cart\nand report")])
+        summary = claude.scan_cached(path)
+        self.assertEqual((summary["dispatch"], summary["prompt"]), ("Second task: fix the cart", ""))
+
+    def test_a_typed_prompt_or_a_session_with_no_peer_message_has_no_dispatch(self):
+        path = self.write([{"type": "user", "message": {"content": "hello"}, "origin": {"kind": "human"}},
+                           {"type": "last-prompt", "lastPrompt": "hello"}])
+        self.assertEqual(claude.scan_cached(path)["dispatch"], "")
+
     def test_a_detached_head_is_not_a_branch(self):
         path = self.write([{"type": "user", "message": {}, "gitBranch": "HEAD"}])
         self.assertEqual(claude.scan_cached(path)["branch"], "")

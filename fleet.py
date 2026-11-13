@@ -451,7 +451,7 @@ def jump_to(p, s):
 # out and the row is still whole.
 DEFAULTS = {
     "name": "", "kind": "interactive", "tmux": "", "startedAt": 0, "routine": "",
-    "waitingFor": "", "boss": False, "bg": False, "title": "", "prompt": "",
+    "waitingFor": "", "boss": False, "bg": False, "title": "", "prompt": "", "dispatch": "",
     "branch": "", "track": "", "attach": "", "noJump": "",
 }
 
@@ -1020,7 +1020,7 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
                                          busy=busy, watch=watch)
                          if running else [])
         # Workers whose task no row's ticket carries: said by name and task, not guessed onto a row.
-        track["elsewhere"] = objectives.elsewhere(track["rows"], crew, busy, watch) if running else []
+        track["elsewhere"] = objectives.elsewhere(track["rows"], crew, busy, watch, objectives.said(rows, crew)) if running else []
     # The column of no project has no name to repeat.
     column_says = working.repeats(None if project is NO_PROJECT else name, about)
     made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says))

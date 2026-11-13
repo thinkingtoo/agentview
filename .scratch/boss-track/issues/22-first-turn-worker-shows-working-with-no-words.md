@@ -6,8 +6,10 @@
 
 **Decision (Tarek, 2026-11-13):** with no did, no title and no last prompt, show the first line of the newest dispatch the session received (the cross-session message in its transcript) before "working". First check that the transcript holds that message and in which record shape; build only on what is observed. Built in one PR with 21, after PR 48 merges.
 
-**Status:** ready-for-agent, after the record shape is checked
+**Record shape (observed in a real transcript, 2026-11-13):** a received cross-session message is a `type:"user"` record with `isMeta:true` and `origin:{kind:"peer", from, name, msg_id, body, ...}`. `origin.body` is the text, without the wrapper line and the tag. A `queue-operation` enqueue record carries the tagged text too and is not read.
 
-- [ ] The record shape of a received cross-session message is written here, from a real transcript -- evidence: a quoted record with identifiers redacted
-- [ ] A session with no did, title or prompt shows the first line of its newest dispatch; with any of the three it does not -- evidence: a test in `tests/test_objectives.py`
-- [ ] The transcript is read only for the tail the row already reads, never whole -- evidence: the reader's existing budget
+**Status:** done
+
+- [x] The record shape of a received cross-session message is written here, from a real transcript -- evidence: the paragraph above
+- [x] A session with no did, title or prompt shows the first line of its newest dispatch; with any of the three it does not -- evidence: `tests/test_objectives.py` class `Stamped`; the reader: `tests/test_fleet.py` class `Summary`
+- [x] The transcript is read only for the tail the row already reads, never whole -- evidence: `_dispatch` runs inside `_absorb`, no new read. A dispatch older than the tail is not found and the row says "working".
