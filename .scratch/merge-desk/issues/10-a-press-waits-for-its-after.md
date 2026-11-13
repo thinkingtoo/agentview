@@ -6,8 +6,8 @@
 
 **Claimed by:** Katya 2026-11-14 00:36
 
-**Status:** in-progress
+**Status:** done, on branch katya/10-after (not merged into dev)
 
-- [ ] A press of an item whose `after` PR is open is refused with that line, and the box unticks
-- [ ] Once N is merged, the same press merges
-- [ ] Tests use a fake `gh` on PATH, never the real GitHub
+- [x] A press of an item whose `after` PR is open is refused with that line, and the box unticks (test_a_press_whose_after_pr_is_open_is_refused_and_unticks_the_box passes)
+- [x] Once N is merged, the same press merges (test_once_the_after_pr_is_merged_the_same_press_merges passes)
+- [x] Tests use a fake `gh` on PATH, never the real GitHub (tests/test_deskwatch.py FAKE_GH; 126 passed across test_deskwatch, test_desk, test_deskinstall)
