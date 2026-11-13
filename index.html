@@ -481,6 +481,7 @@ let PROVIDERS = {};         // who answered the last poll, and who did not
 let PASTES = 0;             // the roster's count of Pastes waiting, anywhere
 let MERGES = 0;             // the roster's count of items waiting on the merge desk
 let DESK_RUNG = "";         // what the desk's daily ring said, shown under the header for a minute
+let DESK_FAILED = false;    // the server could not keep the day the desk rang: no more rings this page
 let DESK_RINGING = false;   // a ring is sounding and not yet reported to the server
 let KEPT = [];              // the roster's `kept`: Pastes of sessions no longer on the machine
 let COUNTS = {};            // the roster's header counts: needs, stuck, moving
@@ -645,17 +646,21 @@ function announce(flags) {
 // The server spends the day only when told the ring sounded: a muted chime or a browser holding
 // back sound leaves it due. The words stay on the page a minute, under the header.
 async function deskRing(text) {
-  if (typeof text !== "string" || !text || DESK_RINGING || !CHIME) return false;
+  // Overlapping polls and a second tab ask again before the server has the day: while the words are
+  // up, or the server could not keep the day, the ring is not played again.
+  if (typeof text !== "string" || !text || DESK_RINGING || DESK_RUNG || DESK_FAILED || !CHIME) return false;
   DESK_RINGING = true;
+  ANNOUNCED_AT = Date.now();      // before the sound: a stale-build reload waits for it
   try {
     if (!await ring()) return false;
     DESK_RUNG = text;
-    ANNOUNCED_AT = Date.now();
     setTimeout(() => { DESK_RUNG = ""; paint(); }, 60000);
     paint();
-    await fetch("/api/desk_rung", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" }, body: "{}" });
-    return true;
+    const r = await fetch("/api/desk_rung", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" }, body: "{}" });
+    if (!r.ok) DESK_FAILED = true;
+    return r.ok;
   } catch (e) {
+    DESK_FAILED = true;
     return false;
   } finally {
     DESK_RINGING = false;

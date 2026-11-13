@@ -24,7 +24,7 @@ HANDED = re.compile(r"Handed over by .*?, (\d{4}-\d\d-\d\d \d\d:\d\d)\.")
 def _waiting():
     try:
         return [i for i in deskfile.items() if not i.ticked]
-    except OSError:
+    except (OSError, ValueError):     # unreadable or not UTF-8: the roster must still answer
         return []
 
 

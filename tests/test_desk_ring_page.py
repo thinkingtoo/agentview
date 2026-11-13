@@ -13,9 +13,9 @@ import unittest
 PAGE = pathlib.Path(__file__).resolve().parent.parent / "index.html"
 
 HARNESS = """
-let CHIME = %s, DESK_RUNG = "", DESK_RINGING = false, ANNOUNCED_AT = 0, sounds = [], posts = [];
+let CHIME = %s, DESK_RUNG = %s, DESK_RINGING = false, DESK_FAILED = false, ANNOUNCED_AT = 0, sounds = [], posts = [];
 async function ring(){ sounds.push("ring"); return %s; }
-async function fetch(url){ posts.push(url); }
+async function fetch(url){ posts.push(url); return {ok: %s}; }
 function paint(){}
 function setTimeout(){}
 %s
@@ -26,11 +26,11 @@ function setTimeout(){}
 """
 
 
-def run(chime, arg, heard="true"):
+def run(chime, arg, heard="true", rung='""', ok="true"):
     src = PAGE.read_text()
     start = src.index("async function deskRing(text)")
     end = src.index("function drawSound()")
-    out = subprocess.run(["node", "-e", HARNESS % (chime, heard, src[start:end], arg)],
+    out = subprocess.run(["node", "-e", HARNESS % (chime, rung, heard, ok, src[start:end], arg)],
                          capture_output=True, text=True, check=True).stdout
     return json.loads(out)
 
@@ -50,6 +50,18 @@ class DeskRing(unittest.TestCase):
 
     def test_a_ring_the_browser_held_back_does_not_spend_the_day(self):
         self.assertEqual(run("true", '"The merge desk"', heard="false"), [False, "ring", "", "none"])
+
+    def test_words_still_up_mean_the_ring_is_not_played_again(self):
+        self.assertEqual(run("true", '"again"', rung='"earlier"'), [False, "silence", "earlier", "none"])
+
+    def test_a_server_that_cannot_keep_the_day_does_not_make_it_ring_on_every_poll(self):
+        out = run("true", '"words"', ok="false")
+        self.assertEqual(out, [False, "ring", "words", "/api/desk_rung"])
+
+    def test_the_stale_reload_is_held_off_before_the_sound(self):
+        src = PAGE.read_text()
+        body = src[src.index("async function deskRing"):src.index("function drawSound()")]
+        self.assertLess(body.index("ANNOUNCED_AT = Date.now()"), body.index("await ring()"))
 
     def test_the_button_is_beside_the_pastes_button_and_lights_none_of_the_counts(self):
         src = PAGE.read_text()
