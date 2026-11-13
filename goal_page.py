@@ -60,7 +60,7 @@ _LOCK = threading.Lock()
 _hub = {"at": None, "port": None, "why": ""}
 _paths = {}                     # goal file -> the page's path on the hub, or None
 _wanted = set()                 # the goal files the cards have asked for
-_boss = {}                      # goal file -> the session id of its track's boss, as the cards last said
+_boss = {}                      # goal file -> (session id of its track's boss, when a card last said so)
 _bound = {}                     # goal file -> (boss session, when) of the last `sheaf open` run for it
 _busy = [False]                 # a refresh is running
 
@@ -91,7 +91,7 @@ def forget():
 
 
 def _run(args, env=None):
-    """`(exit code, stdout)` of `sheaf ARGS` (with `env` added to the environment); a sheaf missing (`MISSING`), too
+    """`(exit code, stdout)` of `sheaf ARGS`, `env` added to its environment; a sheaf missing (`MISSING`), too
     slow (`TIMED_OUT`), with a hub that did not answer it (`SILENT`) or failing
     otherwise fails."""
     try:
@@ -153,34 +153,40 @@ def _address(goal, roots):
     return "/" + "/".join(quote(seg, safe="") for seg in (name, *real.relative_to(path).parts))
 
 
-def _entry(goal, address):
-    """The `docs.json` entry of the page at `address` (`/<root>/<path>`), or None:
-    none kept, unreadable, or not what sheaf writes."""
+def _entry(address):
+    """The `docs.json` entry of the page at `address` (`/<root>/<path>`): `{}` when
+    sheaf keeps none (no file, or none for the page), None when what it keeps
+    cannot be read, which is no reason to bind over settings not seen."""
     try:
         with docs_file().open(encoding="utf-8") as fh:
             got = json.load(fh)
+    except FileNotFoundError:
+        return {}
     except (OSError, ValueError):
         return None
-    entry = got.get(unquote(address.lstrip("/"))) if isinstance(got, dict) else None
-    return entry if isinstance(entry, dict) else None
+    if not isinstance(got, dict):
+        return None
+    entry = got.get(unquote(address.lstrip("/")))
+    return entry if isinstance(entry, dict) else {}
 
 
 def _settings(entry):
     """The `sheaf open` options that keep the page's stored settings: a re-render
-    records them anew, so what is not passed back is lost."""
+    records them anew, so what is not passed back is lost. Each is one `--flag=value`
+    word, so a value that starts with a dash is not read as an option."""
     out = []
     if not entry:
         return out
     if isinstance(entry.get("title"), str):
-        out += ["--title", entry["title"]]
+        out.append("--title=" + entry["title"])
     if entry.get("toc") in ("always", "auto", "never"):
-        out += ["--toc", entry["toc"]]
+        out.append("--toc=" + entry["toc"])
     width = entry.get("max_image_width")
     if isinstance(width, int) and not isinstance(width, bool) and width > 0:
-        out += ["--max-image-width", str(width)]
+        out.append(f"--max-image-width={width}")
     for key, flag in (("by", "--by"), ("for", "--for"), ("theme", "--theme")):
         if isinstance(entry.get(key), str):
-            out += [flag, entry[key]]
+            out.append(f"{flag}={entry[key]}")
     if entry.get("credit") is True:
         out.append("--credit")
     return out
@@ -196,8 +202,10 @@ def _bind(goal, address, boss, now, run):
         done = _bound.get(goal)
     if done and done[0] == boss and now - done[1] < RETRY:
         return
-    entry = _entry(goal, address)
-    target = entry.get("target") if entry else None
+    entry = _entry(address)
+    if entry is None or not projects.regular(goal):
+        return
+    target = entry.get("target")
     if isinstance(target, dict) and target.get("session") == boss:
         return
     with _LOCK:
@@ -234,9 +242,14 @@ def _refresh(now, run):
         with _LOCK:
             _hub.update(at=now, port=port, why=why)
             _paths.update(paths)
-            binds = [(g, paths[g], _boss[g]) for g in wanted if g in _boss and paths.get(g)]
+            # only a boss a card named in the last look: a track whose column is gone is bound to nobody
+            binds = [(g, paths[g], _boss[g][0]) for g in wanted
+                     if g in _boss and paths.get(g) and now - _boss[g][1] <= STATUS_EVERY]
         for goal, address, boss in (binds if port is not None else []):
-            _bind(goal, address, boss, now, run)
+            try:
+                _bind(goal, address, boss, now, run)
+            except Exception:           # one page's bind must not take the others' links away
+                pass
     except Exception:                   # whatever it was, the card says so and waits STATUS_EVERY
         with _LOCK:
             _hub.update(at=now, port=None, why=UNREADABLE)
@@ -263,7 +276,7 @@ def of(track, now, run=_run, start=_start, boss=None):
     with _LOCK:
         _wanted.add(goal)
         if boss:
-            _boss[goal] = boss
+            _boss[goal] = (boss, now)
         else:
             _boss.pop(goal, None)
         go = _stale(now) and not _busy[0]

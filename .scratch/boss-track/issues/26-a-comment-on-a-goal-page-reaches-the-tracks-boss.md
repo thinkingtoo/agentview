@@ -16,7 +16,7 @@
 
 **Where the binding belongs.** On the sheaf side nothing is missing: `--session` already attaches a page to any session. The missing party is whoever knows track → boss session, and that is agentview: the boss marker `~/.claude/pm/.boss-sessions/<session id>` names the track (`providers/claude.boss_marker`), and `_column` already holds the boss row (`projects.boss_tracks(rows)`) next to the call that builds the goal link. The boss itself could run `sheaf open` at registration (claude-boss, other team), but that leaves a boss already running (Ignacio) unbound, and a boss that restarts has a new session id while the page keeps the old one. agentview sees both.
 
-**Decision:** agentview binds. For each track that has a goal file and a boss row, when a hub runs and the page has a root, `goal_page` reads `docs.json` (read-only, like `roots.json`); if the page's entry holds no target, or one whose session is not the boss's, it runs `sheaf open GOAL --no-browser --agent claude-code --session <boss id>`, with `CLAUDE_CONFIG_DIR` = the config folder agentview reads sessions from, and the page's stored settings passed back (title, toc, max image width, by, for, theme, credit) so a re-render wipes nothing. Once per (goal, boss session); a failure is tried again after `RETRY` seconds, not on every poll. No boss running: the page is left as it is (never bound to nobody, never wiped).
+**Decision:** agentview binds. For each track that has a goal file and a boss row, when a hub runs and the page has a root, `goal_page` reads `docs.json` (read-only, like `roots.json`); if the page's entry holds no target, or one whose session is not the boss's, it runs `sheaf open GOAL --no-browser --agent claude-code --session <boss id>`, with `CLAUDE_CONFIG_DIR` = the config folder agentview reads sessions from (`pm_dir().parent`), and the page's stored settings passed back as `--flag=value` words (title, toc, max image width, by, for, theme, credit) so a re-render wipes nothing. Not repeated for the same boss within `RETRY` (300 s), worked or not; the page's entry is looked at on every refresh, so a render from another session is bound back after that. A `docs.json` that exists and cannot be read binds nothing. Only a boss a card named in the last look is bound (a track whose column is gone is left alone), and with two bosses on one track the smallest session id (`projects.boss_session`). No boss running: the page is left as it is (never bound to nobody, never wiped).
 
 The sheaf repo is not edited. No change is asked of it.
 
@@ -43,7 +43,8 @@ Not edited: claude-boss. Suggested change for Chiara: `with_body` and `set_next`
 
 ## Done when
 
-- [x] A goal page whose track has a running boss and no target is bound to that boss's session; a Tell on it reaches the boss -- evidence: tests in `tests/test_goal_page.py`,; the live page is checked once after the merge, by restarting agentview and reading `docs.json` (not done: nothing was run against the live hub)
+- [x] A goal page whose track has a running boss and no target is bound to that boss's session -- evidence: tests in `tests/test_goal_page.py` (class `Binding`), `test_context.py`
+- [ ] A Tell on a bound page reaches the boss -- evidence: to be checked once after the merge, by restarting agentview and reading `docs.json`; nothing was run against the live hub
 - [x] A page bound to another session is rebound to the boss; one already bound to the boss is left alone (no `sheaf open`) -- evidence: tests
 - [x] The page's settings survive the bind -- evidence: test passing stored settings back
 - [x] No boss, no hub, no root, or a failing `sheaf`: nothing runs or nothing breaks, the card as before -- evidence: tests
@@ -54,3 +55,7 @@ Not edited: claude-boss. Suggested change for Chiara: `with_body` and `set_next`
 **Known limit:** a page re-rendered by another session is taken back after `RETRY` (5 min) at the next look; in between, a Tell on it goes to that session.
 
 **Known limit:** a boss session whose config folder is not agentview's (`CLAUDE_CONFIG_DIR`) is not found by `sheaf open`; boss markers live under agentview's own `pm/`, so a boss that registered there is in its registry.
+
+**Reviews (PR 54):** Matt's code-review (Standards, Spec) and an Opus bug hunt ("Codex review 1", no P1). Fixed from them: a boss named by no card for a while is no longer bound (a finished track's page would have been rebound to a dead session); two bosses on one track no longer flip the bind (`boss_session`); a value starting with a dash is passed as `--flag=value`; an unreadable `docs.json` binds nothing; one bind raising no longer blanks every goal link; a deleted goal file is not bound.
+
+**Known limit (Opus):** if the hub dies between `sheaf status` and `sheaf open`, `sheaf open` starts a hub inside agentview's service cgroup, which an agentview restart then kills. sheaf has no flag to refuse starting one.

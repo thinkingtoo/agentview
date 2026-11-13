@@ -269,6 +269,13 @@ class Tracks(Cards):
         self.claude(self.boss("b", self.loom, "checkout"), sess("w", self.loom))
         self.assertEqual(asked, [("checkout", "b")])
 
+    def test_two_bosses_on_one_track_give_the_same_one_whichever_moved_last(self):
+        rows = [{"key": f"claude:{i}", "id": i, "boss": True, "provider": "claude", "track": "checkout"}
+                for i in ("b2", "b1")]
+        self.assertEqual(fleet.projects.boss_session(rows, "checkout"), "b1")
+        self.assertEqual(fleet.projects.boss_session(rows[::-1], "checkout"), "b1")
+        self.assertIsNone(fleet.projects.boss_session(rows, "other"))
+
     def test_only_a_goal_of_that_track_is_ever_read(self):
         # An identity comes from the page; a path in it must not walk out of the folder.
         (self.disk / "secret.goal.md").write_text("## Outcome\nNot for the card.\n")
