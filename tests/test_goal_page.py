@@ -10,6 +10,7 @@ waiting for it. The clock is passed in. Names are invented.
 """
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -445,6 +446,37 @@ class Binding(Fixture):
         goal_page.of("checkout", now=100, run=sheaf, start=started.append, boss=BOSS)
         self.assertEqual((sheaf.asked, sheaf.opened), ([], []))
         self.assertEqual(len(started), 1)
+
+
+class Scope(unittest.TestCase):
+    """`sheaf open` can start a hub; one started from agentview's service would die with its restart."""
+    def argv_of(self, args, missing=False):
+        seen = []
+
+        def fake(argv, **kw):
+            seen.append((argv, kw))
+            if missing and argv[0] == "systemd-run":
+                raise FileNotFoundError(argv[0])
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        real, subprocess_run = goal_page.subprocess.run, fake
+        goal_page.subprocess.run = subprocess_run
+        self.addCleanup(setattr, goal_page.subprocess, "run", real)
+        return goal_page._run(args, env={"CLAUDE_CONFIG_DIR": "/x"}), seen
+
+    def test_an_open_runs_in_a_scope_of_its_own_with_the_environment_it_was_given(self):
+        (code, _), seen = self.argv_of(["open", "g.md", "--no-browser"])
+        self.assertEqual(seen[0][0], [*goal_page.SCOPE, "sheaf", "open", "g.md", "--no-browser"])
+        self.assertEqual(goal_page.SCOPE[:3], ["systemd-run", "--user", "--scope"])
+        self.assertEqual(seen[0][1]["env"]["CLAUDE_CONFIG_DIR"], "/x")
+
+    def test_status_is_not_scoped(self):
+        _, seen = self.argv_of(["status"])
+        self.assertEqual(seen[0][0], ["sheaf", "status"])
+
+    def test_without_systemd_run_the_open_does_not_run_at_all(self):
+        (code, _), seen = self.argv_of(["open", "g.md"], missing=True)
+        self.assertEqual(code, goal_page.MISSING)
+        self.assertEqual([a[0][0] for a in seen], ["systemd-run"])
 
 
 if __name__ == "__main__":

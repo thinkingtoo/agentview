@@ -17,7 +17,9 @@ tells that one. So a track whose boss runs gets its page bound to that boss
 or one whose session is not the boss's, `sheaf open GOAL --no-browser --agent
 claude-code --session BOSS` records it, with the page's stored settings passed
 back so nothing of them is wiped. That is the one `sheaf open` run here, and only
-for a goal that has a boss and a root (boss-track/26).
+for a goal that has a boss and a root (boss-track/26). It runs in a systemd scope of its
+own (`SCOPE`): `sheaf open` starts a hub when none runs, and a hub in agentview's own
+cgroup would die with its restart.
 
 A goal whose root sheaf has not registered has no page yet; the card says so
 and how to give it one. sheaf takes a second or two to answer on a busy
@@ -36,6 +38,10 @@ from urllib.parse import quote, unquote
 import projects
 
 SHEAF = "sheaf"
+# `sheaf open` starts a hub when none runs (it has no flag to refuse), and a hub started from
+# agentview's service would sit in its cgroup and die with the next restart. So an open runs in a
+# scope of its own: any hub it starts lives outside. A host without systemd-run binds nothing.
+SCOPE = ["systemd-run", "--user", "--scope", "--quiet", "--"]
 STATUS_EVERY = 30               # seconds between two looks at the hub
 RETRY = 300                     # seconds before a bind that failed is tried again
 TIMEOUT = 10
@@ -91,11 +97,12 @@ def forget():
 
 
 def _run(args, env=None):
-    """`(exit code, stdout)` of `sheaf ARGS`, `env` added to its environment; a sheaf missing (`MISSING`), too
+    """`(exit code, stdout)` of `sheaf ARGS` (an `open` inside a scope of its own), `env` added to its environment; a sheaf missing (`MISSING`), too
     slow (`TIMED_OUT`), with a hub that did not answer it (`SILENT`) or failing
     otherwise fails."""
     try:
-        done = subprocess.run([SHEAF, *args], capture_output=True, text=True, errors="replace",
+        argv = [*SCOPE, SHEAF, *args] if args[:1] == ["open"] else [SHEAF, *args]
+        done = subprocess.run(argv, capture_output=True, text=True, errors="replace",
                               timeout=TIMEOUT, stdin=subprocess.DEVNULL,
                               env={**os.environ, **env} if env else None)
     except OSError:
