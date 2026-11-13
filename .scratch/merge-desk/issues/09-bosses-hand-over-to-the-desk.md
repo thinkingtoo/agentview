@@ -4,7 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Claimed by:** Santiago 2026-11-14 00:13
 
-- [ ] The boss skill's merge step names `desk ready`
-- [ ] A boss that wraps up lists its desk items in its wrap-up state
+**Status:** done
+
+- [x] The boss skill's merge step names `desk ready` (SKILL.md P13/P14; `test_a_merge_for_the_owner_goes_to_the_desk_not_to_an_ask` passes, PR 151)
+- [x] A boss that wraps up lists its desk items in its wrap-up state (Phase E step 4; `test_wrap_up_lists_the_desk_items_in_the_state_line` passes, PR 151)

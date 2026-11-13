@@ -15,6 +15,7 @@ from pathlib import Path
 import archive
 import context
 import desk
+import deskrelay
 import deskring
 import deskwatch
 import embedder
@@ -360,7 +361,17 @@ class Handler(BaseHTTPRequestHandler):
               "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep",
               "paste_copied", "paste_done", "desk_page", "desk_rung")
 
+    def _desk_post(self):
+        """A POST the desk relay answers (the phone's press): the Host and Origin are judged here, the way
+        `_local` judges them, but the page cannot send X-Fleet, so a POST with no Origin at all is refused instead."""
+        if self.headers.get("Origin") is None or not (self._origin_ok() and self._host_ok()):
+            log.event("refused", path=self.path.split("?", 1)[0], origin=self.headers.get("Origin"))
+            return self.send_error(403, "not a local request")
+        deskrelay.serve(self, "POST")
+
     def do_POST(self):
+        if deskrelay.claims(self.path):
+            return self._desk_post()
         if not self._local():
             log.event("refused", path=self.path, origin=self.headers.get("Origin"))
             return self.send_error(403, "not a local request")
@@ -625,6 +636,8 @@ class Handler(BaseHTTPRequestHandler):
         if not self._host_ok():
             log.event("refused", path=self.path.split("?", 1)[0], host=self.headers.get("Host"))
             return self.send_error(403, "not a local request")
+        if deskrelay.claims(self.path):
+            return deskrelay.serve(self, "GET")
         if self.path.startswith("/api/roster"):
             # The round does the asking, the forgetting and the sweep
             # (`poll.py`); what is added here is Claude-only.

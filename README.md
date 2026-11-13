@@ -1022,6 +1022,37 @@ entry written wrong opens nothing; the server prints the entries it takes and
 the ones it ignores at start. Unset, nothing beyond `127.0.0.1` and `localhost`
 passes.
 
+### The merge desk from the phone
+
+With `AGENTVIEW_EXTRA_ORIGINS` naming the `tailscale serve` origin (above), this server also
+relays the merge desk page to the laptop's sheaf hub, which answers only on `127.0.0.1`. The
+FleetView link in Open WebUI's rail points at `https://<laptop name>.<tailnet>.ts.net:8445/desk`,
+which sends the phone to the desk page; a press there ticks the item exactly as a press on the
+laptop does, and the watcher merges the commit that was pinned.
+
+`deskrelay.py` answers for the desk page alone:
+
+- **What passes:** the desk page's own document; `GET /_/doc` and `GET /_/live` for the desk's
+  address; `POST /_/tick`, `/_/comment` and `/_/seen` whose body names the desk's address. A path
+  is compared as written, nothing is decoded first, and what goes to the hub is rebuilt from the
+  desk's address, never copied from the request. Another document, every other `/_/` route
+  (save, jump, tell, export, the index, sign-in), a crafted path and a body that names another
+  document are refused here with a 404 before the hub is asked.
+- **No Tell:** a comment with `tell` set would make the hub run the laptop's own agent session;
+  the relay refuses it.
+- **Who the hub sees:** the relay signs in itself (`sheaf signin-url`) and sends that cookie. The
+  caller's cookie and credential headers go no further, and the hub's cookie never comes back.
+  The phone holds no hub credential, so the exposure is the one above: whoever passes this
+  server's Host and Origin check can press, and now that includes the desk's Merge buttons.
+- **Host and Origin:** rewritten on the request to the hub only (Host `127.0.0.1:<port>`, Origin
+  `http://127.0.0.1:<port>`), so the hub's own check is unchanged for everything else. In front of
+  that, a POST here needs an Origin that is this server's own or an extra entry, exactly; with no
+  Origin it is refused (the desk page cannot send `X-Fleet`, the Origin is its guard).
+- **Local programs:** the hub used to refuse any local program that was not signed in. A program on
+  the laptop that sends a loopback Origin to this server can now press the desk too.
+- **When it does not answer:** the laptop's sheaf hub is not running and cannot be started
+  (503), or the relay cannot sign in (503). Nothing is merged while the laptop is off.
+
 ### Restarting the service, and what survives it
 
 `agentview.service` runs with systemd's default `KillMode=control-group` and
