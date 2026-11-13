@@ -6,7 +6,7 @@
 
 **Claimed by:** Suki 2026-11-13 23:33
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] The button shows the number of items waiting, 0 hides it
-- [ ] The ring fires once per day, not on every poll round
+- [x] The button shows the number of items waiting, 0 hides it (tests/test_roster_route.py merges count; t-compute screenshot showed "Merges 2"; page test checks the 0-hides template)
+- [x] The ring fires once per day, not on every poll round (tests/test_deskring.py once-a-day + restart; tests/test_desk_ring_page.py no second ring, failed stamp)
