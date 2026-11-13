@@ -68,35 +68,40 @@ class Count(Base):
 
 class Ring(Base):
     def test_nothing_waiting_never_rings(self):
-        self.assertIsNone(deskring.ring_due(now=at("2026-11-20 12:00")))
+        self.assertIsNone(deskring.ring_pending(now=at("2026-11-20 12:00")))
 
     def test_an_item_under_a_day_old_does_not_ring(self):
         self.hand(1, "2026-11-13 09:00")
-        self.assertIsNone(deskring.ring_due(now=at("2026-11-14 08:59")))
+        self.assertIsNone(deskring.ring_pending(now=at("2026-11-14 08:59")))
 
     def test_the_oldest_item_past_a_day_rings_and_names_the_desk(self):
         self.hand(1, "2026-11-13 09:00")
         self.hand(2, "2026-11-14 07:00")
-        text = deskring.ring_due(now=at("2026-11-14 09:01"))
+        text = deskring.ring_pending(now=at("2026-11-14 09:01"))
         self.assertIn("merge desk", text.lower())
+
+    def test_a_ring_nobody_heard_is_still_due(self):
+        self.hand(1, "2026-11-13 09:00")
+        self.assertTrue(deskring.ring_pending(now=at("2026-11-14 10:00")))
+        self.assertTrue(deskring.ring_pending(now=at("2026-11-14 10:30")))
 
     def test_it_rings_once_a_day_not_on_every_poll(self):
         self.hand(1, "2026-11-13 09:00")
-        self.assertTrue(deskring.ring_due(now=at("2026-11-14 10:00")))
-        self.assertIsNone(deskring.ring_due(now=at("2026-11-14 10:30")))
-        self.assertIsNone(deskring.ring_due(now=at("2026-11-14 20:00")))
+        self.assertTrue(deskring.mark_rung(now=at("2026-11-14 10:00")))
+        self.assertIsNone(deskring.ring_pending(now=at("2026-11-14 10:30")))
+        self.assertIsNone(deskring.ring_pending(now=at("2026-11-14 20:00")))
 
     def test_it_rings_again_the_next_day(self):
         self.hand(1, "2026-11-13 09:00")
-        self.assertTrue(deskring.ring_due(now=at("2026-11-14 10:00")))
-        self.assertTrue(deskring.ring_due(now=at("2026-11-15 10:00")))
+        deskring.mark_rung(now=at("2026-11-14 10:00"))
+        self.assertTrue(deskring.ring_pending(now=at("2026-11-15 10:01")))
 
     def test_once_a_day_survives_a_restart(self):
         self.hand(1, "2026-11-13 09:00")
-        self.assertTrue(deskring.ring_due(now=at("2026-11-14 10:00")))
+        deskring.mark_rung(now=at("2026-11-14 10:00"))
         import importlib
         importlib.reload(deskring)      # the service restarted: nothing is kept in memory
-        self.assertIsNone(deskring.ring_due(now=at("2026-11-14 11:00")))
+        self.assertIsNone(deskring.ring_pending(now=at("2026-11-14 11:00")))
         self.assertTrue((Path(self.tmp) / "agentview" / deskring.STAMP).exists())
 
     def test_an_unreadable_stamp_rings_rather_than_stays_silent(self):
@@ -104,11 +109,11 @@ class Ring(Base):
         stamp = Path(self.tmp) / "agentview" / deskring.STAMP
         stamp.parent.mkdir(parents=True, exist_ok=True)
         stamp.write_text("not json")
-        self.assertTrue(deskring.ring_due(now=at("2026-11-14 10:00")))
+        self.assertTrue(deskring.ring_pending(now=at("2026-11-14 10:00")))
 
     def test_an_item_with_no_readable_time_is_not_taken_for_old(self):
         deskfile.put_item("sweatshop-ai/sheaf#3", "- [ ] Merge sweatshop-ai/sheaf#3: x\n  - Pinned commit: " + SHA + "\n")
-        self.assertIsNone(deskring.ring_due(now=at("2030-01-01 10:00")))
+        self.assertIsNone(deskring.ring_pending(now=at("2030-01-01 10:00")))
 
 
 if __name__ == "__main__":

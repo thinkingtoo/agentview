@@ -480,7 +480,8 @@ let MUZZLED = false;        // wanted to ring, and the browser would not have it
 let PROVIDERS = {};         // who answered the last poll, and who did not
 let PASTES = 0;             // the roster's count of Pastes waiting, anywhere
 let MERGES = 0;             // the roster's count of items waiting on the merge desk
-let DESK_RUNG = "";         // what the desk's daily ring said, kept on the button's tooltip
+let DESK_RUNG = "";         // what the desk's daily ring said, shown under the header for a minute
+let DESK_RINGING = false;   // a ring is sounding and not yet reported to the server
 let KEPT = [];              // the roster's `kept`: Pastes of sessions no longer on the machine
 let COUNTS = {};            // the roster's header counts: needs, stuck, moving
 let BANNERS = [];           // what is wrong with the whole machine, as the roster said
@@ -641,12 +642,24 @@ function announce(flags) {
 
 // The merge desk's daily ring: the server says when it is due (once a day, kept across restarts),
 // the page only plays it. It is the ring of a session that needs you, and its words name the desk.
-function deskRing(text) {
-  if (typeof text !== "string" || !text) return false;
-  DESK_RUNG = text;
-  if (!CHIME) return false;
-  ring();
-  return true;
+// The server spends the day only when told the ring sounded: a muted chime or a browser holding
+// back sound leaves it due. The words stay on the page a minute, under the header.
+async function deskRing(text) {
+  if (typeof text !== "string" || !text || DESK_RINGING || !CHIME) return false;
+  DESK_RINGING = true;
+  try {
+    if (!await ring()) return false;
+    DESK_RUNG = text;
+    ANNOUNCED_AT = Date.now();
+    setTimeout(() => { DESK_RUNG = ""; paint(); }, 60000);
+    paint();
+    await fetch("/api/desk_rung", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" }, body: "{}" });
+    return true;
+  } catch (e) {
+    return false;
+  } finally {
+    DESK_RINGING = false;
+  }
 }
 
 function drawSound() {
@@ -700,7 +713,7 @@ async function load() {
     COUNTS = counts || {};
     PASTES = Number.isInteger(pastes) && pastes > 0 ? pastes : 0;
     MERGES = Number.isInteger(merges) && merges > 0 ? merges : 0;
-    if (deskRing(merges_ring)) ANNOUNCED_AT = Date.now();
+    deskRing(merges_ring);
     KEPT = Array.isArray(kept) ? kept.filter(k => k && typeof k.key === "string" && Array.isArray(k.pastes)) : [];
     BANNERS = Array.isArray(banners) ? banners : [];
     paint();
@@ -843,7 +856,7 @@ function drawHead(cols, down) {
       title="Go to the first Paste waiting for you">${PASTES} ${PASTES === 1 ? "Paste" : "Pastes"} waiting</button>` : "";
   // Not one of the three counts either: it lights nothing up, it opens the merge desk page. 0 hides it.
   const merges = MERGES ? ` &nbsp;·&nbsp; <button class="hc merges" data-merges
-      title="${esc(DESK_RUNG || "Open the merge desk: finished work that waits for your hand")}">Merges ${MERGES}</button>` : "";
+      title="Open the merge desk: finished work that waits for your hand">Merges ${MERGES}</button>` : "";
   const html = `${total} ${total === 1 ? "session" : "sessions"} · ${cols.length} ${cols.length === 1 ? "project" : "projects"}`
     + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
     + ` &nbsp;·&nbsp; ${buttons}${pastes}${merges}${down}`;
@@ -862,7 +875,7 @@ function drawHead(cols, down) {
 // again only when the list changed, like the header.
 let BANNERS_SHOWN = "";
 function drawBanners() {
-  const list = BANNERS.filter(b => b && typeof b.text === "string" && b.text);
+  const list = [...BANNERS, ...(DESK_RUNG ? [{ text: DESK_RUNG }] : [])].filter(b => b && typeof b.text === "string" && b.text);
   const key = JSON.stringify(list);
   if (key === BANNERS_SHOWN) return;
   BANNERS_SHOWN = key;

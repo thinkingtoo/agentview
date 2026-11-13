@@ -77,7 +77,7 @@ def extra_origins():
 
 def desk_roster():
     """The merge desk's two fields of the roster: the Merges button's count and the daily ring."""
-    return {"merges": deskring.waiting(), "merges_ring": deskring.ring_due()}
+    return {"merges": deskring.waiting(), "merges_ring": deskring.ring_pending()}
 
 
 def build(raw=None):
@@ -357,7 +357,7 @@ class Handler(BaseHTTPRequestHandler):
 
     ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "merge", "chime", "restore",
               "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep",
-              "paste_copied", "paste_done", "desk_page")
+              "paste_copied", "paste_done", "desk_page", "desk_rung")
 
     def do_POST(self):
         if not self._local():
@@ -524,6 +524,12 @@ class Handler(BaseHTTPRequestHandler):
         except desk.Refused as why:
             return self.send_error(500, str(why))
         self._send(json.dumps({"ok": True, "url": url}), "application/json")
+
+    def _desk_rung(self, body):
+        """The page played the desk's daily ring: it is spent until tomorrow."""
+        if not deskring.mark_rung():
+            return self.send_error(500, "could not keep the day the desk rang")
+        self._send(json.dumps({"ok": True}), "application/json")
 
     def _paste_copied(self, body):
         """The copy button of a Paste: it is on the clipboard now. It stays."""

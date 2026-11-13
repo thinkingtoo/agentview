@@ -94,13 +94,23 @@ class Poll(unittest.TestCase):
             f"- [ ] Merge o/r#{n}: x\n  - Pinned commit: {'a' * 40}\n  - Handed over by Ciro, {w}.\n"
             for n, w in enumerate(whens, 1)))
 
-    def test_the_roster_counts_the_desk_and_rings_for_it_once(self):
+    def _post(self, route):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.httpd.server_address[1]}/api/{route}", method="POST",
+            data=b"{}", headers={"X-Fleet": "1"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.load(r)
+
+    def test_the_roster_counts_the_desk_and_the_ring_is_spent_when_the_page_says_it_sounded(self):
         self.assertEqual((self.poll()["merges"], self.poll()["merges_ring"]), (0, None))
         self._desk("2020-01-01 09:00", "2020-01-02 09:00")
-        first, second = self.poll(), self.poll()
+        first, again = self.poll(), self.poll()
         self.assertEqual(first["merges"], 2)
         self.assertIn("merge desk", first["merges_ring"].lower())
-        self.assertEqual((second["merges"], second["merges_ring"]), (2, None))
+        self.assertEqual(again["merges_ring"], first["merges_ring"])    # nobody has heard it yet
+        self.assertEqual(self._post("desk_rung"), {"ok": True})
+        after = self.poll()
+        self.assertEqual((after["merges"], after["merges_ring"]), (2, None))
 
     def test_the_merges_button_opens_the_desk_page(self):
         with mock.patch("desk.page", return_value="http://127.0.0.1:1/x") as page:

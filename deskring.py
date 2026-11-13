@@ -4,7 +4,7 @@ The count comes through `deskfile.items()`. An item waits for the person until i
 ticked item is the watcher's now. How long an item has waited is read from its "Handed over by X,
 YYYY-MM-DD HH:MM." line; an item without a readable time is never taken for old.
 
-The ring is at most one a day, and the day it last rang is kept in `$XDG_STATE_HOME/agentview/`, so a
+The ring is at most one a day, and the moment it last rang is kept in `$XDG_STATE_HOME/agentview/`, so a
 restart of the service does not ring again.
 """
 import json
@@ -53,8 +53,9 @@ def _last_rang():
         return None
 
 
-def ring_due(now=None):
-    """The words of the ring when it is due now, else None. Asking again counts as the ring."""
+def ring_pending(now=None):
+    """The words of the ring when it is due now, else None. It asks only: the day is spent by `mark_rung`,
+    which the page calls once the ring has really sounded, so a ring nobody heard is still due."""
     now = time.time() if now is None else now
     open_items = _waiting()
     times = [t for t in map(_handed_at, open_items) if t is not None]
@@ -63,9 +64,12 @@ def ring_due(now=None):
     last = _last_rang()
     if last is not None and 0 <= now - last < DAY:
         return None
-    p = _stamp_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    if not lines.write_atomic(p, json.dumps({"at": now})):
-        return None     # no stamp, no ring: a ring that cannot be remembered would repeat on every poll
     n = len(open_items)
     return f"The merge desk has waited over a day for you: {n} {'item' if n == 1 else 'items'} waiting"
+
+
+def mark_rung(now=None):
+    """The ring sounded: no other before tomorrow, also after a restart. Whether it landed."""
+    p = _stamp_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return lines.write_atomic(p, json.dumps({"at": time.time() if now is None else now}))

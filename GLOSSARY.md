@@ -41,6 +41,7 @@ A pull request going into its base branch, GitHub's word.
 
 **Merge desk**:
 The sheaf page where every finished piece of work that waits only for the person's hand is listed with its button: a Merge, a Deploy or an Install.
+The header shows a **Merges** button with the number of items not yet ticked, beside the Pastes button: not one of the three counts, it lights nothing, 0 hides it, a click opens the page. Once a day at most, when the oldest such item has waited more than 24 hours, the page rings as for a session that needs the person and says so under the header; the day is spent only when the ring has sounded.
 _Avoid_: merge queue, PR list
 
 **Desk item**:
