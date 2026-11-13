@@ -174,10 +174,12 @@ def watching_names(sessions, crew, is_concierge):
 def _own_words(m):
     """What a working session's row says of its task when the table has none:
     the line it last wrote, else its card title, else the first line of its last
-    prompt, else "working" so its name still shows (ticket boss-track/11). Never
-    read from a transcript."""
+    prompt, else the first line of the newest message another session sent it (the
+    dispatch that started it), else "working" so its name still shows (tickets
+    boss-track/11 and 22). Read by the provider with the rest of the tail, never here."""
     prompt = next((l.strip() for l in str(m.get("prompt") or "").splitlines() if l.strip()), "")
-    return (str(m.get("did") or "").strip() or str(m.get("title") or "").strip() or prompt or "working")
+    return (str(m.get("did") or "").strip() or str(m.get("title") or "").strip() or prompt
+            or str(m.get("dispatch") or "").strip() or "working")
 
 
 def workers(track, sessions, is_concierge, owner_of, boss_panes):
@@ -204,14 +206,29 @@ def workers(track, sessions, is_concierge, owner_of, boss_panes):
     return out
 
 
-def elsewhere(made, crew, busy=frozenset(), watch=frozenset()):
+def own_lines(sessions, crew, is_concierge):
+    """`{name: the line it last wrote}` for each of the crew (`workers`) that wrote one.
+    The cell of the table is the boss's assignment: it places a worker on a ticket and
+    keeps an idle one off the card. The words the card prints come from the worker when
+    it has any, because a cell nobody refreshes lies (ticket boss-track/21). Same
+    admission as `busy_names`: an older idle session, a boss or a concierge of the same
+    name speaks for no worker."""
+    return {m["name"]: str(m["did"]).strip() for m in sessions
+            if m.get("name") in crew and not m.get("boss") and not is_concierge(m)
+            and (working(m) or watching(m)) and str(m.get("did") or "").strip()}
+
+
+def elsewhere(made, crew, busy=frozenset(), watch=frozenset(), lines=None):
     """`[{name, task}]` of each working session whose task no row's ticket
     carries, by name. Idle (an empty or "idle" task) is not read as work.
     Hammers stay tied to `feature/NN` refs; this only says what the rest are on.
     `busy` is `busy_names`: an entry is busy when its worker is in it.
-    `watch` is `watching_names`: an entry is watching when its worker is in it."""
+    `watch` is `watching_names`: an entry is watching when its worker is in it.
+    `lines` is `own_lines`: an entry prints the worker's own line, not the task that
+    placed it (that task still decides who is idle, ticket boss-track/21)."""
+    lines = lines or {}
     placed = {w for r in made for t in r["tickets"] for w in t["workers"]}
-    return [{"name": name, "task": context.squash(task), "busy": name in busy, "watching": name in watch}
+    return [{"name": name, "task": context.squash(lines.get(name) or task), "busy": name in busy, "watching": name in watch}
             for name, task in sorted(crew.items(), key=lambda kv: kv[0].casefold())
             if name not in placed and task.strip().casefold() not in IDLE_TASKS]
 

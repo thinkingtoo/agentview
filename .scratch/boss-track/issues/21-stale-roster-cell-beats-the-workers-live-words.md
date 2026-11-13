@@ -6,8 +6,10 @@
 
 **Decision (Tarek, boss of agentview, 2026-11-13):** the worker's live did beats a stale cell for the words shown after the name. The cell is the boss's assignment and stays what ties a worker to a ticket and a row; matching keeps reading the cell, and the did where it already does. Reason: the card should show what the worker is doing now, and a cell nobody refreshes lies, as "fresh, parked" did. An idle cell still keeps a worker off the card (PR 47, tested).
 
-**Status:** ready-for-agent, after PR 48 merges (both change `workers()`)
+**Status:** done
 
-- [ ] A worker with a roster cell and a did shows the did; the cell still decides the ticket it sits on -- evidence: a test in `tests/test_objectives.py`
-- [ ] A worker with a cell and no did shows the cell -- evidence: the same class
-- [ ] An idle cell still keeps the worker off the card -- evidence: the existing test
+- [x] A worker with a roster cell and a did shows the did; the cell still decides the ticket it sits on -- evidence: `tests/test_objectives.py` class `Stamped` (three tests naming ticket boss-track/21)
+- [x] A worker with a cell and no did shows the cell -- evidence: the same first test (Odile)
+- [x] An idle cell still keeps the worker off the card -- evidence: `test_an_idle_cell_keeps_the_worker_off_the_card_even_with_a_line`
+
+**Known limit (Codex review 1):** a worker's `did` stays until it writes another (`lines.kept_did`). If the boss rewrites the cell to a new task that sits on no row, the card prints the old did until the worker runs its team-line again. That follows from the decision as written; a worker that never updates its line is the source, not this code.

@@ -178,6 +178,7 @@ MAX_USES = 64
 # How many of the directories a session has worked in to remember: where a
 # teammate it spawns may write (`_subagent_files`).
 MAX_CWDS = 8
+DISPATCH_MAX = 300      # a dispatch line is carried this long
 
 
 # Background commands the session started and has not been told are over.
@@ -418,10 +419,21 @@ def _places(state, rec):
         del state["cwds"][next(iter(state["cwds"]))]
 
 
+def _dispatch(rec):
+    """The first line of a message another session sent, else "": Claude Code writes it as a
+    meta user record whose `origin` is `{"kind": "peer", "body": ...}`, which is not a typed
+    prompt and so never reaches `prompt` (ticket boss-track/22). Cut short: a body can be long."""
+    origin = _dict(rec.get("origin"))
+    body = origin.get("body")
+    if origin.get("kind") != "peer" or not isinstance(body, str):
+        return ""
+    return next((l.strip()[:DISPATCH_MAX] for l in body.splitlines() if l.strip()), "")
+
+
 def _blank_state():
     return {**_blank_counts(),
             "failure": None, "tool": None, "over": False, "cwds": {},
-            "title": "", "prompt": "", "branch": "", "tasks": {},
+            "title": "", "prompt": "", "dispatch": "", "branch": "", "tasks": {},
             "uses": {}, "done": set(), "said": "", "spoke": "", "msg": "",
             "answered": None, "sent": collections.Counter(),
             "paths": collections.deque(maxlen=400)}
@@ -445,6 +457,8 @@ def _absorb(state, text):
             state["title"] = rec["aiTitle"]
         elif kind == "last-prompt" and rec.get("lastPrompt"):
             state["prompt"] = rec["lastPrompt"]
+        elif kind == "user":
+            state["dispatch"] = _dispatch(rec) or state["dispatch"]
         branch = rec.get("gitBranch")
         if branch and branch != "HEAD":
             state["branch"] = branch
@@ -709,7 +723,7 @@ def _view(state, now):
             pending = max(0.0, (current - started).total_seconds() / 60)
         except ValueError:
             pending = None
-    return {"title": state["title"], "prompt": state["prompt"],
+    return {"title": state["title"], "prompt": state["prompt"], "dispatch": state["dispatch"],
             "branch": state["branch"], "paths": list(state["paths"]),
             # The raw last message: the core shapes it into the one line the
             # card shows, and reads the ask out of the whole of it.
@@ -885,7 +899,7 @@ def scan_session(path, now=None):
     return view
 
 
-EMPTY = {"title": "", "prompt": "", "branch": "", "paths": [], "said": "",
+EMPTY = {"title": "", "prompt": "", "dispatch": "", "branch": "", "paths": [], "said": "",
          "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": [],
          "calls": [], "answeredAt": None, "failure": None, "lastTool": None, "turnOver": False,
          "cwds": []}
@@ -1123,6 +1137,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         "remote": remote_of(rec),
         "title": summary["title"],
         "prompt": summary["prompt"],
+        "dispatch": summary["dispatch"],
         "branch": summary["branch"],
         "doing": summary["doing"],
         # Movement: writes per minute (own and subagents', oldest first, None
