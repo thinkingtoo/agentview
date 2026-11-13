@@ -37,6 +37,7 @@ import time
 import desk
 import deskfile
 import deskinstall
+import deskscan
 import log
 
 SYSTEM_PATH = desk.SYSTEM_PATH
@@ -296,6 +297,7 @@ def run():
         try:
             tick()
             deskinstall.scan_if_due()
+            deskscan.scan_if_due()
         except Exception as exc:        # a watcher that dies leaves ticked boxes unanswered
             log.error("desk-watch", exc)
         time.sleep(POLL)
