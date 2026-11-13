@@ -12,6 +12,7 @@ Every text in here is whatever a file or a session said, kept as it was said:
 the page prints it as text and never as markup, so nothing is stripped for
 safety here.
 """
+import bisect
 import itertools
 import os
 import re
@@ -294,7 +295,9 @@ def track_card(track):
     """What a track's goal file gives the card: (the Outcome paragraph, or "";
     `{"status", "progress", "boxes"}`). The boxes are the Done when list in the
     file's order, each `{"text", "done"}`, its text as plain as the Outcome's."""
-    lines = list(unfenced(goal_file(track)))
+    # A sheaf comment sits where the words it is about end, in a heading too, and may run over
+    # lines that look like boxes or headings: it goes before anything is read (boss-track/27).
+    lines = without_sheaf_comments("\n".join(unfenced(goal_file(track)))).split("\n")
     status = next((m.group(1).upper() for m in map(STATUS.match, lines) if m), "")
     status = status if status in STATUS_WORDS else ""
     marked, wrapping = [], False                # [ticked?, its words]; a wrapped box's lines joined
@@ -324,6 +327,8 @@ def track_card(track):
 # ------------------------------------------------------------- the repository
 
 OPENS = re.compile(r"`[^`\n]+`|<!--")
+SHEAF_OPENS = re.compile(r"\\.|`+|<!--\s*(?:sheaf|rd)-comment\b")
+BACKTICKS = re.compile(r"`+")
 FRONT_MATTER = re.compile(r"\A\s*---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", re.DOTALL)
 INCLUDE = re.compile(r"^\s*@\S+\s*$")
 REFERENCE = re.compile(r"^\s*\[[^\]]+\]:")      # CommonMark wants no space after the colon, footnotes too
@@ -380,6 +385,44 @@ def without_comments(text):
         end = text.find("-->", found.end())
         if end < 0:
             return "".join(out)
+        at = end + 3
+
+
+def without_sheaf_comments(text):
+    """The text with sheaf's comment blocks taken out, over as many lines as they
+    run (`<!-- sheaf-comment …-->`, or the older `rd-comment`). sheaf writes one
+    where the words it is about end, in a heading too, and its text may hold lines
+    that look like boxes or headings. Any other comment stays as written: one
+    that never closes must not pair with the `-->` of a block further down. A
+    block that never closes stays too. A code span is code: as in CommonMark it
+    ends at the next run of as many backticks on its line, a run that finds none
+    is plain backticks, and a backslash escapes the character after it. The end
+    is found with `find`, as in `without_comments`."""
+    out, at, line, ends = [], 0, -1, {}             # line: where the line of `ends` ends; ends: run length -> run ends
+    while True:
+        found = SHEAF_OPENS.search(text, at)
+        if found is None:
+            out.append(text[at:])
+            return "".join(out)
+        run = found.group()
+        if run[0] != "<":                           # an escape or a code span goes by as it stands
+            stop = found.end()
+            if run[0] == "`":
+                if stop > line:                     # the runs of a line are gathered once, in one pass
+                    line, ends = text.find("\n", stop) % (len(text) + 1), {}
+                    for other in BACKTICKS.finditer(text, found.start(), line):
+                        ends.setdefault(len(other.group()), []).append(other.end())
+                after = ends.get(len(run), [])  # an escape can split a run: `\``
+                closing = bisect.bisect_right(after, stop)
+                stop = after[closing] if closing < len(after) else stop
+            out.append(text[at:stop])
+            at = stop
+            continue
+        end = text.find("-->", found.end())
+        if end < 0:
+            out.append(text[at:])
+            return "".join(out)
+        out.append(text[at:found.start()])
         at = end + 3
 
 
