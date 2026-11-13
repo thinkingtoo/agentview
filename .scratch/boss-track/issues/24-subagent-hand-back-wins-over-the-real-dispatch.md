@@ -41,3 +41,7 @@ An earlier version of this ticket put the dispatch above the cell and let it int
 **Known limit (Codex review 1):** the dispatch is the newest message from a session, not the first. Later messages from other workers ("thanks", "slice 2 accepted") replace it, and now rank above the cell, and, for a stamped worker with no cell, above the title; the text of a message that names a `feature/NN` ref can place the worker on that row. Resolved by Tarek's decision above: the dispatch is below the cell and places nobody, so an ack can only show where the worker has no cell.
 
 **Known limit (ticket 21, narrowed by the ruling):** a worker's did stays until it writes another, and for a worker with no cell the dispatch stays until a newer message arrives, so a card can show an old task. A cell, when there is one, beats the dispatch. A dispatch older than the transcript tail is not found (ticket 22).
+
+**Known limit (Opus round 4):** no test covers a reviewing worker (ticket 20) with no did shown by its dispatch; the did case is covered.
+
+**Known limit (Opus round 4):** `own_lines` reads the track's tracker file once more per refresh (`projects.roster_tasks`, on top of `workers`).
