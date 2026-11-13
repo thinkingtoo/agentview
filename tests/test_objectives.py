@@ -410,6 +410,13 @@ class Stamped(Panes):
                          self.at("c", "Mei", "%34"))
         self.assertEqual([(e["name"], e["task"]) for e in got["elsewhere"]], [("Mei", "building PR 50")])
 
+    def test_a_boss_of_the_same_name_prints_no_line_for_the_worker(self):
+        """Ticket boss-track/21: a boss is no worker; its line is not the worker's."""
+        self.roster_of(("Mei", "fresh, parked"))
+        boss = sess("b2", self.loom, name="Mei", boss=True, track="checkout", status="busy", tmux="boss-checkout:@3.%30")
+        got = self.track({"w": "building PR 50", "b2": "dispatching"}, self.at("w", "Mei", "%31"), boss)
+        self.assertEqual([(e["name"], e["task"]) for e in got["elsewhere"]], [("Mei", "building PR 50")])
+
     def test_an_idle_cell_keeps_the_worker_off_the_card_even_with_a_line(self):
         """Ticket boss-track/21: the line replaces the words shown, never the idle verdict."""
         self.roster_of(("Mei", "idle"))
