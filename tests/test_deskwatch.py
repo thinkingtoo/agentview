@@ -94,14 +94,17 @@ class Case(unittest.TestCase):
         os.environ.update(env)
         self.addCleanup(lambda: [os.environ.pop(k) if v is None else os.environ.__setitem__(k, v) for k, v in old.items()])
         self.page = deskfile.path()
-        self.saved = (deskwatch.GH, deskwatch.sleep, deskwatch.log.error)
+        self.saved = (deskwatch.GH, deskwatch.sleep, deskwatch.log.error, deskwatch.GRACE)
+        deskwatch.GRACE = 0
+        deskwatch._warned.clear()
         self.sleeps = []
         deskwatch.GH = str(self.gh)
         deskwatch.sleep = self.sleeps.append
         deskwatch.log.error = lambda *a, **k: self.errors.append((a, k))
         self.errors = []
         self.addCleanup(lambda: (setattr(deskwatch, "GH", self.saved[0]), setattr(deskwatch, "sleep", self.saved[1]),
-                                 setattr(deskwatch.log, "error", self.saved[2])))
+                                 setattr(deskwatch.log, "error", self.saved[2]),
+                                 setattr(deskwatch, "GRACE", self.saved[3])))
 
     def pr(self, n, head=SHA, state="OPEN", mergeable="MERGEABLE", repo=REPO):
         (self.prs / f"{repo.replace('/', '_')}#{n}.json").write_text(
@@ -246,6 +249,50 @@ class Refused(Case):
         self.assertFalse(self.item(272).ticked)
 
 
+class Hostile(Case):
+    def test_an_already_merged_pr_at_another_commit_is_not_called_merged(self):
+        self.pr(272, state="MERGED", head=SHA2)
+        self.hand_over(272, SHA)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertIn("Not merged: the PR is already merged, but at bbbbbbb", self.item(272).block)
+        self.assertFalse(self.item(272).ticked)
+
+    def test_two_items_with_one_key_press_neither_and_do_not_loop(self):
+        self.pr(272)
+        k = self.hand_over(272)
+        self.tick_box(272)
+        text = deskfile.items()[0].block
+        deskfile.edit(lambda t: t + text.replace("- [x]", "- [ ]"))
+        deskwatch.tick()
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertEqual(self.events(k), ["ready"])
+        self.assertEqual(len(self.errors), 1)
+
+    def test_gh_json_with_null_values_is_unreadable_not_a_crash(self):
+        self.pr(272, head=None, state=None)
+        k = self.hand_over(272)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertIn("GitHub could not be asked: GitHub's answer could not be read", self.item(272).block)
+        self.assertFalse(self.item(272).ticked)
+
+    def test_a_second_result_replaces_only_our_last_line_not_the_persons_note_above_it(self):
+        self.pr(272, head=SHA2)
+        self.hand_over(272, SHA)
+        self.tick_box(272)
+        deskfile.edit(lambda t: t.replace("  - Handed over", "  - Not merged: my own note, please keep\n  - Handed over", 1))
+        deskwatch.tick()                                     # refused: our line goes last
+        self.pr(272, head=SHA)
+        self.tick_box(272)
+        deskwatch.tick()
+        block = self.item(272).block
+        self.assertIn("  - Not merged: my own note, please keep\n", block)
+        self.assertNotIn("branch changed", block)
+        self.assertRegex(block, r"Merged as 41678e3")
+
+
 class Unknown(Case):
     def test_unknown_that_clears_within_a_minute_merges(self):
         self.pr(272)
@@ -351,6 +398,23 @@ class Restart(Case):
         self.assertEqual(self.events(k), ["ready", "pressing", "refused"])
         self.assertFalse(self.item(272).ticked)
         self.assertIn("interrupted", self.item(272).block)
+
+    def test_an_open_pr_is_not_called_unmerged_while_the_press_may_still_be_completing(self):
+        self.pr(272)
+        k = self.interrupted()
+        deskwatch.GRACE = 3600
+        deskwatch.tick()
+        self.assertEqual(self.events(k), ["ready", "pressing"])
+        self.assertTrue(self.item(272).ticked)
+        self.assertEqual(self.merge_calls(), [])
+
+    def test_a_pr_merged_at_another_commit_than_the_pinned_one_is_not_blessed(self):
+        self.pr(272, state="MERGED", head=SHA2)
+        k = self.interrupted()
+        deskwatch.tick()
+        self.assertEqual(self.events(k), ["ready", "pressing", "refused"])
+        self.assertIn("not the reviewed ead9a1f", self.item(272).block)
+        self.assertNotIn("Already merged", self.item(272).block)
 
     def test_github_unreachable_leaves_it_open_and_presses_nothing(self):
         k = self.interrupted()                                # no PR file: gh fails

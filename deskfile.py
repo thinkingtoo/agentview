@@ -201,12 +201,12 @@ def drop(text, key):
     return text
 
 
-RESULT = re.compile(r"^  - (?:Merged as |Already merged|Not merged:)")
+RESULT = re.compile(r"^  - (?:(?:Already merged|Merged)(?: as [0-9a-f]{7})? at \d\d:\d\d|Not merged: .*)$")
 
 
 def settle(text, key, result, untick=False):
     """`text` with the result of a press written as the last sub-line of item `key` (the
-    sub-line of an earlier press is replaced), and its box unticked when `untick`. Text with
+    last result sub-line of an earlier press is replaced), and its box unticked when `untick`. Text with
     no such item comes back as it was."""
     for k, start, end in _spans(text):
         if k != key:
@@ -214,7 +214,10 @@ def settle(text, key, result, untick=False):
         block = text[start:end]
         body = block.rstrip("\n")
         tail = block[len(body):] or "\n"
-        kept = [l for l in body.split("\n") if not RESULT.match(l)]
+        kept = body.split("\n")
+        mine = [n for n, l in enumerate(kept) if RESULT.match(l)]       # only our own last line, never the person's words
+        if mine:
+            del kept[mine[-1]]
         if untick and kept[0][3] in "xX":
             kept[0] = kept[0][:3] + " " + kept[0][4:]
         return text[:start] + "\n".join(kept + ["  - " + result]) + tail + text[end:]

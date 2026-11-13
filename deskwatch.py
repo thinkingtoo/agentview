@@ -21,6 +21,7 @@ holder. The desk file's own lock is never held across a `gh` call.
 (`~/.local/bin` leads it) is consulted when a merge is made, and the child gets that PATH too.
 """
 import contextlib
+import datetime
 import fcntl
 import json
 import os
@@ -40,11 +41,17 @@ WAIT_MAX = 60       # how long GitHub may answer UNKNOWN
 WAIT_STEP = 2
 CALL_TIMEOUT = 120
 sleep = time.sleep
+GRACE = 120         # seconds a press may still be completing at GitHub before a restart calls it not merged
 LOCK = ".merge-desk.press.lock"
+_warned = set()
 
 
 class NotMerged(Exception):
     """The press is refused; the text says why and goes under the item."""
+
+
+class TakenBack(NotMerged):
+    """The person unticked or replaced the item while the press waited: nothing is written on the page."""
 
 
 class Unsure(Exception):
@@ -70,10 +77,13 @@ def view(repo, n):
         raise Unsure(desk.flatten(out, 160))
     try:
         data = json.loads(out)
-        data["state"], data["headRefOid"]
-        return data
+        ok = isinstance(data["state"], str) and isinstance(data["headRefOid"], str) \
+            and isinstance(data.get("mergeable") or "", str)
     except (ValueError, KeyError, TypeError):
-        raise Unsure("GitHub's answer could not be read") from None
+        ok = False
+    if not ok:
+        raise Unsure("GitHub's answer could not be read")
+    return data
 
 
 def merge_sha(pr):
@@ -133,6 +143,8 @@ def check_and_merge(k, pinned):
         except Unsure as why:                               # nothing was pressed yet: refuse, the person presses again
             raise NotMerged(f"GitHub could not be asked: {why}") from None
         if pr["state"] == "MERGED":
+            if pr["headRefOid"] != pinned:
+                raise NotMerged(f"the PR is already merged, but at {pr['headRefOid'][:7]}, not the reviewed {pinned[:7]}")
             return merge_sha(pr), True
         if pr["state"] != "OPEN":
             raise NotMerged(f"the PR is {pr['state'].lower()}, not open")
@@ -148,10 +160,12 @@ def check_and_merge(k, pinned):
         raise NotMerged(f"GitHub says {pr.get('mergeable')}")
     now = item(k)                                           # the person may have taken the press back while we waited
     if not now or not now.ticked or now.pinned != pinned:
-        raise NotMerged("the press was taken back before the merge")
+        raise TakenBack("the press was taken back before the merge")
     code, out = gh("pr", "merge", str(n), "-R", repo, "--merge", "--match-head-commit", pinned)
     after = view(repo, n)                                   # an unreadable answer leaves the press open
     if after["state"] == "MERGED":
+        if after["headRefOid"] != pinned:
+            raise NotMerged(f"the PR is merged, but at {after['headRefOid'][:7]}, not the reviewed {pinned[:7]}")
         return merge_sha(after), False
     raise NotMerged("the merge failed: " + desk.flatten(out or f"gh exited {code}", 200))
 
@@ -168,10 +182,9 @@ def press(k):
         if not pinned:
             raise NotMerged("the item names no pinned commit")
         sha, already = check_and_merge(k, pinned)
+    except TakenBack as why:
+        record("refused", k, why=str(why))
     except NotMerged as why:
-        if str(why).startswith("the press was taken back"):
-            record("refused", k, why=str(why))
-            return
         settle_page(k, f"Not merged: {why}", untick=True)
         record("refused", k, why=str(why))
     except Unsure as why:
@@ -181,23 +194,37 @@ def press(k):
         record("merged", k, sha=sha, pinned=pinned, already=already)
 
 
+def age(rec):
+    try:
+        return time.time() - datetime.datetime.strptime(rec["at"], "%Y-%m-%dT%H:%M:%S%z").timestamp()
+    except (KeyError, ValueError, TypeError):
+        return float("inf")
+
+
 def recover():
     """Settle each press that began and never recorded a result. Never presses."""
-    unresolved = {}
+    last = {}
     for rec in desk.history():
         if rec["event"] in ("ready", "pressing", "merged", "refused"):
-            unresolved[rec["key"]] = rec["event"] == "pressing"
-    for k in [k for k, open_ in unresolved.items() if open_]:
+            last[rec["key"]] = rec
+    for k, rec in last.items():
+        if rec["event"] != "pressing":
+            continue
         repo, n = split(k)
         try:
             pr = view(repo, n)
         except Unsure:
             continue
-        if pr["state"] == "MERGED":
+        pinned = rec.get("pinned", "")
+        if pr["state"] == "MERGED" and pr["headRefOid"] == pinned:
             sha = merge_sha(pr)
             settle_page(k, merged_text(sha, already=True))
             record("merged", k, sha=sha, recovered=True)
-        else:
+        elif pr["state"] == "MERGED":
+            why = f"the PR was merged, but at {pr['headRefOid'][:7]}, not the reviewed {pinned[:7]}"
+            settle_page(k, f"Not merged: {why}", untick=True)
+            record("refused", k, why=why, recovered=True)
+        elif age(rec) >= GRACE:             # a merge that reached GitHub before the crash may still be completing
             why = "the press was interrupted before it finished; GitHub shows the PR not merged"
             settle_page(k, f"Not merged: {why}", untick=True)
             record("refused", k, why=why, recovered=True)
@@ -208,7 +235,13 @@ def tick():
         if not got:
             return
         recover()
-        for k in [i.key for i in deskfile.items() if i.ticked and not i.key.startswith("install:")]:
+        every = [i.key for i in deskfile.items()]
+        for k in dict.fromkeys(i.key for i in deskfile.items() if i.ticked and not i.key.startswith("install:")):
+            if every.count(k) > 1:                              # which of two is meant? press neither
+                if k not in _warned:
+                    _warned.add(k)
+                    log.error("desk-press", ValueError("two items with one key"), key=k)
+                continue
             press(k)
 
 
