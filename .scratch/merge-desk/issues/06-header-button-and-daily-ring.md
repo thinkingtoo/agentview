@@ -4,7 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Claimed by:** Suki 2026-11-13 23:33
+
+**Status:** in-progress
 
 - [ ] The button shows the number of items waiting, 0 hides it
 - [ ] The ring fires once per day, not on every poll round
