@@ -4,7 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Claimed by:** Sigrid 2026-11-13 23:56
+
+**Status:** in-progress
 
 - [ ] The relay serves only the desk page and the routes it needs, not every sheaf document
 - [ ] Checked by Thierry on his phone (the box below is his)
