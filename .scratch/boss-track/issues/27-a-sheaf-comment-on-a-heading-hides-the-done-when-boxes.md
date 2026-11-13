@@ -1,6 +1,6 @@
 # 27: A sheaf comment on a goal's heading hides every Done when box
 
-**Status:** in review
+**Status:** done
 
 **What happened (2026-11-13, found by the boss of a client track):** Thierry commented on the words "Done when" of a goal page. Sheaf wrote the comment block into the heading line, and `boss-goal` then found 0 criteria. The boss moved the block onto its own line by hand; claude-boss ticket 47 covers `boss-goal`.
 
@@ -45,3 +45,10 @@ First version (Opus round 1, PR 55): it took out every `<!--` (the README reader
 **Known limit:** a hand-written comment (not a sheaf block) with box or heading lines inside it still counts them, as before this ticket. A sheaf-comment opener inside a code span that spans lines, or an indented code block, is taken for a block. So is one inside a hand-written comment (`<!-- see <!-- sheaf-comment -->` leaves `<!-- see`). A bare fence line inside an old `rd-comment` body unfences the rest of the file, as before this ticket (sheaf 1.0.0 and later escape such lines).
 
 Review round 2 (Lennart, PR 55): a code span now ends at a backtick run of its own length, and `\`` opens none (CommonMark), so a block after ``` ``a`b`` ``` or `` \` `` is taken out too. Evidence: `test_a_code_span_ends_at_a_run_of_its_own_length_and_an_escaped_backtick_opens_none`; the Outcome case: `test_a_multi_line_sheaf_comment_in_the_outcome_is_not_part_of_it` (fails with the old `track_card` line).
+
+## Live check after the merge (2026-11-13)
+
+PR 55 merged as eac5ca0 (Codex review 3, the last one before the merge, read the final head df4e4d3; the full suite on t-compute at df4e4d3 passed, 2576 tests, OK, 29 skipped). Restart at 11:26:21: MainPID 3345513 to 3895922, `is-active` active, build 4dabf0f39431 = sha1(index.html)[:12]. Before and after, the same 45 `claude` processes (pid and start time identical), tmux server 8512 on the default socket, and the service cgroup holding `server.py` alone; 0 `session.gone` in the 54 events since.
+
+- The client track whose comment started this ticket shows 9 of 10, with 10 boxes and 10 rows. Its goal file (read only, unchanged since 10:46:25) holds Thierry's c1 block on its own line under the heading (the boss's repair). Run in memory on the merged code, the same file with that block put back inside the heading as sheaf wrote it (`## Done<!-- sheaf-comment id=c1 … --> when`) gives 9 of 10 and 10 boxes as well.
+- No track lost rows. The rows per track are the same before and after: 12, 10, 10, 12, 11 and 13 across the six track cards.
