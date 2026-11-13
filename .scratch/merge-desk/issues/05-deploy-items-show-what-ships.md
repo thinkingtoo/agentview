@@ -2,7 +2,7 @@
 
 **What to build:** an item whose repo's base branch deploys (`~/.claude/routines/branch_deploys.py <checkout> <branch>` exit 0 with deploy, publish or upload lines) is a Deploy item: `- [ ] Deploy …`, with a "What ships" sub-list of those lines and the commits that go out. The press merges as in 03. v1 repos: `tiroir/apex`, `tiroir/telemasterclass`.
 
-**Blocked by:** 03, 04 (both change deskwatch.py; boss, 2026-11-14)
+**Blocked by:** 03, 04, 10 (all change the press path in deskwatch.py; boss, 2026-11-14)
 
 **Status:** ready-for-agent
 
