@@ -3066,7 +3066,7 @@ def e2e_pass(browser):
             wait_order(["folder:orchard", "folder:maple"])
 
         fold_pear()
-        check("e2e: a merge is a move of the whole project in the config",
+        check("e2e: a fold is a move of the whole project in the config",
               stored()["assign"] == {"folder:pear": "folder:maple"}, stored())
         check("e2e: and the card that took it says so",
               col("folder:maple").locator(".ov-merged").inner_text().startswith("includes Pear"))   # the default name, made readable

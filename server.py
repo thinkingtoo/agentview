@@ -474,9 +474,8 @@ class Handler(BaseHTTPRequestHandler):
     def _fold(self, body):
         self._correct(lambda config: hand.merge(config, body.get("source"), body.get("target"), body.get("shown")))
 
-    def _merge(self, body):
-        """The old path of `_fold`, for a page of the old code that is still open."""
-        self._correct(lambda config: hand.merge(config, body.get("source"), body.get("target"), body.get("shown")))
+    # The old path of `_fold`, for a page of the old code that is still open.
+    _merge = _fold
 
     def _correct(self, change, **answer):
         """Make one correction to config.json -- alone, whatever else is being

@@ -238,7 +238,7 @@ def merge(config, source, target, shown=None):
     """
     gone, kept = _named(source, "source"), _named(target, "target")
     if source == target:
-        raise Refused("a project cannot be merged into itself")
+        raise Refused("a project cannot be folded into itself")
     shown = _shown(shown)
     _current(config, source, target, *shown)
     assign = _table(config, "assign")

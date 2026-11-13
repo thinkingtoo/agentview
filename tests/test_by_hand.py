@@ -520,7 +520,7 @@ class Renames(Corrected):
 
 
 class Folds(Corrected):
-    """"Fold into" is the project action's name; `/api/merge` keeps answering for a page of the old code."""
+    """Fold into is the project action's name; `/api/merge` keeps answering for a page of the old code."""
 
     def test_fold_does_what_merge_did_and_merge_answers_the_same(self):
         body = {"source": "folder:orchard", "target": "folder:maple"}
