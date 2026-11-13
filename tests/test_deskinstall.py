@@ -186,6 +186,7 @@ class Receipts(Case):
             "no rev": REAL_RECEIPT.replace(f"?rev={OLD}", ""),
             "short rev": REAL_RECEIPT.replace(OLD, OLD[:12]),
             "two reqs": REAL_RECEIPT.replace("requirements = [", "requirements = [{ name = \"b\", specifier = \"*\" }, "),
+            "dot-dot repo": REAL_RECEIPT.replace("sweatshop-ai/sheaf?", "sweatshop-ai/..?"),
             "extra key": REAL_RECEIPT.replace('name = "sheafmd",', 'name = "sheafmd", extras = ["x"],'),
             "subdirectory": REAL_RECEIPT.replace(OLD + '"', OLD + '#subdirectory=x"'),
             "name with a newline": REAL_RECEIPT.replace('name = "sheafmd"', 'name = "a\\nb"'),
@@ -456,6 +457,40 @@ class Press(Case):
         self.assertEqual([o for o in self.order() if o.startswith("sheaf")], [])
         self.assertIn("  - Installed as 1a2b3c4 at ", self.item("install:thingd").block)
 
+    def test_a_second_press_after_a_refusal_survives_a_scan(self):
+        self.found()
+        self.tick_box()
+        (self.fake / "uv-fails").write_text("")
+        deskwatch.tick()
+        self.tick_box()                                         # ticked again; the watcher has not run yet
+        deskinstall.scan()
+        it = self.item()
+        self.assertTrue(it.ticked)
+        self.assertIn("Not installed", it.block)
+        self.assertEqual(self.events(), ["ready", "pressing", "refused"])
+
+    def test_a_pin_that_is_not_on_main_is_refused(self):
+        self.found()
+        deskfile.edit(lambda t: t.replace(f"Pinned commit: {MAIN}", f"Pinned commit: {NEWER}"))
+        self.tick_box()
+        deskwatch.tick()
+        self.assertIn("Not installed: GitHub could not compare", self.item().block)
+        self.assertEqual(self.calls("uv.json"), [])
+
+    def test_a_press_taken_back_before_uv_runs_installs_nothing_and_writes_nothing(self):
+        self.found()
+        self.tick_box()
+        real = deskinstall.exe
+        def untick_then_exe(name):
+            deskfile.edit(lambda t: t.replace("- [x] Install sheafmd", "- [ ] Install sheafmd"))
+            return real(name)
+        deskinstall.exe = untick_then_exe
+        self.addCleanup(setattr, deskinstall, "exe", real)
+        deskwatch.tick()
+        self.assertEqual(self.calls("uv.json"), [])
+        self.assertNotIn("Not installed", self.item().block)
+        self.assertEqual(self.events()[-1], "refused")
+
     def test_the_second_tick_does_not_install_again(self):
         self.press_it()
         deskwatch.tick()
@@ -508,7 +543,7 @@ class Restart(Case):
         deskinstall.restart_sheaf()
         self.assertEqual({c["port"] for c in self.calls("sheaf.json") if c["cmd"] in ("stop", "start")}, {None})
 
-    def test_start_goes_through_a_user_scope_when_there_is_one_and_falls_back_when_it_fails(self):
+    def test_start_goes_through_a_user_scope_when_there_is_one_and_never_falls_back_to_a_plain_start(self):
         scope = script(self.bin / "systemd-run", f"""#!{sys.executable}
 import os, sys
 open(os.environ["FAKE_DIR"] + "/scope.json", "a").write(repr(sys.argv[1:]) + "\\n")
@@ -519,8 +554,10 @@ sys.exit(1 if os.path.exists(os.environ["FAKE_DIR"] + "/scope-fails") else os.ex
         self.assertIn("'--user', '--scope'", (self.fake / "scope.json").read_text())
         self.assertEqual(self.order().count("sheaf start"), 1)
         (self.fake / "scope-fails").write_text("")
-        self.assertEqual(deskinstall.restart_sheaf(), (True, ""))
-        self.assertEqual(self.order().count("sheaf start"), 2)  # the scope failed before starting; started plain
+        ok, why = deskinstall.restart_sheaf()
+        self.assertFalse(ok)                                    # said, and no plain start inside AgentView's own cgroup
+        self.assertIn("sheaf start failed", why)
+        self.assertEqual(self.order().count("sheaf start"), 1)
 
 
 class Shared(Case):

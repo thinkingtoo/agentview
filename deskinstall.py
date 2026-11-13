@@ -49,6 +49,7 @@ import deskwatch
 OWNERS = ("sweatshop-ai", "tiroir")
 SYSTEM_PATH = desk.SYSTEM_PATH
 HOME = pwd.getpwuid(os.getuid()).pw_dir
+# ~/.local/bin is searched because that is where uv and sheaf live; it is user-writable, unlike the system folders `gh` is taken from.
 SEARCH = ":".join([f"{HOME}/.local/bin", SYSTEM_PATH])
 EXES = {name: shutil.which(name, path=SEARCH) for name in ("uv", "sheaf", "systemd-run")}
 SCAN_EVERY = 900            # seconds between scans of the receipts
@@ -62,6 +63,10 @@ _last_scan = [0.0]
 
 class NotInstalled(Exception):
     """The press is refused; the text says why and goes under the item."""
+
+
+class TakenBack(NotInstalled):
+    """The person unticked or replaced the item while the press waited: nothing is written on the page."""
 
 
 @dataclass
@@ -94,8 +99,9 @@ def read_receipt(folder):
             return None
         if set(req) - {"name", "git"} or not re.fullmatch(r"[^\s:]+", folder.name):
             return None
+        desk.check_repo(f"{got.group(1)}/{got.group(2)}")                # no "." or ".." for a name
         return Tool(folder.name, name, f"{got.group(1)}/{got.group(2)}", got.group(3))
-    except (OSError, ValueError, KeyError, TypeError, UnicodeDecodeError):
+    except (OSError, ValueError, KeyError, TypeError, UnicodeDecodeError, desk.Refused):
         return None
 
 
@@ -150,7 +156,7 @@ def scan_tool(tool):
         cur = deskwatch.item(k)
         rec = last(k)
         pressing = bool(rec) and rec["event"] == "pressing"
-        waiting_on_press = bool(cur) and cur.ticked and (rec is None or rec["event"] == "ready")
+        waiting_on_press = bool(cur) and cur.ticked and (rec is None or rec["event"] != "installed")
         if pressing or waiting_on_press:                        # a ticked item is the watcher's, not the scan's
             return
         if status != "ahead":                                   # at main, or ahead of it, or diverged: nothing to install
@@ -226,11 +232,10 @@ def restart_sheaf():
         return False, f"sheaf stop failed: {desk.flatten(out, 120)}"
     start = [sheaf, "start"]
     scope = EXES.get("systemd-run")
-    if scope and os.path.isabs(scope):
+    if not scope or not os.path.isabs(scope):                   # no systemd-run at all: start it where we are
+        code, out = run(start, env)
+    else:                                                       # never a plain start after a failed scope: it would land in our cgroup
         code, out = run([scope, "--user", "--scope", "--quiet", "--collect", "--", *start], env)
-        if not code:
-            return True, ""
-    code, out = run(start, env)                                 # no user manager to ask: start it where we are
     return (True, "") if not code else (False, f"sheaf start failed: {desk.flatten(out, 120)}")
 
 
@@ -262,7 +267,13 @@ def install(k, pinned):
     status, _ = compare(tool.repo, tool.rev, pinned)
     if status != "ahead":
         raise NotInstalled(f"the installed commit changed since the hand-over (now {tool.rev[:7]}, which is not behind {pinned[:7]}); the scan will look again")
+    on_main, _ = compare(tool.repo, pinned, main_head(tool.repo))
+    if on_main not in ("ahead", "identical"):
+        raise NotInstalled(f"the pinned commit {pinned[:7]} is not on {tool.repo}'s main")
     uv = exe("uv")
+    now = deskwatch.item(k)                                     # the person may have taken the press back meanwhile
+    if not now or not now.ticked or now.pinned != pinned:
+        raise TakenBack("the press was taken back before the install")
     code, out = run([uv, "tool", "install", "--reinstall", "--from", f"git+https://github.com/{tool.repo}@{pinned}", tool.package],
                     uv_env(), UV_TIMEOUT)
     if code:
@@ -294,6 +305,8 @@ def press(k):
         desk.log("pressing", k, pinned=pinned)
     try:
         text, fields = install(k, pinned)
+    except TakenBack as why:
+        deskwatch.finish(k, pinned, "refused", "", False, why=str(why), page=False)
     except NotInstalled as why:
         deskwatch.finish(k, pinned, "refused", f"Not installed: {why}", True, why=str(why))
     else:
