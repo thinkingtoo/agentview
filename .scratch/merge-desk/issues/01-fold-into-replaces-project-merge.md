@@ -4,7 +4,9 @@
 
 **Blocked by:** 02 (merged into dev first: both edit the same page code; boss brief, 2026-11-13)
 
-**Status:** ready-for-agent
+**Claimed by:** Idris 2026-11-13 23:46
+
+**Status:** in-progress
 
 - [ ] No visible "merge" left for the project action (UI smoke test reads the card menu)
 - [ ] `/api/fold` does what `/api/merge` did; `/api/merge` still answers the same
