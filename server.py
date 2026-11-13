@@ -16,6 +16,7 @@ import archive
 import context
 import desk
 import deskring
+import deskwatch
 import embedder
 import fleet
 import hand
@@ -690,11 +691,13 @@ def main():
     log.start(claude.claude_dir())
     if migrated:
         log.event("migrated", fields=migrated)
+    deskwatch.start()
     print(f"fleet on http://127.0.0.1:{p}", flush=True)
     for entry, site in extra_entries():
         print(f"also     {entry}" if site else f"ignored  {entry} (not scheme://host[:port])",
               flush=True)
     print(f"log      {log.LOG}", flush=True)
+    print(f"desk     {deskwatch.GH or 'no gh in the system folders: ticked merges are refused'}", flush=True)
     server.serve_forever()
 
 

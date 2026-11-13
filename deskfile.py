@@ -201,6 +201,33 @@ def drop(text, key):
     return text
 
 
+RESULT = re.compile(r"^  - (?:(?:Already merged|Merged)(?: as [0-9a-f]{7})? at \d\d:\d\d|Not merged: .*)$")
+
+
+def settle(text, key, result, untick=False, pinned=None):
+    """`text` with the result of a press written as the last sub-line of item `key` (the
+    last result sub-line of an earlier press is replaced), and its box unticked when `untick`; with `pinned`, only an item still pinned at that commit. Text with
+    no such item comes back as it was."""
+    for k, start, end in _spans(text):
+        if k != key:
+            continue
+        block = text[start:end]
+        if pinned is not None and parse(block)[0].pinned != pinned:      # the item was handed over again meanwhile
+            return text
+        body = block.rstrip("\n")
+        tail = block[len(body):] or "\n"
+        kept = body.split("\n")
+        at = len(kept) - 1                                              # our line is always the last one, bar the person's comments after it
+        while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at]):
+            at -= 1
+        if RESULT.match(kept[at]):
+            del kept[at]
+        if untick and kept[0][3] in "xX":
+            kept[0] = kept[0][:3] + " " + kept[0][4:]
+        return text[:start] + "\n".join(kept + ["  - " + result]) + tail + text[end:]
+    return text
+
+
 def edit(change, file=None):
     """Read the file fresh under the lock, apply `change(text) -> text`, write it whole
     or not at all. Returns what `change` returned about it (the new text)."""
