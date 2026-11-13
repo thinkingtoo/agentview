@@ -6,7 +6,7 @@
 
 **Blocked by:** 18 (merged)
 
-**Status:** in-progress
+**Status:** done
 
 Signs after this ticket:
 - swinging 🔨: a turn in flight (busy).
@@ -41,4 +41,4 @@ Row precedence: 🔍 is shown when every worker with a turn in flight on the row
 - [x] A worker in flight, one whose turn is over with only a review agent behind it, and one with a review agent beside another job each show 🔍; a boss, a concierge and a session with a question open do not -- evidence: `tests/test_objectives.py` (class `Reviewing`)
 - [x] A row is reviewing only when every worker in flight on it is; real work in flight beside it keeps the swinging 🔨 -- evidence: same
 - [x] The page draws 🔍 with `scan` over 🔨 and 🧪, never on a waiting row; `scan` lives only under `no-preference`, moves on a 0.12em ring inside the room the line leaves it -- evidence: `tests/test_hammers_on_top.py`
-- [ ] No clipping on the live card, checked in the personal Chrome after the restart -- evidence: PR comment
+- [x] No clipping on the live card, checked in the personal Chrome after the restart -- evidence: 2026-11-13 02:17-02:21, build 4dabf0f39431, two real review agents (a worker on the track card's "elsewhere" line, then a worker on the agentview card). The `scan` animation (2800 ms, ring 0.12em = 1.44px at 12px) was stepped every 100/50 ms over a whole cycle with `getBoundingClientRect` against its clip box (`.ov-obj-note`, overflow hidden, 0.3em = 3.6px of left room): the sign's box stays 3.3-3.4px inside the clip's left edge at its extreme, so the glyph clears it by about 2px past the ring; its vertical excursion is 1.34px, inside the glyph's own 27px box, so no ink leaves the line. The box's right edge moves at most 2.1px into the leading space of the name text, never into a letter. Five native-resolution zooms at random phases show the whole lens and handle, clear of the name. Screenshots: /tmp/claude-chrome-screenshots-gRgSuD/screenshot-1794532761042-6.png, -7.png, -8.png, -9.png (on the track card), screenshot-1794532703539-1.png (top extreme). Gaps in the word list did not show on the live cards.
