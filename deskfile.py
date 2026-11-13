@@ -201,6 +201,26 @@ def drop(text, key):
     return text
 
 
+RESULT = re.compile(r"^  - (?:Merged as |Already merged|Not merged:)")
+
+
+def settle(text, key, result, untick=False):
+    """`text` with the result of a press written as the last sub-line of item `key` (the
+    sub-line of an earlier press is replaced), and its box unticked when `untick`. Text with
+    no such item comes back as it was."""
+    for k, start, end in _spans(text):
+        if k != key:
+            continue
+        block = text[start:end]
+        body = block.rstrip("\n")
+        tail = block[len(body):] or "\n"
+        kept = [l for l in body.split("\n") if not RESULT.match(l)]
+        if untick and kept[0][3] in "xX":
+            kept[0] = kept[0][:3] + " " + kept[0][4:]
+        return text[:start] + "\n".join(kept + ["  - " + result]) + tail + text[end:]
+    return text
+
+
 def edit(change, file=None):
     """Read the file fresh under the lock, apply `change(text) -> text`, write it whole
     or not at all. Returns what `change` returned about it (the new text)."""

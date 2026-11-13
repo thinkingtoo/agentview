@@ -1,0 +1,225 @@
+"""The merge desk's watcher: a ticked Merge item is merged, at the commit that was reviewed, and nothing else.
+
+`start()` runs `tick()` every few seconds on a thread of the server. A tick presses, one item at
+a time in page order, every item that is ticked and has no result yet:
+
+1. the PR's head must still be the item's pinned commit, else "the branch changed after the review";
+2. while GitHub answers UNKNOWN it is asked again every 2 s, for up to 60 s;
+3. anything but MERGEABLE is "GitHub says <state>";
+4. `gh pr merge --merge --match-head-commit <pinned>`.
+
+The result goes under the item (`deskfile.settle`); a refused press unticks the box. Every press is
+two records in `merge-desk.log`: `pressing` before the first `gh` call, `merged` or `refused` after
+the result is on the page. A press that has no result (the service was restarted under it) is
+settled from GitHub at the next tick, before anything is pressed: merged there means `merged`
+is recorded and nothing is pressed again; still open means `refused`, and the person presses again.
+
+One at a time holds across processes: the whole tick is under a lock file that dies with its
+holder. The desk file's own lock is never held across a `gh` call.
+
+`gh` is the absolute path found once, in the system's own folders: no entry of the service's PATH
+(`~/.local/bin` leads it) is consulted when a merge is made, and the child gets that PATH too.
+"""
+import contextlib
+import fcntl
+import json
+import os
+import shutil
+import subprocess
+import threading
+import time
+
+import desk
+import deskfile
+import log
+
+SYSTEM_PATH = "/usr/local/bin:/usr/bin:/bin"
+GH = shutil.which("gh", path=SYSTEM_PATH)
+POLL = 3            # seconds between ticks
+WAIT_MAX = 60       # how long GitHub may answer UNKNOWN
+WAIT_STEP = 2
+CALL_TIMEOUT = 120
+sleep = time.sleep
+LOCK = ".merge-desk.press.lock"
+
+
+class NotMerged(Exception):
+    """The press is refused; the text says why and goes under the item."""
+
+
+class Unsure(Exception):
+    """GitHub could not be asked; the press stays open and is settled at a later tick."""
+
+
+def gh(*args):
+    """(exit code, output) of one `gh` call; (1, why) when it cannot be run."""
+    if not GH or not os.path.isabs(GH):
+        return 1, "gh was not found in the system's folders"
+    try:
+        got = subprocess.run([GH, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                             timeout=CALL_TIMEOUT, env={**os.environ, "PATH": SYSTEM_PATH, "GH_PROMPT_DISABLED": "1"})
+    except (OSError, subprocess.TimeoutExpired) as err:
+        return 1, str(err)
+    return got.returncode, (got.stdout if got.returncode == 0 else got.stdout + got.stderr).strip()
+
+
+def view(repo, n):
+    """The PR as GitHub answers now: state, mergeable, headRefOid, mergeCommit."""
+    code, out = gh("pr", "view", str(n), "-R", repo, "--json", "state,mergeable,headRefOid,mergeCommit")
+    if code:
+        raise Unsure(desk.flatten(out, 160))
+    try:
+        data = json.loads(out)
+        data["state"], data["headRefOid"]
+        return data
+    except (ValueError, KeyError, TypeError):
+        raise Unsure("GitHub's answer could not be read") from None
+
+
+def merge_sha(pr):
+    commit = pr.get("mergeCommit")
+    return (commit.get("oid") or "") if isinstance(commit, dict) else ""
+
+
+def record(event, k, **fields):
+    with deskfile.locked():
+        desk.log(event, k, **fields)
+
+
+def last_event(k):
+    return next((r for r in reversed(desk.history(k))
+                 if r["event"] in ("ready", "pressing", "merged", "refused")), None)
+
+
+def split(k):
+    repo, _, n = k.rpartition("#")
+    return repo, n
+
+
+def settle_page(k, text, untick=False):
+    deskfile.edit(lambda t: deskfile.settle(t, k, desk.flatten(text), untick))
+
+
+def merged_text(sha, already=False):
+    when = time.strftime("%H:%M")
+    return (f"Already merged as {sha[:7]}" if already and sha else "Already merged" if already
+            else f"Merged as {sha[:7]}" if sha else "Merged") + f" at {when}"
+
+
+@contextlib.contextmanager
+def press_lock():
+    path = deskfile.path().parent / LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        yield True
+
+
+def item(k):
+    return next((i for i in deskfile.items() if i.key == k), None)
+
+
+def check_and_merge(k, pinned):
+    """Make the merge or raise NotMerged. Returns (sha, already_merged)."""
+    repo, n = split(k)
+    pr = None
+    for waited in range(WAIT_MAX // WAIT_STEP + 1):
+        try:
+            pr = view(repo, n)
+        except Unsure as why:                               # nothing was pressed yet: refuse, the person presses again
+            raise NotMerged(f"GitHub could not be asked: {why}") from None
+        if pr["state"] == "MERGED":
+            return merge_sha(pr), True
+        if pr["state"] != "OPEN":
+            raise NotMerged(f"the PR is {pr['state'].lower()}, not open")
+        if pr["headRefOid"] != pinned:
+            raise NotMerged(f"the branch changed after the review (reviewed {pinned[:7]}, now {pr['headRefOid'][:7]})")
+        if pr.get("mergeable") != "UNKNOWN":
+            break
+        if waited < WAIT_MAX // WAIT_STEP:
+            sleep(WAIT_STEP)
+    if pr.get("mergeable") == "UNKNOWN":
+        raise NotMerged(f"GitHub still says UNKNOWN after {WAIT_MAX} s")
+    if pr.get("mergeable") != "MERGEABLE":
+        raise NotMerged(f"GitHub says {pr.get('mergeable')}")
+    now = item(k)                                           # the person may have taken the press back while we waited
+    if not now or not now.ticked or now.pinned != pinned:
+        raise NotMerged("the press was taken back before the merge")
+    code, out = gh("pr", "merge", str(n), "-R", repo, "--merge", "--match-head-commit", pinned)
+    after = view(repo, n)                                   # an unreadable answer leaves the press open
+    if after["state"] == "MERGED":
+        return merge_sha(after), False
+    raise NotMerged("the merge failed: " + desk.flatten(out or f"gh exited {code}", 200))
+
+
+def press(k):
+    with deskfile.locked():
+        it = item(k)
+        last = last_event(k)
+        if not it or not it.ticked or (last and last["event"] in ("pressing", "merged")):
+            return
+        pinned = it.pinned
+        desk.log("pressing", k, pinned=pinned)
+    try:
+        if not pinned:
+            raise NotMerged("the item names no pinned commit")
+        sha, already = check_and_merge(k, pinned)
+    except NotMerged as why:
+        if str(why).startswith("the press was taken back"):
+            record("refused", k, why=str(why))
+            return
+        settle_page(k, f"Not merged: {why}", untick=True)
+        record("refused", k, why=str(why))
+    except Unsure as why:
+        log.error("desk-press", why, key=k)
+    else:
+        settle_page(k, merged_text(sha, already))
+        record("merged", k, sha=sha, pinned=pinned, already=already)
+
+
+def recover():
+    """Settle each press that began and never recorded a result. Never presses."""
+    unresolved = {}
+    for rec in desk.history():
+        if rec["event"] in ("ready", "pressing", "merged", "refused"):
+            unresolved[rec["key"]] = rec["event"] == "pressing"
+    for k in [k for k, open_ in unresolved.items() if open_]:
+        repo, n = split(k)
+        try:
+            pr = view(repo, n)
+        except Unsure:
+            continue
+        if pr["state"] == "MERGED":
+            sha = merge_sha(pr)
+            settle_page(k, merged_text(sha, already=True))
+            record("merged", k, sha=sha, recovered=True)
+        else:
+            why = "the press was interrupted before it finished; GitHub shows the PR not merged"
+            settle_page(k, f"Not merged: {why}", untick=True)
+            record("refused", k, why=why, recovered=True)
+
+
+def tick():
+    with press_lock() as got:
+        if not got:
+            return
+        recover()
+        for k in [i.key for i in deskfile.items() if i.ticked and not i.key.startswith("install:")]:
+            press(k)
+
+
+def run():
+    while True:
+        try:
+            tick()
+        except Exception as exc:        # a watcher that dies leaves ticked boxes unanswered
+            log.error("desk-watch", exc)
+        time.sleep(POLL)
+
+
+def start():
+    threading.Thread(target=run, name="desk-watch", daemon=True).start()

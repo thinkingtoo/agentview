@@ -157,13 +157,15 @@ def withdraw(repo, n):
 
 
 def status_line(k):
-    last = next((r for r in reversed(history(k)) if r["event"] in ("ready", "withdrawn", "merged", "refused")), None)
+    last = next((r for r in reversed(history(k)) if r["event"] in ("ready", "withdrawn", "pressing", "merged", "refused")), None)
     if last is None:
         return f"{k}: not on the desk"
     ev = last["event"]
     if ev == "ready":
         pinned = last.get("pinned", "")[:7]
         return f"{k}: waiting (pinned {pinned}, handed over {last.get('at', '?')})"
+    if ev == "pressing":
+        return f"{k}: being merged now"
     if ev == "merged":
         return f"{k}: merged as {str(last.get('sha', ''))[:7]} at {last.get('at', '?')}"
     if ev == "refused":

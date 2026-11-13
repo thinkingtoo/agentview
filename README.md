@@ -1065,6 +1065,15 @@ not restart until you know how it got there.
 - A window opened from the desktop's launcher shows the launcher's own unit
   (on Plasma `app-org.wezfurlong.wezterm@….service`, possibly with
   `OOMPolicy=stop`). That is outside the service and passes the check.
+- **A merge in flight.** `deskwatch.py` runs on a thread of `server.py`; a ticked
+  Merge item on the desk page is merged by a `gh` call of a few seconds (and, while
+  GitHub answers UNKNOWN, up to a minute of asking). A restart that lands in that
+  window kills the call. The log (`merge-desk.log`) then ends in `pressing` with no
+  result, and the next start settles it from GitHub before it presses anything:
+  merged there is recorded as merged, still open is recorded as refused and the box
+  is unticked. It never presses an unsettled item again. `gh` is the one found in
+  `/usr/local/bin:/usr/bin:/bin` when the server starts (the startup line `desk` names
+  it), never an entry of the service's PATH, which leads with `~/.local/bin`.
 - **Reload the page once** in every tab that was open before the restart that
   brings the overview as the only view. Such a tab keeps the page it was
   served, and that page reads `blocks`, which the roster no longer has: every
