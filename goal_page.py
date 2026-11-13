@@ -11,6 +11,14 @@ holds it. The hub serves any markdown file of a registered root at
 it starts a hub when none runs, restarts one of an older version, and records
 a page's settings anew, wiping a title or theme it was given.
 
+A page nobody rendered has no session to Tell, and one rendered by another session
+tells that one. So a track whose boss runs gets its page bound to that boss
+(`_bind`): when `docs.json`, read and never written, holds no target for the page,
+or one whose session is not the boss's, `sheaf open GOAL --no-browser --agent
+claude-code --session BOSS` records it, with the page's stored settings passed
+back so nothing of them is wiped. That is the one `sheaf open` run here, and only
+for a goal that has a boss and a root (boss-track/26).
+
 A goal whose root sheaf has not registered has no page yet; the card says so
 and how to give it one. sheaf takes a second or two to answer on a busy
 laptop, so the poll never waits for it: `of` answers from what was learnt, and
@@ -23,12 +31,13 @@ import re
 import subprocess
 import threading
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 import projects
 
 SHEAF = "sheaf"
 STATUS_EVERY = 30               # seconds between two looks at the hub
+RETRY = 300                     # seconds before a bind that failed is tried again
 TIMEOUT = 10
 RUNNING = re.compile(r"hub running on 127\.0\.0\.1:(\d{1,5})\b")
 NONE_RUNS = "no hub is running"   # what `sheaf status` prints when nothing listens on its port
@@ -51,6 +60,8 @@ _LOCK = threading.Lock()
 _hub = {"at": None, "port": None, "why": ""}
 _paths = {}                     # goal file -> the page's path on the hub, or None
 _wanted = set()                 # the goal files the cards have asked for
+_boss = {}                      # goal file -> the session id of its track's boss, as the cards last said
+_bound = {}                     # goal file -> (boss session, when) of the last `sheaf open` run for it
 _busy = [False]                 # a refresh is running
 
 
@@ -64,21 +75,29 @@ def roots_file():
     return base / "sheaf" / "roots.json"
 
 
+def docs_file():
+    """sheaf's `docs.json`, beside its `roots.json`."""
+    return roots_file().with_name("docs.json")
+
+
 def forget():
     """Drop what was learnt of the hub, as at start."""
     with _LOCK:
         _hub.update(at=None, port=None, why="")
         _paths.clear()
         _wanted.clear()
+        _boss.clear()
+        _bound.clear()
 
 
-def _run(args):
-    """`(exit code, stdout)` of `sheaf ARGS`; a sheaf missing (`MISSING`), too
+def _run(args, env=None):
+    """`(exit code, stdout)` of `sheaf ARGS` (with `env` added to the environment); a sheaf missing (`MISSING`), too
     slow (`TIMED_OUT`), with a hub that did not answer it (`SILENT`) or failing
     otherwise fails."""
     try:
         done = subprocess.run([SHEAF, *args], capture_output=True, text=True, errors="replace",
-                              timeout=TIMEOUT, stdin=subprocess.DEVNULL)
+                              timeout=TIMEOUT, stdin=subprocess.DEVNULL,
+                              env={**os.environ, **env} if env else None)
     except OSError:
         return MISSING, ""
     except subprocess.TimeoutExpired:
@@ -134,6 +153,59 @@ def _address(goal, roots):
     return "/" + "/".join(quote(seg, safe="") for seg in (name, *real.relative_to(path).parts))
 
 
+def _entry(goal, address):
+    """The `docs.json` entry of the page at `address` (`/<root>/<path>`), or None:
+    none kept, unreadable, or not what sheaf writes."""
+    try:
+        with docs_file().open(encoding="utf-8") as fh:
+            got = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    entry = got.get(unquote(address.lstrip("/"))) if isinstance(got, dict) else None
+    return entry if isinstance(entry, dict) else None
+
+
+def _settings(entry):
+    """The `sheaf open` options that keep the page's stored settings: a re-render
+    records them anew, so what is not passed back is lost."""
+    out = []
+    if not entry:
+        return out
+    if isinstance(entry.get("title"), str):
+        out += ["--title", entry["title"]]
+    if entry.get("toc") in ("always", "auto", "never"):
+        out += ["--toc", entry["toc"]]
+    width = entry.get("max_image_width")
+    if isinstance(width, int) and not isinstance(width, bool) and width > 0:
+        out += ["--max-image-width", str(width)]
+    for key, flag in (("by", "--by"), ("for", "--for"), ("theme", "--theme")):
+        if isinstance(entry.get(key), str):
+            out += [flag, entry[key]]
+    if entry.get("credit") is True:
+        out.append("--credit")
+    return out
+
+
+def _bind(goal, address, boss, now, run):
+    """Record `boss` as the session the page of `goal` is Told through, unless the
+    page's entry already says so, which is looked at on every refresh: a render
+    from another session takes the page back, and the next look binds it again.
+    A bind is not repeated for the same boss within `RETRY` seconds, whether it
+    worked or not, so a `sheaf` that leaves no target cannot be run on every look."""
+    with _LOCK:
+        done = _bound.get(goal)
+    if done and done[0] == boss and now - done[1] < RETRY:
+        return
+    entry = _entry(goal, address)
+    target = entry.get("target") if entry else None
+    if isinstance(target, dict) and target.get("session") == boss:
+        return
+    with _LOCK:
+        _bound[goal] = (boss, now)
+    run(["open", goal, "--no-browser", "--agent", "claude-code", "--session", boss,
+         *_settings(entry)], env={"CLAUDE_CONFIG_DIR": str(projects.pm_dir().parent)})
+
+
 def _stale(now):
     return _hub["at"] is None or now - _hub["at"] >= STATUS_EVERY or any(g not in _paths for g in _wanted)
 
@@ -162,6 +234,9 @@ def _refresh(now, run):
         with _LOCK:
             _hub.update(at=now, port=port, why=why)
             _paths.update(paths)
+            binds = [(g, paths[g], _boss[g]) for g in wanted if g in _boss and paths.get(g)]
+        for goal, address, boss in (binds if port is not None else []):
+            _bind(goal, address, boss, now, run)
     except Exception:                   # whatever it was, the card says so and waits STATUS_EVERY
         with _LOCK:
             _hub.update(at=now, port=None, why=UNREADABLE)
@@ -175,10 +250,11 @@ def _start(work):
     threading.Thread(target=work, name="goal-page", daemon=True).start()
 
 
-def of(track, now, run=_run, start=_start):
+def of(track, now, run=_run, start=_start, boss=None):
     """`{"url", "why"}` for the card of `track`: the page of its goal file, or
     no URL and why not. None when the track has no goal file. What is not known
-    yet is asked of sheaf by `start`, never here."""
+    yet is asked of sheaf by `start`, never here. `boss` is the session id of the
+    track's running boss, if any: the page is bound to it by the next refresh."""
     if not projects.TRACK_NAME.match(track):
         return None
     goal = str(projects.pm_dir() / f"{track}.goal.md")
@@ -186,6 +262,10 @@ def of(track, now, run=_run, start=_start):
         return None
     with _LOCK:
         _wanted.add(goal)
+        if boss:
+            _boss[goal] = boss
+        else:
+            _boss.pop(goal, None)
         go = _stale(now) and not _busy[0]
         if go:
             _busy[0] = True

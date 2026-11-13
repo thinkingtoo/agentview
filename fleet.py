@@ -1009,7 +1009,8 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
     if progress and not progress["met"]:
         progress["eta"] = pace.eta(project["raw"], progress["done"], progress["total"], time.time())
     if track is not None:
-        track["goal"] = GOAL_PAGE(project["raw"], time.time())
+        boss = next((r.get("id") for r in rows if projects.boss_tracks([r]).get(r["key"]) == project["raw"]), None)
+        track["goal"] = GOAL_PAGE(project["raw"], time.time(), boss=boss)
         # Rows say where a running track stands: a track you moved sessions
         # into by hand, with no boss of its own running (a boss of another
         # track moved in does not count), has its boxes and no rows.
