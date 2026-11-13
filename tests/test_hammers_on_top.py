@@ -8,6 +8,7 @@ done rows a hammer sat below twelve rows. They now sit right after the worked
 rows, so every hammer is together on top (boss-track/13).
 """
 import json
+import re
 import pathlib
 import shutil
 import subprocess
@@ -140,6 +141,36 @@ class HammersSwing(unittest.TestCase):
     def test_the_waiting_row_never_swings_even_if_the_server_says_busy(self):
         card = {"project": "p", "track": {"rows": [dict(row("asked", "waiting"), busy=True)]}}
         self.assertEqual(self.swung(card), {"asked": False})
+
+    def test_a_watching_row_and_entry_show_the_flask_and_rock_the_hammers_do_not(self):
+        card = {"project": "p", "track": {
+            "rows": [dict(row("w row", "worked"), busy=False, watching=True),
+                     dict(row("b row", "worked"), busy=True, watching=True),      # swinging beats it
+                     dict(row("q row", "worked"), busy=False, watching=False)],
+            "elsewhere": [{"name": "A", "task": "a", "busy": False, "watching": True},
+                          {"name": "B", "task": "b", "busy": False, "watching": False}]}}
+        import re
+        html = self.draw(card)[0]["html"]
+        got = {text: (cls.split(), glyph) for cls, glyph, text in re.findall(
+            r'<span class="(sign[^"]*)"[^>]*>([^<]*)</span> ([^<]*?)(?:</button>|<br>|</span>)', html)}
+        self.assertEqual(got["w row"], (["sign", "rock"], "🧪"))
+        self.assertEqual(got["A: a"], (["sign", "rock"], "🧪"))
+        self.assertEqual(got["b row"], (["sign", "swing"], "🔨"))
+        self.assertEqual(got["q row"], (["sign"], "🔨"))
+        self.assertEqual(got["B: b"], (["sign"], "🔨"))
+
+    def test_the_waiting_row_never_shows_the_flask(self):
+        card = {"project": "p", "track": {"rows": [dict(row("asked", "waiting"), watching=True)]}}
+        self.assertIn("⏸", self.draw(card)[0]["html"])
+
+    def test_the_rock_is_gated_on_motion_and_is_no_swing(self):
+        css = PAGE.read_text()
+        gate = css.index("@media (prefers-reduced-motion: no-preference)")
+        self.assertIn(".sign.rock", css[gate:css.index("</style>", gate)])
+        self.assertNotIn(".sign.rock", css[:gate])
+        self.assertNotRegex(css[:gate], r"animation:[^;]*rock")
+        self.assertNotEqual(re.search(r"@keyframes rock \{(.*?)\n", css).group(1),
+                            re.search(r"@keyframes swing \{(.*?)\n", css).group(1))
 
     def test_the_stylesheet_swings_only_where_motion_is_welcome(self):
         css = PAGE.read_text()

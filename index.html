@@ -147,7 +147,11 @@
   .ov-obj.st-worked .sign { color:var(--busy); }
   /* A hammer swings while a worker behind it has a turn in flight, and rests while it waits. */
   @keyframes swing { 0%, 100% { transform:rotate(-14deg); } 50% { transform:rotate(14deg); } }
+  /* 🧪 rocks side to side, a shorter turn and a shift sideways the hammer's swing does not have. It
+     only moves right of its start so the box (1.2em, clipped by the line) never cuts it. */
+  @keyframes rock { 0%, 100% { transform:translateX(0) rotate(-9deg); } 50% { transform:translateX(0.15em) rotate(9deg); } }
   @media (prefers-reduced-motion: no-preference) {
+    .sign.rock { animation:rock 900ms ease-in-out infinite; transform-origin:50% 90%; }
     .sign.swing { animation:swing 1200ms ease-in-out infinite; transform-origin:70% 80%; }
   }
   .ov-obj.st-waiting .sign { color:var(--wait); }
@@ -939,8 +943,10 @@ const boxLine = b => `${b.done ? "☑" : "☐"} ${b.text}`;
 const SIGN = { worked: "🔨", waiting: "⏸", planned: "○", done: "✅" };
 // The page redraws every poll and a redrawn hammer would start its swing over: a busy one is set
 // to the clock's phase of the 1200 ms swing in the stylesheet, so the redraw carries on.
-const signOf = (glyph, busy) => busy
+// A worker whose turn is over with a job of its own open shows 🧪, rocking (900 ms, same carry-on).
+const signOf = (glyph, busy, watching) => busy
   ? `<span class="sign swing" style="animation-delay:-${Date.now() % 1200}ms">${glyph}</span>`
+  : watching ? `<span class="sign rock" style="animation-delay:-${Date.now() % 900}ms">🧪</span>`
   : `<span class="sign">${glyph}</span>`;
 const FOLD_KEY = "agentview.folded-tracks";
 const FOLDED = new Set((() => {
@@ -963,7 +969,7 @@ function ticketLine(t) {
 function elsewhereOf(c) {
   const list = Array.isArray(c.track?.elsewhere) ? c.track.elsewhere : [];
   return list.length ? `<li class="ov-obj st-worked"><span class="ov-obj-note">${
-    list.map(w => `${signOf("🔨", w.busy === true)} ${esc(w.name)}: ${esc(w.task)}`).join("<br>")}</span></li>` : "";
+    list.map(w => `${signOf("🔨", w.busy === true, w.busy !== true && w.watching === true)} ${esc(w.name)}: ${esc(w.task)}`).join("<br>")}</span></li>` : "";
 }
 function doneWhenOf(c) {
   const rows = rowsOf(c);
@@ -981,7 +987,7 @@ function doneWhenOf(c) {
       r.awaiting_tick ? `<span class="tick">its tickets are done, awaiting tick</span>` : ""}${
       (r.tickets || []).map(t => `<span>${esc(ticketLine(t))}</span>`).join("")}</div>` : "";
     return [state, `<li class="ov-obj st-${state}"><button class="ov-obj-line" aria-expanded="${open}" data-row="${esc(key)}"
-      title="${esc(r.text)}">${signOf(SIGN[state], state === "worked" && r.busy === true)} ${esc(r.text)}</button>${more}</li>`];
+      title="${esc(r.text)}">${signOf(SIGN[state], state === "worked" && r.busy === true, state === "worked" && r.busy !== true && r.watching === true)} ${esc(r.text)}</button>${more}</li>`];
   });
   // The server sends worked rows first; the elsewhere hammers follow them, ahead of waiting, planned and done.
   const at = lis.findIndex(([state]) => state !== "worked");
