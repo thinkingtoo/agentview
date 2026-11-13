@@ -398,7 +398,7 @@ def without_sheaf_comments(text):
     ends at the next run of as many backticks on its line, a run that finds none
     is plain backticks, and a backslash escapes the character after it. The end
     is found with `find`, as in `without_comments`."""
-    out, at, line, ends = [], 0, None, {}           # ends: run length -> where the runs of the line end
+    out, at, line, ends = [], 0, -1, {}             # line: where the line of `ends` ends; ends: run length -> run ends
     while True:
         found = SHEAF_OPENS.search(text, at)
         if found is None:
@@ -407,11 +407,10 @@ def without_sheaf_comments(text):
         run = found.group()
         if run[0] != "<":                           # an escape or a code span goes by as it stands
             stop = found.end()
-            eol = text.find("\n", stop) % (len(text) + 1)
             if run[0] == "`":
-                if line != eol:                     # the runs of a line are gathered once, in one pass
-                    line, ends = eol, {}
-                    for other in BACKTICKS.finditer(text, found.start(), eol):
+                if stop > line:                     # the runs of a line are gathered once, in one pass
+                    line, ends = text.find("\n", stop) % (len(text) + 1), {}
+                    for other in BACKTICKS.finditer(text, found.start(), line):
                         ends.setdefault(len(other.group()), []).append(other.end())
                 after = ends.get(len(run), [])  # an escape can split a run: `\``
                 closing = bisect.bisect_right(after, stop)

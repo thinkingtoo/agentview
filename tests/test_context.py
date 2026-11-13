@@ -326,11 +326,13 @@ class Tracks(Cards):
                 self.assertNotIn("sheaf-comment", text)
                 self.assertTrue(text.endswith(" here then y"), text)
 
-    def test_backtick_runs_that_never_close_are_read_in_one_pass(self):
-        line = "".join("`" * n + "a" for n in range(1, 450))           # 100k characters, no run closes
-        started = time.monotonic()
-        self.assertEqual(context.without_sheaf_comments(line + self.BLOCK), line)
-        self.assertLess(time.monotonic() - started, 1)
+    def test_a_long_line_of_backtick_runs_or_escapes_is_read_in_one_pass(self):
+        for line in ("".join("`" * n + "a" for n in range(1, 900)),    # 400k characters, no run closes
+                     "\\a" * 200_000, "a`b" * 133_000):
+            with self.subTest(line=line[:12]):
+                started = time.monotonic()
+                self.assertEqual(context.without_sheaf_comments(line + self.BLOCK), line)
+                self.assertLess(time.monotonic() - started, 1.5)
 
     def test_an_escape_that_takes_the_first_backtick_of_a_run_leaves_the_rest_a_run_of_its_own(self):
         self.assertEqual(context.without_sheaf_comments("``a`` \\`` x" + self.BLOCK + " y"), "``a`` \\`` x y")
