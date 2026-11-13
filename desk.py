@@ -163,12 +163,12 @@ def status_line(k):
     ev = last["event"]
     if ev == "ready":
         pinned = last.get("pinned", "")[:7]
-        return f"{k}: waiting (pinned {pinned}, handed over {last['at']})"
+        return f"{k}: waiting (pinned {pinned}, handed over {last.get('at', '?')})"
     if ev == "merged":
-        return f"{k}: merged as {str(last.get('sha', ''))[:7]} at {last['at']}"
+        return f"{k}: merged as {str(last.get('sha', ''))[:7]} at {last.get('at', '?')}"
     if ev == "refused":
         return f"{k}: refused: {last.get('why', 'no reason given')}"
-    return f"{k}: withdrawn at {last['at']}"
+    return f"{k}: withdrawn at {last.get('at', '?')}"
 
 
 def status_all():

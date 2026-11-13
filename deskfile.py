@@ -22,6 +22,7 @@ of an item or a section.
 """
 import contextlib
 import fcntl
+import hashlib
 import os
 import re
 import threading
@@ -72,6 +73,17 @@ def path():
 _held = threading.local()
 
 
+def sheaf_lock_path(file):
+    """The lock sheaf takes around its own read-and-replace of this document: sheaf ticks
+    boxes and writes comments in the same file, so a writer that wants no lost update takes
+    it too. `<runtime>/locks/<first 12 hex of sha1 of the resolved path>.lock`, as sheaf's
+    `source.lock_key` names it."""
+    run = os.environ.get("XDG_RUNTIME_DIR")
+    base = Path(run) / "sheaf" if run and os.path.isabs(run) else Path(f"/tmp/sheaf-{os.getuid()}")
+    key = hashlib.sha1(os.fsencode(Path(file).resolve())).hexdigest()[:12]
+    return base / "locks" / (key + ".lock")
+
+
 @contextlib.contextmanager
 def locked(file=None):
     """The one writer of the desk file. The watcher, the scan and the tidy take it too.
@@ -85,8 +97,11 @@ def locked(file=None):
             _held.depth -= 1
         return
     file.parent.mkdir(parents=True, exist_ok=True)
-    with open(file.parent / ".merge-desk.lock", "a") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
+    theirs = sheaf_lock_path(file)
+    theirs.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with open(file.parent / ".merge-desk.lock", "a") as ours, open(theirs, "a") as sheafs:
+        fcntl.flock(ours, fcntl.LOCK_EX)
+        fcntl.flock(sheafs, fcntl.LOCK_EX)
         _held.depth = 1
         try:
             yield file
@@ -135,7 +150,7 @@ def parse(text):
     found = []
     for key, start, end in _spans(text):
         block = text[start:end]
-        pin = PINNED.search(block)
+        pin = PINNED.search(re.sub(r"<!--.*?-->", "", block, flags=re.S))   # a comment pins nothing
         found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block))
     return found
 
@@ -155,6 +170,9 @@ def put(text, key, block, section="merge"):
             return text[:start] + block + text[end:]
     heading = SECTIONS[section]
     at = _heading_end(text, heading)
+    if at is not None and not text.endswith("\n") and at == len(text):
+        text += "\n"
+        at += 1
     if at is None:
         text = text.rstrip("\n") + "\n\n" + heading + "\n"
         at = len(text)
@@ -171,7 +189,7 @@ def _heading_end(text, heading):
     """Offset just after the heading's own line (outside any comment), or None."""
     for offset, line, inside in _walk(text):
         if not inside and line.rstrip("\n") == heading:
-            return offset + len(line) if line.endswith("\n") else None
+            return offset + len(line)
     return None
 
 

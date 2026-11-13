@@ -33,6 +33,18 @@ cat "$f"
 """
 
 
+def setUpModule():
+    # Sheaf's own lock for the file lives in the runtime folder: never the real one.
+    global _runtime
+    _runtime = tempfile.mkdtemp()
+    os.environ["XDG_RUNTIME_DIR"] = _runtime
+
+
+def tearDownModule():
+    os.environ.pop("XDG_RUNTIME_DIR", None)
+    shutil.rmtree(_runtime, True)
+
+
 class Case(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -55,7 +67,7 @@ class Case(unittest.TestCase):
             [sys.executable, str(COMMAND), *map(str, args)], capture_output=True, text=True,
             stdin=subprocess.DEVNULL, timeout=30,
             env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1", "XDG_STATE_HOME": str(self.state),
-                 "PATH": f"{self.gh.parent}:{os.environ['PATH']}", "FAKE_GH_DIR": str(self.prs)})
+                 "XDG_RUNTIME_DIR": _runtime, "PATH": f"{self.gh.parent}:{os.environ['PATH']}", "FAKE_GH_DIR": str(self.prs)})
 
     def ready(self, n=272, repo="sweatshop-ai/sheaf", what="the dictation time limit", rec="merge", *more):
         return self.run_desk("ready", repo, n, "--what", what, "--rec", rec, "--why", "CI green", *more)
@@ -304,6 +316,43 @@ class Comments(unittest.TestCase):
         self.addCleanup(lambda: os.environ.pop("XDG_STATE_HOME") if old is None else os.environ.update(XDG_STATE_HOME=old))
         self.assertIn("waiting", desk.status_line("a/b#1"))
         self.assertEqual(len(desk.status_all()), 1)
+
+    def test_a_record_without_a_time_still_reads(self):
+        import desk
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "agentview").mkdir()
+        (tmp / "agentview" / "merge-desk.log").write_text(json.dumps({"event": "ready", "key": "a/b#1"}) + "\n")
+        old = os.environ.get("XDG_STATE_HOME")
+        os.environ["XDG_STATE_HOME"] = str(tmp)
+        self.addCleanup(lambda: os.environ.pop("XDG_STATE_HOME") if old is None else os.environ.update(XDG_STATE_HOME=old))
+        self.assertIn("a/b#1: waiting", desk.status_line("a/b#1"))
+
+    def test_a_pinned_line_in_a_comment_pins_nothing(self):
+        text = ("- [x] Merge a/b#1: r\n  <!--\n  - Pinned commit: " + "a" * 40 + "\n  -->\n  - Pinned commit: " + "b" * 40 + "\n")
+        self.assertEqual(deskfile.parse(text)[0].pinned, "b" * 40)
+
+    def test_a_heading_at_the_end_without_a_newline_is_the_section(self):
+        got = deskfile.put("# D\n## Pull requests waiting for your merge", "a/b#1", "- [ ] Merge a/b#1: x\n")
+        self.assertEqual(got.count("## Pull requests waiting"), 1)
+        self.assertEqual([i.key for i in deskfile.parse(got)], ["a/b#1"])
+
+    def test_the_writer_takes_sheafs_own_lock_too(self):
+        import fcntl
+        f = Path(tempfile.mkdtemp()) / "merge-desk.md"
+        self.addCleanup(shutil.rmtree, f.parent, True)
+        lock = deskfile.sheaf_lock_path(f)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock, "a") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)           # sheaf is writing
+            import threading, time
+            done = []
+            t = threading.Thread(target=lambda: (deskfile.put_item("o/r#1", "- [ ] Merge o/r#1: w\n", file=f), done.append(1)))
+            t.start(); time.sleep(0.5)
+            self.assertEqual(done, [])               # we wait for it
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        t.join(5)
+        self.assertEqual(done, [1])
 
     def test_a_write_by_another_writer_between_read_and_replace_is_not_lost(self):
         tmp = Path(tempfile.mkdtemp())
