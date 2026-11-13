@@ -4,9 +4,10 @@
 a time in page order, every item that is ticked and has no result yet:
 
 1. the PR's head must still be the item's pinned commit, else "the branch changed after the review";
-2. while GitHub answers UNKNOWN it is asked again every 2 s, for up to 60 s;
-3. anything but MERGEABLE is "GitHub says <state>";
-4. `gh pr merge --merge --match-head-commit <pinned>`.
+2. an item handed over `--after N` waits until PR N of the same repo is merged: "#N must go in first";
+3. while GitHub answers UNKNOWN it is asked again every 2 s, for up to 60 s;
+4. anything but MERGEABLE is "GitHub says <state>";
+5. `gh pr merge --merge --match-head-commit <pinned>`.
 
 The result goes under the item (`deskfile.settle`); a refused press unticks the box. Every press is
 two records in `merge-desk.log`: `pressing` before the first `gh` call, `merged` or `refused` after
@@ -149,6 +150,19 @@ def item(k):
     return next((i for i in deskfile.items() if i.key == k), None)
 
 
+def check_after(k, repo):
+    """Refuse while the PR this item must go after is not merged."""
+    it = item(k)
+    if not it or not it.after:
+        return
+    try:
+        first = view(repo, it.after)
+    except Unsure as why:
+        raise NotMerged(f"GitHub could not be asked about #{it.after}: {why}") from None
+    if first["state"] != "MERGED":
+        raise NotMerged(f"#{it.after} must go in first")
+
+
 def check_and_merge(k, pinned):
     """Make the merge or raise NotMerged. Returns (sha, already_merged)."""
     repo, n = split(k)
@@ -166,6 +180,7 @@ def check_and_merge(k, pinned):
             raise NotMerged(f"the PR is {pr['state'].lower()}, not open")
         if pr["headRefOid"] != pinned:
             raise NotMerged(f"the branch changed after the review (reviewed {pinned[:7]}, now {pr['headRefOid'][:7]})")
+        check_after(k, repo)
         if pr.get("mergeable") != "UNKNOWN":
             break
         if waited < WAIT_MAX // WAIT_STEP:

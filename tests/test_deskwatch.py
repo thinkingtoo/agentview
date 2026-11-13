@@ -112,10 +112,10 @@ class Case(unittest.TestCase):
         (self.prs / f"{repo.replace('/', '_')}#{n}.json").write_text(
             json.dumps({"state": state, "headRefOid": head, "mergeable": mergeable, "mergeCommit": None}))
 
-    def hand_over(self, n, pinned=SHA, repo=REPO):
+    def hand_over(self, n, pinned=SHA, repo=REPO, after=None):
         k = f"{repo}#{n}"
         with deskfile.locked():
-            deskfile.put_item(k, desk.item_block(repo, n, f"what {n} does", "merge", "CI green", pinned, "dev", None,
+            deskfile.put_item(k, desk.item_block(repo, n, f"what {n} does", "merge", "CI green", pinned, "dev", after,
                                                  "Faisal", "2026-11-13 10:40"))
             desk.log("ready", k, pinned=pinned)
         return k
@@ -211,6 +211,47 @@ class Refused(Case):
         self.assertEqual(len(self.merge_calls()), 1)
         self.assertNotIn("Not merged", self.item(272).block)       # the earlier result is replaced
         self.assertIn("Merged as 41678e3", self.item(272).block)
+
+    def test_a_press_whose_after_pr_is_open_is_refused_and_unticks_the_box(self):
+        self.pr(262)
+        self.pr(272)
+        k = self.hand_over(272, after=262)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        it = self.item(272)
+        self.assertFalse(it.ticked)
+        self.assertIn("  - Not merged: #262 must go in first", it.block)
+        self.assertEqual(self.events(k), ["ready", "pressing", "refused"])
+
+    def test_once_the_after_pr_is_merged_the_same_press_merges(self):
+        self.pr(262)
+        self.pr(272)
+        self.hand_over(272, after=262)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.pr(262, state="MERGED")
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual([c["args"][2] for c in self.merge_calls()], ["272"])
+        self.assertIn("Merged as 41678e3", self.item(272).block)
+
+    def test_an_after_pr_that_is_closed_unmerged_does_not_release_the_press(self):
+        self.pr(262, state="CLOSED")
+        self.pr(272)
+        self.hand_over(272, after=262)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertIn("Not merged: #262 must go in first", self.item(272).block)
+
+    def test_an_after_pr_gh_cannot_find_refuses_the_press(self):
+        self.pr(272)
+        self.hand_over(272, after=262)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertFalse(self.item(272).ticked)
 
     def test_a_pr_that_is_not_mergeable_is_refused_with_githubs_word(self):
         self.pr(272, mergeable="CONFLICTING")

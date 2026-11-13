@@ -47,6 +47,7 @@ list means nothing waits.
 
 TASK = re.compile(r"^- \[([ xX])\] (?:(?:Merge|Deploy) ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#\d+)|Install ([^\s:]+))(?::|$)")
 PINNED = re.compile(r"^\s+- Pinned commit: ([0-9a-f]{7,40})\b", re.M)
+AFTER = re.compile(r"^\s+- Pinned commit: [^\n]*; must go after #(\d+)\s*$", re.M)
 HEADING = re.compile(r"^#{1,6} ")
 TOP_ITEM = re.compile(r"^[-*+] ")
 
@@ -57,6 +58,7 @@ class Item:
     ticked: bool
     pinned: str
     block: str
+    after: int = 0          # the PR of the same repo that must be merged first; 0 for none
 
 
 def key_of(first_line):
@@ -152,7 +154,8 @@ def parse(text):
     for key, start, end in _spans(text):
         block = text[start:end]
         pin = PINNED.search(re.sub(r"<!--.*?-->", "", block, flags=re.S))   # a comment pins nothing
-        found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block))
+        order = AFTER.search(re.sub(r"<!--.*?-->", "", block, flags=re.S))
+        found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block, int(order.group(1)) if order else 0))
     return found
 
 
