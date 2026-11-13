@@ -194,6 +194,37 @@ class HammersSwing(unittest.TestCase):
         self.assertIn("Date.now() % 2400", PAGE.read_text())
         self.assertNotIn("Date.now() % 900", PAGE.read_text())
 
+    def test_a_reviewing_row_and_entry_show_the_magnifier_which_beats_the_hammer_and_the_flask(self):
+        card = {"project": "p", "track": {
+            "rows": [dict(row("r row", "worked"), busy=True, watching=True, reviewing=True),
+                     dict(row("f row", "worked"), busy=False, watching=True, reviewing=False)],
+            "elsewhere": [{"name": "A", "task": "a", "busy": False, "watching": True, "reviewing": True}]}}
+        html = self.draw(card)[0]["html"]
+        got = {text: (cls.split(), glyph) for cls, glyph, text in re.findall(
+            r'<span class="(sign[^"]*)"[^>]*>([^<]*)</span> ([^<]*?)(?:</button>|<br>|</span>)', html)}
+        self.assertEqual(got["r row"], (["sign", "scan"], "🔍"))
+        self.assertEqual(got["A: a"], (["sign", "scan"], "🔍"))
+        self.assertEqual(got["f row"], (["sign", "rock"], "🧪"))
+
+    def test_the_waiting_row_never_shows_the_magnifier(self):
+        card = {"project": "p", "track": {"rows": [dict(row("asked", "waiting"), reviewing=True)]}}
+        html = self.draw(card)[0]["html"]
+        self.assertIn("⏸", html)
+        self.assertNotIn("🔍", html)
+
+    def test_the_scan_circles_gently_only_where_motion_is_welcome(self):
+        css = PAGE.read_text()
+        gate = css.index("@media (prefers-reduced-motion: no-preference)")
+        self.assertIn(".sign.scan", css[gate:css.index("</style>", gate)])
+        self.assertNotIn(".sign.scan", css[:gate])
+        self.assertRegex(css, r"\.sign\.scan \{ animation:scan 2800ms linear infinite; \}")
+        keys = re.search(r"@keyframes scan \{(.*?)\}\s*\n\s*@media", css, re.S).group(1)
+        moves = [tuple(float(x) for x in m) for m in re.findall(r"translate\((-?[\d.]+)(?:em)?, (-?[\d.]+)(?:em)?\)", keys)]
+        self.assertEqual(len(moves), 4)
+        self.assertTrue(all(abs(x) <= 0.12 and abs(y) <= 0.12 for x, y in moves), moves)   # the room the line leaves it
+        self.assertTrue(any(x for x, _ in moves) and any(y for _, y in moves))              # a ring, not a line
+        self.assertIn("Date.now() % 2800", css)
+
     def test_the_stylesheet_swings_only_where_motion_is_welcome(self):
         css = PAGE.read_text()
         gate = css.index("@media (prefers-reduced-motion: no-preference)")

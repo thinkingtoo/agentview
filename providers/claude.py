@@ -846,6 +846,45 @@ def _subagent_files(path, now, cwds=()):
     return found
 
 
+# A subagent is a review when its description says so (ticket boss-track/20). Measured on 878
+# descriptions of four days: precision about 100% on samples, 94% of the calls. `opus` and `codex`
+# only count beside no word of work to build (`REVIEW_VETO`); none of the 39 that matched through
+# them alone was.
+REVIEW_WORDS = re.compile(
+    r"(?<![A-Za-z])(?:re-?|code-)?review|revue|\bbug[ -]hunt|\bdelta\b|\bre-?(?:check|run|gate|read)\b|"
+    r"\brecheck\b|\bverdict\b|\b(?:standards|spec) axis\b|\bfinal read\b|\bopus\b|\bcodex\b", re.I)
+REVIEW_VETO = re.compile(r"\b(?:implement\w*|parity|build|port|migrate|write|draft)\b", re.I)
+REVIEW_FRESH_MINUTES = 5     # a running subagent's transcript wrote this recently; a stale meta is an old run
+META_READ = 4096
+REVIEW_MAX = 12              # fresh subagents looked into per session, per poll
+
+
+def is_review(description):
+    return bool(REVIEW_WORDS.search(description)) and not REVIEW_VETO.search(description)
+
+
+def _reviewing(path, now, cwds=()):
+    """Whether a live subagent of the session is a review: its meta file (`description`,
+    `finished`) beside its transcript says it is not finished, the transcript wrote in the
+    last REVIEW_FRESH_MINUTES, and the description is a review's (`is_review`)."""
+    seen = 0
+    for entry in _subagent_files(path, now, cwds):
+        try:
+            if (now - entry.stat().st_mtime) / 60 > REVIEW_FRESH_MINUTES:
+                continue
+            seen += 1
+            if seen > REVIEW_MAX:
+                break
+            with open(entry.path[:-len(".jsonl")] + ".meta.json", "rb") as fh:
+                meta = json.loads(fh.read(META_READ))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(meta, dict) and meta.get("finished") is not True
+                and isinstance(meta.get("description"), str) and is_review(meta["description"])):
+            return True
+    return False
+
+
 def _subagents(path, now, cwds=()):
     """The session's subagents: their transcript states, and how many minutes
     ago the newest of them wrote (None when it has none).
@@ -894,6 +933,7 @@ def scan_session(path, now=None):
         return view
     now = time.time() if now is None else now
     subs, view["subQuiet"] = _subagents(path, now, view["cwds"])
+    view["reviewing"] = _reviewing(path, now, view["cwds"])
     for state in subs:
         view["writes"] = _add(view["writes"], _strip(state, now))
     return view
@@ -902,7 +942,7 @@ def scan_session(path, now=None):
 EMPTY = {"title": "", "prompt": "", "dispatch": "", "branch": "", "paths": [], "said": "",
          "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": [],
          "calls": [], "answeredAt": None, "failure": None, "lastTool": None, "turnOver": False,
-         "cwds": []}
+         "cwds": [], "reviewing": False}
 
 
 def _peers(cfg):
@@ -1145,6 +1185,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # tasks with a live shell behind them, and CPU under a shell.
         "writes": summary["writes"],
         "subQuiet": summary["subQuiet"],
+        "reviewing": bool(summary.get("reviewing")),
         "bgTasks": under["tasks"],
         "shellCpu": under["cpu"],
         "shellCpuAgo": under["cpu_ago"],
