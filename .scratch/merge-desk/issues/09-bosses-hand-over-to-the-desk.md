@@ -4,7 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Claimed by:** Santiago 2026-11-14 00:13
+
+**Status:** in-progress
 
 - [ ] The boss skill's merge step names `desk ready`
 - [ ] A boss that wraps up lists its desk items in its wrap-up state
