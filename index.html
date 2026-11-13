@@ -479,6 +479,10 @@ let SPEAKER = null;         // the audio context, built on your first click
 let MUZZLED = false;        // wanted to ring, and the browser would not have it
 let PROVIDERS = {};         // who answered the last poll, and who did not
 let PASTES = 0;             // the roster's count of Pastes waiting, anywhere
+let MERGES = 0;             // the roster's count of items waiting on the merge desk
+let DESK_RUNG = "";         // what the desk's daily ring said, shown under the header for a minute
+let DESK_FAILED = false;    // the server could not keep the day the desk rang: no more rings this page
+let DESK_RINGING = false;   // a ring is sounding and not yet reported to the server
 let KEPT = [];              // the roster's `kept`: Pastes of sessions no longer on the machine
 let COUNTS = {};            // the roster's header counts: needs, stuck, moving
 let BANNERS = [];           // what is wrong with the whole machine, as the roster said
@@ -637,6 +641,34 @@ function announce(flags) {
   return asks || done;
 }
 
+// The merge desk's daily ring: the server says when it is due (once a day, kept across restarts),
+// the page only plays it. It is the ring of a session that needs you, and its words name the desk.
+// The server spends the day only when told the ring sounded: a muted chime or a browser holding
+// back sound leaves it due. The words stay on the page a minute, under the header.
+async function deskRing(text) {
+  // Overlapping polls and a second tab ask again before the server has the day: while the words are
+  // up, or the server could not keep the day, the ring is not played again.
+  if (typeof text !== "string" || !text || DESK_RINGING || DESK_RUNG || DESK_FAILED || !CHIME) return false;
+  DESK_RINGING = true;
+  const before = ANNOUNCED_AT;
+  ANNOUNCED_AT = Date.now();      // before the sound: a stale-build reload waits for it
+  try {
+    if (!await ring()) { ANNOUNCED_AT = before; return false; }   // held back: nothing sounded, nothing to wait for
+    DESK_RUNG = text;
+    // Like every deferred paint: not over a field the person is typing in.
+    setTimeout(() => { DESK_RUNG = ""; if (!busyWithUser()) paint(); }, 60000);
+    if (!busyWithUser()) paint();
+    const r = await fetch("/api/desk_rung", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" }, body: "{}" });
+    if (!r.ok) DESK_FAILED = true;
+    return r.ok;
+  } catch (e) {
+    DESK_FAILED = true;
+    return false;
+  } finally {
+    DESK_RINGING = false;
+  }
+}
+
 function drawSound() {
   const button = document.getElementById("sound");
   button.textContent = MUZZLED ? "allow sound" : CHIME ? "chime" : "muted";
@@ -674,7 +706,7 @@ async function load() {
     // Checked again on the far side of the await: a poll that set off a
     // moment before you clicked would otherwise land now and wipe the field
     // you have already started typing in.
-    const { flags, columns, counts, banners, chime, providers, restore, saved, closed, pastes, kept, build } = await r.json();
+    const { flags, columns, counts, banners, chime, providers, restore, saved, closed, pastes, kept, merges, merges_ring, build } = await r.json();
     drawRestore(restore);
     drawClosed(closed);
     drawSave(saved);
@@ -687,6 +719,8 @@ async function load() {
     COLUMNS = columns || [];
     COUNTS = counts || {};
     PASTES = Number.isInteger(pastes) && pastes > 0 ? pastes : 0;
+    MERGES = Number.isInteger(merges) && merges > 0 ? merges : 0;
+    deskRing(merges_ring);
     KEPT = Array.isArray(kept) ? kept.filter(k => k && typeof k.key === "string" && Array.isArray(k.pastes)) : [];
     BANNERS = Array.isArray(banners) ? banners : [];
     paint();
@@ -827,9 +861,12 @@ function drawHead(cols, down) {
   // Not one of the three counts: it lights nothing up, it takes you to the first Paste.
   const pastes = PASTES ? ` &nbsp;·&nbsp; <button class="hc pastes" data-paste-count
       title="Go to the first Paste waiting for you">${PASTES} ${PASTES === 1 ? "Paste" : "Pastes"} waiting</button>` : "";
+  // Not one of the three counts either: it lights nothing up, it opens the merge desk page. 0 hides it.
+  const merges = MERGES ? ` &nbsp;·&nbsp; <button class="hc merges" data-merges
+      title="Open the merge desk: finished work that waits for your hand">Merges ${MERGES}</button>` : "";
   const html = `${total} ${total === 1 ? "session" : "sessions"} · ${cols.length} ${cols.length === 1 ? "project" : "projects"}`
     + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
-    + ` &nbsp;·&nbsp; ${buttons}${pastes}${down}`;
+    + ` &nbsp;·&nbsp; ${buttons}${pastes}${merges}${down}`;
   if (html === HEAD_SHOWN) return;
   HEAD_SHOWN = html;
   // Rebuilding the buttons drops the focus from the one that has it, so a
@@ -845,7 +882,7 @@ function drawHead(cols, down) {
 // again only when the list changed, like the header.
 let BANNERS_SHOWN = "";
 function drawBanners() {
-  const list = BANNERS.filter(b => b && typeof b.text === "string" && b.text);
+  const list = [...BANNERS, ...(DESK_RUNG ? [{ text: DESK_RUNG }] : [])].filter(b => b && typeof b.text === "string" && b.text);
   const key = JSON.stringify(list);
   if (key === BANNERS_SHOWN) return;
   BANNERS_SHOWN = key;
@@ -2057,6 +2094,21 @@ document.getElementById("sound").addEventListener("click", async () => {
     headers: { "Content-Type": "application/json", "X-Fleet": "1" },
     body: JSON.stringify({ chime: CHIME }),
   }).catch(() => {});
+});
+
+// The Merges button opens the desk page, the page `desk page` opens.
+document.getElementById("count").addEventListener("click", async ev => {
+  const button = ev.target.closest("button[data-merges]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const r = await fetch("/api/desk_page", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" }, body: "{}" });
+    if (!r.ok) throw new Error(await r.text());
+  } catch (e) {
+    report("desk_page", e.message, e.stack);
+    button.title = "the desk page could not be opened: " + e.message;
+  }
+  button.disabled = false;
 });
 
 // The Paste count takes you to the first Paste on the page, in the order it is drawn.
