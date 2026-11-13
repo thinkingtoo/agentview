@@ -316,6 +316,19 @@ class Tracks(Cards):
                 track = self.raw_goal(between=note, after=later)
                 self.assertEqual([b["text"] for b in track["boxes"]], ["cart", "receipt", "refund", "extra"])
 
+    def test_a_code_span_ends_at_a_run_of_its_own_length_and_an_escaped_backtick_opens_none(self):
+        # CommonMark: ``a`b`` is one span, and \` is a backtick, so the block after each is a block.
+        for words in ("use ``a`b`` here", "use \\` here"):
+            with self.subTest(words=words):
+                track = self.raw_goal(after=f"- [ ] {words}{self.BLOCK} then `y`\n")
+                text = track["boxes"][-1]["text"]
+                self.assertNotIn("sheaf-comment", text)
+                self.assertTrue(text.endswith(" here then y"), text)
+
+    def test_a_multi_line_sheaf_comment_in_the_outcome_is_not_part_of_it(self):
+        self.assertEqual(self.track(outcome=f"Customers pay{self.MULTI} with a saved card.")["context"]["full"],
+                         "Customers pay with a saved card.")
+
     def test_the_older_rd_comment_marker_is_a_sheaf_comment_too(self):
         self.assertCart(self.raw_goal(f"## Done when{self.BLOCK.replace('sheaf-comment', 'rd-comment')}"))
 

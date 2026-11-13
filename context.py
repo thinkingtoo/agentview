@@ -326,7 +326,8 @@ def track_card(track):
 # ------------------------------------------------------------- the repository
 
 OPENS = re.compile(r"`[^`\n]+`|<!--")
-SHEAF_OPENS = re.compile(r"`[^`\n]+`|<!--\s*(?:sheaf|rd)-comment\b")
+# A code span ends at a backtick run of its own length, and \` opens none (CommonMark).
+SHEAF_OPENS = re.compile(r"(?<![`\\])(`+)(?!`).*?(?<!`)\1(?!`)|<!--\s*(?:sheaf|rd)-comment\b")
 FRONT_MATTER = re.compile(r"\A\s*---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", re.DOTALL)
 INCLUDE = re.compile(r"^\s*@\S+\s*$")
 REFERENCE = re.compile(r"^\s*\[[^\]]+\]:")      # CommonMark wants no space after the colon, footnotes too
