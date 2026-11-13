@@ -294,7 +294,9 @@ def track_card(track):
     """What a track's goal file gives the card: (the Outcome paragraph, or "";
     `{"status", "progress", "boxes"}`). The boxes are the Done when list in the
     file's order, each `{"text", "done"}`, its text as plain as the Outcome's."""
-    lines = list(unfenced(goal_file(track)))
+    # A sheaf comment sits where the words it is about end, in a heading too, and may run over
+    # lines that look like boxes or headings: it goes before anything is read (boss-track/27).
+    lines = without_comments("\n".join(unfenced(goal_file(track))), keep_unclosed=True).split("\n")
     status = next((m.group(1).upper() for m in map(STATUS.match, lines) if m), "")
     status = status if status in STATUS_WORDS else ""
     marked, wrapping = [], False                # [ticked?, its words]; a wrapped box's lines joined
@@ -360,9 +362,11 @@ DESCRIBED_BY = (("readme.md", "readme.markdown", "readme.txt", "readme"),
                 ("agents.md",), ("claude.md",))
 
 
-def without_comments(text):
+def without_comments(text, keep_unclosed=False):
     """The text with its HTML comments taken out. One that never closes runs to
-    the end, as it does when the README is shown. A code span on a line is
+    the end, as it does when the README is shown, unless `keep_unclosed`: a
+    goal file is edited by hand, and a comment left open must not hide its
+    boxes. A code span on a line is
     code: a `<!--` inside it opens nothing. The end of a comment is found with
     `find`, not a pattern: a pattern tries every `<!--` against the whole rest
     of the file."""
@@ -379,6 +383,8 @@ def without_comments(text):
         out.append(text[at:found.start()])
         end = text.find("-->", found.end())
         if end < 0:
+            if keep_unclosed:
+                out.append(text[found.start():])
             return "".join(out)
         at = end + 3
 

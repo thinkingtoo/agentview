@@ -262,6 +262,54 @@ class Tracks(Cards):
         self.claude(sess("p", self.loom, name="Femi"))
         self.assertEqual(asked, [])
 
+    # A sheaf comment is an HTML comment written where the words it is about end (boss-track/27). Inside a
+    # heading it leaves "## Done when" with a block in it; a multi-line one carries lines that look like
+    # boxes or headings and are neither.
+    BLOCK = '<!-- sheaf-comment id=c1 by="Ana" at=2026-11-13T10:01 status=open quote="Done"<br>Why? -->'
+    MULTI = ('<!-- sheaf-comment id=c2 by="Ana" at=2026-11-13T10:02 status=open quote="refund"\n'
+             'Please check\n- [ ] a box inside the comment\n- [x] and a ticked one\n## A heading inside it\n-->')
+
+    def raw_goal(self, heading="## Done when", between="", after=""):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective \u2014 checkout\n_Status: OPEN_\n\n## Outcome\nCustomers pay.\n\n"
+            f"{heading}\n{between}- [x] cart\n- [ ] receipt\n- [ ] refund\n{after}\n## Next\n1. a\n")
+        return self.claude(self.boss("b", self.loom, "checkout"))["columns"][0]["track"]
+
+    def assertCart(self, track):
+        self.assertEqual([(b["text"], b["done"]) for b in track["boxes"]],
+                         [("cart", True), ("receipt", False), ("refund", False)])
+        self.assertEqual(track["progress"]["text"], "1 of 3")
+
+    def test_a_comment_block_at_the_end_of_the_done_when_heading_leaves_its_boxes(self):
+        self.assertCart(self.raw_goal(f"## Done when{self.BLOCK}"))
+
+    def test_a_comment_block_inside_the_done_when_heading_leaves_its_boxes(self):
+        self.assertCart(self.raw_goal(f"## Done{self.BLOCK} when"))
+
+    def test_a_comment_block_over_several_lines_inside_the_heading_leaves_its_boxes(self):
+        self.assertCart(self.raw_goal("## Done<!-- one\nlines two\n--> when"))
+
+    def test_a_comment_block_on_its_own_line_under_the_heading_leaves_its_boxes(self):
+        self.assertCart(self.raw_goal(between=self.BLOCK + "\n"))
+
+    def test_a_box_line_inside_a_multi_line_comment_is_no_box(self):
+        self.assertCart(self.raw_goal(between=self.MULTI + "\n"))
+        self.assertCart(self.raw_goal(after=self.MULTI + "\n"))
+
+    def test_a_heading_line_inside_a_multi_line_comment_does_not_end_the_section(self):
+        track = self.raw_goal(between="- [x] cart-first\n" + self.MULTI + "\n")
+        self.assertEqual([b["text"] for b in track["boxes"]], ["cart-first", "cart", "receipt", "refund"])
+
+    def test_a_comment_after_a_boxs_words_is_not_part_of_them(self):
+        (self.pm / "checkout.goal.md").write_text(
+            "# Objective\n_Status: OPEN_\n\n## Done when\n- [x] cart" + self.BLOCK + "\n- [ ] receipt\n")
+        got = self.claude(self.boss("b", self.loom, "checkout"))["columns"][0]["track"]
+        self.assertEqual([b["text"] for b in got["boxes"]], ["cart", "receipt"])
+
+    def test_a_comment_that_never_closes_changes_nothing_and_a_code_span_is_code(self):
+        self.assertCart(self.raw_goal(between="Note: <!-- never closed\n"))
+        self.assertCart(self.raw_goal(between="Use `<!--` in a code span.\n"))
+
     def test_the_goal_page_is_given_the_session_of_the_tracks_boss_not_a_workers(self):
         asked = []
         fleet.GOAL_PAGE = lambda track, now, boss=None: asked.append((track, boss))

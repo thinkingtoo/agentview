@@ -1,6 +1,6 @@
 # 27: A sheaf comment on a goal's heading hides every Done when box
 
-**Status:** diagnosed, fix not built (Tarek asked for the findings first)
+**Status:** in review
 
 **What happened (2026-11-13, found by the boss of a client track):** Thierry commented on the words "Done when" of a goal page. Sheaf wrote the comment block into the heading line, and `boss-goal` then found 0 criteria. The boss moved the block onto its own line by hand; claude-boss ticket 47 covers `boss-goal`.
 
@@ -28,10 +28,16 @@ So agentview loses every row in the same two cases as `boss-goal`.
 
 **What to ask of sheaf (for the sheaf team):** for a `heading` block, anchor at the **end of the heading line** whatever the selection (or write the block on the line after the heading as its own HTML block), so no reader sees a comment inside a heading's words. A comment in a heading's middle also splits the heading's text for any other tool.
 
-## (2) The agentview fix, to build after PR 54
+## (2) The agentview fix
 
-`context.HEADING` / `heading_text` take the comment blocks out of a heading line before comparing it with the title: `<!-- … -->` on the line, whole, including a block that is cut across the line by a heading word (`Done<!-- … --> when` → `Done when`). A block that runs over several lines (a heading comment is one line, but a hand-written one may not be) is out of scope.
+Two more cases from claude-boss PR 142 (found for multi-line sheaf-comment blocks), checked here with fixtures: **(a)** a `- [ ]` / `- [x]` line inside a multi-line `<!-- … -->` block was counted as a box (it was: the fixture failed); **(b)** a `## ` line inside a block ended the Done when section (it did: the fixture failed). Cases that already passed: the block on its own line, an unclosed `<!--`, a `<!--` in a code span.
 
-- [ ] A heading with a trailing or inner sheaf-comment block opens the same section as without -- evidence: test in `tests/test_context.py` with the fixtures above
-- [ ] The boxes, progress and rows are those of the file without the block -- evidence: same test
-- [ ] A block-free heading and a heading that only looks like a block (`<!-- note` unclosed) behave as before -- evidence: tests
+`context.track_card` takes the comments out of the goal text before reading it, with the existing `without_comments` (a code span is code), after the fences are out. A comment that never closes is kept as text (`keep_unclosed`), where the README reader lets it run to the end: a goal file is edited by hand, and one open comment must not hide the boxes under it. A comment cut across a heading word (`Done<!-- … --> when`) joins to `Done when`. The Outcome is read from the same lines, so comment text is no longer in it either.
+
+- [x] A heading with a trailing, inner or multi-line inner sheaf-comment block opens the same section as without -- evidence: `tests/test_context.py` `Tracks` (three tests)
+- [x] The boxes, progress and rows are those of the file without the block -- evidence: `assertCart` in the same tests
+- [x] (a) a box line inside a multi-line block is no box -- evidence: `test_a_box_line_inside_a_multi_line_comment_is_no_box`
+- [x] (b) a `## ` line inside a block does not end the section -- evidence: `test_a_heading_line_inside_a_multi_line_comment_does_not_end_the_section`
+- [x] A comment after a box's words is not in its text; an unclosed `<!--` and a code span change nothing -- evidence: the last two tests; mutation-checked (`keep_unclosed`, code-span rule)
+
+**Known limit:** a `<!--` inside an inline code span that spans lines is not a code span for `OPENS` (one line only), as in the README reader.
