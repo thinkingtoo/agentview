@@ -36,8 +36,9 @@ BODY_MAX = 64 * 1024
 POSTS = ("tick", "comment", "seen")
 GETS = ("doc", "live")
 PAGE_ENTRY = "/desk"
-TIMEOUT = 15                     # connecting, and any wait for the hub's answer to a read
-PRESS_TIMEOUT = 60               # a tick or a comment is saved, committed and rendered before the hub answers
+TIMEOUT = 15                     # the sign-in's connecting and answer
+ASK_TIMEOUT = 60                 # the hub's answer to a request: a tick or a comment is saved, committed and
+                                 # rendered first, and a read of the same document waits for that write
 READ_TIMEOUT = 30                # the phone's own body, once it has said how long it is
 STREAM_TIMEOUT = 70              # the hub's event stream says something every 25 s
 CHUNK = 8192
@@ -208,7 +209,9 @@ def _ask(desk, plan_, cookie, last_event):
         headers.update({"Origin": f"http://{host}", "Content-Type": "application/json"})
     if plan_.stream and last_event and LAST_EVENT.fullmatch(last_event):
         headers["Last-Event-ID"] = last_event
-    conn = http.client.HTTPConnection("127.0.0.1", desk.port, timeout=PRESS_TIMEOUT if plan_.body is not None else TIMEOUT)
+    # Set when the connection is made: the hub's answers end with `Connection: close`, and http.client
+    # drops its socket as soon as it has read the head of one, so a timeout set after that reaches nothing.
+    conn = http.client.HTTPConnection("127.0.0.1", desk.port, timeout=STREAM_TIMEOUT if plan_.stream else ASK_TIMEOUT)
     try:
         conn.request(plan_.method, plan_.target, body=plan_.body, headers=headers)
         res = conn.getresponse()
@@ -278,8 +281,6 @@ def serve(h, method):
         h.end_headers()
         if plan_.method == "POST":
             log.event("desk-relay", path=path, status=res.status)
-        if plan_.stream and conn.sock:
-            conn.sock.settimeout(STREAM_TIMEOUT)
         while True:
             chunk = res.read1(CHUNK)
             if not chunk:

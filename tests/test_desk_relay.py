@@ -142,6 +142,7 @@ class StubHub(BaseHTTPRequestHandler):
             self.wfile.write(b"retry: 2000\n\n")
             self.wfile.flush()
             type(self).stream_gate.wait(10)
+            self.wfile.write(b"data: late\n\n")
             return
         if self.headers.get("Cookie") != "sheaf_4242=good":
             return self._send(401, b"not signed in", "text/plain")
@@ -305,6 +306,14 @@ class Relayed(unittest.TestCase):
         self.assertEqual(res.fp.readline(), b"retry: 2000\n")             # before the hub has ended the stream
         StubHub.stream_gate.set()
 
+    def test_a_quiet_stream_is_held_open_past_the_timeout_of_a_press(self):
+        with mock.patch.object(deskrelay, "ASK_TIMEOUT", 0.3):
+            res, _ = self.call("GET", f"/_/live?doc={ADDRESS.replace('/', '%2F')}", read=False)
+            self.assertEqual(res.fp.readline(), b"retry: 2000\n")
+            time.sleep(1.0)                                   # longer than ASK_TIMEOUT, shorter than the hub's keepalive
+            StubHub.stream_gate.set()
+            self.assertEqual((res.fp.readline(), res.fp.readline()), (b"\n", b"data: late\n"))
+
     def test_a_hub_that_is_not_there_is_a_503_not_a_hang(self):
         self.stub.shutdown()
         self.stub.server_close()
@@ -320,7 +329,7 @@ class Relayed(unittest.TestCase):
         self.assertEqual(res.status, 503)
 
     def test_a_hub_slower_than_the_press_timeout_is_a_504_and_the_hub_is_not_forgotten(self):
-        with mock.patch.object(deskrelay, "PRESS_TIMEOUT", 0.3), \
+        with mock.patch.object(deskrelay, "ASK_TIMEOUT", 0.3), \
                 mock.patch.object(StubHub, "do_POST", lambda self: time.sleep(1.5)):
             res, _ = self.call("POST", "/_/tick", body(action=0, word="Merge"))
         self.assertEqual(res.status, 504)
