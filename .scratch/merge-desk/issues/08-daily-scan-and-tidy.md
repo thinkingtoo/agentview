@@ -4,7 +4,9 @@
 
 **Blocked by:** 03, 04 (both change deskwatch.py; boss, 2026-11-14)
 
-**Status:** ready-for-agent
+**Claimed by:** Rania 2026-11-14 00:45
+
+**Status:** in-progress
 
 - [ ] A found item never carries a recommendation of its own
 - [ ] Tidying never touches an item with an open comment thread
