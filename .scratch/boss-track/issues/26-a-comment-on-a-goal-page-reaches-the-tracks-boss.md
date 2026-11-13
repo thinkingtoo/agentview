@@ -1,6 +1,6 @@
 # 26: A comment or Tell on a track's goal page reaches that track's boss
 
-**Status:** in review
+**Status:** done
 
 **What happened (Thierry, 2026-11-13, relayed by Petra):** he opened the goal page of a client track from the "goal ↗" link on that track's card, left a comment and pressed Tell. No session was linked to the page, so nobody answered. He wants a comment or Tell on `~/.claude/pm/<track>.goal.md` to reach the boss of that track (here Ignacio).
 
@@ -44,11 +44,11 @@ Not edited: claude-boss. Suggested change for Chiara: `with_body` and `set_next`
 ## Done when
 
 - [x] A goal page whose track has a running boss and no target is bound to that boss's session -- evidence: tests in `tests/test_goal_page.py` (class `Binding`), `test_context.py`
-- [ ] A Tell on a bound page reaches the boss -- evidence: to be checked once after the merge, by restarting agentview and reading `docs.json`; nothing was run against the live hub
+- [x] A Tell on a bound page reaches the boss -- evidence: live, 2026-11-13 after the merge (dece7cf) and a restart (MainPID 2768350 to 3345513, build 4dabf0f39431 = sha1(index.html)[:12], the same 44 claude pids, tmux server 8512 with 9 sessions, the service cgroup holding `server.py` alone): sheaf's `docs.json` rendered stamps 10:34:15 to 10:34:31 (7 pages, 2 to 3 s each, one after another, from 15 s after the restart); each of the 7 tracks with a boss marker is bound to its boss's session (config dir `~/.claude`), among them the client track whose Tell started this ticket (its boss). The 3 pages with no boss marker are still bound to the session of 2026-11-11, as designed (left alone). No new hub: the one running (pid 374945) is in a WezTerm app service and was not started by a bind; the agentview cgroup held `server.py` alone in all 14 samples over 170 s apart from the server's own `ci_state.py refresh` child. Not shown: a Tell sent and answered (no one pressed Tell)
 - [x] A page bound to another session is rebound to the boss; one already bound to the boss is left alone (no `sheaf open`) -- evidence: tests
 - [x] The page's settings survive the bind -- evidence: test passing stored settings back
 - [x] No boss, no hub, no root, or a failing `sheaf`: nothing runs or nothing breaks, the card as before -- evidence: tests
-- [x] The poll never waits for it -- evidence: the bind runs in the refresh thread
+- [x] The poll never waits for it -- evidence: the bind runs in the refresh thread; live, `/api/roster` took 4.6 to 5.0 s during the bind window (10:34:15 to 10:34:31), 5.5 s before it and 6.8 s after, 1.85 s before the restart and 1.7 s at the end, with the laptop at load 21 to 26: the binds show no effect on it, the load does (one 15 s timeout at +60 s, outside the window)
 
 **Known limit:** the bind is checked with a fake `sheaf`; `sheaf open --session` from agentview's environment is not run against the live hub before merge (it would write sheaf's real `docs.json`). The flags exist in the installed sheaf 1.0.3 (`sheaf open --help`).
 
