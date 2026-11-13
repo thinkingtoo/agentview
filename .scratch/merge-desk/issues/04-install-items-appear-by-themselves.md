@@ -2,7 +2,7 @@
 
 **What to build:** AgentView reads the `uv tool` receipts (`~/.local/share/uv/tools/*/uv-receipt.toml`); for each tool installed from a `sweatshop-ai/*` or `tiroir/*` git URL whose pinned rev is not its `main`, an Install item is on the desk (under its own heading). A ticked Install runs `uv tool install --reinstall --from git+<url>@<main sha> <package>` and the tool's restart (sheaf: `sheaf stop`, `sheaf start`), and writes the installed commit under the item.
 
-**Blocked by:** 02
+**Blocked by:** 02, 03 (a ticked Install goes through the watcher 03 builds; boss, 2026-11-13)
 
 **Status:** ready-for-agent
 
