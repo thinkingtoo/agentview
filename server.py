@@ -355,7 +355,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         return json.loads(self.rfile.read(length) or "{}")
 
-    ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "merge", "chime", "restore",
+    ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "fold", "merge", "chime", "restore",
               "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep",
               "paste_copied", "paste_done", "desk_page", "desk_rung")
 
@@ -471,7 +471,11 @@ class Handler(BaseHTTPRequestHandler):
         self._correct(lambda config: hand.pin(config, body.get("project"), body.get("action"),
                                               body.get("with"), body.get("shown"), body.get("side")))
 
+    def _fold(self, body):
+        self._correct(lambda config: hand.merge(config, body.get("source"), body.get("target"), body.get("shown")))
+
     def _merge(self, body):
+        """The old path of `_fold`, for a page of the old code that is still open."""
         self._correct(lambda config: hand.merge(config, body.get("source"), body.get("target"), body.get("shown")))
 
     def _correct(self, change, **answer):

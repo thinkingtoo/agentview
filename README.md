@@ -63,7 +63,7 @@ and a repository that share a name stay two projects; `pinned`, `names` and
 ## What a project is about
 
 The name has the card's first row to itself; the state word, a track's status,
-the pin and merge share the second, with "open ↗" at its end: the boss's
+the pin and Fold into share the second, with "open ↗" at its end: the boss's
 terminal, or the first session's when the project has no boss (the same jump as
 a click on that tile, and its answer shows on that tile). Under them the card says what the project
 is about, the whole text (up to 1,500 characters), clipped at three lines: a
@@ -162,29 +162,30 @@ not set up here". The notes are never where a context line comes from.
 
 **By hand**, on the overview: click a project's name to rename it (its raw name
 stays on hover); the ☆ on its card pins it, and the ‹ › on a pinned card move
-it along the pinned ones, the ★ again unpins; **merge…** puts all of the
+it along the pinned ones, the ★ again unpins; **Fold into…** puts all of the
 project into another and carries its pin and its context line with it; the ⋯
 on a tile moves that one session, which lasts as long as the session does.
-Merge and move of a whole project are `assign` keyed by the project's identity
+Fold into and move of a whole project are `assign` keyed by the project's identity
 (`"track:x": "repo:host/o/n"`), so they hold for sessions that start later; a
 project you moved away is gone, and what is put into it follows. Each click is
 one change to `config.json`, made under a lock, so clicks made at once all
-hold (`/api/pin`, `/api/merge`, and `/api/name` and `/api/assign` as before).
-A merge is taken back from the card of the project that took it (`includes X ·
+hold (`/api/pin`, `/api/fold`, and `/api/name` and `/api/assign` as before;
+`/api/merge` still answers as `/api/fold` does, for a page of the old code that is still open).
+A fold is taken back from the card of the project that took it (`includes X ·
 undo`); a session you had moved into the absorbed project goes back there, its
-pin, name and line do not. The page tells `/api/pin` and `/api/merge` which
+pin, name and line do not. The page tells `/api/pin` and `/api/fold` which
 cards it shows (`shown`), because a pin written by plain name can hold two
 cards, and only the page knows which is which. A click is about
 the cards as the page drew them, and another tab may have changed them since.
-A request that names a project which has been moved away since (merged into
+A request that names a project which has been moved away since (folded into
 another: its card is gone) is refused with 409 and
 nothing is written, whichever it is: a pin, an unpin, an arrow, a rename, a
-move or the guess chip, a merge, and whether the name is in the request's
+move or the guess chip, a fold, and whether the name is in the request's
 project or in the list of what the page shows (`shown`). The page reads the
 roster again and says "changed in another tab, refreshed". An arrow also says
 which way it goes (`side`, before or after the neighbour it names) and is
 refused unless the two are still in that order with no card the page showed
-between them; the undo of a merge says which card it was shown in (`was`).
+between them; the undo of a fold says which card it was shown in (`was`).
 So the page never writes a ring of moves, stale tabs included. A ring written
 into `config.json` by hand is not supported: it neither crashes nor loops, and
 every session still has a card, but the cards swap places and a click aimed at
@@ -1288,7 +1289,7 @@ repositories and the folders; `No project` is always last. Inside a kind they go
 by name, so a column never jumps sideways because a session woke up.
 
 The controls are in *The overview*, under **By hand**: the ☆ and ★ pin and
-unpin a project, the ‹ › move a pinned card, **merge…** puts one project into
+unpin a project, the ‹ › move a pinned card, **Fold into…** puts one project into
 another, the ⋯ on a tile moves that one session. Two more facts belong here:
 
 - **Click a project name** to rename it. The name you type is a label — the
@@ -1621,7 +1622,7 @@ revive or rename can reach a terminal. One unrouted pass loads the test server's
 own roster read-only (no clicks, any non-GET request aborted, no screenshot) and
 asserts that columns render. One more starts a server of its own, on invented
 sessions with a config in a temp dir, and drives the by-hand controls (pin,
-arrows, rename, merge, move) against it, reading the config back and restarting
+arrows, rename, fold into, move) against it, reading the config back and restarting
 the server; the config you give is only read.
 
 It runs in Chromium, then copies a Paste in WebKit and Firefox as well, so all

@@ -189,8 +189,8 @@
                color:var(--dim); overflow-wrap:anywhere; }
   .ov-tools .ov-pin { font-size:13px; }
   .ov-tools .ov-pin.on { color:var(--claude); }
-  .ov-tools .ov-merge { opacity:0; }
-  .ov-head:hover .ov-merge, .ov-head:focus-within .ov-merge { opacity:1; }
+  .ov-tools .ov-fold { opacity:0; }
+  .ov-head:hover .ov-fold, .ov-head:focus-within .ov-fold { opacity:1; }
   .ov-form { margin-top:6px; display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px;
              font-weight:400; font-size:12px; color:var(--dim); }
   select.pick { font:inherit; font-size:12px; color:var(--ink); background:var(--bg); max-width:100%;
@@ -1076,12 +1076,12 @@ function hitsOf(c) {
 function mergedOf(c) {
   if (!(c.merged || []).length) return "";
   return `<div class="ov-merged">${c.merged.map(m => `<span>includes ${esc(m.name)}
-    <button data-act="unmerge" data-from="${esc(m.project)}"
+    <button data-act="unfold" data-from="${esc(m.project)}"
       title="make ${esc(m.name)} its own project again (its pin, name and line are not given back)">undo</button></span>`).join("")}</div>`;
 }
 
 // The name, and what you can do to the project: pin it, move a pinned one
-// along the row, merge it into another. A project is what you correct, so
+// along the row, fold it into another. A project is what you correct, so
 // "No project" -- the pile of sessions waiting for one -- has none of it.
 // The raw name stays on hover: renaming never hides what it is.
 // The name has the first row to itself; the state word, the track's status
@@ -1108,8 +1108,8 @@ function headOf(c, word) {
       <button class="ov-pin ${c.pinned ? "on" : ""}" data-act="${c.pinned ? "unpin" : "pin"}"
         title="${c.pinned ? "pinned: click to unpin" : "pin to the front"}"
         aria-pressed="${c.pinned ? "true" : "false"}">${c.pinned ? "★" : "☆"}</button>
-      <button class="ov-merge" data-act="merge-form"
-        title="merge all of it into another project; holds for sessions that start later">merge…</button>
+      <button class="ov-fold" data-act="fold-form"
+        title="fold all of it into another project; holds for sessions that start later">Fold into…</button>
     </span>${openOf(c)}
   </div>`;
 }
@@ -1792,13 +1792,13 @@ document.getElementById("main").addEventListener("click", async ev => {
   // The arrow says which way it goes and the undo says where it saw the project,
   // so that the same click from a tab that is behind is refused, not repeated.
   if (what === "swap") return correct("/api/pin", { project, action: "swap", with: act.dataset.with, side: act.dataset.side, shown });
-  if (what === "unmerge") return correct("/api/assign", { key: act.dataset.from, project: "", was: project });
-  if (what === "merge-form") {
-    picker(col.querySelector(".ov-head"), `merge all of it into
-        <select class="pick" aria-label="merge into">
+  if (what === "unfold") return correct("/api/assign", { key: act.dataset.from, project: "", was: project });
+  if (what === "fold-form") {
+    picker(col.querySelector(".ov-head"), `fold all of it into
+        <select class="pick" aria-label="fold into">
         <option value="" disabled selected>choose…</option>${projectOptions(project)}</select>
-        <button data-act="go">merge</button><button data-act="cancel">cancel</button>`,
-      into => correct("/api/merge", { source: project, target: into, shown }));
+        <button data-act="go">fold</button><button data-act="cancel">cancel</button>`,
+      into => correct("/api/fold", { source: project, target: into, shown }));
   }
 });
 

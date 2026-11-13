@@ -314,7 +314,7 @@ class Fake:
             self.pin_column(b)
         elif path == "/api/keep":
             self.keep(b["key"], b["pinned"])
-        elif path == "/api/merge":
+        elif path == "/api/fold":
             cols = self.body["columns"]
             source = next(c for c in cols if c["project"] == b["source"])
             target = next(c for c in cols if c["project"] == b["target"])
@@ -1108,7 +1108,7 @@ def card_pass(browser):
           col("checkout").locator(".ov-eta").inner_text() == "ETA Thu 23"
           and col("checkout").locator(".ov-eta").get_attribute("title") == "2 boxes in 3 days"
           and col("shipped").locator(".ov-eta").count() == 0)
-    check("the name has the first row to itself; status, pin and merge share the second",
+    check("the name has the first row to itself; status, pin and Fold into share the second",
           col("checkout").locator(".ov-top > *").count() == 1
           and col("checkout").locator(".ov-row > .ov-state + .ov-tag + .ov-tools .ov-pin").count() == 1)
     check("a met track says done and its bar is full",
@@ -2697,7 +2697,7 @@ def hand_roster(**names):
 
 
 def hand_pass(browser):
-    """By hand, as the page makes it: pin, arrows, unpin, rename, merge, move.
+    """By hand, as the page makes it: pin, arrows, unpin, rename, fold into, move.
     The routes are the fixture's; what is checked is what the page asks and shows."""
     fake = Fake(hand_roster(pear=BOMB))
     page = new_page(browser, fake)
@@ -2707,9 +2707,12 @@ def hand_pass(browser):
     order = lambda: page.locator(".ov-col").evaluate_all("els => els.map(e => e.dataset.project)")
     posts = lambda path: fake.of(path)
 
-    check("a project card has a pin button and a merge; No project has neither",
-          col("folder:maple").locator(".ov-pin").count() == 1 and col("folder:maple").locator(".ov-merge").count() == 1
+    check("a project card has a pin button and a Fold into; No project has neither",
+          col("folder:maple").locator(".ov-pin").count() == 1 and col("folder:maple").locator(".ov-fold").count() == 1
           and col("").locator(".ov-tools").count() == 0)
+    tools = col("folder:maple").locator(".ov-tools").inner_text()
+    check("the card menu says Fold into and no 'merge' is left for the project action",
+          "Fold into…" in tools and "merge" not in col("folder:maple").locator(".ov-head").inner_text().lower(), tools)
     check("nothing is pinned: no arrows anywhere and the pin is not pressed",
           page.locator(".ov-arrow").count() == 0
           and page.locator('.ov-pin[aria-pressed="true"]').count() == 0)
@@ -2768,9 +2771,9 @@ def hand_pass(browser):
 
     # Merge: a form that waits for you, and a poll that leaves it alone.
     col("folder:orchard").hover()
-    col("folder:orchard").locator(".ov-merge").click()
+    col("folder:orchard").locator(".ov-fold").click()
     form = page.locator(".ov-form")
-    check("merge opens one form on that card", form.count() == 1 and col("folder:orchard").locator(".ov-form").count() == 1)
+    check("Fold into opens one form on that card", form.count() == 1 and col("folder:orchard").locator(".ov-form").count() == 1)
     options = lambda: page.locator("select.pick option").evaluate_all("els => els.map(e => [e.value, e.textContent])")
     check("it offers every other project, not itself and not No project, and shows a hostile name as text",
           [v for v, _ in options()[1:]] == ["folder:maple", "folder:pear"]
@@ -2778,16 +2781,16 @@ def hand_pass(browser):
     poll_now(page)
     check("a poll while the form is open does not repaint it away", page.locator(".ov-form").count() == 1)
     page.keyboard.press("Escape")
-    check("Escape closes it and nothing is sent", page.locator(".ov-form").count() == 0 and not posts("/api/merge"))
-    col("folder:orchard").locator(".ov-merge").click()
+    check("Escape closes it and nothing is sent", page.locator(".ov-form").count() == 0 and not posts("/api/fold"))
+    col("folder:orchard").locator(".ov-fold").click()
     page.locator("select.pick").select_option("folder:maple")
-    check("choosing is not merging: nothing is sent until the button", not posts("/api/merge"))
-    page.locator(".ov-form button", has_text="merge").click()
+    check("choosing is not merging: nothing is sent until the button", not posts("/api/fold"))
+    page.locator(".ov-form button", has_text="fold").click()
     page.wait_for_function("() => !document.querySelector('.ov-form')")
     page.wait_for_function("() => !document.querySelector('.ov-col[data-project=\"folder:orchard\"]')")
-    check("the merge button sends source and target by identity",
-          posts("/api/merge") == [{"source": "folder:orchard", "target": "folder:maple",
-                                   "shown": ["folder:maple"]}], posts("/api/merge"))
+    check("the fold button sends source and target by identity",
+          posts("/api/fold") == [{"source": "folder:orchard", "target": "folder:maple",
+                                   "shown": ["folder:maple"]}], posts("/api/fold"))
     check("the absorbed card is gone and its session is in the other",
           "folder:orchard" not in order() and col("folder:maple").locator(".tile").count() == 3, order())
 
@@ -2873,7 +2876,7 @@ def picker_pass(browser):
     open_at(page)
     page.wait_for_selector(".ov-col")
     page.locator('.ov-col[data-project="folder:solo"]').hover()
-    page.locator('.ov-col[data-project="folder:solo"] .ov-merge').click()
+    page.locator('.ov-col[data-project="folder:solo"] .ov-fold').click()
     options = page.locator("select.pick option").evaluate_all("els => els.map(e => [e.value, e.textContent])")[1:]
     labels = [text for _, text in options]
     check("the picker tells two projects with one name apart, whatever they share",
@@ -2979,9 +2982,9 @@ def stale_pass(browser):
         hold_back(c)
         for p in ("folder:orchard", "folder:pear"):
             col(a, p).hover()
-            col(a, p).locator(".ov-merge").click()
+            col(a, p).locator(".ov-fold").click()
             a.locator("select.pick").select_option("folder:maple")
-            a.locator(".ov-form button", has_text="merge").click()
+            a.locator(".ov-form button", has_text="fold").click()
             wait_for(lambda p=p: p in stored().get("assign", {}))
         wait_order(a, ["folder:maple"])
         done = stored()
@@ -3055,14 +3058,14 @@ def e2e_pass(browser):
         page.wait_for_function("() => document.querySelector('.ov-name') && [...document.querySelectorAll('.ov-name')].some(e => e.textContent === 'Maple tree')")
         check("e2e: a rename is in the config by identity", stored()["names"] == {"folder:maple": "Maple tree"}, stored())
 
-        def merge_pear():
+        def fold_pear():
             col("folder:pear").hover()
-            col("folder:pear").locator(".ov-merge").click()
+            col("folder:pear").locator(".ov-fold").click()
             page.locator("select.pick").select_option("folder:maple")
-            page.locator(".ov-form button", has_text="merge").click()
+            page.locator(".ov-form button", has_text="fold").click()
             wait_order(["folder:orchard", "folder:maple"])
 
-        merge_pear()
+        fold_pear()
         check("e2e: a merge is a move of the whole project in the config",
               stored()["assign"] == {"folder:pear": "folder:maple"}, stored())
         check("e2e: and the card that took it says so",
@@ -3071,7 +3074,7 @@ def e2e_pass(browser):
         wait_order(["folder:orchard", "folder:maple", "folder:pear"])
         check("e2e: undo takes it back out of the config and the project is its own again",
               stored().get("assign", {}) == {} and col("folder:maple").locator(".ov-merged").count() == 0, stored())
-        merge_pear()
+        fold_pear()
 
         # One session: moved, shown as moved, and taken back.
         tile = col("folder:maple").locator('.tile[data-sid="fake:c"]')

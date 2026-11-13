@@ -519,6 +519,25 @@ class Renames(Corrected):
         self.assertEqual(self.keys("folder:orchard"), ["fake:a", "fake:b", "fake:c", "fake:d"])
 
 
+class Folds(Corrected):
+    """"Fold into" is the project action's name; `/api/merge` keeps answering for a page of the old code."""
+
+    def test_fold_does_what_merge_did_and_merge_answers_the_same(self):
+        body = {"source": "folder:orchard", "target": "folder:maple"}
+        status, answer = self.post("/api/fold", body)
+        self.assertEqual(status, 200)
+        folded = (self.stored()["assign"], self.keys("folder:maple"))
+        self.post("/api/assign", {"key": "folder:orchard", "project": ""})
+        self.assertEqual(self.post("/api/merge", body), (status, answer))
+        self.assertEqual((self.stored()["assign"], self.keys("folder:maple")), folded)
+
+    def test_fold_refuses_what_merge_refused(self):
+        for body in ({}, {"source": "folder:orchard", "target": "folder:orchard"}):
+            self.assertEqual(self.post("/api/fold", body)[0], self.post("/api/merge", body)[0], body)
+        self.post("/api/fold", {"source": "folder:orchard", "target": "folder:maple"})
+        self.assertEqual(self.post("/api/fold", {"source": "folder:maple", "target": "folder:orchard"})[0], 409)
+
+
 class Merges(Corrected):
     def test_merging_puts_every_session_of_the_project_into_the_other_and_survives_a_restart(self):
         self.assertEqual(self.post("/api/merge", {"source": "folder:orchard", "target": "folder:maple"})[0], 200)
