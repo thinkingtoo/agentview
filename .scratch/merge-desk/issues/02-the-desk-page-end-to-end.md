@@ -4,7 +4,9 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Claimed by:** Frida 2026-11-13 22:47
+
+**Status:** in-progress
 
 - [ ] `desk ready` refuses a PR that is not open, and says why
 - [ ] The page is edited one item at a time: a comment on another item survives an add, a replace and a withdraw
