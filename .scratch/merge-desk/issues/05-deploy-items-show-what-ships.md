@@ -4,7 +4,9 @@
 
 **Blocked by:** 03, 04, 10 (all change the press path in deskwatch.py; boss, 2026-11-14)
 
-**Status:** ready-for-agent
+**Claimed by:** Chiara 2026-11-14 00:52
+
+**Status:** in-progress
 
 - [ ] A repo whose workflows only test stays a Merge item
 - [ ] The "What ships" lines are read at hand-over and again just before the merge; a change between the two refuses the press and says what changed
