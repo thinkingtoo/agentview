@@ -335,6 +335,12 @@ class Binding(Fixture):
         self.poll(sheaf, now=100 + goal_page.STATUS_EVERY)
         self.assertEqual(sheaf.opened, [])
 
+    def test_a_target_the_person_pointed_at_an_agent_token_is_left_alone(self):
+        self.kept(**{"claude/pm/checkout.goal.md": {"target": {"kind": "agent", "token": "mine", "id": "x1"}}})
+        sheaf = Binder()
+        self.poll(sheaf)
+        self.assertEqual(sheaf.opened, [])
+
     def test_a_page_with_a_space_in_its_address_is_found_by_its_decoded_key(self):
         shutil.rmtree(self.home / ".git")
         notes = self.disk / "my notes"

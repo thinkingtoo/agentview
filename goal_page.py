@@ -1,15 +1,15 @@
 """Where a track's goal opens as a page: the sheaf hub's URL of
 `<pm>/<track>.goal.md`, where it can be read and edited.
 
-Only a hub that already runs is used, and nothing is ever rendered: `sheaf
-status` says whether a hub runs and on which port, and the page's address is
-worked out here from the roots sheaf keeps (`roots.json`, read and never
+Only a hub that already runs is used, and a page is rendered only to bind it to its
+boss (below): `sheaf status` says whether a hub runs and on which port, and the
+page's address is worked out here from the roots sheaf keeps (`roots.json`, read and never
 written), by sheaf's own rule (SPEC 8.2): the root of a file is the top of its
 git work tree, else the deepest registered root that is no repository and
 holds it. The hub serves any markdown file of a registered root at
-`/<root>/<path>`, with the settings it kept for it. `sheaf open` is never run:
-it starts a hub when none runs, restarts one of an older version, and records
-a page's settings anew, wiping a title or theme it was given.
+`/<root>/<path>`, with the settings it kept for it. `sheaf open` is run for
+nothing else: it starts a hub when none runs, restarts one of an older version,
+and records a page's settings anew, wiping a title or theme it was given.
 
 A page nobody rendered has no session to Tell, and one rendered by another session
 tells that one. So a track whose boss runs gets its page bound to that boss
@@ -17,8 +17,9 @@ tells that one. So a track whose boss runs gets its page bound to that boss
 or one whose session is not the boss's, `sheaf open GOAL --no-browser --agent
 claude-code --session BOSS` records it, with the page's stored settings passed
 back so nothing of them is wiped. That is the one `sheaf open` run here, and only
-for a goal that has a boss and a root (boss-track/26). It runs in a systemd scope of its
-own (`SCOPE`): `sheaf open` starts a hub when none runs, and a hub in agentview's own
+for a goal that has a boss and a root (boss-track/26). A target the person chose
+on the page (an agent token) is left alone. It runs in a systemd scope of its own
+(`SCOPE`): `sheaf open` starts a hub when none runs, and a hub in agentview's own
 cgroup would die with its restart.
 
 A goal whose root sheaf has not registered has no page yet; the card says so
@@ -213,8 +214,8 @@ def _bind(goal, address, boss, now, run):
     if entry is None or not projects.regular(goal):
         return
     target = entry.get("target")
-    if isinstance(target, dict) and target.get("session") == boss:
-        return
+    if isinstance(target, dict) and (target.get("session") == boss or target.get("kind") == "agent"):
+        return                          # bound already, or the person pointed the Tell at an agent token
     with _LOCK:
         _bound[goal] = (boss, now)
     run(["open", goal, "--no-browser", "--agent", "claude-code", "--session", boss,
