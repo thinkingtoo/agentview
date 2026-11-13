@@ -432,8 +432,8 @@ class Stamped(Panes):
 
 class Busy(Panes):
     """Which hammers swing (ticket boss-track/17): a worker whose turn is in flight.
-    A question open (`waiting`) is still; so is a finished turn with a job open
-    (a worker since ticket boss-track/18, shown with 🧪, never a swinging hammer)."""
+    A question open (`waiting`) is a still hammer; a finished turn with a job open
+    is a worker since ticket boss-track/18, shown with 🧪, never a swinging hammer."""
 
     def test_a_busy_worker_makes_its_row_and_its_elsewhere_entry_busy(self):
         self.roster_of(("Mei", "#09c waiver"), ("Odile", "paste/12 the reader"))
@@ -477,7 +477,7 @@ class Busy(Panes):
 
 
 class Watching(Panes):
-    """A worker whose turn is over with a job of its own open keeps a still hammer
+    """A worker whose turn is over with a job of its own open keeps the 🧪 sign
     on its objective (ticket boss-track/18)."""
 
     def test_idle_with_a_job_open_marks_its_row_watching_and_not_busy(self):

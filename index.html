@@ -148,8 +148,9 @@
   /* A hammer swings while a worker behind it has a turn in flight, and rests while it waits. */
   @keyframes swing { 0%, 100% { transform:rotate(-14deg); } 50% { transform:rotate(14deg); } }
   /* 🧪 rocks side to side, a shorter turn and a shift sideways the hammer's swing does not have. It
-     rests 0.15em right of its start, the room the left tilt needs, so the line's clip never cuts it. */
-  @keyframes rock { 0%, 100% { transform:translateX(0.15em) rotate(-9deg); } 50% { transform:translateX(0.3em) rotate(9deg); } }
+     rests 0.12em right of its start, more than the left tilt pulls its corner out (about 0.11em), and
+     never leans past 0.2em, so neither the line's clip nor the text beside it is touched. */
+  @keyframes rock { 0%, 100% { transform:translateX(0.12em) rotate(-6deg); } 50% { transform:translateX(0.2em) rotate(6deg); } }
   @media (prefers-reduced-motion: no-preference) {
     .sign.rock { animation:rock 900ms ease-in-out infinite; transform-origin:50% 90%; }
     .sign.swing { animation:swing 1200ms ease-in-out infinite; transform-origin:70% 80%; }

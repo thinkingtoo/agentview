@@ -167,9 +167,11 @@ class HammersSwing(unittest.TestCase):
         self.assertIn(".sign.rock", css[gate:css.index("</style>", gate)])
         self.assertNotIn(".sign.rock", css[:gate])
         self.assertNotRegex(css[:gate], r"animation:[^;]*rock")
-        # The left tilt of -9deg pulls a 1em glyph's corner 0.14em left: it must start that far right.
-        rests = [float(x) for x in re.findall(r"translateX\(([\d.]+)em\)", re.search(r"@keyframes rock \{(.*?)\n", css).group(1))]
-        self.assertTrue(rests and min(rests) >= 0.14, rests)
+        # The left tilt of -6deg pulls the glyph's corner about 0.11em left: it rests at least that far right.
+        keys = re.search(r"@keyframes rock \{(.*)\}\s*\n", css).group(1)
+        shifts = [float(x) for x in re.findall(r"translateX\((-?[\d.]+)(?:em)?\)", keys)]
+        self.assertEqual(len(shifts), 2, keys)
+        self.assertTrue(0.12 <= min(shifts) and max(shifts) <= 0.2, shifts)
         self.assertNotEqual(re.search(r"@keyframes rock \{(.*?)\n", css).group(1),
                             re.search(r"@keyframes swing \{(.*?)\n", css).group(1))
 
