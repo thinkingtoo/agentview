@@ -45,7 +45,8 @@ if os.path.exists(d + "/gh-down"):
 repo_file = d + "/history-" + a[1].split("/")[1] + "_" + a[1].split("/")[2] + ".txt"
 hist = open(repo_file).read().split()
 if a[1].endswith("/commits/main"):
-    print(hist[-1]); sys.exit(0)
+    own = d + "/main-" + a[1].split("/")[1] + "_" + a[1].split("/")[2] + ".txt"
+    print(open(own).read().strip() if os.path.exists(own) else hist[-1]); sys.exit(0)
 base, head = a[1].split("/compare/")[1].split("...")
 if base not in hist or head not in hist:
     print("Not Found", file=sys.stderr); sys.exit(1)
@@ -392,7 +393,7 @@ class Press(Case):
         deskwatch.tick()
         it = self.item()
         self.assertIn("Installed as 1a2b3c4", it.block)
-        self.assertIn("the restart failed (sheaf stop failed", it.block)
+        self.assertIn("the restart failed (sheaf stop failed, so the running sheaf may still be the old one", it.block)
         self.assertEqual([o for o in self.order() if o.startswith("sheaf")], ["sheaf status", "sheaf stop"])
         self.assertEqual(self.events()[-1], "installed")
         self.assertFalse(desk.history("install:sheafmd")[-1]["restarted"])
@@ -402,7 +403,8 @@ class Press(Case):
         self.tick_box()
         (self.fake / "sheaf-start-fails").write_text("")
         deskwatch.tick()
-        self.assertIn("sheaf start failed", self.item().block)
+        self.assertIn("sheaf start failed after sheaf stop", self.item().block)
+        self.assertIn("no hub is running now", self.item().block)
 
     def test_a_tool_already_at_the_pinned_commit_is_not_installed_again(self):
         self.found()
@@ -475,6 +477,16 @@ class Press(Case):
         self.tick_box()
         deskwatch.tick()
         self.assertIn("Not installed: GitHub could not compare", self.item().block)
+        self.assertEqual(self.calls("uv.json"), [])
+
+    def test_a_pin_ahead_of_main_is_refused_by_the_main_check(self):
+        self.history([OLD, MID, MAIN, NEWER])
+        (self.fake / "main-sweatshop-ai_sheaf.txt").write_text(MAIN)      # main is MAIN: NEWER is on some branch
+        self.found()
+        deskfile.edit(lambda t: t.replace(f"Pinned commit: {MAIN}", f"Pinned commit: {NEWER}"))
+        self.tick_box()
+        deskwatch.tick()
+        self.assertIn(f"Not installed: the pinned commit {NEWER[:7]} is not on {REPO}'s main", self.item().block)
         self.assertEqual(self.calls("uv.json"), [])
 
     def test_a_press_taken_back_before_uv_runs_installs_nothing_and_writes_nothing(self):

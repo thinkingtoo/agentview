@@ -229,14 +229,14 @@ def restart_sheaf():
     env = hub_env(sheaf)
     code, out = run([sheaf, "stop"], env)
     if code:
-        return False, f"sheaf stop failed: {desk.flatten(out, 120)}"
+        return False, f"sheaf stop failed, so the running sheaf may still be the old one: {desk.flatten(out, 120)}"
     start = [sheaf, "start"]
     scope = EXES.get("systemd-run")
     if not scope or not os.path.isabs(scope):                   # no systemd-run at all: start it where we are
         code, out = run(start, env)
     else:                                                       # never a plain start after a failed scope: it would land in our cgroup
         code, out = run([scope, "--user", "--scope", "--quiet", "--collect", "--", *start], env)
-    return (True, "") if not code else (False, f"sheaf start failed: {desk.flatten(out, 120)}")
+    return (True, "") if not code else (False, f"sheaf start failed after sheaf stop: {desk.flatten(out, 120)}; no hub is running now")
 
 
 RESTARTS = {"sheafmd": ("sheaf", restart_sheaf)}
@@ -291,7 +291,7 @@ def install(k, pinned):
         except NotInstalled as err:
             ok, why = False, str(err)
         fields["restarted"] = ok
-        text += f"; {label} restarted" if ok else f"; the restart failed ({why}), so the running {label} may still be the old one"
+        text += f"; {label} restarted" if ok else f"; the restart failed ({why})"
     return text, fields
 
 
