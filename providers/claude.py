@@ -846,7 +846,55 @@ def _subagent_files(path, now, cwds=()):
     return found
 
 
-def _subagents(path, now, cwds=()):
+# A subagent is a review when its description says so (ticket boss-track/20). Measured on 878
+# descriptions of four days: precision about 100% on samples, 94% of the calls with a wider list.
+# A word that names a review outright counts alone. `opus` and `codex` count when no word of work
+# to do (`REVIEW_VETO`) stands beside them: all 39 descriptions that matched through them alone
+# were reviews. A bare `re-run`, `re-read`, `re-check`, `re-gate` or `delta` is no review ("Rerun
+# failing tests"); "Recheck five wording fixes" is a review that this misses.
+REVIEW_WORDS = re.compile(
+    r"(?<![A-Za-z])(?:re-?|code-)?review(?:s|ed|ing)?\b|revue|\bbug[ -]hunt|\bdelta (?:check|read)\b|"
+    r"\bverdict\b|\b(?:standards|spec) axis\b|\bfinal read\b", re.I)
+REVIEW_BY_WHO = re.compile(r"\bopus\b|\bcodex\b", re.I)
+REVIEW_VETO = re.compile(r"\b(?:implement\w*|parity|build|port|migrate|write|draft|fix (?:the|round))\b", re.I)
+REVIEW_FRESH_MINUTES = 10    # a running subagent's transcript wrote this recently; a stale meta is an old run
+META_READ = 4096             # real meta files are 200 to 450 bytes
+REVIEW_MAX = 12              # the freshest subagents looked into per session, per poll
+
+
+def is_review(description):
+    """Whether a subagent's description is a review's. A review word stands alone; `opus`
+    and `codex` count unless a word of work to do is beside them."""
+    if REVIEW_WORDS.search(description):
+        return True
+    return bool(REVIEW_BY_WHO.search(description)) and not REVIEW_VETO.search(description)
+
+
+def _reviewing(files, now):
+    """Whether a live subagent among `files` is a review: its meta file (`description`,
+    `finished`) beside its transcript says it is not finished, the transcript wrote in the
+    last REVIEW_FRESH_MINUTES, and the description is a review's (`is_review`)."""
+    fresh = []
+    for entry in files:
+        try:
+            age = (now - entry.stat().st_mtime) / 60
+        except OSError:
+            continue
+        if age <= REVIEW_FRESH_MINUTES:
+            fresh.append((age, entry))
+    for _, entry in sorted(fresh, key=lambda pair: pair[0])[:REVIEW_MAX]:
+        try:
+            with open(entry.path[:-len(".jsonl")] + ".meta.json", "rb") as fh:
+                meta = json.loads(fh.read(META_READ))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(meta, dict) and meta.get("finished") is not True
+                and isinstance(meta.get("description"), str) and is_review(meta["description"])):
+            return True
+    return False
+
+
+def _subagents(files, now):
     """The session's subagents: their transcript states, and how many minutes
     ago the newest of them wrote (None when it has none).
 
@@ -856,7 +904,7 @@ def _subagents(path, now, cwds=()):
     shows cannot add to it, and is not even opened.
     """
     states, quiet = [], None
-    for entry in _subagent_files(path, now, cwds):
+    for entry in files:
         try:
             mtime = entry.stat().st_mtime
         except OSError:
@@ -890,10 +938,13 @@ def scan_session(path, now=None):
     archive only wants a title and calls `scan_cached`; looking into a
     subagent folder is for a session that is running."""
     view = scan_cached(path, now)
+    view["reviewing"] = False
     if view["writes"] is None:
         return view
     now = time.time() if now is None else now
-    subs, view["subQuiet"] = _subagents(path, now, view["cwds"])
+    files = _subagent_files(path, now, view["cwds"])      # listed once: the scan is the cost
+    subs, view["subQuiet"] = _subagents(files, now)
+    view["reviewing"] = _reviewing(files, now)
     for state in subs:
         view["writes"] = _add(view["writes"], _strip(state, now))
     return view
@@ -902,7 +953,7 @@ def scan_session(path, now=None):
 EMPTY = {"title": "", "prompt": "", "dispatch": "", "branch": "", "paths": [], "said": "",
          "sent": [], "pending": None, "doing": "", "writes": None, "subQuiet": None, "tasks": [],
          "calls": [], "answeredAt": None, "failure": None, "lastTool": None, "turnOver": False,
-         "cwds": []}
+         "cwds": [], "reviewing": False}
 
 
 def _peers(cfg):
@@ -1145,6 +1196,7 @@ def session(rec, cfg=None, light=False, shells=None, proc="/proc", running=None,
         # tasks with a live shell behind them, and CPU under a shell.
         "writes": summary["writes"],
         "subQuiet": summary["subQuiet"],
+        "reviewing": bool(summary.get("reviewing")),
         "bgTasks": under["tasks"],
         "shellCpu": under["cpu"],
         "shellCpuAgo": under["cpu_ago"],

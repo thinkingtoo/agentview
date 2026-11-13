@@ -400,9 +400,9 @@ class Tracks(Cards):
                                "boxes": [{"text": "cart", "done": True}, {"text": "receipt", "done": False},
                                          {"text": "refund", "done": False}],
                                "goal": None, "elsewhere": [],
-                               "rows": [{"text": "receipt", "state": "planned", "awaiting_tick": False, "tickets": [], "busy": False, "watching": False},
-                                        {"text": "refund", "state": "planned", "awaiting_tick": False, "tickets": [], "busy": False, "watching": False},
-                                        {"text": "cart", "state": "done", "awaiting_tick": False, "tickets": [], "busy": False, "watching": False}]})
+                               "rows": [{"text": "receipt", "state": "planned", "awaiting_tick": False, "tickets": [], "busy": False, "watching": False, "reviewing": False},
+                                        {"text": "refund", "state": "planned", "awaiting_tick": False, "tickets": [], "busy": False, "watching": False, "reviewing": False},
+                                        {"text": "cart", "state": "done", "awaiting_tick": False, "tickets": [], "busy": False, "watching": False, "reviewing": False}]})
 
     def test_a_met_track_shows_done_whatever_its_boxes_say(self):
         got = self.track(status="MET 2026-10-16 \u2014 all done", boxes=("[ ] a", "[ ] b"))["track"]

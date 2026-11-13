@@ -589,6 +589,7 @@ def normalize(p, raw, shelves, assigned, thresholds, now, state, lines_root=None
         turn_over=raw.get("turnOver") is True)
     moves = {"writes": writes_of(raw.get("writes")), "subQuiet": sub_quiet,
              "bgTasks": tasks, "shellCpu": bool(raw.get("shellCpu")),
+             "reviewing": raw.get("reviewing") is True,
              "movement": sign, "moving": moving,
              "waits": waits_on_a_job(status, tasks, raw.get("turnOver") is True),
              # Who wrote last, for the one word: a subagent fresher than the
@@ -1016,12 +1017,13 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
         crew = _crew(project["raw"], rows) if running else {}
         busy = objectives.busy_names(rows, crew, is_concierge)
         watch = objectives.watching_names(rows, crew, is_concierge)
+        review = objectives.reviewing_names(rows, crew, is_concierge)
         own = objectives.own_lines(rows, crew, is_concierge)
         track["rows"] = (objectives.rows(track["boxes"], rows, crew, met=bool(progress and progress["met"]),
-                                         busy=busy, watch=watch)
+                                         busy=busy, watch=watch, review=review)
                          if running else [])
         # Workers whose task no row's ticket carries: said by name and task, not guessed onto a row.
-        track["elsewhere"] = objectives.elsewhere(track["rows"], crew, busy, watch, own) if running else []
+        track["elsewhere"] = objectives.elsewhere(track["rows"], crew, busy, watch, own, review) if running else []
     # The column of no project has no name to repeat.
     column_says = working.repeats(None if project is NO_PROJECT else name, about)
     made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says))

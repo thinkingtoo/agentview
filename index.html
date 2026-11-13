@@ -154,7 +154,12 @@
      of its start, where the lines' clip would cut it; the lines' clip box is grown by 0.3em on the left
      and given the same back in margin, so nothing moves. On the right its ink stays short of the name (its box may touch the name's first letter box). */
   @keyframes rock { 0%, 12% { transform:rotate(-30deg); } 50%, 62% { transform:rotate(30deg); } 100% { transform:rotate(-30deg); } }
+  /* 🔍 circles on a small ring, 0.12em across: a scan, not the hammer's swing nor the flask's rock (boss-track/20).
+     The lines' clip box already has 0.3em to the left of the sign. */
+  @keyframes scan { 0%, 100% { transform:translate(0.12em, 0); } 25% { transform:translate(0, 0.12em); }
+                    50% { transform:translate(-0.12em, 0); } 75% { transform:translate(0, -0.12em); } }
   @media (prefers-reduced-motion: no-preference) {
+    .sign.scan { animation:scan 2800ms linear infinite; }
     .sign.rock { animation:rock 2400ms ease-in-out infinite; transform-origin:50% 50%; }
     .sign.swing { animation:swing 1200ms ease-in-out infinite; transform-origin:70% 80%; }
   }
@@ -947,8 +952,11 @@ const boxLine = b => `${b.done ? "☑" : "☐"} ${b.text}`;
 const SIGN = { worked: "🔨", waiting: "⏸", planned: "○", done: "✅" };
 // The page redraws every poll and a redrawn hammer would start its swing over: a busy one is set
 // to the clock's phase of the 1200 ms swing in the stylesheet, so the redraw carries on.
-// A worker whose turn is over with a job of its own open shows 🧪, rocking (2400 ms, same carry-on).
-const signOf = (glyph, busy, watching) => busy
+// A worker whose turn is over with a job of its own open shows 🧪, rocking (2400 ms, same carry-on);
+// one with a review agent running shows 🔍, circling (2800 ms, same carry-on; boss-track/20).
+const signOf = (glyph, busy, watching, reviewing) => reviewing
+  ? `<span class="sign scan" style="animation-delay:-${Date.now() % 2800}ms">🔍</span>`
+  : busy
   ? `<span class="sign swing" style="animation-delay:-${Date.now() % 1200}ms">${glyph}</span>`
   : watching ? `<span class="sign rock" style="animation-delay:-${Date.now() % 2400}ms">🧪</span>`
   : `<span class="sign">${glyph}</span>`;
@@ -973,7 +981,7 @@ function ticketLine(t) {
 function elsewhereOf(c) {
   const list = Array.isArray(c.track?.elsewhere) ? c.track.elsewhere : [];
   return list.length ? `<li class="ov-obj st-worked"><span class="ov-obj-note">${
-    list.map(w => `${signOf("🔨", w.busy === true, w.busy !== true && w.watching === true)} ${esc(w.name)}: ${esc(w.task)}`).join("<br>")}</span></li>` : "";
+    list.map(w => `${signOf("🔨", w.busy === true, w.busy !== true && w.watching === true, w.reviewing === true)} ${esc(w.name)}: ${esc(w.task)}`).join("<br>")}</span></li>` : "";
 }
 function doneWhenOf(c) {
   const rows = rowsOf(c);
@@ -991,7 +999,8 @@ function doneWhenOf(c) {
       r.awaiting_tick ? `<span class="tick">its tickets are done, awaiting tick</span>` : ""}${
       (r.tickets || []).map(t => `<span>${esc(ticketLine(t))}</span>`).join("")}</div>` : "";
     return [state, `<li class="ov-obj st-${state}"><button class="ov-obj-line" aria-expanded="${open}" data-row="${esc(key)}"
-      title="${esc(r.text)}">${signOf(SIGN[state], state === "worked" && r.busy === true, state === "worked" && r.busy !== true && r.watching === true)} ${esc(r.text)}</button>${more}</li>`];
+      title="${esc(r.text)}">${signOf(SIGN[state], state === "worked" && r.busy === true, state === "worked" && r.busy !== true && r.watching === true,
+              state === "worked" && r.reviewing === true)} ${esc(r.text)}</button>${more}</li>`];
   });
   // The server sends worked rows first; the elsewhere hammers follow them, ahead of waiting, planned and done.
   const at = lis.findIndex(([state]) => state !== "worked");

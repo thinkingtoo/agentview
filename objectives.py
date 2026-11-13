@@ -149,6 +149,12 @@ def watching(m):
     return bool(m.get("waits"))
 
 
+def reviewing(m):
+    """Whether a session has a review agent of its own running (ticket boss-track/20). A
+    session with a question open (`waiting`) is at rest, whatever runs behind it."""
+    return bool(m.get("reviewing")) and m.get("status") != "waiting"
+
+
 def in_flight(m):
     """Whether a session has a turn in flight: busy, and not a finished turn with a
     job open. A question open (`waiting`) is a worker at rest, not at work: its
@@ -171,6 +177,13 @@ def watching_names(sessions, crew, is_concierge):
             if m.get("name") in crew and not m.get("boss") and not is_concierge(m) and watching(m)}
 
 
+def reviewing_names(sessions, crew, is_concierge):
+    """The names of the crew (`workers`) with a review agent running: their sign is 🔍,
+    whether their turn is in flight or over. Same admission as `busy_names`."""
+    return {m["name"] for m in sessions
+            if m.get("name") in crew and not m.get("boss") and not is_concierge(m) and reviewing(m)}
+
+
 def _own_words(m):
     """What a working session's row says of its task when the table has none:
     the line it last wrote, else its card title, else the first line of its last
@@ -191,12 +204,13 @@ def workers(track, sessions, is_concierge, owner_of, boss_panes):
     says idle still wins over the stamp. The boss and a concierge, by the pane's
     mark or a roster task of "concierge", are never one. A worker whose turn is
     over with a job of its own open is listed like a working one (`watching`):
-    its sign is 🧪, never a swinging hammer (ticket boss-track/18)."""
+    its sign is 🧪, never a swinging hammer (ticket boss-track/18); so is one with a
+    review agent running (`reviewing`, ticket boss-track/20), whose sign is 🔍."""
     table = projects.roster_tasks(track)
     out = {}
     for m in sessions:
         name = m.get("name")
-        if not name or m.get("boss") or is_concierge(m) or not (working(m) or watching(m)):
+        if not name or m.get("boss") or is_concierge(m) or not (working(m) or watching(m) or reviewing(m)):
             continue
         task = table.get(name.casefold()) or None     # an empty cell names nobody's task
         if task is None and owner_of(m) in boss_panes:
@@ -215,30 +229,35 @@ def own_lines(sessions, crew, is_concierge):
     name speaks for no worker."""
     return {m["name"]: str(m["did"]).strip() for m in sessions
             if m.get("name") in crew and not m.get("boss") and not is_concierge(m)
-            and (working(m) or watching(m)) and str(m.get("did") or "").strip()}
+            and (working(m) or watching(m) or reviewing(m)) and str(m.get("did") or "").strip()}
 
 
-def elsewhere(made, crew, busy=frozenset(), watch=frozenset(), lines=None):
+def elsewhere(made, crew, busy=frozenset(), watch=frozenset(), lines=None, review=frozenset()):
     """`[{name, task}]` of each working session whose task no row's ticket
     carries, by name. Idle (an empty or "idle" task) is not read as work.
     Hammers stay tied to `feature/NN` refs; this only says what the rest are on.
     `busy` is `busy_names`: an entry is busy when its worker is in it.
     `watch` is `watching_names`: an entry is watching when its worker is in it.
+    `review` is `reviewing_names`: an entry is reviewing when its worker is in it.
     `lines` is `own_lines`: an entry prints the worker's own line, not the task that
     placed it (that task still decides who is idle, ticket boss-track/21)."""
     lines = lines or {}
     placed = {w for r in made for t in r["tickets"] for w in t["workers"]}
-    return [{"name": name, "task": context.squash(lines.get(name) or task), "busy": name in busy, "watching": name in watch}
+    return [{"name": name, "task": context.squash(lines.get(name) or task), "busy": name in busy, "watching": name in watch,
+             "reviewing": name in review}
             for name, task in sorted(crew.items(), key=lambda kv: kv[0].casefold())
             if name not in placed and task.strip().casefold() not in IDLE_TASKS]
 
 
-def rows(boxes, sessions, crew, met=False, busy=frozenset(), watch=frozenset()):
+def rows(boxes, sessions, crew, met=False, busy=frozenset(), watch=frozenset(), review=frozenset()):
     """The rows of a track's card, in ORDER, each state in the goal file's order.
     `crew` is `workers`: who is working on the track now, with their tasks.
     `busy` is `busy_names`: a row is busy when any worker on any of its tickets is.
     `watch` is `watching_names`: a row is watching when it has workers and every
     one of them is: a swinging hammer beats a still one, which beats 🧪.
+    `review` is `reviewing_names`: a row is reviewing when a worker on it is and every
+    worker on it with a turn in flight is: then 🔍 is its sign; real work in flight
+    beside it keeps the swinging hammer (ticket boss-track/20).
     A track whose goal says MET has every row done, as its progress says.
     Every row's own tickets are looked up before any blocker is: on a card that
     reaches TICKETS_MAX, what a blocker costs comes out of "waiting", never out
@@ -258,5 +277,6 @@ def rows(boxes, sessions, crew, met=False, busy=frozenset(), watch=frozenset()):
         made.append({"text": box["text"], "state": state, "awaiting_tick": awaiting,
                      "tickets": [t for _, t in pairs],
                      "busy": bool(on_it & busy),
-                     "watching": bool(on_it) and on_it <= watch})
+                     "watching": bool(on_it) and on_it <= watch,
+                     "reviewing": bool(on_it & review) and (on_it & busy) <= review})
     return sorted(made, key=lambda r: ORDER.index(r["state"]))
