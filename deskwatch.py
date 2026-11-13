@@ -63,7 +63,7 @@ class Unsure(Exception):
 def gh(*args):
     """(exit code, output) of one `gh` call; (1, why) when it cannot be run."""
     if not GH or not os.path.isabs(GH):
-        return 1, "gh was not found in the system's folders"
+        return 1, "gh was not found in " + SYSTEM_PATH.replace(":", ", ")
     try:
         got = subprocess.run([GH, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL,
                              timeout=CALL_TIMEOUT, env={**os.environ, "PATH": SYSTEM_PATH, "GH_PROMPT_DISABLED": "1"})

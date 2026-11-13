@@ -247,7 +247,7 @@ class Refused(Case):
         self.tick_box(272)
         deskwatch.GH = None
         deskwatch.tick()
-        self.assertIn("Not merged: GitHub could not be asked: gh was not found", self.item(272).block)
+        self.assertIn("Not merged: GitHub could not be asked: gh was not found in /usr/local/bin, /usr/bin, /bin", self.item(272).block)
         self.assertFalse(self.item(272).ticked)
 
 
