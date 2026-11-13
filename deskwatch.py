@@ -209,7 +209,10 @@ def press(k):
         finish(k, pinned, "refused", f"Not merged: {why}", True, why=str(why))
     except Unsure as why:
         log.error("desk-press", why, key=k)
-        record("pressing", k, pinned=pinned, again=True)       # the grace before recovery calls it unmerged starts now
+        with deskfile.locked():                                 # the grace before recovery calls it unmerged starts now,
+            last = last_event(k)                                # unless a newer hand-over already closed this press
+            if last and last["event"] == "pressing" and last.get("pinned") == pinned:
+                desk.log("pressing", k, pinned=pinned, again=True)
     else:
         finish(k, pinned, "merged", merged_text(sha, already), sha=sha, already=already)
 

@@ -356,6 +356,22 @@ class Closing(Case):
         self.assertEqual(self.events(k), ["ready", "pressing", "pressing"])
         self.assertTrue(self.item(272).ticked)
 
+    def test_an_unfinished_merge_call_logs_nothing_over_a_newer_hand_over(self):
+        self.pr(272)
+        k = self.hand_over(272)
+        self.tick_box(272)
+        real = deskwatch.gh
+
+        def gh(*a):
+            if a[:2] == ("pr", "merge"):
+                self.hand_over(272)
+                return deskwatch.CANNOT, "timed out"
+            return real(*a)
+        deskwatch.gh = gh
+        self.addCleanup(setattr, deskwatch, "gh", real)
+        deskwatch.tick()
+        self.assertEqual(self.events(k), ["ready", "pressing", "ready"])
+
     def test_a_press_taken_back_after_a_new_hand_over_logs_nothing_over_it(self):
         self.pr(272)
         k = self.hand_over(272)
