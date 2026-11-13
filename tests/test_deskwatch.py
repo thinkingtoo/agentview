@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import desk
 import deskfile
+import deskships
 import deskwatch
 
 SHA = "ead9a1f" + "0" * 33
@@ -33,6 +34,25 @@ with open(d + "/calls.log", "a") as f:
     f.write(json.dumps({{"args": args, "path": os.environ.get("PATH"),
                          "log": open(os.environ["XDG_STATE_HOME"] + "/agentview/merge-desk.log").read().splitlines()[-1:]
                          if os.path.exists(os.environ["XDG_STATE_HOME"] + "/agentview/merge-desk.log") else []}}) + "\\n")
+if args[0] == "api":
+    path = next(a for a in args if a.startswith("repos/"))
+    repo_ = "_".join(path.split("/")[1:3])
+    if "/contents/.github/workflows" in path:
+        wf = d + "/wf-" + repo_
+        name = path.split("/workflows")[1].split("?")[0].lstrip("/")
+        if os.path.exists(d + "/api-fails"):
+            print("gh: HTTP 502", file=sys.stderr)
+            sys.exit(1)
+        if not os.path.isdir(wf) or (name and not os.path.exists(wf + "/" + name)):
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps([{{"name": n, "type": "file"}} for n in sorted(os.listdir(wf))]) if not name else open(wf + "/" + name).read())
+        sys.exit(0)
+    if "/compare/" in path:
+        f = d + "/compare-" + repo_
+        print(open(f).read() if os.path.exists(f) else json.dumps({{"total_commits": 0, "commits": []}}))
+        sys.exit(0)
+    sys.exit(9)
 if args[:2] not in (["pr", "view"], ["pr", "merge"]):
     sys.exit(9)
 n, repo = args[2], args[4]
@@ -110,7 +130,7 @@ class Case(unittest.TestCase):
 
     def pr(self, n, head=SHA, state="OPEN", mergeable="MERGEABLE", repo=REPO):
         (self.prs / f"{repo.replace('/', '_')}#{n}.json").write_text(
-            json.dumps({"state": state, "headRefOid": head, "mergeable": mergeable, "mergeCommit": None}))
+            json.dumps({"state": state, "headRefOid": head, "mergeable": mergeable, "mergeCommit": None, "baseRefName": "dev"}))
 
     def hand_over(self, n, pinned=SHA, repo=REPO, after=None):
         k = f"{repo}#{n}"
@@ -120,9 +140,28 @@ class Case(unittest.TestCase):
             desk.log("ready", k, pinned=pinned)
         return k
 
+    def workflow(self, name, text, repo=REPO):
+        d = self.prs / ("wf-" + repo.replace("/", "_"))
+        d.mkdir(exist_ok=True)
+        (d / name).write_text(text)
+
+    def commits(self, *msgs, repo=REPO):
+        (self.prs / ("compare-" + repo.replace("/", "_"))).write_text(json.dumps({"total_commits": len(msgs), "commits": [
+            {"sha": f"{i + 1:07x}" + "0" * 33, "commit": {"message": m}} for i, m in enumerate(msgs)]}))
+
+    def hand_over_with_ships(self, n, pinned=SHA, repo=REPO, outside=""):
+        """The hand-over as `desk ready` makes it: the lines read from the (fake) GitHub at that moment."""
+        ships = deskships.read(repo, "dev", pinned, deskwatch.gh, outside=outside)
+        k = f"{repo}#{n}"
+        with deskfile.locked():
+            deskfile.put_item(k, desk.item_block(repo, n, f"what {n} does", "merge", "CI green", pinned, "dev", None,
+                                                 "Faisal", "2026-11-13 10:40", ships=ships))
+            desk.log("ready", k, pinned=pinned)
+        return k
+
     def tick_box(self, n, repo=REPO):
         k = f"{repo}#{n}"
-        deskfile.edit(lambda t: t.replace(f"- [ ] Merge {k}:", f"- [x] Merge {k}:"))
+        deskfile.edit(lambda t: t.replace(f"- [ ] Merge {k}:", f"- [x] Merge {k}:").replace(f"- [ ] Deploy {k}:", f"- [x] Deploy {k}:"))
 
     def item(self, n, repo=REPO):
         return next(i for i in deskfile.items() if i.key == f"{repo}#{n}")
@@ -185,6 +224,112 @@ class Press(Case):
         deskwatch.tick()
         self.assertEqual(self.item(1).block, before)
         self.assertIn("<!-- comment c1: wait -->", before)
+
+
+DEPLOY_YML = "name: deploy\non:\n  push:\n    branches: [dev]\njobs:\n  d:\n    runs-on: x\n    steps:\n      - run: ./deploy.sh\n"
+TEST_YML = "name: ci\non:\n  push:\n    branches: [dev]\njobs:\n  t:\n    runs-on: x\n    steps:\n      - run: pytest\n"
+
+
+class Ships(Case):
+    """What ships is read at the hand-over and again just before the merge; a difference refuses the press."""
+
+    def deploy(self, n=272):
+        self.pr(n)
+        self.workflow("deploy.yml", DEPLOY_YML)
+        self.commits("Fix the thing")
+        k = self.hand_over_with_ships(n)
+        self.tick_box(n)
+        return k
+
+    def test_a_deploy_item_shows_what_ships_and_merges_when_it_is_unchanged(self):
+        k = self.deploy()
+        self.assertTrue(self.item(272).block.startswith("- [x] Deploy "))
+        self.assertIn("  - What ships:\n    - Fires on push to dev: deploy.yml\n", self.item(272).block)
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+        self.assertEqual(self.events(k), ["ready", "pressing", "merged"])
+
+    def test_a_workflow_line_changed_after_the_hand_over_refuses_the_press_and_unticks(self):
+        k = self.deploy()
+        self.workflow("deploy.yml", DEPLOY_YML.replace("./deploy.sh", "./deploy.sh --to-prod"))
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        it = self.item(272)
+        self.assertFalse(it.ticked)
+        self.assertRegex(it.block, r"\n  - Not merged: what ships changed: .*--to-prod")
+        self.assertEqual(self.events(k), ["ready", "pressing", "refused"])
+
+    def test_a_commit_that_joined_the_base_range_after_the_hand_over_refuses_the_press(self):
+        self.deploy()
+        self.commits("Fix the thing", "Something else")
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*Something else")
+
+    def test_a_change_during_the_unknown_wait_is_seen_because_the_read_is_just_before_the_merge(self):
+        self.deploy()
+        (self.prs / "unknown-272").write_text("1")
+        deskwatch.sleep = lambda s: self.workflow("deploy.yml", DEPLOY_YML.replace("deploy.sh", "other.sh"))
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertIn("Not merged: what ships changed", self.item(272).block)
+
+    def test_a_merge_item_stays_a_merge_item_when_the_workflows_only_test(self):
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        self.hand_over_with_ships(272)
+        self.assertTrue(self.item(272).block.startswith("- [ ] Merge "))
+        self.assertNotIn("What ships", self.item(272).block)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+
+    def test_a_merge_item_whose_repo_started_to_deploy_after_the_hand_over_is_refused(self):
+        self.pr(272)
+        self.hand_over_with_ships(272)
+        self.tick_box(272)
+        self.workflow("deploy.yml", DEPLOY_YML)
+        self.commits("x")
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*deploy.yml")
+
+    def test_an_item_that_ships_outside_github_is_a_deploy_and_the_persons_line_is_not_compared(self):
+        self.pr(272)
+        self.commits("Fix the thing")
+        k = self.hand_over_with_ships(272, outside="the daily run reads main")
+        self.assertTrue(self.item(272).block.startswith("- [ ] Deploy "))
+        self.assertIn("    - Outside GitHub: the daily run reads main\n", self.item(272).block)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.events(k), ["ready", "pressing", "merged"])
+
+    def test_commits_that_changed_under_an_outside_item_refuse_the_press(self):
+        self.pr(272)
+        self.commits("Fix the thing")
+        self.hand_over_with_ships(272, outside="the daily run reads main")
+        self.tick_box(272)
+        self.commits("Fix the thing", "More")
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertIn("Not merged: what ships changed", self.item(272).block)
+
+    def test_when_github_cannot_say_what_ships_nothing_is_merged(self):
+        self.deploy()
+        (self.prs / "api-fails").write_text("")
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        it = self.item(272)
+        self.assertFalse(it.ticked)
+        self.assertIn("Not merged: could not read what ships", it.block)
+
+    def test_the_classifier_never_sees_the_pull_requests_head(self):
+        self.deploy()
+        deskwatch.tick()
+        refs = [a.split("?ref=")[1] for c in self.calls() for a in c["args"] if "?ref=" in a]
+        self.assertTrue(refs)
+        self.assertEqual(set(refs), {"dev"})
 
 
 class Refused(Case):

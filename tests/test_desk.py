@@ -23,13 +23,38 @@ COMMAND = ROOT / "hooks" / "desk"
 SHA = "ead9a1f" + "0" * 33
 SHA2 = "b" * 40
 
-FAKE_GH = """#!/bin/sh
-# fake gh: `gh pr view N -R repo --json ...` answers from $FAKE_GH_DIR/<repo with / as _>#<N>.json
-[ "$1 $2" = "pr view" ] || { echo "fake gh: unexpected $*" >&2; exit 9; }
-n=$3; repo=$5
-f="$FAKE_GH_DIR/$(echo "$repo" | tr / _)#$n.json"
-[ -f "$f" ] || { echo "GraphQL: Could not resolve to a PullRequest" >&2; exit 1; }
-cat "$f"
+FAKE_GH = f"""#!{sys.executable}
+# fake gh: `gh pr view N -R repo --json ...` answers from $FAKE_GH_DIR/<repo with / as _>#<N>.json;
+# `gh api repos/R/contents/.github/workflows[/f]` from the folder wf-<repo>, `gh api repos/R/compare/..` from compare-<repo>
+import json, os, sys
+d = os.environ["FAKE_GH_DIR"]
+args = sys.argv[1:]
+if args[0] == "api":
+    path = next(a for a in args if a.startswith("repos/"))
+    repo_ = "_".join(path.split("/")[1:3])
+    if "/contents/.github/workflows" in path:
+        wf = d + "/wf-" + repo_
+        name = path.split("/workflows")[1].split("?")[0].lstrip("/")
+        if os.path.exists(d + "/api-fails"):
+            print("gh: HTTP 502", file=sys.stderr)
+            sys.exit(1)
+        if not os.path.isdir(wf) or (name and not os.path.exists(wf + "/" + name)):
+            print("gh: Not Found (HTTP 404)", file=sys.stderr)
+            sys.exit(1)
+        print(json.dumps([{{"name": n, "type": "file"}} for n in sorted(os.listdir(wf))]) if not name else open(wf + "/" + name).read())
+        sys.exit(0)
+    if "/compare/" in path:
+        f = d + "/compare-" + repo_
+        print(open(f).read() if os.path.exists(f) else json.dumps({{"total_commits": 0, "commits": []}}))
+        sys.exit(0)
+if args[:2] != ["pr", "view"]:
+    print("fake gh: unexpected " + " ".join(args), file=sys.stderr)
+    sys.exit(9)
+f = d + "/" + args[4].replace("/", "_") + "#" + args[2] + ".json"
+if not os.path.exists(f):
+    print("GraphQL: Could not resolve to a PullRequest", file=sys.stderr)
+    sys.exit(1)
+print(open(f).read())
 """
 
 
@@ -74,6 +99,60 @@ class Case(unittest.TestCase):
 
     def text(self):
         return self.page.read_text()
+
+
+DEPLOY_YML = "name: deploy\non:\n  push:\n    branches: [dev]\njobs:\n  d:\n    runs-on: x\n    steps:\n      - run: ./deploy.sh\n"
+TEST_YML = DEPLOY_YML.replace("./deploy.sh", "pytest").replace("name: deploy", "name: ci").replace("  d:", "  t:")
+
+
+class Ships(Case):
+    REPO = "tiroir/apex"
+
+    def setUp(self):
+        super().setUp()
+        self.pr(self.REPO, 5)
+        (self.prs / "compare-tiroir_apex").write_text(json.dumps({"total_commits": 1, "commits": [
+            {"sha": "abc1234" + "0" * 33, "commit": {"message": "Fix the thing\n\nbody"}}]}))
+
+    def workflow(self, name, text):
+        d = self.prs / "wf-tiroir_apex"
+        d.mkdir(exist_ok=True)
+        (d / name).write_text(text)
+
+    def test_a_repo_whose_base_deploys_is_handed_over_as_a_deploy_item_with_what_ships(self):
+        self.workflow("deploy.yml", DEPLOY_YML)
+        got = self.ready(5, self.REPO)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertIn("- [ ] Deploy tiroir/apex#5: ", self.text())
+        self.assertIn("  - What ships:\n    - Fires on push to dev: deploy.yml\n      - deploy.yml:", self.text())
+        self.assertIn("    - Commits that go out (1):\n      - abc1234 Fix the thing\n  - Handed over by", self.text())
+        (item,) = deskfile.items(self.page)
+        self.assertEqual(item.key, "tiroir/apex#5")
+        self.assertEqual(item.pinned, SHA)
+        self.assertEqual(item.ships[0], "- Fires on push to dev: deploy.yml")
+
+    def test_a_repo_whose_workflows_only_test_stays_a_merge_item(self):
+        self.workflow("ci.yml", TEST_YML)
+        self.assertEqual(self.ready(5, self.REPO).returncode, 0)
+        self.assertIn("- [ ] Merge tiroir/apex#5: ", self.text())
+        self.assertNotIn("What ships", self.text())
+
+    def test_ships_makes_a_repo_with_no_ci_a_deploy_item_with_that_line(self):
+        got = self.ready(5, self.REPO, "x", "merge", "--ships", "the daily run reads main")
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertIn("- [ ] Deploy tiroir/apex#5: ", self.text())
+        self.assertIn("  - What ships:\n    - Outside GitHub: the daily run reads main\n    - Commits that go out (1):", self.text())
+
+    def test_github_that_cannot_say_what_ships_refuses_the_hand_over(self):
+        (self.prs / "api-fails").write_text("")
+        got = self.ready(5, self.REPO)
+        self.assertEqual(got.returncode, 1)
+        self.assertIn("could not tell what merging tiroir/apex#5 ships", got.stderr)
+        self.assertFalse(self.page.exists())
+
+    def test_a_ships_line_cannot_open_a_box_or_a_second_item(self):
+        self.ready(5, self.REPO, "x", "merge", "--ships", "a\n- [ ] Merge x/y#1: z <!-- ")
+        self.assertEqual([i.key for i in deskfile.items(self.page)], ["tiroir/apex#5"])
 
 
 class Ready(Case):
