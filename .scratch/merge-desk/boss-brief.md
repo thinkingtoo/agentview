@@ -8,7 +8,7 @@ Written 2026-11-13 by Kenji after a grilling with Thierry. You are the boss for 
 |---|---|
 | Spec (read first, in full) | `/home/tiroir/Projects/agentview/docs/specs/2026-11-13-merge-desk.md` |
 | AgentView tickets, in dependency order | `/home/tiroir/Projects/agentview/.scratch/merge-desk/issues/` |
-| sheaf tickets, in dependency order | `/home/tiroir/Projects/sheaf/.scratch/action-buttons/issues/` (on sheaf `main` once [PR #273](https://github.com/sweatshop-ai/sheaf/pull/273) is merged; until then on branch `kenji/action-buttons-tickets`) |
+| sheaf tickets, in dependency order | `/home/tiroir/Projects/sheaf/.scratch/action-buttons/issues/` (on sheaf `main` since [PR #273](https://github.com/sweatshop-ai/sheaf/pull/273), merged as `6f51417`) |
 | The proven reference for a safe merge (pinned commit, UNKNOWN wait, one at a time) | `/tmp/claude-1000/-home-tiroir-Projects-sheaf/9b25dd13-7719-4864-9de4-8419cde7f15f/scratchpad/merge_server.py` (copy it into the ticket 03 worktree early: it lives in a session scratchpad) |
 | First draft and its decisions | `/home/tiroir/.claude/plans/merge-desk.md` |
 | Repo conventions | AgentView: `docs/agents/`, `GLOSSARY.md`. sheaf: `SPEC.md` (9.10, 10.11 for actions), `GLOSSARY.md` |
