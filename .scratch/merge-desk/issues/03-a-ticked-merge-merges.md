@@ -4,7 +4,9 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Claimed by:** Vera 2026-11-13 22:59
+
+**Status:** in-progress
 
 - [ ] A branch pushed after the hand-over is refused with "the branch changed after the review", and the box unticks
 - [ ] Two presses in a row merge one after the other, never at once
