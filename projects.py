@@ -369,6 +369,14 @@ def boss_tracks(members):
     return out
 
 
+def boss_session(members, track):
+    """The session id of the boss of `track` among `members`, or None. With two
+    bosses on one track (a hand-off) the smallest id: the same one at every look,
+    whichever of them last moved."""
+    ids = [m.get("id") for m in members if boss_tracks([m]).get(m["key"]) == track and m.get("id")]
+    return min(ids, default=None)
+
+
 HEADING = re.compile(r"^#{1,6}\s*(.*?)\s*#*\s*$")
 # `Roster`, `Roster (current, max 2)`, `Worker roster` -- not `Roster correction`.
 ROSTER = re.compile(r"^(?:worker )?roster(?: *\(.*\))?:?$")

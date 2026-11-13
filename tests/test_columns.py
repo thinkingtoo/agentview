@@ -48,7 +48,7 @@ class Base(unittest.TestCase):
         fleet._pane_owners = lambda now=None: {}
         # Nor sheaf: a track's card asks it for the goal's page.
         self.addCleanup(setattr, fleet, "GOAL_PAGE", fleet.GOAL_PAGE)
-        fleet.GOAL_PAGE = lambda track, now: None
+        fleet.GOAL_PAGE = lambda track, now, boss=None: None
 
     def roster(self, *sessions, provider=None):
         fleet.CONFIG.write_text(json.dumps(self.config))
