@@ -31,7 +31,7 @@ The desk is a sheaf page, and the only view of the list (Thierry: the sheaf page
     - Handed over by Faisal, 2026-11-13 10:40; waiting 11 h.
   ```
 
-  A list, not a table, because Markdown has no box in a table cell. Tables with buttons are a wanted sheaf feature (sheaf `.scratch/action-buttons/issues/05`), and the desk moves to them when sheaf has them.
+  A list, not a table, because Markdown has no box in a table cell. Tables with buttons are a wanted sheaf feature (sheaf `.scratch/sheaf-looks/tables-with-buttons.md`), and the desk moves to them when sheaf has them.
 - A comment with Tell on an item goes to the session that handed it over, through sheaf's own Tell.
 - Install items sit under their own heading at the end; Deploy items carry a "What ships" sub-list: the workflows that fire and their deploy lines (`~/.claude/routines/branch_deploys.py`) and the commits that go out.
 
