@@ -6,8 +6,8 @@
 
 **Claimed by:** Idris 2026-11-13 23:46
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] No visible "merge" left for the project action (UI smoke test reads the card menu)
-- [ ] `/api/fold` does what `/api/merge` did; `/api/merge` still answers the same
-- [ ] README's section on arranging projects says Fold into
+- [x] No visible "merge" left for the project action (UI smoke test reads the card menu) — hand/picker/e2e/stale passes on t-compute: all OK incl. new "card menu says Fold into" check; Opus review round 1
+- [x] `/api/fold` does what `/api/merge` did; `/api/merge` still answers the same
+- [x] README's section on arranging projects says Fold into
