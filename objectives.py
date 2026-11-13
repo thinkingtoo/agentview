@@ -137,14 +137,15 @@ def _state(done, named, tickets):
 def working(m):
     """Whether a session is on a turn now: busy or waiting on a dialog, and not
     only waiting on a job whose turn is over. Idle never is, and `shell` is idle
-    with a job: the status flips to busy when a turn starts (ticket boss-track/06)."""
+    with a job: the status flips to busy when a turn starts (ticket boss-track/06).
+    A session with a job open is `watching` instead (ticket boss-track/18)."""
     return m.get("status") in ("busy", "waiting") and not m.get("waits")
 
 
 def watching(m):
-    """Whether a session's turn is over and a job of its own runs on: it waits on
-    the job, and its objective is still its own (ticket boss-track/18). Idle with
-    no job never is."""
+    """Whether a session's turn is over and a job of its own runs on (the fleet's
+    `waits`): it waits on the job, and its objective is still its own (ticket
+    boss-track/18). Idle with no job never is."""
     return bool(m.get("waits"))
 
 
