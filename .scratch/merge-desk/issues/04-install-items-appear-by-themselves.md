@@ -4,7 +4,9 @@
 
 **Blocked by:** 02, 03 (a ticked Install goes through the watcher 03 builds; boss, 2026-11-13)
 
-**Status:** ready-for-agent
+**Claimed by:** Suki 2026-11-13 23:56
+
+**Status:** in-progress
 
 - [ ] sheaf behind main shows one Install item with both commits; sheaf at main shows none
 - [ ] A failed install leaves the old install running and says the error under the item
