@@ -6,7 +6,7 @@
 
 **Claimed by:** Suki 2026-11-13 23:56
 
-**Status:** done, on branch suki/04-install-items (not merged into dev; waits for Tarek's turn)
+**Status:** done, merged into dev (afd590e), live 2026-11-14 00:43
 
 - [x] sheaf behind main shows one Install item with both commits; sheaf at main shows none (tests/test_deskinstall.py Scan.test_a_tool_behind_main_is_one_item_with_both_commits, test_a_tool_at_main_has_none; real receipt shape parsed in Receipts)
 - [x] A failed install leaves the old install running and says the error under the item (uv 0.13.5 proved in a sandbox to keep the old tool on resolve and build failures; Press.test_a_failed_install_leaves_the_old_one_and_says_so_and_never_restarts)
