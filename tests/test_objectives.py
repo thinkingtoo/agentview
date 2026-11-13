@@ -414,8 +414,8 @@ class Stamped(Panes):
         """Ticket boss-track/21: a boss is no worker; its line is not the worker's."""
         self.roster_of(("Mei", "fresh, parked"))
         boss = sess("b2", self.loom, name="Mei", boss=True, track="checkout", status="busy", tmux="boss-checkout:@3.%30")
-        got = self.track({"w": "building PR 50", "b2": "dispatching"}, self.at("w", "Mei", "%31"), boss)
-        self.assertEqual([(e["name"], e["task"]) for e in got["elsewhere"]], [("Mei", "building PR 50")])
+        got = self.track({"b2": "dispatching"}, self.at("w", "Mei", "%31"), boss)     # a boss leads the column, so only a worker with no line of its own shows the leak
+        self.assertEqual([(e["name"], e["task"]) for e in got["elsewhere"]], [("Mei", "fresh, parked")])
 
     def test_an_idle_cell_keeps_the_worker_off_the_card_even_with_a_line(self):
         """Ticket boss-track/21: the line replaces the words shown, never the idle verdict."""
