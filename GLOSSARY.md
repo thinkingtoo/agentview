@@ -32,8 +32,26 @@ _Avoid_: favourite
 **Move**:
 Putting a session, or a whole track or repository, into a project by hand. Moving a track or a repository holds for the sessions it will have; moving one session lasts as long as that session.
 
-**Merge**:
+**Fold into**:
 Putting everything of one project into another by hand, so that the first is gone. Its pin and its context line go with it; the other project keeps its own name.
+_Avoid_: merge (a merge is a pull request's, see Merge)
+
+**Merge**:
+A pull request going into its base branch, GitHub's word.
+
+**Merge desk**:
+The sheaf page where every finished piece of work that waits only for the person's hand is listed with its button: a Merge, a Deploy or an Install.
+_Avoid_: merge queue, PR list
+
+**Desk item**:
+One entry of the merge desk: what it does, the recommendation of the session that handed it over, and the commit it is pinned to.
+_Avoid_: row (a row is a goal's line)
+
+**Deploy**:
+A merge on a repository where the merge ships something, shown with what ships before it is pressed.
+
+**Install**:
+Bringing a tool installed on this machine up to its repository's main and restarting what runs it.
 
 **Context line**:
 A short line under a project's name that reminds the person what the project is about.
