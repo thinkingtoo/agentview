@@ -167,13 +167,27 @@ class HammersSwing(unittest.TestCase):
         self.assertIn(".sign.rock", css[gate:css.index("</style>", gate)])
         self.assertNotIn(".sign.rock", css[:gate])
         self.assertNotRegex(css[:gate], r"animation:[^;]*rock")
-        # The left tilt of -6deg pulls the glyph's corner about 0.11em left: it rests at least that far right.
+
+    def test_the_rock_goes_fully_left_then_fully_right_slowly_with_a_hold_at_each_end(self):
+        """Thierry, 2026-11-13: "slower, all the way to the left and then all the way to the right" (boss-track/23)."""
+        css = PAGE.read_text()
         keys = re.search(r"@keyframes rock \{(.*)\}\s*\n", css).group(1)
-        shifts = [float(x) for x in re.findall(r"translateX\((-?[\d.]+)(?:em)?\)", keys)]
-        self.assertEqual(len(shifts), 2, keys)
-        self.assertTrue(0.12 <= min(shifts) and max(shifts) <= 0.2, shifts)
-        self.assertNotEqual(re.search(r"@keyframes rock \{(.*?)\n", css).group(1),
-                            re.search(r"@keyframes swing \{(.*?)\n", css).group(1))
+        stops = [(int(a), float(d)) for a, d in re.findall(r"(\d+)%[^{]*\{\s*transform:rotate\((-?[\d.]+)deg\)", keys)]
+        angles = {d for _, d in stops}
+        self.assertEqual(angles, {-30.0, 30.0}, keys)
+        self.assertIn("0%, 12%", keys)                    # a hold at the left end
+        self.assertIn("50%, 62%", keys)                                            # a hold at the right end
+        self.assertRegex(css, r"\.sign\.rock \{ animation:rock 2400ms ease-in-out infinite; transform-origin:50% 50%;")
+
+    def test_the_lines_clip_leaves_room_to_the_left_of_the_sign_and_moves_nothing(self):
+        css = PAGE.read_text()
+        self.assertRegex(css, r"\.ov-obj-line, \.ov-obj-note \{ padding-left:0\.3em; margin-left:-0\.3em; \}")
+        self.assertRegex(css, r"\.ov-obj-line \{ width:calc\(100% \+ 0\.3em\); \}")
+
+    def test_a_redrawn_rock_carries_on_at_the_clock_phase_of_its_2400_ms_cycle(self):
+        card = {"project": "p", "track": {"rows": [dict(row("w", "worked"), watching=True)]}}
+        delay = int(re.search(r"rock[^>]*animation-delay:-(\d+)ms", self.draw(card)[0]["html"]).group(1))
+        self.assertTrue(0 <= delay < 2400)
 
     def test_the_stylesheet_swings_only_where_motion_is_welcome(self):
         css = PAGE.read_text()
