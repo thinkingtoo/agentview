@@ -215,9 +215,11 @@ def settle(text, key, result, untick=False):
         body = block.rstrip("\n")
         tail = block[len(body):] or "\n"
         kept = body.split("\n")
-        mine = [n for n, l in enumerate(kept) if RESULT.match(l)]       # only our own last line, never the person's words
-        if mine:
-            del kept[mine[-1]]
+        at = len(kept) - 1                                              # our line is always the last one, bar the person's comments after it
+        while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at]):
+            at -= 1
+        if RESULT.match(kept[at]):
+            del kept[at]
         if untick and kept[0][3] in "xX":
             kept[0] = kept[0][:3] + " " + kept[0][4:]
         return text[:start] + "\n".join(kept + ["  - " + result]) + tail + text[end:]
