@@ -317,13 +317,23 @@ class Tracks(Cards):
                 self.assertEqual([b["text"] for b in track["boxes"]], ["cart", "receipt", "refund", "extra"])
 
     def test_a_code_span_ends_at_a_run_of_its_own_length_and_an_escaped_backtick_opens_none(self):
-        # CommonMark: ``a`b`` is one span, and \` is a backtick, so the block after each is a block.
-        for words in ("use ``a`b`` here", "use \\` here"):
+        # CommonMark: ``a`b`` is one span, \` is a backtick, and after \\ a backtick opens a span again,
+        # so the block after each is a block.
+        for words in ("use ``a`b`` here", "use \\` here", "use C:\\\\`x` here"):
             with self.subTest(words=words):
                 track = self.raw_goal(after=f"- [ ] {words}{self.BLOCK} then `y`\n")
                 text = track["boxes"][-1]["text"]
                 self.assertNotIn("sheaf-comment", text)
                 self.assertTrue(text.endswith(" here then y"), text)
+
+    def test_backtick_runs_that_never_close_are_read_in_one_pass(self):
+        line = "".join("`" * n + "a" for n in range(1, 450))           # 100k characters, no run closes
+        started = time.monotonic()
+        self.assertEqual(context.without_sheaf_comments(line + self.BLOCK), line)
+        self.assertLess(time.monotonic() - started, 1)
+
+    def test_an_escape_that_takes_the_first_backtick_of_a_run_leaves_the_rest_a_run_of_its_own(self):
+        self.assertEqual(context.without_sheaf_comments("``a`` \\`` x" + self.BLOCK + " y"), "``a`` \\`` x y")
 
     def test_a_multi_line_sheaf_comment_in_the_outcome_is_not_part_of_it(self):
         self.assertEqual(self.track(outcome=f"Customers pay{self.MULTI} with a saved card.")["context"]["full"],

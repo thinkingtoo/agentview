@@ -12,6 +12,7 @@ Every text in here is whatever a file or a session said, kept as it was said:
 the page prints it as text and never as markup, so nothing is stripped for
 safety here.
 """
+import bisect
 import itertools
 import os
 import re
@@ -326,8 +327,8 @@ def track_card(track):
 # ------------------------------------------------------------- the repository
 
 OPENS = re.compile(r"`[^`\n]+`|<!--")
-# A code span ends at a backtick run of its own length, and \` opens none (CommonMark).
-SHEAF_OPENS = re.compile(r"(?<![`\\])(`+)(?!`).*?(?<!`)\1(?!`)|<!--\s*(?:sheaf|rd)-comment\b")
+SHEAF_OPENS = re.compile(r"\\.|`+|<!--\s*(?:sheaf|rd)-comment\b")
+BACKTICKS = re.compile(r"`+")
 FRONT_MATTER = re.compile(r"\A\s*---[ \t]*\n.*?\n---[ \t]*(?:\n|\Z)", re.DOTALL)
 INCLUDE = re.compile(r"^\s*@\S+\s*$")
 REFERENCE = re.compile(r"^\s*\[[^\]]+\]:")      # CommonMark wants no space after the colon, footnotes too
@@ -393,17 +394,30 @@ def without_sheaf_comments(text):
     where the words it is about end, in a heading too, and its text may hold lines
     that look like boxes or headings. Any other comment stays as written: one
     that never closes must not pair with the `-->` of a block further down. A
-    block that never closes stays too. A code span is code. The end is found with
-    `find`, as in `without_comments`."""
-    out, at = [], 0
+    block that never closes stays too. A code span is code: as in CommonMark it
+    ends at the next run of as many backticks on its line, a run that finds none
+    is plain backticks, and a backslash escapes the character after it. The end
+    is found with `find`, as in `without_comments`."""
+    out, at, line, ends = [], 0, None, {}           # ends: run length -> where the runs of the line end
     while True:
         found = SHEAF_OPENS.search(text, at)
         if found is None:
             out.append(text[at:])
             return "".join(out)
-        if found.group()[0] == "`":                 # a code span goes by as it stands
-            out.append(text[at:found.end()])
-            at = found.end()
+        run = found.group()
+        if run[0] != "<":                           # an escape or a code span goes by as it stands
+            stop = found.end()
+            eol = text.find("\n", stop) % (len(text) + 1)
+            if run[0] == "`":
+                if line != eol:                     # the runs of a line are gathered once, in one pass
+                    line, ends = eol, {}
+                    for other in BACKTICKS.finditer(text, found.start(), eol):
+                        ends.setdefault(len(other.group()), []).append(other.end())
+                after = ends.get(len(run), [])  # an escape can split a run: `\``
+                closing = bisect.bisect_right(after, stop)
+                stop = after[closing] if closing < len(after) else stop
+            out.append(text[at:stop])
+            at = stop
             continue
         end = text.find("-->", found.end())
         if end < 0:
