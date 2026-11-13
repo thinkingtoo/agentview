@@ -45,11 +45,14 @@ The header shows a **Merges** button with the number of items not yet ticked, be
 _Avoid_: merge queue, PR list
 
 **Desk item**:
-One entry of the merge desk: what it does, the recommendation of the session that handed it over, and the commit it is pinned to.
+One entry of the merge desk: what it does, the recommendation of the session that handed it over, the commit it is pinned to, and, for a Deploy, what ships.
 _Avoid_: row (a row is a goal's line)
 
 **Deploy**:
-A merge on a repository where the merge ships something, shown with what ships before it is pressed.
+A merge on a repository where the merge ships something, shown with what ships before it is pressed. A merge that ships nothing is a **Merge item**.
+
+**What ships**:
+The sub-list of a Deploy item: the workflow lines of the base branch that deploy, publish or upload, the commits that go out, and, for a repository run from outside GitHub, the person's own line (`desk ready --ships`). It is read at hand-over and again just before the merge; a difference refuses the press.
 
 **Install**:
 Bringing a tool installed on this machine up to its repository's main and restarting what runs it.
