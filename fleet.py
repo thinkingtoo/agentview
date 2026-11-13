@@ -1018,7 +1018,7 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
         busy = objectives.busy_names(rows, crew, is_concierge)
         watch = objectives.watching_names(rows, crew, is_concierge)
         review = objectives.reviewing_names(rows, crew, is_concierge)
-        own = objectives.own_lines(rows, crew, is_concierge)
+        own = objectives.own_lines(rows, crew, is_concierge, project["raw"])
         track["rows"] = (objectives.rows(track["boxes"], rows, crew, met=bool(progress and progress["met"]),
                                          busy=busy, watch=watch, review=review)
                          if running else [])

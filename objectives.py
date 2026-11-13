@@ -187,12 +187,12 @@ def reviewing_names(sessions, crew, is_concierge):
 def _own_words(m):
     """What a working session's row says of its task when the table has none:
     the line it last wrote, else its card title, else the first line of its last
-    prompt, else the first line of the newest message another session sent it (the
-    dispatch that started it), else "working" so its name still shows (tickets
-    boss-track/11 and 22). Read by the provider with the rest of the tail, never here."""
+    prompt, else "working" so its name still shows (ticket boss-track/11). This is
+    the task a worker is placed by, so a message from another session is never in it
+    (ticket boss-track/24); `own_lines` carries a dispatch for display only. Read by
+    the provider with the rest of the tail, never here."""
     prompt = next((l.strip() for l in str(m.get("prompt") or "").splitlines() if l.strip()), "")
-    return (str(m.get("did") or "").strip() or str(m.get("title") or "").strip() or prompt
-            or str(m.get("dispatch") or "").strip() or "working")
+    return str(m.get("did") or "").strip() or str(m.get("title") or "").strip() or prompt or "working"
 
 
 def workers(track, sessions, is_concierge, owner_of, boss_panes):
@@ -220,16 +220,21 @@ def workers(track, sessions, is_concierge, owner_of, boss_panes):
     return out
 
 
-def own_lines(sessions, crew, is_concierge):
-    """`{name: the line it last wrote}` for each of the crew (`workers`) that wrote one.
-    The cell of the table is the boss's assignment: it places a worker on a ticket and
-    keeps an idle one off the card. The words the card prints come from the worker when
-    it has any, because a cell nobody refreshes lies (ticket boss-track/21). Same
+def own_lines(sessions, crew, is_concierge, track):
+    """`{name: the words to print}` for each of the crew (`workers`) that has any: the line
+    it last wrote, else, only where the track's table has no cell for it, the first line of
+    its newest dispatch. The cell is the boss's statement of the task: it places a worker on
+    a ticket, keeps an idle one off the card, and is printed unless the worker's own did
+    replaces it (ticket boss-track/21). A dispatch fills in where no cell exists and never
+    places anyone, for the newest message can be an ack (ticket boss-track/24). Same
     admission as `busy_names`: an older idle session, a boss or a concierge of the same
     name speaks for no worker."""
-    return {m["name"]: str(m["did"]).strip() for m in sessions
+    cells = projects.roster_tasks(track)
+    return {m["name"]: words for m in sessions
             if m.get("name") in crew and not m.get("boss") and not is_concierge(m)
-            and (working(m) or watching(m) or reviewing(m)) and str(m.get("did") or "").strip()}
+            and (working(m) or watching(m) or reviewing(m))
+            and (words := str(m.get("did") or "").strip()
+                 or (not cells.get(m["name"].casefold()) and str(m.get("dispatch") or "").strip()))}
 
 
 def elsewhere(made, crew, busy=frozenset(), watch=frozenset(), lines=None, review=frozenset()):

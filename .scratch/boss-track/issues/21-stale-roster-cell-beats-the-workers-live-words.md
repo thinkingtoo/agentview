@@ -6,7 +6,7 @@
 
 **Decision (Tarek, boss of agentview, 2026-11-13):** the worker's live did beats a stale cell for the words shown after the name. The cell is the boss's assignment and stays what ties a worker to a ticket and a row; matching keeps reading the cell, and the did where it already does. Reason: the card should show what the worker is doing now, and a cell nobody refreshes lies, as "fresh, parked" did. An idle cell still keeps a worker off the card (PR 47, tested).
 
-**Status:** done
+**Status:** done (ticket 24 adds the first line of a session's newest dispatch to the words shown, below the cell and above the title: did, cell, dispatch, title, prompt, working. Reason: a cell is the boss's statement of the task; a dispatch only fills in where no cell exists, and never places a worker.)
 
 - [x] A worker with a roster cell and a did shows the did; the cell still decides the ticket it sits on -- evidence: `tests/test_objectives.py` class `Stamped` (three tests naming ticket boss-track/21)
 - [x] A worker with a cell and no did shows the cell -- evidence: the same first test (Odile)

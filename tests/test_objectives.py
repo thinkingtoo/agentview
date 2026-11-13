@@ -440,17 +440,41 @@ class Stamped(Panes):
                                             {"name": "Odile", "task": "Review PR 248", "busy": True, "watching": False, "reviewing": False}])
 
     def test_a_worker_with_no_line_title_or_prompt_shows_the_first_line_of_its_newest_dispatch(self):
-        """Ticket boss-track/22: before the word working; every better word still wins."""
+        """Ticket boss-track/22: before the title and the word working, where no cell exists; the worker's own line still wins."""
         self.prose_roster()
         fleet._pane_owners = lambda now=None: {"%31": "%30", "%32": "%30", "%33": "%30", "%34": "%30"}
         got = self.track({"v": "waiting for review of PR 248"},
-                         self.at("w", "Mei", "%31", dispatch="Ticket 52: fix the reader"),
+                         self.at("w", "Mei", "%31", title="Reader", dispatch="Ticket 52: fix the reader"),
                          self.at("v", "Odile", "%32", dispatch="Ticket 9: ignored"),
                          self.at("u", "Anik", "%33"),
-                         self.at("t", "Zoe", "%34", title="Reader", dispatch="Ticket 9: ignored"))
+                         self.at("t", "Zoe", "%34", title="Reader"))
         self.assertEqual([(e["name"], e["task"]) for e in got["elsewhere"]],
                          [("Anik", "working"), ("Mei", "Ticket 52: fix the reader"),
                           ("Odile", "waiting for review of PR 248"), ("Zoe", "Reader")])
+
+    def test_the_words_shown_run_did_then_cell_then_dispatch_then_title(self):
+        """Ticket boss-track/24 (amends 21 and 22): the cell is the boss's statement of the task, so a dispatch never beats it; a dispatch fills in only where no cell exists."""
+        self.roster_of(("Mei", "fresh, parked"), ("Odile", "fresh, parked"))
+        fleet._pane_owners = lambda now=None: {"%34": "%30"}
+        got = self.track({"v": "building PR 50"},
+                         self.at("w", "Mei", "%31", dispatch="GO"),
+                         self.at("v", "Odile", "%32", dispatch="Ticket 9: ignored"),
+                         self.at("t", "Zoe", "%34", title="Reader", dispatch="Ticket 3: fix the cart"))
+        self.assertEqual([(e["name"], e["task"]) for e in got["elsewhere"]],
+                         [("Mei", "fresh, parked"), ("Odile", "building PR 50"), ("Zoe", "Ticket 3: fix the cart")])
+
+    def test_a_dispatch_never_places_a_worker_on_a_ticket_or_a_row(self):
+        """Ticket boss-track/24: a message can be an ack that names a ref; only the cell (or the worker's own words) places."""
+        self.roster_of(("Mei", "paste/12 the reader"))
+        fleet._pane_owners = lambda now=None: {"%32": "%30"}
+        got = self.track({}, self.at("w", "Mei", "%31"), self.at("v", "Odile", "%32", dispatch="paste/12 is merged, thanks"))
+        self.assertEqual((got["rows"][0]["tickets"][0]["workers"], [(e["name"], e["task"]) for e in got["elsewhere"]]),
+                         (["Mei"], [("Odile", "paste/12 is merged, thanks")]))
+
+    def test_an_idle_cell_keeps_the_worker_off_the_card_whatever_the_dispatch_says(self):
+        """Ticket boss-track/24: only the words change; an idle cell keeps it off."""
+        self.roster_of(("Odile", "idle"))
+        self.assertEqual(self.track({}, self.at("v", "Odile", "%32", dispatch="something else"))["elsewhere"], [])
 
     def test_a_table_cell_that_says_idle_wins_over_the_stamp(self):
         """Ticket boss-track/11: only an empty cell falls through."""
