@@ -108,6 +108,7 @@ class Summary(unittest.TestCase):
         self.assertEqual((summary["dispatch"], summary["prompt"]), ("Second task: fix the cart", ""))
 
     def test_a_typed_prompt_or_a_session_with_no_peer_message_has_no_dispatch(self):
+        """Ticket boss-track/22: the typed prompt stays in `prompt`."""
         path = self.write([{"type": "user", "message": {"content": "hello"}, "origin": {"kind": "human"}},
                            {"type": "last-prompt", "lastPrompt": "hello"}])
         self.assertEqual(claude.scan_cached(path)["dispatch"], "")

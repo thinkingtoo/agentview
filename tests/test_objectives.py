@@ -401,6 +401,15 @@ class Stamped(Panes):
         self.assertEqual(([r["state"] for r in got["rows"]], got["rows"][0]["tickets"][0]["workers"], got["elsewhere"]),
                          (["worked", "planned"], ["Mei"], []))
 
+    def test_only_the_session_that_works_speaks_for_its_name(self):
+        """Ticket boss-track/21: an older idle session of the same name, and a concierge, print no line."""
+        self.roster_of(("Mei", "fresh, parked"))
+        fleet._pane_roles = lambda now=None: frozenset({"%34"})
+        got = self.track({"w": "building PR 50", "o": "PR 41 merged", "c": "concierge chatter"},
+                         self.at("w", "Mei", "%31"), self.at("o", "Mei", "%32", status="idle"),
+                         self.at("c", "Mei", "%34"))
+        self.assertEqual([(e["name"], e["task"]) for e in got["elsewhere"]], [("Mei", "building PR 50")])
+
     def test_an_idle_cell_keeps_the_worker_off_the_card_even_with_a_line(self):
         """Ticket boss-track/21: the line replaces the words shown, never the idle verdict."""
         self.roster_of(("Mei", "idle"))
