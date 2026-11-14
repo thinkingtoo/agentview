@@ -10,7 +10,9 @@
 
 **Blocked by:** 11
 
-**Status:** ready-for-agent
+**Claimed by:** Anika 2026-11-14 15:22
+
+**Status:** in-progress
 
 - [ ] A 429 from the stream cap carries Retry-After (test)
 - [ ] A test fails when sheaf's comment OPS and the relay's COMMENT_OPS differ
