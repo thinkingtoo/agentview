@@ -334,6 +334,7 @@ def open_thread(block):
     return False
 
 
+TOP = re.compile(r"^(?:[-*+] |#{1,6} )")
 NOT_WELL = re.compile(r"failed|may not have run|no hub is running")
 SHEAF_COMMENT = re.compile(r"<!--\s*(?:sheaf|rd)-comment\b.*?-->", re.S)
 
@@ -344,7 +345,16 @@ def whole(block):
     after the item (a paragraph, a numbered list, a quote), another item or heading that a stray `<!--` swallowed,
     all land in the block above, and dropping it would drop them. A block is whole when, outside sheaf's own
     comments (whose lines sheaf guards), no line after the first is anything but indented by two spaces or a tab, blank or a comment's,
-    and no `<!--` is left that no sheaf comment owns."""
+    and no `<!--` is left that no sheaf comment owns. A sheaf comment is one sheaf could have written: a head, then
+    either the one line or lines that end in a line of `-->` alone, and no second `<!--` inside: a thread whose
+    closing `-->` was lost in an edit would otherwise pair with the first `-->` of the item below it, and take that
+    item out of sight of this check."""
+    for m in SHEAF_COMMENT.finditer(block):
+        span = m.group(0)
+        if "<!--" in span[4:] or ("\n" in span and not span.endswith("\n-->")):   # sheaf writes neither: the real end is lost
+            return False
+    if any(TOP.match(l) for l in block.splitlines()[1:]):    # sheaf guards these on its comment lines
+        return False
     bare = SHEAF_COMMENT.sub("", block)
     return "<!--" not in bare and all(not l.strip() or l.startswith(("  ", "\t")) for l in bare.splitlines()[1:])
 
@@ -363,7 +373,7 @@ def results(block):
 def over(it, rec, now):
     """Is the item's story over, by its last log record, and a day ago?"""
     at = settled_at(rec)
-    if at is None or now - at < DAY or open_thread(it.block):
+    if at is None or now - at < DAY or it.ticked or open_thread(it.block):
         return False
     ev = rec["event"]
     if ev == "withdrawn":

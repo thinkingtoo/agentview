@@ -714,6 +714,54 @@ class Tidy(Case):
             reached |= set(window)
         self.assertEqual(len(reached), 10)
 
+    LOST = ('<!-- sheaf-comment id=c1 by="Thierry" at=2026-11-10T10:00 status=resolved quote="Handed over"\n'
+            'ok, done\n')                       # a resolved thread of sheaf's own shape, its closing line lost in an edit
+
+    def lost_end(self, after):
+        """A merged item whose resolved thread lost its `-->` line, then `after` on the page."""
+        k = self.merged(1)
+        deskfile.path().write_text(self.page().replace("  - Merged as ccccccc at 10:00", self.LOST + "  - Merged as ccccccc at 10:00", 1).rstrip("\n") + "\n" + after)
+        return k
+
+    def test_a_thread_that_lost_its_closing_line_takes_nothing_below_it_with_it(self):
+        waiting = ("- [ ] Merge o/r#2: please wait\n  - Recommendation: wait.\n  - Pinned commit: " + "b" * 40 +
+                   "\n  - Handed over by s, 2026-11-14 09:00.\n")
+        for name, after in (("a waiting item with a resolved thread", waiting + COMMENT_DONE + "\n"),
+                            ("an arrow in an indented note", waiting + "  - Plan: dev --> main after this\n"),
+                            ("the person's text and an arrow", "\nAsk Hans about the invoices.\n\n1. call Sven\n\nflow: dev --> main\n"),
+                            ("a ticked item", waiting.replace("- [ ]", "- [x]", 1) + COMMENT_DONE + "\n")):
+            self.setUp_again()
+            self.lost_end(after)
+            self.hand_over(REPO, 3)             # a second, waiting item that must survive too
+            before = self.page()
+            self.assertEqual(deskscan.tidy(), [], name)
+            self.assertEqual(self.page(), before, name)
+
+    def test_each_way_a_comment_span_can_be_one_sheaf_did_not_write_is_refused_alone(self):
+        head = '- [ ] Merge a/b#1: x\n  - y\n<!-- sheaf-comment id=c1 by="T" at=2026-11-10T10:00 status=resolved quote="q"\nok\n'
+        # lost its end: the span runs to a `-->` that is not on a line of its own
+        self.assertFalse(deskscan.whole(head + "  - note dev -->  main\n"))
+        self.assertFalse(deskscan.whole(head + "  - z\n\nAsk Hans.\n\nflow: dev -->\n"))
+        # a second `<!--` inside the span, whose end is a line of its own
+        self.assertFalse(deskscan.whole(head + '<!-- sheaf-comment id=c2 status=open\n-->\n'))
+        # a list item or heading line inside the span: sheaf guards those characters
+        self.assertFalse(deskscan.whole(head + "- [ ] Merge a/b#2: y\n-->\n"))
+        self.assertFalse(deskscan.whole(head + "# Later\n-->\n"))
+        # and the shapes sheaf writes pass
+        self.assertTrue(deskscan.whole(head + "-->\n"))
+        self.assertTrue(deskscan.whole('- [ ] Merge a/b#1: x <!-- sheaf-comment id=c1 by="T" at=2026-11-10T10:00 status=resolved quote="q"<br>ok<br>@C 2026-11-10T10:30: yes -->\n  - y\n'))
+
+    def test_the_same_thread_with_its_closing_line_still_goes(self):
+        k = self.lost_end("")
+        deskfile.path().write_text(self.page().rstrip("\n") + "\n-->\n")
+        self.assertEqual(deskscan.tidy(), [k])
+
+    def test_a_settled_item_the_person_ticked_again_is_left_to_the_watcher(self):
+        k = self.merged()
+        deskfile.edit(lambda t: t.replace("- [ ] Merge", "- [x] Merge", 1))
+        self.assertEqual(deskscan.tidy(), [])
+        self.assertEqual(self.keys(), [k])
+
     def test_a_block_with_a_heading_or_list_line_of_its_own_is_not_whole(self):
         self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n## Later\n"))
         self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n- note\n"))
