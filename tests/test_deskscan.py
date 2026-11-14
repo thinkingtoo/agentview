@@ -22,6 +22,7 @@ import desk
 import deskfile
 import deskinstall
 import deskscan
+import deskships
 import deskwatch
 
 HEAD = "a" * 40
@@ -89,7 +90,9 @@ class Case(unittest.TestCase):
         old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.addCleanup(lambda: [os.environ.pop(k) if v is None else os.environ.__setitem__(k, v) for k, v in old.items()])
-        self.saved = (deskwatch.GH, deskwatch.log.error, deskscan.PER_REPO, deskscan.TOTAL, deskscan.MAX_REPOS, desk.pr_head)
+        self.saved = (deskwatch.GH, deskwatch.log.error, deskscan.PER_REPO, deskscan.TOTAL, deskscan.MAX_REPOS, desk.pr_head,
+                      deskships.read)
+        deskships.read = lambda *a, **k: []          # what a merge ships is ticket 05's, not read here
         desk.pr_head = lambda r, num: ("OPEN", f"{num:x}".rjust(40, "b"), "main")
         self.errors = []
         deskwatch.GH = script(self.bin / "gh", FAKE_GH)
@@ -97,7 +100,7 @@ class Case(unittest.TestCase):
         self.addCleanup(self.restore)
 
     def restore(self):
-        deskwatch.GH, deskwatch.log.error, deskscan.PER_REPO, deskscan.TOTAL, deskscan.MAX_REPOS, desk.pr_head = self.saved
+        deskwatch.GH, deskwatch.log.error, deskscan.PER_REPO, deskscan.TOTAL, deskscan.MAX_REPOS, desk.pr_head, deskships.read = self.saved
 
     def prs(self, repo, *prs):
         (self.fake / f"prs-{repo.replace('/', '_')}.json").write_text(json.dumps(list(prs)))
