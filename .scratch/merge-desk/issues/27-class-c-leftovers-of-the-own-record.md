@@ -16,7 +16,7 @@
 
 **Claimed by:** Arvid 2026-11-14 16:03
 
-**Status:** in-progress
+**Status:** done
 
 - [x] CRLF page: a hand-over replaces our lines, no LF block appended (test) (arvid/27, tests in tests/test_desk.py)
 - [x] settle with no record: a second refused press replaces the first result line (test) (arvid/27, tests in tests/test_desk.py)
