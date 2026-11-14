@@ -1881,6 +1881,17 @@ class SettleAndPutShapes(unittest.TestCase):
             deskfile.drop_item("a/b#1", file=f)
         self.assertEqual(((tmp / deskfile.RECORD).read_text(), f.read_text()), ("{not json", before))
 
+    def test_a_press_still_writes_its_result_on_a_corrupt_record_and_leaves_the_record_alone(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        f = tmp / "merge-desk.md"
+        deskfile.put_item("a/b#1", self.block(self.OLD_SHA), file=f)
+        (tmp / deskfile.RECORD).write_text("{not json")
+        deskfile.edit(lambda t: deskfile.settle(t, "a/b#1", "Merged at 12:00"), f)
+        self.assertIn("  - Merged at 12:00\n", f.read_text())
+        self.assertEqual((tmp / deskfile.RECORD).read_text(), "{not json")
+        self.assertIsNone(getattr(deskfile._held, "unreadable", None))          # the flag did not leak out of `edit`
+
     def test_adopt_reports_a_case_duplicate_under_an_entry_that_exists(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
