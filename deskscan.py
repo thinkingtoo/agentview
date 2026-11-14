@@ -424,19 +424,25 @@ def settled_at(rec):
         return None
 
 
-def results(block):
-    return [l for l in block.split("\n") if deskfile.RESULT.match(l)]
+def results(it, record):
+    """The result lines of the item that AgentView wrote: the record of the item says so, else the line is the
+    person's, whatever shape it has. An item with no record has none."""
+    own = deskfile._own(record, it.key, it.block)
+    if own is None:
+        return []
+    return [l for l in it.block.split("\n") if deskfile.RESULT.match(l) and own[l] > 0]
 
 
-def over(it, rec, now):
-    """Is the item's story over, by its last log record, and a day ago?"""
+def over(it, rec, now, record):
+    """Is the item's story over, by its last log record, and a day ago? `record` is what AgentView wrote
+    (`deskfile.edit` holds it): a result line the person typed is no proof."""
     at = settled_at(rec)
     if at is None or now - at < DAY or it.ticked or open_thread(it.block):
         return False
     ev = rec["event"]
     if ev == "withdrawn":
         return True
-    said = results(it.block)
+    said = results(it, record)
     if ev == "merged":
         return not it.key.startswith("install:") and any(l.startswith(("  - Merged", "  - Already merged")) for l in said)
     if ev == "installed":
@@ -466,7 +472,7 @@ def tidy(now=None):
             def change(text, k=k):
                 dropped.clear()
                 found = [i for i in deskfile.items_in(text) if i.key == k]
-                if len(found) != 1 or not whole(found[0].block) or not over(found[0], last[k], now):
+                if len(found) != 1 or not whole(found[0].block) or not over(found[0], last[k], now, getattr(deskfile._held, "record", None)):
                     return text
                 dropped.append(k)
                 return deskfile.drop(text, k)
