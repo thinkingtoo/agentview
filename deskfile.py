@@ -49,7 +49,7 @@ list means nothing waits.
 
 """ + SECTIONS["merge"] + "\n"
 
-TASK = re.compile(r"^- \[([ xX])\] (?:(?:Merge|Deploy) ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#\d+)|Install ([^\s:]+))(?::|$)")
+TASK = re.compile(r"^- \[([ xX])\] (?:(?:Merge|Deploy) ([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#\d+)|Install ([^\s:]+))(?::|\s*$)")
 PINNED = re.compile(r"^\s+- Pinned commit: ([0-9a-f]{7,40})\b", re.M)
 AFTER = re.compile(r"^\s+- Pinned commit: [^\n]*; must go after #(\d+)", re.M)
 HEADING = re.compile(r"^#{1,6} ")
@@ -152,6 +152,50 @@ def _spans(text):
     if open_ is not None:
         out.append((*open_, end))
     return out
+
+
+def _open_at(text):
+    """The offset of the `<!--` that opens the comment left open at the end of `text`, or None when every comment is closed."""
+    inside, at = False, None
+    for m in re.finditer(r"<!--|-->", text):
+        if m.group(0) == "<!--":
+            if not inside:
+                at = m.start()
+            inside = True
+        else:
+            inside = False
+    return at if inside else None
+
+
+def _unhidden(text, key):
+    """`text` with a comment the person left open inside the item `key` closed,
+    so the lines below it are lines again: an open comment swallows the rest of the page, the items below it with
+    it. The comment is closed before the next task line or heading, so what the person typed in it stays in it. Only a
+    comment that hides `key` or sits inside its block is closed, one at a time, and none beyond it. `text`
+    as it was when it holds no such comment, or when closing them does not bring `key` into view."""
+    here, found = text, False
+    for _ in range(50):
+        at = _open_at(here)
+        if at is None:
+            break
+        spans = [(s, e) for k, s, e in _spans(here) if k == key or (k.lower() == key.lower() and not key.startswith("install:"))]
+        if spans and at >= spans[0][1]:
+            break
+        end = len(here)
+        for offset, line, _ in _walk(here):
+            if offset > at and (TASK.match(line) or HEADING.match(line)):
+                end = offset                                         # the comment ends before the first line that is an item or a heading again
+                break
+        end -= len(here[:end]) - len(here[:end].rstrip("\r\n"))     # ... and before the line end that precedes it
+        here = here[:end] + " -->" + here[end:]
+        found = True
+    shown = any(k == key or (k.lower() == key.lower() and not key.startswith("install:")) for k, _, _ in _spans(here))
+    return here if found and shown else text
+
+
+def _eol(block):
+    """The line end `block` mostly has."""
+    return "\r\n" if block.count("\r\n") * 2 > block.count("\n") else "\n"
 
 
 SHIPS_HEADER = "  - What ships:"
@@ -412,7 +456,10 @@ def _orphaned(comment):
 def _without_words(line, mid):
     """`line` with the person's words `mid` taken out and every thread left where it stood among the words that are
     AgentView's: the threads quote those words, so they must keep following them. The words come after ours (`mid`
-    is the end of the line with the threads out); a thread after them goes at the end."""
+    is the end of the line with the threads out); a thread after them goes at the end. So a thread that quotes the person's
+    words (`Merge it.<c2> and fine<c3>`: c3 quotes "and fine") no longer has them before it once they are a line of
+    their own: its quote does not end our line, and sheaf will show it as an orphan when it next anchors it. The words
+    cannot stay on our line (it would not be ours next time), and the thread cannot follow them (it is on our line)."""
     if not mid:
         return line.rstrip("\n")
     bare = CLOSED.sub("", line.rstrip("\r\n"))
@@ -474,7 +521,7 @@ def carry(old, new, own=None, orders=None, at=None):
                 blanks.append(line)                              # kept only when a line of the person's comes after it
                 continue
             if "<!--" in CLOSED.sub("", line):                    # a comment of the person's left open: it and what it swallows go last, closed, so it hides none of the lines AgentView writes
-                orphans.extend(blanks + [line.rstrip("\n") + " -->\n"])
+                orphans.extend(blanks + [line.rstrip("\r\n") + " -->" + ("\r\n" if line.endswith("\r\n") else "\n")])
             else:
                 (theirs.setdefault(after(last), []) if after(last) else orphans).extend(blanks + [line])
             blanks = []
@@ -551,6 +598,9 @@ def _prev_stands(entry, block):
     texts = _heads(block)
     if texts:
         texts[0] = re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", texts[0], count=1)
+    known = set(entry["prev"]) | set(entry["lines"])
+    if any(t not in known and any(shape.match(t) for _, shape in OWN_LINES) for t in texts[1:]):
+        return False                    # a line shaped like ours that no generation wrote: the person edited this block, it is no stale write
     return len(_mine(texts, [(entry["prev"], None)])) > len(_mine(texts, [(entry["lines"], entry.get("at"))]))
 
 
@@ -569,13 +619,13 @@ def _record_block(record, key, block, at=None, behind=False):
     """`at` is, for each line of `block`, how many identical lines stand before it on the page it is written onto
     (`carry` gives it): the record keeps it, so a copy of a line the person puts next to ours cannot take its place
     later. Without it the block stands alone on the page: all zero. `behind`: the page still held the generation before
-    the record's last (a write that did not reach it): that one stays in `prev` too, so the page is still read as ours."""
+    the record's last (a write that did not reach it): that one stays in `prev`, and the generation that never reached the page is not added to it (`prev` is never longer than one generation), so the page is still read as ours."""
     if record is None:
         return
     heads, was = _heads(block), record.get(_slot(key))
     at = _ordinals(heads) if at is None else at
     if was is None or was["lines"] != heads or was.get("at") != at:
-        prev = was["lines"] + (was["prev"] if behind else []) if was and was["lines"] != heads else (was["prev"] if was else [])
+        prev = was["prev"] if was and behind else was["lines"] if was and was["lines"] != heads else (was["prev"] if was else [])
         record[_slot(key)] = {"lines": heads, "prev": prev, "at": at}
 
 
@@ -586,14 +636,19 @@ def put(text, key, block, section="merge", record=None):
     record = getattr(_held, "record", None) if record is None else record
     if not block.endswith("\n"):
         block += "\n"
+    text = _unhidden(text, key)
     for k, start, end in _spans(text):
         if k == key or (k.lower() == key.lower() and not key.startswith("install:")):   # GitHub's names are not case-sensitive, a tool's are
             got, at = (record or {}).get(_slot(k)), []
             behind = got is not None and _prev_stands(got, text[start:end])
             kept = carry(text[start:end], block, _own(record, k, text[start:end]), None if got is None else _orders(got), at)
+            if _eol(text[start:end]) == "\r\n":
+                kept = re.sub(r"\r?\n", "\r\n", kept)                 # a CRLF block stays one kind of line end: our lines come in with LF
             _record_block(record, k, block, at if len(at) == len(_heads(block)) else None, behind)
             return text[:start] + kept + text[end:]
     _record_block(record, key, block)
+    if _eol(text) == "\r\n":
+        block = re.sub(r"\r?\n", "\r\n", block)
     heading = SECTIONS[section]
     at = _heading_end(text, heading)
     if at is not None and not text.endswith("\n") and at == len(text):
@@ -621,6 +676,7 @@ def _heading_end(text, heading):
 
 def drop(text, key, record=None):
     record = getattr(_held, "record", None) if record is None else record
+    text = _unhidden(text, key)
     for k, start, end in _spans(text):
         if k == key:
             if record is not None:
@@ -639,6 +695,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
     no such item comes back as it was. A result line is replaced only if AgentView wrote it (the record says so, else
     its shape); the new one goes in the record."""
     record = getattr(_held, "record", None) if record is None else record
+    text = _unhidden(text, key)
     for k, start, end in _spans(text):
         if k != key:
             continue
@@ -651,11 +708,16 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         at = len(kept) - 1                                              # our line is always the last one, bar the person's comments after it
         while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at], re.S):
             at -= 1
-        own, left = _own(record, k, block), []
+        own, left, cr, put_at = _own(record, k, block), [], "\r" if body.endswith("\r") else "", None
         head, rest = _split(kept[at])
-        if RESULT.match(head.rstrip("\r")) and own is not None and own[head.rstrip("\r")] > 0:
+        whole = _text(kept[at])[1]                                       # the line with its threads out: a thread in the middle of our words does not make them another line
+        if RESULT.match(whole) and own is not None and own[whole] > 0:
             del kept[at]
-            left = ["  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest)] if rest.strip() else []     # the result line is gone: what was on it stays, its threads as orphans
+            put_at = at                                                  # the new result goes where the old one stood, its orphaned threads after it
+            if whole == head:
+                left = ["  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest)] if rest.strip() else []     # the result line is gone: what was on it stays, its threads as orphans
+            else:
+                left = ["  " + _orphaned(m.group(0)) + cr for m in CLOSED.finditer(rest)]                  # the words after a thread are ours: only the threads stay
         if record is not None and _slot(k) in record:
             entry = record[_slot(k)]
             entry["lines"] = [l for l in entry["lines"] if not RESULT.match(l)] + ["  - " + result]
@@ -663,7 +725,9 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
             record[_slot(k)] = {"lines": ["  - " + result], "prev": []}
         if untick and kept[0][3] in "xX":
             kept[0] = kept[0][:3] + " " + kept[0][4:]
-        return text[:start] + "\n".join(kept + ["  - " + result] + left) + tail + text[end:]
+        fresh = ["  - " + result + cr] + left
+        kept[len(kept) if put_at is None else put_at:len(kept) if put_at is None else put_at] = fresh
+        return text[:start] + "\n".join(kept) + tail + text[end:]
     return text
 
 
@@ -779,6 +843,8 @@ def adopt(file=None):
     done, skipped = [], []
 
     def change(text):
+        done.clear()
+        skipped.clear()                                      # `edit` may run this again on a page that moved under it
         if rec.exists() and not _load_record(f) and not _is_empty_record(rec):      # looked at under the lock: nobody changes it between this and the write
             raise OSError(f"{rec} cannot be read; look at it before adopting")
         record = _held.record

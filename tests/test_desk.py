@@ -6,6 +6,7 @@ The command runs as a process of its own with `XDG_STATE_HOME` under a throwaway
 state folder.
 """
 import contextlib
+import copy
 import json
 from collections import Counter
 from unittest import mock
@@ -679,8 +680,8 @@ class OwnRecord(unittest.TestCase):
         text = text.replace("Recommendation: Merge it.\n", "Recommendation: Merge it.<!-- never closed\n", 1)
         got = self.hand_over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
         self.assertEqual(got.count("Recommendation:"), 1)
-        self.assertEqual([i.key for i in deskfile.parse(got, rec)], ["a/b#2", "a/b#1"])      # a/b#3 was inside the open comment already: it stays there
-        self.assertEqual(got.count("<!--"), got.count("-->"))                                  # but the comment is closed, so it swallows no more than that
+        self.assertEqual([i.key for i in deskfile.parse(got, rec)], ["a/b#2", "a/b#1", "a/b#3"])      # a/b#3 was inside the open comment: it is an item again
+        self.assertEqual(got.count("<!--"), got.count("-->"))                                  # the comment is closed, before it
         self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
         self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec), got)
 
@@ -1373,6 +1374,167 @@ class CopyOfOurLine(unittest.TestCase):
         f.write_text(self.page(self.block(self.OLD_SHA)))
         self.assertEqual(deskfile.adopt(f), (["a/b#1", "a/b#2"], []))
         self.assertEqual(json.loads((d / ".merge-desk.own.json").read_text())["a/b#1"]["at"], [0, 0, 0, 0])
+
+
+class Leftovers(unittest.TestCase):
+    """Ticket 28: a comment the person left open, line ends of a CRLF page, and the loose ends of tickets 23 and 27."""
+
+    OLD_SHA, NEW_SHA, THIRD_SHA = "a" * 40, "b" * 40, "c" * 40
+    PIN = "  - Pinned commit: {}, into main\n"
+    THREAD = '<!-- sheaf-comment id=c9 by="Thierry" at=2026-11-14T01:00 status=open quote="QUOTE" -->'
+
+    def block(self, sha, rec="Merge it.", when="01:00"):
+        return (f"- [ ] Deploy a/b#1: what it does\n  - Recommendation: {rec}\n" + self.PIN.format(sha)
+                + f"  - Handed over by a session, 2026-11-14 {when}.\n")
+
+    def page(self, body):
+        return "# D\n\n## Pull requests waiting for your merge\n" + body + "- [ ] Merge a/b#2: next\n  - Pinned commit: " + "d" * 40 + ", into main\n"
+
+    def over(self, text, block, rec, key="a/b#1"):
+        return deskfile.put(text, key, block, record=rec)
+
+    def keys(self, text, rec):
+        return [i.key for i in deskfile.parse(text, rec)]
+
+    def live(self, text):
+        """The page without its comments: what is on it for a reader."""
+        return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+
+    def closed(self, text):
+        return deskfile._open_at(text) is None
+
+    def test_a_comment_left_open_on_one_of_our_lines_hides_no_item_after_a_hand_over(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = text.replace("Merge it.\n", "Merge it.<!-- oops\n", 1)
+        got = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        self.assertEqual(self.keys(got, rec), ["a/b#1", "a/b#2"])
+        self.assertTrue(self.closed(got))
+        again = self.over(got, self.block(self.THIRD_SHA, when="03:00"), rec)
+        live = self.live(again)
+        self.assertEqual((live.count("Pinned commit: " + self.THIRD_SHA), live.count("Pinned commit: " + self.NEW_SHA), live.count("Recommendation"), live.count("a/b#2")), (1, 0, 1, 1))
+        self.assertEqual(self.keys(again, rec), ["a/b#1", "a/b#2"])
+
+    def test_an_item_hidden_by_a_comment_left_open_above_it_is_handed_over_once(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = text.replace("Merge it.\n", "Merge it.<!-- oops\n", 1)
+        got = deskfile.put(text, "a/b#2", "- [ ] Merge a/b#2: next\n  - Pinned commit: " + "e" * 40 + ", into main\n", record=rec)
+        self.assertEqual(got.count("Merge a/b#2"), 1)
+        self.assertEqual(self.keys(got, rec), ["a/b#1", "a/b#2"])
+        self.assertIn("e" * 40, got)
+
+    def test_a_comment_left_open_on_the_task_line_is_closed_and_the_block_is_not_added_twice(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = text.replace("what it does\n", "what it does <!-- oops\n", 1)
+        got = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        self.assertEqual(self.keys(got, rec), ["a/b#1", "a/b#2"])
+        self.assertTrue(self.closed(got))
+        live = self.live(got)
+        self.assertEqual((live.count("Recommendation"), live.count("Pinned commit: " + self.NEW_SHA), live.count("Handed over")), (1, 1, 1))
+        again = self.live(self.over(got, self.block(self.THIRD_SHA, when="03:00"), rec))
+        self.assertEqual((again.count("Recommendation"), again.count("Pinned commit: " + self.THIRD_SHA), again.count("Handed over")), (1, 1, 1))
+        self.assertEqual(again.count("what it does"), 1)
+
+    def test_a_comment_left_open_on_the_result_line_does_not_send_the_next_result_to_the_next_item(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        text = text.replace("Not merged: CI is red\n", "Not merged: CI is red<!-- oops\n", 1)
+        got = deskfile.settle(text, "a/b#1", "Not merged: CI is still red", record=rec)
+        items = {i.key: i.block for i in deskfile.parse(got, rec)}
+        self.assertEqual(sorted(items), ["a/b#1", "a/b#2"])
+        self.assertIn("CI is still red", items["a/b#1"])
+        self.assertNotIn("Not merged", items["a/b#2"])
+        self.assertTrue(self.closed(got))
+
+    def test_a_copy_of_an_old_pin_line_stays_when_the_person_also_edited_the_current_pin_line(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = self.over(text, self.block(self.NEW_SHA), rec)
+        text = text.replace(self.PIN.format(self.NEW_SHA), self.PIN.format(self.OLD_SHA) + f"  - Pinned commit: {self.NEW_SHA}, into main (checked)\n", 1)
+        got = self.over(text, self.block(self.THIRD_SHA), rec)
+        self.assertEqual(got.count(self.PIN.format(self.OLD_SHA)), 1)
+        self.assertIn(f"{self.NEW_SHA}, into main (checked)", got)
+
+    def test_prev_stays_one_generation_long_while_writes_keep_failing(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        for n in range(8):                                               # the record moves on, the write does not reach the page
+            self.over(text, self.block(str(n) * 40, when=f"0{n}:00"), rec)
+        self.assertLessEqual(len(rec["a/b#1"]["prev"]), len(deskfile._heads(self.block(self.OLD_SHA))))
+        got = self.over(text, self.block(self.THIRD_SHA, when="09:00"), rec)
+        self.assertEqual((got.count("Pinned commit: " + self.THIRD_SHA), got.count("Handed over"), got.count("Recommendation")), (1, 1, 1))
+        self.assertNotIn(self.OLD_SHA, got)
+
+    def lone_ends(self, text):
+        return re.findall(r"(?<!\r)\n|\r(?!\n)", text)
+
+    def test_a_crlf_page_keeps_one_kind_of_line_end_after_a_hand_over_and_a_settle(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec).replace("\n", "\r\n")
+        got = self.over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        self.assertEqual(self.lone_ends(got), [])
+        got = deskfile.settle(got, "a/b#1", "Not merged: CI is red", record=rec)
+        self.assertEqual(self.lone_ends(got), [])
+        got = deskfile.put(got, "a/b#3", "- [ ] Merge a/b#3: new\n", record=rec)
+        self.assertEqual(self.lone_ends(got), [])
+
+    def test_the_closing_added_on_a_crlf_page_leaves_no_lone_carriage_return(self):
+        text = self.page(self.block(self.OLD_SHA)).replace("\n", "\r\n")
+        rec = written(text)
+        text = text.replace("Merge it.\r\n", "Merge it.<!-- oops\r\n", 1)
+        got = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        self.assertEqual(self.lone_ends(got), [])
+        self.assertNotIn("\r -->", got)
+        self.assertEqual(self.keys(got, rec), ["a/b#1", "a/b#2"])
+
+    def test_carry_alone_closes_an_open_comment_without_a_lone_carriage_return(self):
+        old = "- [ ] Deploy a/b#1: x\r\n  - Recommendation: Merge it.<!-- oops\r\n"
+        got = deskfile.carry(old, "- [ ] Deploy a/b#1: x\n", {"- [ ] Deploy a/b#1: x": 1, "  - Recommendation: Merge it.": 1})
+        self.assertNotIn("\r -->", got)
+
+    def test_a_task_line_without_a_colon_on_a_crlf_page_is_still_an_item(self):
+        text = "# D\r\n\r\n## Pull requests waiting for your merge\r\n- [ ] Merge a/b#1\r\n  - Pinned commit: " + "a" * 40 + "\r\n- [ ] Install foo\r\n"
+        self.assertEqual([i.key for i in deskfile.parse(text, {})], ["a/b#1", "install:foo"])
+
+    def test_adopt_returns_each_key_once_when_edit_retries(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        f = d / "merge-desk.md"
+        f.write_text(self.page(self.block(self.OLD_SHA)))
+        real = deskfile.edit
+
+        def retrying(change, file=None):
+            def both(t):
+                first = copy.deepcopy(deskfile._held.record)
+                change(t)
+                deskfile._held.record = first                       # a retry starts from the stored record again
+                return change(t)
+            return real(both, file)
+        with mock.patch.object(deskfile, "edit", retrying):
+            self.assertEqual(deskfile.adopt(f), (["a/b#1", "a/b#2"], []))
+
+    def settled(self, rec):
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        return deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+
+    def test_settle_replaces_a_result_line_with_a_thread_in_its_middle(self):
+        rec = {}
+        text = self.settled(rec).replace("Not merged: CI is red", "Not merged: CI" + self.THREAD.replace("QUOTE", "CI") + " is red", 1)
+        got = deskfile.settle(text, "a/b#1", "Not merged: CI is red again", record=rec)
+        self.assertEqual(got.count("Not merged:"), 1)
+        self.assertIn("Not merged: CI is red again", got)
+        self.assertEqual(got.count("id=c9"), 1)
+
+    def test_a_second_settle_with_the_same_result_keeps_it_above_the_thread_left_by_the_first(self):
+        rec = {}
+        text = self.settled(rec).replace("Not merged: CI is red", "Not merged: CI is red" + self.THREAD.replace("QUOTE", "CI is red"), 1)
+        once = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        twice = deskfile.settle(once, "a/b#1", "Not merged: CI is red", record=rec)
+        self.assertEqual(twice, once)
+        self.assertLess(twice.index("Not merged: CI is red\n"), twice.index("orphan=1"))
 
 
 if __name__ == "__main__":
