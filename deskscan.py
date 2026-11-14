@@ -277,7 +277,7 @@ def item_block(repo, n, title, head, base, opened, ships=None):
     ]) + "\n"
 
 
-def known(k):
+def on_desk(k):
     """Whether the desk has anything to do with this key already: on the page, or anywhere in the log."""
     same = k.lower()                    # GitHub names are not case-sensitive: `Owner/Repo#5` is `owner/repo#5`
     return any(i.key.lower() == same for i in deskfile.items()) or any(r["key"].lower() == same for r in desk.history())
@@ -290,7 +290,7 @@ def add(repo, n, title, head, base, opened):
     Merge item by default. `gh` runs outside the desk lock; the desk is looked at again inside it."""
     k = desk.key(repo, n)
     with deskfile.locked():
-        if known(k):
+        if on_desk(k):
             return False
     try:
         if not base:
@@ -300,7 +300,7 @@ def add(repo, n, title, head, base, opened):
         deskwatch.log.error("desk-scan", why, key=k)
         return False
     with deskfile.locked():
-        if known(k):
+        if on_desk(k):
             return False
         deskfile.put_item(k, item_block(repo, n, title, head, base, opened, ships))
         desk.log("ready", k, pinned=head, by=BY, ships=ships, base=base)   # raw, as `desk ready` keeps them: the press compares these
