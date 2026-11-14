@@ -1061,7 +1061,8 @@ laptop does, and the watcher merges the commit that was pinned.
   comments on the desk from the phone, so the relay does not narrow them to a reply. Anyone who
   could reach :8445 could do the same to the owner's comments on the desk; that is why the
   tailnet's device list is the access control here. A sixth `op` (or none) is refused here with a
-  400, not left to the hub.
+  400, not left to the hub. `COMMENT_OPS` is a copy of the hub's `OPS` (sheaf `hub/handler.py`), and
+  `tests/test_desk_relay.py` fails when the installed sheaf's list and the copy differ.
 - **No Tell:** a comment with `tell` set would make the hub run the laptop's own agent session;
   the relay refuses it.
 - **Who the hub sees:** the relay signs in itself (`sheaf signin-url`) and sends that cookie. The
@@ -1076,13 +1077,26 @@ laptop does, and the watcher merges the commit that was pinned.
   the laptop that sends a loopback Origin to this server can now press the desk too.
 - **Streams are capped:** each open desk page holds an AgentView thread and a connection to the hub
   for as long as it is open, so one client holds at most 6 `/_/live` streams and all clients 24; one
-  more is refused with a 429 until a stream ends. The client is the address `tailscale serve` appends
-  to `X-Forwarded-For`, else the connection's own.
+  more is refused with a 429 and `Retry-After: 30` until a stream ends (a stream whose phone went
+  away is let go at the hub's next write, within 25 s). The client is the address `tailscale serve`
+  puts in `X-Forwarded-For`, else the connection's own.
+  - **Does `X-Forwarded-For` reach the relay?** Yes. `tailscale serve`'s reverse proxy
+    (`addProxyForwardedHeaders` in tailscale's `ipn/ipnlocal/serve.go`, read at main on 2026-11-14,
+    the laptop runs 1.104.2) *sets* `X-Forwarded-For` to the tailnet address of the device that
+    connected, replacing any value the device sent, so each device has its own bucket of 6 and a
+    device cannot widen it through the proxy.
+  - **What a local program can do, and why that stays:** the proxy connects from `127.0.0.1`, as a
+    program on the laptop does, so the relay cannot tell the two apart and cannot trust the header
+    "only from the proxy". A program that sends its own `X-Forwarded-For` per stream escapes the
+    cap of 6 but not the total of 24, and it can already do more through this server, as the
+    "Local programs" item says (press the desk). The cap guards against one phone with a stuck
+    page, not against a program on the laptop, so this is accepted.
 - **Slow questions don't queue:** finding the hub (`sheaf open`, up to 60 s) and signing in (up to
   45 s) hold no lock. Requests that ask meanwhile share that one run, and a hub already known is
   answered at once.
 - **When it does not answer:** the laptop's sheaf hub is not running and cannot be started
-  (503), or the relay cannot sign in (503). Nothing is merged while the laptop is off.
+  (503), or its answer to `sheaf open` is not an address the relay can read (503), or the relay
+  cannot sign in (503). Nothing is merged while the laptop is off.
 
 ### Restarting the service, and what survives it
 

@@ -49,6 +49,7 @@ FOLLOW_ROUNDS = 3                # runs a device joins that a reset makes out of
 # (25 s), so a reconnecting device briefly holds two.
 STREAMS_PER_CLIENT = 6
 STREAMS_TOTAL = 24
+RETRY_AFTER = 30                 # seconds a refused stream waits: one whose phone went away is let go at the hub's next write (25 s)
 CHUNK = 8192
 LAST_EVENT = re.compile(r"[0-9A-Za-z:._-]{1,64}")
 PASSED = ("Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-Policy",
@@ -56,9 +57,9 @@ PASSED = ("Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-
 
 
 class Refused(Exception):
-    def __init__(self, status, why):
+    def __init__(self, status, why, headers=()):
         super().__init__(why)
-        self.status, self.why = status, why
+        self.status, self.why, self.headers = status, why, headers
 
 
 class Desk(NamedTuple):
@@ -218,7 +219,11 @@ class SheafHub:
         if not m or not m.group(2).endswith("/" + deskfile.NAME) or not 0 < int(m.group(1)) < 65536:
             raise Refused(503, "sheaf did not say where the desk page is")
         page = m.group(2)
-        return Desk(int(m.group(1)), page, urllib.parse.unquote(page[1:], errors="strict"))
+        try:
+            address = urllib.parse.unquote(page[1:], errors="strict")
+        except UnicodeDecodeError:
+            raise Refused(503, "sheaf did not say where the desk page is") from None
+        return Desk(int(m.group(1)), page, address)
 
     def cookie(self, fresh=False):
         """`name=value`, the hub's cookie for this relay."""
@@ -267,7 +272,8 @@ class Streams:
     def take(self, client):
         with self._lock:
             if self._open.get(client, 0) >= self._per_client or sum(self._open.values()) >= self._total:
-                raise Refused(429, "too many desk streams are open: close the other desk pages and try again")
+                raise Refused(429, "too many desk streams are open: close the other desk pages and try again",
+                              (("Retry-After", str(RETRY_AFTER)),))
             self._open[client] = self._open.get(client, 0) + 1
 
     def drop(self, client):
@@ -371,7 +377,16 @@ def _serve(h, method, held):
         if why.status in (411, 413):
             h.close_connection = True
         # The reason is the status line, which is latin-1: what sheaf said may hold more than that
-        return h.send_error(why.status, why.why.encode("ascii", "replace").decode().replace("\n", " "))
+        said = why.why.encode("ascii", "replace").decode().replace("\n", " ")
+        if not why.headers:
+            return h.send_error(why.status, said)
+        h.send_response(why.status, said)       # send_error takes no headers
+        for name, value in why.headers:
+            h.send_header(name, value)
+        h.send_header("Content-Length", "0")
+        h.send_header("Connection", "close")
+        h.close_connection = True
+        return h.end_headers()
     try:
         h.send_response(res.status)
         for name in PASSED:

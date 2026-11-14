@@ -9,6 +9,7 @@ guards of AgentView's own routes unchanged. No sheaf, no network beyond loopback
 import http.client
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -357,6 +358,19 @@ class Relayed(unittest.TestCase):
             self.assertEqual(conn.getresponse().status, 408)
 
 
+class TheHubsOps(unittest.TestCase):
+    SHEAF_PYTHON = Path.home() / ".local/share/uv/tools/sheafmd/bin/python"
+
+    @unittest.skipUnless(SHEAF_PYTHON.exists(), "sheaf is not installed here")
+    def test_the_relays_comment_ops_are_the_ones_of_the_hub_the_desk_runs_on(self):
+        # COMMENT_OPS is a copy of sheaf's hub/handler.py OPS: a sixth op added there must fail here, not be
+        # refused by the relay without anyone noticing
+        got = subprocess.run([str(self.SHEAF_PYTHON), "-I", "-c", "from sheafmd.hub.handler import OPS; print(*OPS)"],
+                             capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(tuple(got.stdout.split()), deskrelay.COMMENT_OPS)
+
+
 class HubLock(unittest.TestCase):
     """`SheafHub` asks `sheaf` where the hub is and for a sign-in: each can take a minute. What it has
     kept is never behind that wait, and devices that ask while it runs share the one answer."""
@@ -564,6 +578,16 @@ class StreamCap(unittest.TestCase):
             streams.take("b")
 
 
+class WhereTheHubIs(unittest.TestCase):
+    def test_a_malformed_answer_of_sheaf_open_is_a_503_and_not_an_exception(self):
+        for said in (f"opened http://127.0.0.1:4242/agentview/%ff/{deskrelay.deskfile.NAME}\n",
+                     f"opened http://127.0.0.1:4242/%c3%28/{deskrelay.deskfile.NAME}\n"):
+            with self.subTest(said=said), mock.patch.object(deskrelay.deskcmd, "page", return_value=said):
+                with self.assertRaises(deskrelay.Refused) as caught:
+                    deskrelay.SheafHub()._locate()
+                self.assertEqual(caught.exception.status, 503)
+
+
 class StreamsThroughTheRelay(Relayed):
     LIVE = f"/_/live?doc={ADDRESS.replace('/', '%2F')}"
 
@@ -584,6 +608,13 @@ class StreamsThroughTheRelay(Relayed):
         self.assertEqual(self.open_stream().status, 429)
         self.assertEqual(len(StubHub.seen), asked)
         self.assertEqual(self.call("GET", PAGE)[0].status, 200)       # the page itself is not a stream
+
+    def test_the_refusal_of_a_stream_past_the_cap_says_when_to_try_again(self):
+        self.open_stream(), self.open_stream()
+        res = self.open_stream()
+        self.assertEqual(res.status, 429)
+        self.assertEqual(res.getheader("Retry-After"), str(deskrelay.RETRY_AFTER))
+        self.assertGreater(deskrelay.RETRY_AFTER, 0)
 
     def test_a_place_is_free_again_when_a_stream_ends(self):
         first, second = self.open_stream(), self.open_stream()

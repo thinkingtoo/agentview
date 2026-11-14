@@ -10,10 +10,17 @@
 
 **Blocked by:** 11
 
+**Claimed by:** Anika 2026-11-14
+
 **Status:** ready-for-agent
 
-- [ ] A 429 from the stream cap carries Retry-After (test)
-- [ ] A test fails when sheaf's comment OPS and the relay's COMMENT_OPS differ
-- [ ] The X-Forwarded-For question answered with evidence (README)
-- [ ] A malformed `sheaf open` answer gives a 503, not an exception (test)
-- [ ] A direct local client cannot widen the per-client cap with X-Forwarded-For (test), or README says why that is accepted
+- [x] A 429 from the stream cap carries Retry-After (test)
+  Evidence: tests/test_desk_relay.py::StreamsThroughTheRelay::test_the_refusal_of_a_stream_past_the_cap_says_when_to_try_again (red before, green: Retry-After 30)
+- [x] A test fails when sheaf's comment OPS and the relay's COMMENT_OPS differ
+  Evidence: tests/test_desk_relay.py::TheHubsOps (mutation check: dropping `delete` from COMMENT_OPS fails it)
+- [x] The X-Forwarded-For question answered with evidence (README)
+  Evidence: README, merge desk from the phone, Streams are capped: tailscale serve sets X-Forwarded-For (serve.go addProxyForwardedHeaders, read 2026-11-14)
+- [x] A malformed `sheaf open` answer gives a 503, not an exception (test)
+  Evidence: tests/test_desk_relay.py::WhereTheHubIs::test_a_malformed_answer_of_sheaf_open_is_a_503_and_not_an_exception (red before, green)
+- [x] A direct local client cannot widen the per-client cap with X-Forwarded-For (test), or README says why that is accepted
+  Evidence: README: accepted, with the reason (the proxy and a local program both connect from 127.0.0.1; the total of 24 holds)
