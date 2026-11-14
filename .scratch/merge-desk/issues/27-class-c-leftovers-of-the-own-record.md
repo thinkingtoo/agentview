@@ -16,15 +16,15 @@
 
 **Claimed by:** Arvid 2026-11-14 16:03
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] CRLF page: a hand-over replaces our lines, no LF block appended (test)
-- [ ] settle with no record: a second refused press replaces the first result line (test)
-- [ ] A page two generations behind its record does not duplicate lines (test)
-- [ ] No record: a hand-over still updates the task title, or the item says why not (test)
-- [ ] An unterminated comment on our line does not add a second Recommendation (test)
-- [ ] adopt: a person's 4-space line after the ships bullets is not adopted, or the item is skipped (test)
-- [ ] adopt: the record check happens under the lock (test)
-- [ ] adopt: case-duplicate keys are all reported (test)
-- [ ] adopt: a bullet after a blank line in the ships list is not adopted (test)
-- [ ] A person's copy of an old pin line (in `prev`, standing once) survives a third hand-over (test with three hand-overs)
+- [x] CRLF page: a hand-over replaces our lines, no LF block appended (test) (arvid/27, tests in tests/test_desk.py)
+- [x] settle with no record: a second refused press replaces the first result line (test) (arvid/27, tests in tests/test_desk.py)
+- [x] A page two generations behind its record does not duplicate lines (test) (arvid/27, tests in tests/test_desk.py)
+- [x] No record: a hand-over still updates the task title, or the item says why not (test) Accepted limit (Tarek): with no record, a task line the person edited cannot be told from ours, so it stays the person's.
+- [x] An unterminated comment on our line does not add a second Recommendation (test) (arvid/27, tests in tests/test_desk.py)
+- [x] adopt: a person's 4-space line after the ships bullets is not adopted, or the item is skipped (test) Accepted limit (Tarek): such a line has the same text as a ships bullet; nothing in the page tells them apart.
+- [x] adopt: the record check happens under the lock (test) (arvid/27, tests in tests/test_desk.py)
+- [x] adopt: case-duplicate keys are all reported (test) (arvid/27, tests in tests/test_desk.py)
+- [x] adopt: a bullet after a blank line in the ships list is not adopted (test) (arvid/27, tests in tests/test_desk.py)
+- [x] A person's copy of an old pin line (in `prev`, standing once) survives a third hand-over (test with three hand-overs) (arvid/27, tests in tests/test_desk.py)

@@ -5,8 +5,10 @@ The command runs as a process of its own with `XDG_STATE_HOME` under a throwaway
 `gh` first on PATH (a script that answers `pr view` from a file): never the real GitHub, never the real
 state folder.
 """
+import contextlib
 import json
 from collections import Counter
+from unittest import mock
 import os
 import re
 import shutil
@@ -638,6 +640,50 @@ class OwnRecord(unittest.TestCase):
         self.assertNotIn("    - two\n", got)
         self.assertEqual(got.count("    - uno\n") + got.count("    - due\n"), 2)
 
+    def test_a_page_with_crlf_line_ends_has_its_lines_replaced_not_a_block_appended(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        crlf = text.replace("\n", "\r\n")
+        got = self.hand_over(crlf, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        self.assertEqual((got.count("Recommendation"), got.count("Pinned commit"), got.count("Handed over")), (1, 1, 1))
+        self.assertNotIn(self.OLD_SHA, got)
+
+    def test_settle_on_an_item_with_no_record_replaces_the_earlier_result_line(self):
+        rec = {}
+        text = self.page(self.block(self.OLD_SHA))
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red again", record=rec)
+        self.assertEqual(text.count("Not merged:"), 1)
+        self.assertIn("Not merged: CI is red again", text)
+
+    def test_a_new_item_on_a_crlf_page_goes_under_its_heading_and_a_second_refusal_replaces_the_first(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec).replace("\n", "\r\n")
+        got = deskfile.put(text, "a/b#9", "- [ ] Merge a/b#9: new\n", record=rec)
+        self.assertEqual(got.count("## Pull requests waiting for your merge"), 1)
+        got = deskfile.settle(got, "a/b#1", "Not merged: CI is red", record=rec)
+        got = deskfile.settle(got.replace("\n", "\r\n").replace("\r\r", "\r"), "a/b#1", "Not merged: again", record=rec)
+        self.assertEqual(got.count("Not merged:"), 1)
+
+    def test_a_page_two_generations_behind_its_record_is_still_replaced_whole(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        self.hand_over(text, self.block(self.NEW_SHA, when="02:00"), rec)        # two writes that never reached the page
+        self.hand_over(text, self.block("c" * 40, when="03:00"), rec)
+        got = self.hand_over(text, self.block("d" * 40, when="04:00"), rec)
+        self.assertEqual((got.count("Recommendation"), got.count("Pinned commit"), got.count("Handed over")), (1, 1, 1))
+
+    def test_an_unterminated_comment_on_our_line_does_not_add_a_second_recommendation_and_closes_the_comment(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec) + "- [ ] Merge a/b#3: after\n"
+        text = text.replace("Recommendation: Merge it.\n", "Recommendation: Merge it.<!-- never closed\n", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        self.assertEqual(got.count("Recommendation:"), 1)
+        self.assertEqual([i.key for i in deskfile.parse(got, rec)], ["a/b#2", "a/b#1"])      # a/b#3 was inside the open comment already: it stays there
+        self.assertEqual(got.count("<!--"), got.count("-->"))                                  # but the comment is closed, so it swallows no more than that
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
+        self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec), got)
+
     def test_a_person_line_shaped_like_a_recommendation_survives(self):
         rec = {}
         text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
@@ -999,6 +1045,35 @@ class OwnRecord(unittest.TestCase):
         self.assertNotIn("    - two\n", got)
         self.assertNotIn("    - one\n", got)
 
+    def test_adopt_checks_the_record_under_the_lock(self):
+        f, rec = self.legacy()
+        real = deskfile.locked
+
+        @contextlib.contextmanager
+        def corrupting(file=None):
+            with real(file) as got:
+                rec.write_text("{not json")                      # changed after the check outside the lock would have run
+                yield got
+        with mock.patch.object(deskfile, "locked", corrupting):
+            with self.assertRaises(OSError):
+                deskfile.adopt(f)
+        self.assertEqual(rec.read_text(), "{not json")
+
+    def test_adopt_reports_a_case_duplicate_key_too(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text() + f.read_text().split("Deploy a/b#1", 1)[1].split("- [ ] Deploy a/b#2")[0].join(["- [ ] Deploy A/b#1", ""]))
+        done, skipped = deskfile.adopt(f)
+        self.assertEqual(sorted(k.lower() for k in done + skipped), ["a/b#1", "a/b#1", "a/b#2"])
+        self.assertEqual(len(done), 2)
+
+    def test_adopt_does_not_take_a_bullet_after_a_blank_line_in_the_ships_list(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - one\n\n    - the person's bullet\n  - Pinned commit:", 1))
+        deskfile.adopt(f)
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, ships=["x"], when="02:00"), file=f)
+        self.assertIn("    - the person's bullet\n", f.read_text())
+        self.assertNotIn("    - one\n", f.read_text())
+
     def test_adopt_reads_an_empty_record_with_a_space_in_it(self):
         f, rec = self.legacy()
         rec.write_text("{ }")
@@ -1138,6 +1213,77 @@ class Lock(unittest.TestCase):
         self.assertEqual(sorted(i.key for i in deskfile.items(f)), sorted(f"o/r#{i}" for i in range(1, 21)))
 
 
+class ThreadsOnOneLine(unittest.TestCase):
+    """Ticket 23: what sheaf and the person put on one of AgentView's lines survives hand-overs in its place, a comment
+    that is not a sheaf thread is never touched, and a comment the person left open does not swallow the page."""
+
+    OLD_SHA, NEW_SHA, THIRD_SHA = "a" * 40, "b" * 40, "c" * 40
+
+    def thread(self, quote, cid, kind="sheaf-comment"):
+        return f'<!-- {kind} id={cid} by="Thierry" at=2026-11-14T01:00 status=open quote="{quote}"\nWait for {cid}.\n-->'
+
+    def block(self, sha, when="01:00", ships=()):
+        out = "- [ ] Deploy a/b#1: what it does\n  - Recommendation: Merge it.\n"
+        if ships:
+            out += "  - What ships:\n" + "".join(f"    - {b}\n" for b in ships)
+        return out + f"  - Pinned commit: {sha}, into main\n  - Handed over by a session, 2026-11-14 {when}.\n"
+
+    def page(self, body):
+        return ("# D\n\n## Pull requests waiting for your merge\n" + body + "- [ ] Merge a/b#2: next\n"
+                "  - Pinned commit: " + "d" * 40 + "\n")
+
+    def over(self, text, block, rec):
+        return deskfile.put(text, "a/b#1", block, record=rec)
+
+    def test_two_threads_and_the_persons_words_on_one_line_keep_their_order_across_two_hand_overs(self):
+        rec, c1, c2 = {}, self.thread("Merge", "c1"), self.thread("it.", "c2")
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        line = f"  - Recommendation: Merge{c1} it.{c2} and fine\n"
+        text = text.replace("  - Recommendation: Merge it.\n", line, 1)
+        first = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        second = self.over(first, self.block(self.THIRD_SHA, when="03:00"), rec)
+        for got in (first, second):
+            self.assertIn(f"  - Recommendation: Merge{c1} it.{c2}\n", got)      # each thread still follows the words it quotes
+            self.assertEqual(got.count("and fine"), 1)                           # the person's words, once, on a line of their own
+            self.assertNotIn("orphan=1", got)
+        self.assertEqual(deskfile.put(second, "a/b#1", self.block(self.THIRD_SHA, when="03:00"), record=rec), second)
+
+    def test_a_comment_that_is_not_a_sheaf_thread_is_never_marked_orphan(self):
+        rec, note = {}, '<!-- todo quote="restart" check with Sven -->'
+        text = self.over(self.page(""), self.block(self.OLD_SHA, ships=["restart"]), rec)
+        text = text.replace("    - restart\n", f"    - restart{note}\n", 1)
+        got = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)           # the new block has no ships list: the line is gone
+        self.assertIn(note, got)
+        self.assertNotIn("orphan=1", got)
+        sheaf = self.thread("restart", "c1")
+        text = self.over(self.page(""), self.block(self.OLD_SHA, ships=["restart"]), rec)
+        text = text.replace("    - restart\n", f"    - restart{sheaf}\n", 1)
+        self.assertIn("orphan=1", self.over(text, self.block(self.NEW_SHA, when="02:00"), rec))   # a sheaf thread still is
+
+    def test_an_unclosed_comment_in_a_persons_line_leaves_the_following_items_intact(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec) + "- [ ] Merge a/b#4: after\n"
+        text = text.replace("  - Recommendation: Merge it.\n", "  - Recommendation: Merge it.\n  my note <!-- never closed\n", 1)
+        got = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)     # the new lines are not in the comment
+        self.assertIn("my note <!-- never closed", got)
+        self.assertIn("- [ ] Merge a/b#4: after", got)                          # what the comment swallowed is kept as it was, once
+        self.assertEqual(got.count("Merge a/b#4"), 1)
+        self.assertEqual(got.count("<!--"), got.count("-->"))                  # and the comment ends: it swallows nothing of what comes next
+        self.assertEqual(self.over(got, self.block(self.NEW_SHA, when="02:00"), rec), got)        # a second, identical hand-over changes nothing
+
+    def test_settle_replaces_a_result_line_that_carries_a_thread_and_keeps_the_thread(self):
+        rec, c1 = {}, self.thread("Not merged: CI is red", "c1")
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        text = text.replace("Not merged: CI is red\n", f"Not merged: CI is red{c1}\n", 1)
+        got = deskfile.settle(text, "a/b#1", "Merged as abcdef0 at 10:00", record=rec)
+        self.assertNotIn("  - Not merged: CI is red", got)          # the old result line is replaced...
+        self.assertIn("Wait for c1.", got)                          # ...and the thread on it is kept, as an orphan, on a line of its own
+        self.assertIn("orphan=1", got)
+        self.assertEqual(got.count("  - Merged as abcdef0 at 10:00"), 1)
+
+
 class CopyOfOurLine(unittest.TestCase):
     """A person's byte-identical copy of a line AgentView wrote is theirs (ticket 26): the record says in what order
     AgentView wrote its lines and how many identical lines stood before each, so a copy out of its place is not ours."""
@@ -1166,6 +1312,25 @@ class CopyOfOurLine(unittest.TestCase):
         self.assertLess(old, recommendation)
         self.assertLess(recommendation, new)
         self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
+
+    THIRD_SHA = "c" * 40
+
+    def test_a_copy_of_an_old_pin_line_survives_a_third_hand_over(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("  - Recommendation:", self.PIN.format(self.OLD_SHA) + "  - Recommendation:", 1)      # the person's copy of pin A
+        text = self.over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        text = self.over(text, self.block(self.THIRD_SHA, rec="R3", when="03:00"), rec)
+        self.assertEqual(text.count(self.PIN.format(self.OLD_SHA)), 1)            # theirs stays through the third
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(text, rec)}["a/b#1"], self.THIRD_SHA)
+
+    def test_a_page_the_record_has_not_caught_up_with_is_still_replaced_whole(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)             # the record moved on, the write did not finish
+        got = self.over(text, self.block(self.THIRD_SHA, when="03:00"), rec)
+        self.assertEqual(got.count("Pinned commit"), 1)
+        self.assertEqual(got.count("Handed over"), 1)
 
     def test_a_copy_of_the_recommendation_line_after_ours_is_kept_and_ours_is_replaced(self):
         rec = {}
