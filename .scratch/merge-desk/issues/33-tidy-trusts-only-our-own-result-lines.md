@@ -10,7 +10,9 @@ Failing scenario: an item has an old `merged` event in the history log (a day or
 
 Note: deskscan.py only; may run beside the other open tickets. If it needs a `deskfile` function from ticket 31, take it as it is on dev.
 
-**Status:** ready-for-agent
+**Claimed by:** Gaspar 2026-11-14 20:11
+
+**Status:** in-progress
 
 ## Acceptance criteria
 - [ ] A person's `  - Merged at 12:00` line, with an old `merged` event and no result line of ours in the record, does not make `over()` true, and `tidy()` keeps the item and its notes (red test)

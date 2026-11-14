@@ -9,7 +9,9 @@ A request resets the hub once for the generation it saw: a 503 from a flight old
 
 **Blocked by:** none (deskrelay.py only)
 
-**Status:** ready-for-agent
+**Claimed by:** Adnan 2026-11-14 20:11
+
+**Status:** in-progress
 
 ## Acceptance criteria
 - [ ] N requests sharing one failed flight cause one reset and no more than one new flight (red test through `serve()` or the same seam the real handler uses, not `reset()` called by hand)
