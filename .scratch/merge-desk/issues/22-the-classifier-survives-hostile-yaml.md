@@ -14,7 +14,9 @@
 
 **Status:** in-progress
 
-- [ ] A billion-laughs alias in branches: answers within 1 s as could-not-parse (test with a timeout)
-- [ ] 300 `*-*-*-x` entries answer within 1 s (test)
-- [ ] `PYTHONIOENCODING=ascii` with a non-ASCII hint line exits 0 (test)
-- [ ] Default output stays byte-identical on monorepo, agentview, sheaf, ~/.claude, thinkingtoo
+- [x] A billion-laughs alias in branches: answers within 1 s as could-not-parse (test_a_billion_laughs_alias_in_branches_is_a_parse_failure_within_a_second passes; the old script times out on it)
+- [x] 300 `*-*-*-x` entries answer within 1 s (test_300_star_patterns_answer_within_a_second passes; NFA matcher, no regex)
+- [x] `PYTHONIOENCODING=ascii` with a non-ASCII hint line exits 0 (test_a_hostile_non_ascii_hint_line_under_ascii_stdout_exits_0 passes)
+- [x] Default output stays byte-identical on monorepo, agentview, sheaf, ~/.claude, thinkingtoo (old vs new, main and dev, default and --full: identical output and exit codes in all 20 runs; tests.test_deskships 42 OK against the new script)
+- [ ] Item 4 (re-indent hint comparison) not done: any fix shows the indent on every --full hint line and changes every deskships line; needs Tarek's decision
+- [ ] Branch carmen/22 (0744103): Sonnet review GO (carmen-22-sonnet-1.md); waits for one Codex run at 15:00+ before merge
