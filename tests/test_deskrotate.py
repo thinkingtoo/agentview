@@ -30,7 +30,6 @@ SAVED = (desk.MAX_LOG, deskwatch.gh, deskwatch.GRACE, deskwatch.log.error)
 
 def restore():
     desk.MAX_LOG, deskwatch.gh, deskwatch.GRACE, deskwatch.log.error = SAVED
-    desk._floor = 0
 
 
 def setUpModule():
@@ -52,7 +51,6 @@ class Case(unittest.TestCase):
         os.environ["XDG_STATE_HOME"] = str(self.tmp / "state")
         self.addCleanup(lambda: os.environ.pop("XDG_STATE_HOME") if old is None else os.environ.__setitem__("XDG_STATE_HOME", old))
         self.addCleanup(restore)
-        desk._floor = 0
         deskwatch.GRACE = 0
         deskwatch.log.error = lambda *a, **k: None
         self.prs = {}
@@ -223,6 +221,40 @@ class Rotation(Case):
             desk.log("pressing", "o/r#2", pinned=SHA)
         self.assertEqual(deskwatch.last_event("o/r#2")["event"], "pressing")
         self.assertIsNotNone(deskwatch.handed_over("o/r#2", SHA))
+
+    def test_a_last_line_cut_before_its_newline_does_not_swallow_the_next_key(self):
+        self.put("ready", "o/r#1", pinned=SHA, ships=BULK, base="main", by="a")
+        self.put("pressing", "o/r#2", pinned=SHA)
+        self.filler(60)
+        with open(self.log, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"at": STAMP, "event": "merged", "key": "o/r#1", "sha": MERGED_AS}))   # no newline
+        desk.MAX_LOG = self.log.stat().st_size // 2
+        self.assertEqual(desk.status_line("o/r#2"), "o/r#2: being merged now")
+        self.assertEqual(desk.status_line("o/r#1").split(": ")[1].split(" ")[0], "merged")
+
+    def test_the_floor_is_in_a_file_so_another_process_does_not_rotate_again(self):
+        self.story()
+        self.filler(60)
+        desk.MAX_LOG = 100
+        desk.history()
+        self.assertEqual(int((self.log.parent / desk.FLOOR).read_text()), self.log.stat().st_size)
+        for _ in range(3):                       # each a process of its own: nothing is kept in memory
+            desk.history()
+        self.assertEqual(len(self.archives()), 1)
+
+    def test_a_rotation_that_cannot_be_made_leaves_the_log_as_it_was(self):
+        self.story()
+        self.filler(60)
+        before = self.log.read_bytes()
+        desk.MAX_LOG = len(before) // 2
+        real = os.link
+        os.link = lambda *a: (_ for _ in ()).throw(OSError("no hard links here"))
+        try:
+            self.assertEqual(len(desk.history()), self.lines())
+        finally:
+            os.link = real
+        self.assertEqual(self.log.read_bytes(), before)
+        self.assertFalse(list(self.log.parent.glob("*.new")))
 
 
 if __name__ == "__main__":
