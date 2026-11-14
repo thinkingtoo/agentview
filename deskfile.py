@@ -245,6 +245,8 @@ def carry(old, new):
     new_lines = _logical(new)
     new_kinds = _kinds(new_lines)
     home = lambda k: k if k in new_kinds else ("ships" if k.startswith("ships:") and "ships" in new_kinds else None)
+    ships_end = next((k for k in reversed(new_kinds) if k and k.startswith("ships")), None)      # a line that followed a bullet now gone goes after the last one: the list stays whole
+    after = lambda k: k if k in new_kinds else (ships_end if k.startswith("ships") else None)
     marks, theirs, orphans, blanks, last = {}, {}, [], [], "task"
     old_lines = _logical(old)
     for kind, line in zip(_kinds(old_lines), old_lines):
@@ -252,7 +254,7 @@ def carry(old, new):
             if not line.strip():
                 blanks.append(line)                              # kept only when a line of the person's comes after it
                 continue
-            (theirs.setdefault(home(last), []) if home(last) else orphans).extend(blanks + [line])
+            (theirs.setdefault(after(last), []) if after(last) else orphans).extend(blanks + [line])
             blanks = []
             continue
         last = kind

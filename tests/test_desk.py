@@ -502,6 +502,16 @@ class RehandOver(unittest.TestCase):
         for kept in ("unfinished thread", "Merge a/b#2: second", "PERSON'S TEXT"):
             self.assertIn(kept, got)
 
+    def test_a_line_after_a_ships_bullet_that_changed_does_not_split_the_new_list(self):
+        old = ("- [ ] Deploy a/b#1: x\n  - What ships:\n    - old deployment\n  <!-- do this after Friday -->\n  - Pinned commit: " + self.OLD_SHA + "\n"
+               "  - Handed over by a session, 2026-11-14 01:00.\n")
+        new = ("- [ ] Deploy a/b#1: x\n  - What ships:\n    - new deployment\n    - second\n  - Pinned commit: " + self.NEW_SHA + "\n"
+               "  - Handed over by a session, 2026-11-14 02:00.\n")
+        got = deskfile.put(self.page(old), "a/b#1", new)
+        self.assertIn("<!-- do this after Friday -->", got)
+        self.assertEqual(deskfile.parse(got)[0].ships, ["- new deployment", "- second"])
+        self.assertEqual(deskfile.put(got, "a/b#1", new), got)
+
     def test_a_thread_whose_closing_arrow_was_lost_is_kept_too(self):
         old = self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it.<!-- sheaf-comment id=c1 by=\"T\" at=2026-11-14T01:00 status=open quote=\"x\"\nhalf a thread\n", 1)
         got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
