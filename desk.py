@@ -230,9 +230,12 @@ def rotate():
             linked = archive
             os.replace(tmp, p)
         except (OSError, ValueError):
-            tmp.unlink(missing_ok=True)
-            if linked:
-                linked.unlink(missing_ok=True)       # a rotation that did not happen leaves no archive, poll after poll
+            for left in (tmp, linked):               # a rotation that did not happen leaves no archive, poll after poll
+                try:
+                    if left:
+                        left.unlink(missing_ok=True)
+                except OSError:
+                    pass
             return
         try:                                          # the replace is done: nothing below may raise to the caller
             fd = os.open(p.parent, os.O_RDONLY)
