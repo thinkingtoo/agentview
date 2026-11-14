@@ -8,11 +8,13 @@
 5. A huge floor file silently stops rotation.
 Also: nothing prunes the merge-desk.log.<time> archives (decide: keep N, or leave to the person).
 
+**Waiting (Tarek, 2026-11-14):** built on branch Sven/20 head 5729841, Sonnet r1 GO (Sven-20-sonnet-1.md); owes one Codex run at 15:00+ on that head, then merge. Handoff: see handoff-Sven-2026-11-14.md.
+
 **Blocked by:** 15
 
 **Claimed by:** Sven 2026-11-14 10:41
 
-**Status:** done
+**Status:** in-progress
 
 - [x] A failing fsync or floor write after the replace leaves a working log and no exception to the caller (test)
 - [x] A hand-edited ready that does not round-trip is carried as its raw line (test)
