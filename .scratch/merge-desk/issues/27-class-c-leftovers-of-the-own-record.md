@@ -9,6 +9,7 @@
 - `desk adopt` (ticket 19, Sonnet round 7): a person's 4-space line right after the real ships bullets is adopted as ours (the same ambiguity as ticket 26);
 - `desk adopt` checks the record file before it takes the lock, so a record changed between the check and the edit is not rechecked;
 - `desk adopt` with case-duplicate keys (`A/b#1` and `a/b#1`) reports only the first as adopted.
+- `desk adopt` (Sonnet round 8, c12): a blank line inside the ships list ends it for `ships_of` but not for `_adoptable`, so a person's bullet after a blank line is adopted as ours and dropped on the next hand-over.
 
 **Blocked by:** 19
 
@@ -22,3 +23,4 @@
 - [ ] adopt: a person's 4-space line after the ships bullets is not adopted, or the item is skipped (test)
 - [ ] adopt: the record check happens under the lock (test)
 - [ ] adopt: case-duplicate keys are all reported (test)
+- [ ] adopt: a bullet after a blank line in the ships list is not adopted (test)
