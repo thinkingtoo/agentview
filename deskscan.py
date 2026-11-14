@@ -43,6 +43,7 @@ import time
 import desk
 import deskfile
 import deskinstall
+import deskships
 import deskwatch
 import lines
 
@@ -260,25 +261,45 @@ def candidate(p, now):
     return p["number"], p.get("title"), p["headRefOid"], base if isinstance(base, str) else "", p["createdAt"][:10]
 
 
-def item_block(repo, n, title, head, base, opened):
+def item_block(repo, n, title, head, base, opened, ships=None):
+    """`ships`: the lines of "What ships" (deskships.read); with any, the item is a Deploy item, as a hand-over's."""
     return "\n".join([
-        f"- [ ] Merge {desk.key(repo, n)}: {desk.flatten(title if isinstance(title, str) else '') or '(no title)'}",
+        f"- [ ] {'Deploy' if ships else 'Merge'} {desk.key(repo, n)}: {desk.flatten(title if isinstance(title, str) else '') or '(no title)'}",
         f"  - Recommendation: {FOUND}",
         f"  - Pinned commit: {head}" + (f", into {desk.flatten(base, 80)}" if desk.flatten(base, 80) else ""),
+        *(["  - What ships:"] + ["    " + line for line in ships] if ships else []),
         f"  - Read by the scan: CI green on {head[:7]}, GitHub says MERGEABLE, opened {opened}.",
         f"  - Handed over by {BY}, {time.strftime('%Y-%m-%d %H:%M')}.",
     ]) + "\n"
 
 
-def add(repo, n, title, head, base, opened):
-    """Put the found PR on the desk, unless the desk has anything to do with it already. Whether it did."""
-    k = desk.key(repo, n)
+def known(k):
+    """Whether the desk has anything to do with this key already: on the page, or anywhere in the log."""
     same = k.lower()                    # GitHub names are not case-sensitive: `Owner/Repo#5` is `owner/repo#5`
+    return any(i.key.lower() == same for i in deskfile.items()) or any(r["key"].lower() == same for r in desk.history())
+
+
+def add(repo, n, title, head, base, opened):
+    """Put the found PR on the desk, unless the desk has anything to do with it already. Whether it did.
+    What merging it ships is read first, as a hand-over's is, so a PR on a repo that deploys becomes a Deploy
+    item; one that cannot be read, or has no base branch to read it from, is left out and logged: never a
+    Merge item by default. `gh` runs outside the desk lock; the desk is looked at again inside it."""
+    k = desk.key(repo, n)
     with deskfile.locked():
-        if any(i.key.lower() == same for i in deskfile.items()) or any(r["key"].lower() == same for r in desk.history()):
+        if known(k):
             return False
-        deskfile.put_item(k, item_block(repo, n, title, head, base, opened))
-        desk.log("ready", k, pinned=head, by=BY)
+    try:
+        if not base:
+            raise deskships.Unreadable("GitHub gave no base branch")
+        ships = deskships.read(repo, base, head, desk.gh)
+    except deskships.Unreadable as why:
+        deskwatch.log.error("desk-scan", why, key=k)
+        return False
+    with deskfile.locked():
+        if known(k):
+            return False
+        deskfile.put_item(k, item_block(repo, n, title, head, base, opened, ships))
+        desk.log("ready", k, pinned=head, by=BY, ships=ships, base=base)   # raw, as `desk ready` keeps them: the press compares these
     return True
 
 

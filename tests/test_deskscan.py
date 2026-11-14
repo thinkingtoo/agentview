@@ -284,6 +284,113 @@ class Found(Case):
         self.assertEqual(deskscan.scan([REPO]), [f"{REPO}#3"])
 
 
+class Classified(Case):
+    """A found PR is read for what merging it ships, as a hand-over is (ticket 12)."""
+    SHIPS = ["- Workflow deploy.yml runs on push to main and ships:", "  - uploads the site"]
+
+    def reading(self, ships=None, err=None):
+        self.asked = []
+
+        def read(repo, base, pinned, run, **kw):
+            self.asked.append((repo, base, pinned, run, kw))
+            if err:
+                raise deskships.Unreadable(err)
+            return list(ships or [])
+        deskships.read = read
+
+    def test_a_found_pr_on_a_deploying_repo_is_a_deploy_item_with_what_ships(self):
+        self.reading(self.SHIPS)
+        self.prs(REPO, pr(7))
+        self.assertEqual(deskscan.scan([REPO]), [f"{REPO}#7"])
+        block = self.item(f"{REPO}#7").block
+        self.assertTrue(block.startswith(f"- [ ] Deploy {REPO}#7:"))
+        self.assertIn("  - What ships:\n    " + self.SHIPS[0] + "\n    " + self.SHIPS[1], block)
+        self.assertIn("no recommendation yet", block)
+
+    def test_it_is_read_at_the_pinned_commit_and_the_base_with_the_desk_s_gh(self):
+        self.reading(self.SHIPS)
+        self.prs(REPO, pr(7, head="c" * 40, base="release"))
+        deskscan.scan([REPO])
+        self.assertEqual([(a[0], a[1], a[2], a[3]) for a in self.asked], [(REPO, "release", "c" * 40, desk.gh)])
+
+    def test_a_found_pr_on_a_test_only_repo_stays_a_merge_item(self):
+        self.reading([])
+        self.prs(REPO, pr(7))
+        deskscan.scan([REPO])
+        block = self.item(f"{REPO}#7").block
+        self.assertTrue(block.startswith(f"- [ ] Merge {REPO}#7:"))
+        self.assertNotIn("What ships", block)
+
+    def test_a_pr_that_could_not_be_read_is_left_out_and_logged_never_a_merge_item(self):
+        self.reading(err="HTTP 502")
+        self.prs(REPO, pr(7), pr(8))
+        self.assertEqual(deskscan.scan([REPO]), [])
+        self.assertEqual(self.keys(), [])
+        self.assertEqual(desk.history(), [])
+        self.assertEqual(len(self.errors), 2)
+        self.assertIn("HTTP 502", str(self.errors[0]))
+
+    def test_one_unreadable_pr_does_not_stop_the_next(self):
+        def read(repo, base, pinned, run, **kw):
+            if pinned == "7".rjust(40, "b"):
+                raise deskships.Unreadable("rate limit")
+            return []
+        deskships.read = read
+        self.prs(REPO, pr(7), pr(8))
+        self.assertEqual(deskscan.scan([REPO]), [f"{REPO}#8"])
+
+    def test_a_pr_with_no_base_branch_is_left_out_and_logged(self):
+        self.reading([])
+        self.prs(REPO, {**pr(7), "baseRefName": None})
+        self.assertEqual(deskscan.scan([REPO]), [])
+        self.assertEqual(self.keys(), [])
+        self.assertEqual(self.asked, [])
+        self.assertEqual(len(self.errors), 1)
+
+    def test_the_ready_record_keeps_the_raw_lines_and_the_base_like_a_hand_over(self):
+        self.reading(self.SHIPS)
+        self.prs(REPO, pr(7, base="release"))
+        deskscan.scan([REPO])
+        rec = desk.history(f"{REPO}#7")[0]
+        self.assertEqual((rec["ships"], rec["base"]), (self.SHIPS, "release"))
+
+    def test_a_merge_item_s_record_keeps_an_empty_list_not_nothing(self):
+        self.reading([])
+        self.prs(REPO, pr(7))
+        deskscan.scan([REPO])
+        self.assertEqual(desk.history(f"{REPO}#7")[0]["ships"], [])
+
+    def test_nothing_is_read_for_a_pr_already_on_the_desk(self):
+        self.reading(self.SHIPS)
+        self.hand_over(REPO, 7)
+        self.asked.clear()
+        self.prs(REPO, pr(7))
+        self.assertEqual(deskscan.scan([REPO]), [])
+        self.assertEqual(self.asked, [])
+
+    def test_gh_is_not_run_under_the_desk_lock(self):
+        held = []
+
+        def read(repo, base, pinned, run, **kw):
+            held.append(getattr(deskfile._held, "depth", 0))
+            return []
+        deskships.read = read
+        self.prs(REPO, pr(7))
+        deskscan.scan([REPO])
+        self.assertEqual(held, [0])
+
+    def test_a_session_handing_it_over_while_it_was_read_wins(self):
+        def read(repo, base, pinned, run, **kw):
+            deskships.read = lambda *a, **k: []
+            self.hand_over(REPO, 7, rec="wait")        # the desk changes while gh answers
+            return []
+        deskships.read = read
+        self.prs(REPO, pr(7))
+        self.assertEqual(deskscan.scan([REPO]), [])
+        self.assertIn("Recommendation: wait.", self.item(f"{REPO}#7").block)
+        self.assertEqual(self.events(f"{REPO}#7"), ["ready"])
+
+
 class Bounded(Case):
     def test_gh_is_asked_for_open_prs_with_a_limit(self):
         self.prs(REPO)
