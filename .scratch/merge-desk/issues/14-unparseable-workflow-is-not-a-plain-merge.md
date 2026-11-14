@@ -12,7 +12,7 @@
 
 **Claimed by:** Samir 2026-11-14 01:52
 
-**Status:** done
+**Status:** in-progress
 
 - [x] branch_deploys.py prints a parse-failure line for an unparseable workflow (its own test) (`routines/tests/test_branch_deploys.py::test_full_marks_a_workflow_that_cannot_be_parsed` and 3 more; `--full` only, default output unchanged on 4 real repos, ~/.claude 56ddfaf)
 - [x] The desk shows such a repo as "could not tell", not Merge, and refuses its press (`tests/test_deskships.py::test_a_workflow_that_cannot_be_parsed_is_could_not_tell_and_names_the_file`, `tests/test_deskwatch.py::test_a_workflow_that_cannot_be_parsed_is_a_deploy_item_that_cannot_be_pressed`: Deploy item, press refused)
