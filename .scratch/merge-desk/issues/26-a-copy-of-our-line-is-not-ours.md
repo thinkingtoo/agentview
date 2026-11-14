@@ -6,7 +6,9 @@
 
 **Blocked by:** 19
 
-**Status:** ready-for-agent
+**Claimed by:** Hakim 2026-11-14 15:51
+
+**Status:** in-progress
 
 - [ ] A person's byte-identical copy of the pin line above ours: the next hand-over replaces ours and keeps theirs (test)
 - [ ] parse().pinned reads the recorded occurrence, not the first (test)
