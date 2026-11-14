@@ -6,8 +6,8 @@
 
 **Claimed by:** Britta 2026-11-14 01:35
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] `deploy_prod.sh` changed to `deployprod.sh` between hand-over and press refuses the press
-- [ ] A `<...>` span added to a deploy line refuses the press
-- [ ] A line the page rewrote (escaped punctuation, `_` → `*`) still compares equal
+- [x] `deploy_prod.sh` changed to `deployprod.sh` between hand-over and press refuses the press (Differ.test_a_character_the_page_never_writes_is_a_change, 6 R4-1 pairs + redirect, red then green; branch britta/13-ships-exact)
+- [x] A `<...>` span added to a deploy line refuses the press (spaced/attribute spans and `<in ... >out` refuse; a bare `<name>` stays equal because pandoc drops it: see report)
+- [x] A line the page rewrote (escaped punctuation, `_` → `*`) still compares equal (test_what_the_page_writes_back_is_no_change)
