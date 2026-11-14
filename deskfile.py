@@ -196,7 +196,8 @@ def parse(text, record=None):
     for key, start, end in _spans(text):
         block = text[start:end]
         visible = re.sub(r"<!--.*?-->", "", block, flags=re.S)              # a comment pins nothing, and orders nothing
-        mine = _pin_line(block, _own(record, key))
+        got = (record or {}).get(_slot(key))                                 # the pin is read from what was written last, not from the generation before it
+        mine = _pin_line(block, None if got is None else Counter(got["lines"]))
         pin, order = PINNED.search(mine or ""), AFTER.search(visible)     # an order only refuses a press, so a person's line may add one
         found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block, int(order.group(1)) if order else 0, ships_of(block)))
     return found

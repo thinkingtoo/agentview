@@ -609,6 +609,13 @@ class OwnRecord(unittest.TestCase):
         self.assertNotIn("[x]", got)
         self.assertEqual(got.count("Deploy a/b#1"), 1)
 
+    def test_the_previous_pin_line_typed_by_the_person_pins_nothing(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = self.hand_over(text, self.block(self.NEW_SHA), rec)
+        text = text.replace(f"  - Pinned commit: {self.NEW_SHA}", f"  - Pinned commit: {self.OLD_SHA}, into main\n  - Pinned commit: {self.NEW_SHA}", 1)
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(text, rec)}["a/b#1"], self.NEW_SHA)
+
     def test_a_note_between_two_ships_bullets_does_not_turn_the_next_bullet_into_the_persons(self):
         rec = {}
         text = self.hand_over(self.page(""), self.block(self.OLD_SHA, ships=["one", "two"]), rec)
