@@ -10,7 +10,9 @@ Also: nothing prunes the merge-desk.log.<time> archives (decide: keep N, or leav
 
 **Blocked by:** 15
 
-**Status:** ready-for-agent
+**Claimed by:** Sven 2026-11-14 10:41
+
+**Status:** in-progress
 
 - [ ] A failing fsync or floor write after the replace leaves a working log and no exception to the caller (test)
 - [ ] A hand-edited ready that does not round-trip is carried as its raw line (test)
