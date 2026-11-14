@@ -334,6 +334,7 @@ def open_thread(block):
     return False
 
 
+GUARD = set("#-*+=_`~|>0123456789 \t")      # first characters sheaf encodes on a continuation line (`comments.GUARD_FIRST`)
 TOP = re.compile(r"^(?:[-*+] |#{1,6} )")
 NOT_WELL = re.compile(r"failed|may not have run|no hub is running")
 SHEAF_COMMENT = re.compile(r"<!--\s*(?:sheaf|rd)-comment\b.*?-->", re.S)
@@ -353,6 +354,8 @@ def whole(block):
         span = m.group(0)
         if "<!--" in span[4:] or ("\n" in span and not span.endswith("\n-->")):   # sheaf writes neither: the real end is lost
             return False
+        if "\n" in span and any(not l.strip() or l[0] in GUARD for l in span.split("\n")[1:-1]):
+            return False                                # sheaf writes no blank line in a thread, and encodes these first characters
     if any(TOP.match(l) for l in block.splitlines()[1:]):    # sheaf guards these on its comment lines
         return False
     bare = SHEAF_COMMENT.sub("", block)

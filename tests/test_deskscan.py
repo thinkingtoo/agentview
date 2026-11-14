@@ -751,9 +751,17 @@ class Tidy(Case):
         self.assertTrue(deskscan.whole(head + "-->\n"))
         self.assertTrue(deskscan.whole('- [ ] Merge a/b#1: x <!-- sheaf-comment id=c1 by="T" at=2026-11-10T10:00 status=resolved quote="q"<br>ok<br>@C 2026-11-10T10:30: yes -->\n  - y\n'))
 
+    def test_a_damaged_thread_closed_by_a_line_of_the_persons_own_takes_nothing_with_it(self):
+        head = '- [ ] Merge a/b#1: x\n  - y\n<!-- sheaf-comment id=c1 by="T" at=2026-11-10T10:00 status=resolved quote="q"\nok\n'
+        for mid in ("\nTodo: rotate the token.\n1. call Sven\n> quote\n", "\nTodo: rotate the token.\n", "1. call Sven\n", "> quote\n"):
+            self.assertFalse(deskscan.whole(head + mid + "-->  then merge B\n"), mid)
+        # sheaf's own multi-line shapes still pass: a body of words, a reply, the guarded first characters
+        self.assertTrue(deskscan.whole(head + "@Claude 2026-11-10T10:30: yes\n&#45; a list line\n-->\n"))
+        self.assertTrue(deskscan.whole(head + "<br>\n-->\n"))
+
     def test_the_same_thread_with_its_closing_line_still_goes(self):
         k = self.lost_end("")
-        deskfile.path().write_text(self.page().rstrip("\n") + "\n-->\n")
+        deskfile.path().write_text(self.page().replace("ok, done\n", "ok, done\n-->\n", 1))
         self.assertEqual(deskscan.tidy(), [k])
 
     def test_a_settled_item_the_person_ticked_again_is_left_to_the_watcher(self):
