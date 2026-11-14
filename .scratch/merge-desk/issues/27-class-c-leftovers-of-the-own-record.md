@@ -10,6 +10,7 @@
 - `desk adopt` checks the record file before it takes the lock, so a record changed between the check and the edit is not rechecked;
 - `desk adopt` with case-duplicate keys (`A/b#1` and `a/b#1`) reports only the first as adopted.
 - `desk adopt` (Sonnet round 8, c12): a blank line inside the ships list ends it for `ships_of` but not for `_adoptable`, so a person's bullet after a blank line is adopted as ours and dropped on the next hand-over.
+- (class b, from ticket 26's Sonnet review F1, /home/tiroir/Projects/agentview-wt/hakim-26-sonnet-1.md) `_own` is the record's `lines` plus `prev`, and the order check (`_mine`) runs only for a text that stands twice: a person's copy of an OLD pin line (one of `prev`) that stands once is taken for ours at the hand-over after next and dropped. Scenario: hand-over 1 (pin A), the person pastes a copy of A above `Recommendation:`, hand-over 2 (pin B) keeps it, hand-over 3 (pin C) takes the copy for ours and drops it; the person's line is lost. `parse()` still reads the right pin.
 
 **Blocked by:** 19, 26 (same deskfile.py ownership code: one at a time, Tarek)
 
@@ -24,3 +25,4 @@
 - [ ] adopt: the record check happens under the lock (test)
 - [ ] adopt: case-duplicate keys are all reported (test)
 - [ ] adopt: a bullet after a blank line in the ships list is not adopted (test)
+- [ ] A person's copy of an old pin line (in `prev`, standing once) survives a third hand-over (test with three hand-overs)
