@@ -48,6 +48,13 @@ _Avoid_: merge queue, PR list
 One entry of the merge desk: what it does, the recommendation of the session that handed it over, the commit it is pinned to, and, for a Deploy, what ships.
 _Avoid_: row (a row is a goal's line)
 
+**Desk record**:
+The text of the lines AgentView wrote under each desk item, kept beside the desk file (`.merge-desk.own.json`). A line is AgentView's only when the record lists it, so a line the person wrote is never replaced or read as the pin, whatever shape it has. An item with no record is read by the exact shapes.
+_Avoid_: manifest, marker
+
+**Orphan** (desk):
+A comment thread whose passage is gone from its line, kept on a line of its own with `orphan=1`, as sheaf writes one, so the person's words are not lost.
+
 **Found item**:
 A desk item the daily scan put there: an open pull request, green, mergeable and over a day old, that no session handed over. It says "found by the scan, no recommendation yet" and carries only what AgentView read itself. On a repo whose base branch deploys it is a Deploy item with its "What ships" lines, as a hand-over is; a PR AgentView could not read that for is not found. Its press is refused unless its repo is in `desk_found_repos` (a repo that may ship outside GitHub): the session that made the PR hands it over.
 

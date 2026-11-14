@@ -617,6 +617,46 @@ class OwnRecord(unittest.TestCase):
         self.assertEqual({i.key: i.pinned for i in deskfile.parse(got)}["a/b#1"], self.NEW_SHA)      # the first pinned line is still the one that counts
         self.assertNotIn("01:00.", got)
 
+    def test_a_person_line_shaped_like_the_pinned_line_above_ours_does_not_change_what_is_pinned(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("  - Recommendation:", "  - Pinned commit: 1234567 (checked by me)\n  - Recommendation:", 1)
+        pinned = lambda t: {i.key: (i.pinned, i.after) for i in deskfile.parse(t, record=rec)}["a/b#1"]
+        self.assertEqual(pinned(text), (self.OLD_SHA, 0))
+        got = self.hand_over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        self.assertIn("  - Pinned commit: 1234567 (checked by me)\n", got)
+        self.assertEqual(pinned(got), (self.NEW_SHA, 0))
+
+    def test_a_pin_line_the_person_changed_in_place_pins_nothing_but_still_orders(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace(f"Pinned commit: {self.OLD_SHA}, into main", f"Pinned commit: {self.NEW_SHA}, into main; must go after #5", 1)
+        item = {i.key: i for i in deskfile.parse(text, record=rec)}["a/b#1"]
+        self.assertEqual((item.pinned, item.after), ("", 5))
+
+    def test_the_pin_is_read_from_our_line_through_the_file_too(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        old = os.environ.get("XDG_RUNTIME_DIR")
+        os.environ["XDG_RUNTIME_DIR"] = str(tmp / "run")
+        self.addCleanup(lambda: os.environ.pop("XDG_RUNTIME_DIR") if old is None else os.environ.update(XDG_RUNTIME_DIR=old))
+        f = tmp / "state" / "merge-desk.md"
+        deskfile.put_item("a/b#1", self.block(self.OLD_SHA), file=f)
+        f.write_text(f.read_text().replace("  - Recommendation:", "  - Pinned commit: 1234567 (mine)\n  - Recommendation:", 1))
+        self.assertEqual(deskfile.items(f)[0].pinned, self.OLD_SHA)
+
+    def test_words_after_a_thread_that_ends_our_line_become_the_persons_line_not_part_of_ours(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA, rec="Merge it."), rec)
+        text = text.replace("Merge it.", "Merge it." + self.thread("Merge it.") + " and fine", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="Merge it now.", when="02:00"), rec)
+        bare = re.sub(r"<!--.*?-->", "", got, flags=re.S)
+        self.assertIn("  - Recommendation: Merge it now.\n", bare)
+        self.assertIn("\n  and fine\n", bare)
+        self.assertNotIn("Merge it now. and fine", bare)
+        self.assertEqual(got.count("sheaf-comment"), 1)
+        self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, rec="Merge it now.", when="02:00"), rec), got)
+
     def test_an_item_with_no_record_falls_back_to_the_shapes(self):
         old = self.block(self.OLD_SHA) + "  - Not merged: CI is red\n"
         got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA), record={})

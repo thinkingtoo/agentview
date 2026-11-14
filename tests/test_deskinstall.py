@@ -483,7 +483,7 @@ class Press(Case):
 
     def test_a_pin_that_is_not_on_main_is_refused(self):
         self.found()
-        deskfile.edit(lambda t: t.replace(f"Pinned commit: {MAIN}", f"Pinned commit: {NEWER}"))
+        deskfile.put_item("install:sheafmd", self.item().block.replace(f"Pinned commit: {MAIN}", f"Pinned commit: {NEWER}"), section="install")
         self.tick_box()
         deskwatch.tick()
         self.assertIn("Not installed: GitHub could not compare", self.item().block)
@@ -493,7 +493,7 @@ class Press(Case):
         self.history([OLD, MID, MAIN, NEWER])
         (self.fake / "main-sweatshop-ai_sheaf.txt").write_text(MAIN)      # main is MAIN: NEWER is on some branch
         self.found()
-        deskfile.edit(lambda t: t.replace(f"Pinned commit: {MAIN}", f"Pinned commit: {NEWER}"))
+        deskfile.put_item("install:sheafmd", self.item().block.replace(f"Pinned commit: {MAIN}", f"Pinned commit: {NEWER}"), section="install")
         self.tick_box()
         deskwatch.tick()
         self.assertIn(f"Not installed: the pinned commit {NEWER[:7]} is not on {REPO}'s main", self.item().block)

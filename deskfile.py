@@ -175,19 +175,36 @@ def ships_of(block):
     return out
 
 
-def parse(text):
+def _pin_line(block, own):
+    """The text of AgentView's `Pinned commit:` line of `block`, comments taken out, or None. With the record of what
+    it wrote (`own`), that is the pin line the record lists and no other ("" when it is gone): a person's line shaped
+    like it pins nothing. None when there is no record: the first line of the shape counts then."""
+    if own is None:
+        return None
+    logical = _logical(block)
+    for kind, line in zip(_kinds(logical, own), logical):
+        if kind == ("pin",):
+            return CLOSED.sub("", line)
+    return ""
+
+
+def parse(text, record=None):
+    """The items of `text`. `record` is what AgentView wrote last (`edit` gives it): an item that has an entry in it
+    is pinned by its own `Pinned commit:` line only (a line the person wrote or changed pins nothing)."""
     found = []
     for key, start, end in _spans(text):
         block = text[start:end]
         visible = re.sub(r"<!--.*?-->", "", block, flags=re.S)              # a comment pins nothing, and orders nothing
-        pin, order = PINNED.search(visible), AFTER.search(visible)
+        mine = _pin_line(block, _own(record, key))
+        pin, order = PINNED.search(visible if mine is None else mine), AFTER.search(visible)     # an order only refuses a press, so a person's line may add one
         found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block, int(order.group(1)) if order else 0, ships_of(block)))
     return found
 
 
 def items(file=None):
     """The items on the page now, in page order. Read-only: no lock needed."""
-    return parse(_read(Path(file) if file else path()))
+    file = Path(file) if file else path()
+    return parse(_read(file), _load_record(file))
 
 
 # The lines AgentView writes under an item, by kind. A line is its own only in the exact shape it writes it;
@@ -366,8 +383,14 @@ def carry(old, new, own=None):
         if mid is not None:                                      # a thread in the middle of our line: the threads stay, and the person's words after ours
             head = _text(line)[1][:len(_text(line)[1]) - len(mid)]
             rest = "".join(m.group(0) for m in CLOSED.finditer(rest))
-            if mid.strip():                                      # the person's words stay as a line of theirs after ours, so the line is ours again next time
-                (theirs.setdefault(after(kind), []) if after(kind) else orphans).append("  " + mid.strip() + "\n")
+            words = mid.strip()
+        elif own is not None and rest.count("<!--") and "<!--" not in CLOSED.sub("", rest):   # our line is whole, threads after it: what stands between or after them is the person's
+            words = CLOSED.sub("", rest).strip()
+            rest = "".join(m.group(0) for m in CLOSED.finditer(rest))
+        else:
+            words = ""
+        if words:                                                # the person's words stay as a line of theirs after ours, so the line is ours again next time
+            (theirs.setdefault(after(kind), []) if after(kind) else orphans).append("  " + words + "\n")
         if CLOSED.sub("", rest).count("<!--") or not home(kind):   # a thread left open would swallow the lines below it
             orphans.append("  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest) + "\n")   # its line is gone: nothing is left to quote
         else:
@@ -475,7 +498,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         if k != key:
             continue
         block = text[start:end]
-        if pinned is not None and parse(block)[0].pinned != pinned:      # the item was handed over again meanwhile
+        if pinned is not None and parse(block, record)[0].pinned != pinned:      # the item was handed over again meanwhile
             return text
         body = block.rstrip("\n")
         tail = block[len(body):] or "\n"
