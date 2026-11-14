@@ -6,7 +6,9 @@
 
 **Blocked by:** 13
 
-**Status:** ready-for-agent
+**Claimed by:** Emil 2026-11-14 02:11
+
+**Status:** in-progress
 
 - [ ] A poll reads a bounded amount of the log whatever its length (test with a 50 MB log)
 - [ ] `desk status` and recover() give the same answers before and after a rotation
