@@ -41,6 +41,7 @@ import deskfile
 import deskinstall
 import deskscan
 import deskships
+import fleet
 import log
 
 SYSTEM_PATH = desk.SYSTEM_PATH
@@ -184,6 +185,16 @@ def handed_over(k, pinned):
     return ready if isinstance(lines, list) and all(isinstance(l, str) for l in lines) else None
 
 
+FOUND_REPOS = ["sweatshop-ai/sheaf", "thinkingtoo/agentview"]   # when config.json has no `desk_found_repos`
+
+
+def vouched(repo):
+    """Whether the person vouched, in `desk_found_repos` of config.json, that this repo ships only through GitHub
+    workflows, which is all `deskships` can read. Anything but a list of names there, `null` too, vouches for nothing."""
+    got = fleet.read_config().get("desk_found_repos", FOUND_REPOS)
+    return isinstance(got, list) and all(isinstance(r, str) for r in got) and repo.lower() in {r.lower() for r in got}
+
+
 def check_ships(k, repo, base, pinned):
     """Refuse when what merging ships is not what the hand-over read. Read now, just before the merge, from the
     base branch's workflow files and the commits, and compared with the lines stored at the hand-over, character
@@ -194,6 +205,8 @@ def check_ships(k, repo, base, pinned):
     ready = handed_over(k, pinned)
     if ready is None or not isinstance(ready.get("base"), str):
         raise NotMerged("no record of what ships was kept at the hand-over; hand it over again")
+    if ready.get("by") == deskscan.BY and not vouched(repo):     # the scan cannot see a deploy that runs outside GitHub
+        raise NotMerged("found by the scan on a repo that may ship outside GitHub: ask the session that made the PR to hand it over")
     if ready["base"] != base:
         raise NotMerged(f"the base branch changed after the hand-over (handed over into {ready['base']}, now {base}); hand it over again")
     shown = ready["ships"]

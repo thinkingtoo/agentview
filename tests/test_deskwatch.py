@@ -255,6 +255,77 @@ class Ships(Case):
         self.assertTrue(deskscan.add(REPO, n, "Found one", head, "dev", "2026-11-12"))
         return f"{REPO}#{n}"
 
+    def vouch(self, config):
+        """What config.json says (`desk_found_repos` or nothing) for the length of the test."""
+        import fleet
+        old = fleet.read_config
+        fleet.read_config = lambda: dict(config)
+        self.addCleanup(setattr, fleet, "read_config", old)
+
+    def test_a_found_item_on_a_repo_nobody_vouched_for_appears_but_its_press_is_refused(self):
+        self.vouch({"desk_found_repos": ["sweatshop-ai/other"]})
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        k = self.found()
+        self.assertTrue(self.item(272).block.startswith("- [ ] Merge "))
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertIn("found by the scan on a repo that may ship outside GitHub: ask the session that made the PR to hand it over",
+                      self.item(272).block)
+        self.assertFalse(self.item(272).ticked)
+        self.assertEqual(self.events(k), ["ready", "pressing", "refused"])
+
+    def test_a_found_item_on_a_deploying_repo_nobody_vouched_for_is_refused_too(self):
+        self.vouch({"desk_found_repos": []})
+        self.pr(272)
+        self.workflow("deploy.yml", DEPLOY_YML)
+        self.commits("x")
+        self.found()
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertIn("ask the session that made the PR to hand it over", self.item(272).block)
+
+    def test_the_vouching_is_read_at_the_press_and_does_not_depend_on_case(self):
+        self.vouch({"desk_found_repos": []})
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        self.found()
+        self.vouch({"desk_found_repos": ["Sweatshop-AI/Sheaf"]})
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+
+    def test_a_config_that_is_not_a_list_of_names_vouches_for_nothing(self):
+        for bad in ("sweatshop-ai/sheaf", [REPO, 5], {"sweatshop-ai/sheaf": True}, None):
+            with self.subTest(bad=bad):
+                self.vouch({"desk_found_repos": bad})
+                self.assertFalse(deskwatch.vouched(REPO))
+
+    def test_with_no_setting_the_repos_of_the_house_are_vouched_for(self):
+        self.vouch({})
+        self.assertTrue(deskwatch.vouched("sweatshop-ai/sheaf"))
+        self.assertTrue(deskwatch.vouched("thinkingtoo/agentview"))
+        self.assertFalse(deskwatch.vouched("tiroir/telemasterclass"))
+
+    def test_an_empty_setting_vouches_for_nothing(self):
+        self.vouch({"desk_found_repos": []})
+        self.assertFalse(deskwatch.vouched("sweatshop-ai/sheaf"))
+
+    def test_a_session_handing_a_found_pr_over_makes_it_pressable_on_a_repo_nobody_vouched_for(self):
+        self.vouch({"desk_found_repos": []})
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        self.found()
+        self.hand_over_with_ships(272)                    # a session's own hand-over replaces the found item
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+
     def test_a_found_item_on_a_deploying_repo_is_pressable_at_an_unchanged_head(self):
         self.pr(272)
         self.workflow("deploy.yml", DEPLOY_YML)

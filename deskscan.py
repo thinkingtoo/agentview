@@ -12,7 +12,9 @@ neutral or skipped); no checks at all is not green. A PR whose key is on the pag
 Each is read for what merging it ships, as `desk ready` reads it (`deskships.read`, at the pinned commit into its
 base branch): on a repo whose base deploys it is a Deploy item with its "What ships" lines, otherwise a Merge item,
 and the log's `ready` record keeps the raw lines and the base for the press to compare. A PR whose base is missing
-or whose reading fails is left out for the day and logged, never a Merge item by default.
+or whose reading fails is left out for the day and logged, never a Merge item by default. The scan cannot see a
+deploy that runs outside GitHub, so the press refuses a found item (a `ready` record by the scan) unless its repo is
+in `desk_found_repos` (`deskwatch.vouched`).
 
 The scan is bounded: at most `MAX_REPOS` repos, `PER_REPO` PRs read from each and `TOTAL` read in all, whatever
 `gh` returns. One repo's `gh` failure (or an answer that cannot be read) is logged and the next repo goes on.
