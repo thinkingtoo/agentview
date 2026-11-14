@@ -32,5 +32,7 @@
   "_ticket_repos": "Repos whose tickets open in Claude from /ticket/<owner>/<repo>/<n>, each with the directory its Claude starts in.",
   "ticket_repos": {},
   "_push": "push: what the hub's FleetView gets (push.py). include lists the projects sent, by their key (repo:host/owner/name, track:x, client:..., folder:x); a project not on it never leaves this machine, and an empty list sends nothing. The device token is read from the login keyring (application=agentview, purpose=fleet-push), never from here.",
+  "_desk_found_repos": "Repos known to ship only through GitHub workflows. A PR the daily scan finds on the merge desk can be pressed only on one of these; on any other repo the item shows but its press is refused until a session hands it over. Without this key the two below are used; an empty list vouches for none.",
+  "desk_found_repos": ["sweatshop-ai/sheaf", "thinkingtoo/agentview"],
   "push": {"include": [], "url": "https://thinkingtoo.tiroir.me/fleet-push"}
 }

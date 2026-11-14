@@ -4,7 +4,9 @@
 
 **Blocked by:** none
 
-**Status:** ready-for-agent
+**Claimed by:** Alonso 2026-11-14 02:05
+
+**Status:** in-progress
 
 - [ ] A re-hand-over of an item with an open comment thread keeps the thread, word for word (test through deskfile.put)
 - [ ] The install scan re-pinning an Install item keeps its thread the same way

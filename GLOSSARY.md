@@ -49,7 +49,7 @@ One entry of the merge desk: what it does, the recommendation of the session tha
 _Avoid_: row (a row is a goal's line)
 
 **Found item**:
-A desk item the daily scan put there: an open pull request, green, mergeable and over a day old, that no session handed over. It says "found by the scan, no recommendation yet" and carries only what AgentView read itself.
+A desk item the daily scan put there: an open pull request, green, mergeable and over a day old, that no session handed over. It says "found by the scan, no recommendation yet" and carries only what AgentView read itself. On a repo whose base branch deploys it is a Deploy item with its "What ships" lines, as a hand-over is; a PR AgentView could not read that for is not found. Its press is refused unless its repo is in `desk_found_repos` (a repo that may ship outside GitHub): the session that made the PR hands it over.
 
 **Tidy**:
 What the daily scan does to the desk after it looks for pull requests: a merged, installed or withdrawn item leaves the page a day after the log says so. An item with a comment thread that is not resolved, and an Install item still behind, stays.

@@ -1022,6 +1022,23 @@ entry written wrong opens nothing; the server prints the entries it takes and
 the ones it ignores at start. Unset, nothing beyond `127.0.0.1` and `localhost`
 passes.
 
+### Found items and `desk_found_repos`
+
+The daily scan puts green, mergeable PRs nobody handed over on the desk as found items, so you see that they
+wait. It reads what merging one ships (`deskships`), which covers workflows on GitHub and nothing else: a repo
+that deploys by a VPS pulling `main`, or by Cloudflare Pages, looks like a repo that ships nothing. So a found
+item is pressable only on a repo you vouched for in `config.json`:
+
+```json
+"desk_found_repos": ["sweatshop-ai/sheaf", "thinkingtoo/agentview"]
+```
+
+Names are `owner/repo`, compared without regard to case. Without the key those two are vouched for; with the key,
+exactly what it lists (an empty list vouches for none, and anything that is not a list of names too). On any other
+repo the item appears, and its press is refused with "found by the scan on a repo that may ship outside GitHub:
+ask the session that made the PR to hand it over". A session's `desk ready` replaces the found item and is
+pressable as any hand-over is. The list is read at each press, so no restart is needed.
+
 ### The merge desk from the phone
 
 With `AGENTVIEW_EXTRA_ORIGINS` naming the `tailscale serve` origin (above), this server also
