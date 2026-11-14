@@ -414,12 +414,13 @@ class HubLock(unittest.TestCase):
         first, out, errs = self.in_threads(1, hub.desk)
         while not runs:
             time.sleep(0.01)
-        more, _, _ = self.in_threads(4, hub.desk)                      # these ask while the first run is going
+        more, _, more_errs = self.in_threads(4, hub.desk)                      # these ask while the first run is going
         threads = first + more
         time.sleep(0.3)
         gate.set()
         for t in threads:
             t.join(5)
+        errs += more_errs
         self.assertEqual((len(runs), len(errs)), (1, 5))     # not five runs, not five waits one after the other
         self.assertTrue(all(isinstance(e, deskrelay.Refused) and e.status == 503 for e in errs))
 
