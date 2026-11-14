@@ -1174,7 +1174,39 @@ class OwnRecord(unittest.TestCase):
         entry = {"prev": ["- [ ] Deploy a/b#1: work", "  - Recommendation: old", "  - Pinned commit: " + "a" * 7 + ", into main"],
                  "lines": ["- [ ] Deploy a/b#1: work", "  - Merged as ddddddd at 11:00"], "at": [0, 0]}
         block = "- [ ] Deploy a/b#1: work\n  - Recommendation: old\n  - Pinned commit: " + "a" * 7 + ", into main\n  - Merged as ddddddd at 11:00\n"
-        self.assertTrue(deskfile._prev_stands(entry, block))
+        self.assertTrue(deskfile._prev_may_stand(entry, block))
+        self.assertFalse(deskfile._prev_stands(entry, block))       # `put` does not read it so: it deletes what it takes for ours
+
+    RESULT_LINE = "Merged as ddddddd at 11:00"
+
+    def last_generation_with_a_result(self):
+        """The page holds the last generation (B) with the press's result line; the record's prev is the generation before (A)."""
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = self.hand_over(text, self.block(self.OLD_SHA, rec="R2", when=self.B_WHEN), rec)
+        text = deskfile.settle(text, "a/b#1", self.RESULT_LINE, record=rec)
+        self.assertTrue(rec["a/b#1"]["prev"])
+        return rec, text
+
+    B_WHEN = "01:00"
+
+    def test_a_copy_of_the_only_line_of_the_earlier_generation_on_a_page_of_the_last_is_kept(self):
+        """Review of 68cd37f, A1: the person replaced our line of the last generation by a copy of the one line only the
+        generation before wrote; the result line of the last stands. The page is not the earlier generation."""
+        rec, text = self.last_generation_with_a_result()
+        text = text.replace("  - Recommendation: R2\n", "  - Recommendation: Merge it.\n", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="R3", when="03:00"), rec)
+        self.assertEqual(got.count("Recommendation: Merge it."), 1)
+
+    def test_a_copy_of_both_lines_of_the_earlier_generation_on_a_page_of_the_last_is_kept(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = self.hand_over(text, self.block(self.OLD_SHA, rec="R2", when="02:00"), rec)
+        text = deskfile.settle(text, "a/b#1", self.RESULT_LINE, record=rec)
+        text = text.replace("  - Recommendation: R2\n", "  - Recommendation: Merge it.\n", 1).replace("2026-11-14 02:00.", "2026-11-14 01:00.", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="R3", when="03:00"), rec)
+        self.assertEqual(got.count("Recommendation: Merge it."), 1)
+        self.assertEqual(got.count("2026-11-14 01:00."), 1)
 
     def test_adopt_does_not_take_a_persons_line_that_only_begins_like_one_of_ours(self):
         f, rec = self.legacy()

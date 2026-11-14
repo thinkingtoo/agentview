@@ -430,7 +430,7 @@ def results(it, record):
     gives it, and a second copy of it is the person's. An item with no record, or whose page is the generation before the record's last, has none. The head of each line, its
     threads taken out."""
     got = (record or {}).get(deskfile._slot(it.key))
-    if got is None or deskfile._prev_stands(got, it.block):        # no record, or a write that did not finish: nothing here is proof
+    if got is None or deskfile._prev_may_stand(got, it.block):        # no record, or a write that may not have finished: nothing here is proof
         return []
     logical = deskfile._logical(it.block)
     kinds = deskfile._kinds(logical, deskfile._own(record, it.key, it.block), orders=deskfile._orders(got))

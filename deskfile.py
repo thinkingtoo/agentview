@@ -619,28 +619,43 @@ def _specific(texts, other):
     return Counter(texts) - Counter(other)
 
 
-def _prev_stands(entry, block):
-    """Whether `block` is the generation before the record's last (a write that did not finish: the record moved on,
-    the page did not). The lines of `prev` are AgentView's only then: a person's copy of an old pin line in a block of
-    the last generation is theirs, however often its text stands. The page is behind when it holds all the lines only
-    the earlier generation wrote, or most of them and none that only the last wrote: a person who removed two lines of
-    ours and typed a copy of an old pin line has not made the page an old one, and a page that holds a line of the last
-    and lacks one of the earlier is not one."""
+def _prev_overlap(entry, block):
+    """(what only the earlier generation wrote and the page holds, what only the earlier generation wrote, what only
+    the last wrote and the page holds), or None when there is nothing to tell the generations by."""
     if not entry["prev"]:
-        return False
+        return None
     texts = _heads(block)
     if texts:
         texts[0] = re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", texts[0], count=1)
     known = set(entry["prev"]) | set(entry["lines"])
     pin = dict(OWN_LINES)["pin"]
     if any(t not in known and pin.match(t) for t in texts[1:]):
-        return False                    # a pin line that no generation wrote: the person edited the pin of this block, it is no stale write
+        return None                     # a pin line that no generation wrote: the person edited the pin of this block, it is no stale write
     earlier, last = _specific(entry["prev"], entry["lines"]), _specific(entry["lines"], entry["prev"])
+    if not earlier:
+        return None
     old = Counter(texts[i] for i in _mine(texts, [(entry["prev"], None)])) & earlier
     new = Counter(texts[i] for i in _mine(texts, [(entry["lines"], entry.get("at"))])) & last
-    if not earlier:
-        return False
-    return old == earlier or (not new and 2 * sum(old.values()) > sum(earlier.values()))   # all of what only the earlier one wrote is there, or most of it and nothing only the last wrote: one copied line of it is not a page, nor is a page that holds a line of the last and lacks some of the earlier
+    return old, earlier, new
+
+
+def _prev_stands(entry, block):
+    """Whether `block` is the generation before the record's last (a write that did not finish: the record moved on,
+    the page did not). The lines of `prev` are AgentView's only then, and `put` deletes what it takes for ours: so the
+    page is behind only when it holds most of the lines only the earlier generation wrote and none that only the last
+    wrote. A person who removed two lines of ours and typed a copy of an old pin line has not made the page an old one,
+    and a page with a line of the last is not one, however many old lines it holds."""
+    got = _prev_overlap(entry, block)
+    return got is not None and not got[2] and 2 * sum(got[0].values()) > sum(got[1].values())
+
+
+def _prev_may_stand(entry, block):
+    """Whether `block` may be the generation before the record's last: `_prev_stands`, or a page that holds all the
+    lines only the earlier generation wrote with a line of the last (a result line the press wrote on it). For a reader
+    that deletes nothing and keeps an item when in doubt (`deskscan.results`): where `_prev_stands` would let a person's
+    copy of an old line be taken for ours, this only withholds proof."""
+    got = _prev_overlap(entry, block)
+    return got is not None and (got[0] == got[1] or _prev_stands(entry, block))
 
 
 def _own(record, key, block=None):
