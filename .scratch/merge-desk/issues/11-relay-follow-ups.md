@@ -8,8 +8,8 @@
 
 **Claimed by:** Lucas 2026-11-14 10:45
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] The relay's lock is not held across `sheaf open` (up to 60 s) and the sign-in (up to 45 s): after a 503 reset, desk requests from several devices must not queue behind one subprocess
-- [ ] One device cannot hold unlimited `/_/live` streams: each holds an AgentView thread and a hub connection with no cap per client today
-- [ ] The comment route lets whoever reaches :8445 edit, delete and resolve the owner's own comments on the desk (all five `op` values pass); decided: all five pass (see Decision); test that any other op is refused
+- [x] The relay's lock is not held across `sheaf open` (up to 60 s) and the sign-in (up to 45 s): after a 503 reset, desk requests from several devices must not queue behind one subprocess (evidence: HubLock tests in tests/test_desk_relay.py: kept values answered while a sign-in runs, devices share one run, a failed run is every waiting device's answer, a follower made to retry is told 503 after 3 rounds; 56 tests OK at 5ac7bfc)
+- [x] One device cannot hold unlimited `/_/live` streams: each holds an AgentView thread and a hub connection with no cap per client today (evidence: StreamCap and StreamsThroughTheRelay tests: 6 per client, 24 total, 429; 56 tests OK at 5ac7bfc)
+- [x] The comment route lets whoever reaches :8445 edit, delete and resolve the owner's own comments on the desk (all five `op` values pass); decided: all five pass (see Decision); test that any other op is refused (evidence: the five ops pass and any other is 400 in tests/test_desk_relay.py; reason in the README; 56 tests OK at 5ac7bfc)
