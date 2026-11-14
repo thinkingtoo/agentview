@@ -318,6 +318,26 @@ class Ships(Case):
         deskwatch.tick()
         self.assertEqual(len(self.merge_calls()), 1)
 
+    def test_a_merge_item_whose_hand_over_stored_no_ships_lines_is_pressed(self):
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        k = self.hand_over_with_ships(272)               # `desk ready` now: ships == [] is stored
+        self.assertEqual(desk.history(k)[-1]["ships"], [])
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+
+    def test_a_deploy_line_too_long_to_check_refuses_the_press_with_that_reason(self):
+        self.pr(272)
+        self.workflow("deploy.yml", DEPLOY_YML.replace("./deploy.sh", "./deploy.sh && " + "x" * 200))
+        self.commits("x")
+        self.hand_over_with_ships(272)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*too long to check")
+
     def test_a_merge_item_stays_a_merge_item_when_the_workflows_only_test(self):
         self.pr(272)
         self.workflow("ci.yml", TEST_YML)

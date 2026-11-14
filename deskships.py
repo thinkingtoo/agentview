@@ -37,6 +37,7 @@ OUTSIDE = "- Outside GitHub: "
 COMMITS = "- Commits that go out"
 SHOWN = 100                 # commits listed; the rest are counted
 LINE = 140
+HINT_CUT = 140             # where branch_deploys.py cuts a hint line
 WORKFLOW = re.compile(r"[A-Za-z0-9_.-]+\.ya?ml")
 HINT = re.compile(r"^\s+(\d+): (.*)$")
 
@@ -117,7 +118,13 @@ def _classify(files, base):
     deploying = {name: hs for name, hs in hits.items() if hs}
     if not deploying:
         return [], ""
-    out = [_line("- ", f"Fires on push to {base}: " + ", ".join(deploying), 300)]
+    head = f"Fires on push to {base}: " + ", ".join(deploying)
+    cut = [f"{name}:{n}" for name, hs in deploying.items() for n, text in hs
+           if len(text) >= HINT_CUT or len(desk.flatten(f"{name}:{n}: {text}", 10**6)) > LINE + 40]
+    if cut or len(desk.flatten(head, 10**6)) > 300:
+        # A line that reached either cut is shown without its end, so a change in that end could not be seen at the press.
+        return [], "a line in " + (", ".join(cut[:3]) or "the list of workflows") + " is too long to check"
+    out = [_line("- ", head, 300)]
     out += [_line("  - ", f"{name}:{n}: {text}", LINE + 40) for name, hs in deploying.items() for n, text in hs]
     return out, ""
 
