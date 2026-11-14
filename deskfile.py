@@ -201,8 +201,10 @@ def _unhidden(text, key):
     return here if found and shown else text
 
 
-def _eol(block):
-    """The line end `block` mostly has."""
+def _eol(block, page=None):
+    """The line end `block` mostly has; a block with no line end at all (the last line of a page) has the page's."""
+    if page is not None and "\n" not in block:
+        return _eol(page)
     return "\r\n" if block.count("\r\n") * 2 > block.count("\n") else "\n"
 
 
@@ -651,7 +653,7 @@ def put(text, key, block, section="merge", record=None):
             got, at = (record or {}).get(_slot(k)), []
             behind = got is not None and _prev_stands(got, text[start:end])
             kept = carry(text[start:end], block, _own(record, k, text[start:end]), None if got is None else _orders(got), at)
-            if _eol(text[start:end]) == "\r\n":
+            if _eol(text[start:end], text) == "\r\n":
                 kept = re.sub(r"\r?\n", "\r\n", kept)                 # a CRLF block stays one kind of line end: our lines come in with LF
             _record_block(record, k, block, at if len(at) == len(_heads(block)) else None, behind)
             return text[:start] + kept + text[end:]
@@ -713,7 +715,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         if pinned is not None and parse(block, record)[0].pinned != pinned:      # the item was handed over again meanwhile
             return text
         body = block.rstrip("\n")
-        crlf = _eol(block) == "\r\n"
+        crlf = _eol(block, text) == "\r\n"
         tail = block[len(body):] or "\n"
         kept = [l.rstrip("\n") for l in _logical(body)]
         if crlf and not body.endswith("\r"):

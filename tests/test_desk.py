@@ -1607,6 +1607,16 @@ class Leftovers(unittest.TestCase):
         got = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
         self.assertEqual(self.lone_ends(got), [])
 
+    def test_a_one_line_last_block_on_a_crlf_page_with_no_final_line_end_gets_crlf_from_put_and_settle(self):
+        text = "# D\r\n\r\n## Local installs waiting for you\r\n- [ ] Install foo: x"
+        rec = {}
+        got = deskfile.put(text, "install:foo", "- [ ] Install foo: y\n", section="install", record=rec)
+        self.assertEqual(self.lone_ends(got), [])
+        got = deskfile.settle(text, "install:foo", "Installed as abcdef0 at 10:00", record=rec)
+        self.assertEqual(self.lone_ends(got), [])
+        got = deskfile.put(text, "install:bar", "- [ ] Install bar: z\n", section="install", record=rec)
+        self.assertEqual(self.lone_ends(got), [])
+
 
 if __name__ == "__main__":
     unittest.main()
