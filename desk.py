@@ -407,8 +407,10 @@ def main(argv=None, out=None, err=None):
             for line in ([status_line(key(check_repo(a.repo), check_number(a.number)))] if a.repo else status_all()):
                 print(line, file=out)
         elif a.cmd == "adopt":
-            got = deskfile.adopt()
+            got, skipped = deskfile.adopt()
             print("adopted: " + (", ".join(got) if got else "nothing, every item has a record"), file=out)
+            if skipped:
+                print("skipped, two lines of one kind (sort them out by hand): " + ", ".join(skipped), file=out)
         else:
             print(page(browser=not a.no_browser), file=out)
     except (Refused, OSError) as why:

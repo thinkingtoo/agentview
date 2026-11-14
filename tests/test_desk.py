@@ -945,7 +945,7 @@ class OwnRecord(unittest.TestCase):
 
     def test_adopt_on_a_legacy_page_then_a_hand_over_replaces_the_old_lines(self):
         f, rec = self.legacy()
-        self.assertEqual(deskfile.adopt(f), ["a/b#1", "a/b#2"])
+        self.assertEqual(deskfile.adopt(f), (["a/b#1", "a/b#2"], []))
         self.assertEqual({i.key: i.pinned for i in deskfile.items(f)}, {"a/b#1": self.OLD_SHA, "a/b#2": self.OLD_SHA})
         deskfile.put_item("a/b#1", self.block(self.NEW_SHA, rec="R2", when="02:00"), file=f)
         got = f.read_text()
@@ -958,15 +958,43 @@ class OwnRecord(unittest.TestCase):
         f, rec = self.legacy()
         deskfile.put_item("a/b#1", self.block(self.NEW_SHA, rec="R2"), file=f)      # a/b#1 has an entry again, a/b#2 has none
         before = json.loads(rec.read_text())["a/b#1"]
-        self.assertEqual(deskfile.adopt(f), ["a/b#2"])
+        self.assertEqual(deskfile.adopt(f), (["a/b#2"], []))
         self.assertEqual(json.loads(rec.read_text())["a/b#1"], before)
 
     def test_adopt_run_twice_gives_the_same_record_and_the_same_page(self):
         f, rec = self.legacy()
         deskfile.adopt(f)
         first, page = rec.read_text(), f.read_text()
-        self.assertEqual(deskfile.adopt(f), [])
+        self.assertEqual(deskfile.adopt(f), ([], []))
         self.assertEqual((rec.read_text(), f.read_text()), (first, page))
+
+    def test_adopt_does_not_take_an_indented_person_line_outside_the_ships_list(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace("  - Pinned commit:", "    - person indented note\n  - Pinned commit:", 1))
+        deskfile.adopt(f)
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, rec="R2", when="02:00"), file=f)
+        self.assertIn("    - person indented note\n", f.read_text())
+
+    def test_adopt_skips_an_item_with_two_pin_lines_and_says_so(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace(f"  - Pinned commit: {self.OLD_SHA}", f"  - Pinned commit: {self.NEW_SHA}, my pin\n  - Pinned commit: {self.OLD_SHA}", 1))
+        done, skipped = deskfile.adopt(f)
+        self.assertEqual((done, skipped), (["a/b#2"], ["a/b#1"]))
+        self.assertEqual({i.key: i.pinned for i in deskfile.items(f)}["a/b#1"], "")
+
+    def test_adopt_refuses_a_record_that_cannot_be_read_and_leaves_it(self):
+        f, rec = self.legacy()
+        rec.write_text("{not json")
+        with self.assertRaises(OSError):
+            deskfile.adopt(f)
+        self.assertEqual(rec.read_text(), "{not json")
+
+    def test_adopt_takes_a_ticked_task_line_so_a_hand_over_updates_the_title(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace("- [ ] Deploy a/b#1", "- [x] Deploy a/b#1", 1))
+        deskfile.adopt(f)
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, rec="R2").replace("what it does", "new title"), file=f)
+        self.assertIn("- [ ] Deploy a/b#1: new title\n", f.read_text())
 
     def test_adopt_does_not_take_a_line_of_no_known_shape(self):
         f, rec = self.legacy()

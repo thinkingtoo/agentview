@@ -579,28 +579,57 @@ def edit(change, file=None):
             _held.record = mine
 
 
-ADOPTED = ("task", "rec", "pin", "by", "ships", "bullet", "result")
+def _adoptable(block):
+    """The lines of `block` AgentView wrote, judged by shape and place, or None when the block holds two lines of one
+    kind (a person's copy beside ours: which is ours cannot be told). A bullet counts only inside the `What ships:` list;
+    the task line is taken with its box unticked, as AgentView wrote it."""
+    heads, out, seen, in_ships = _heads(block), [], Counter(), False
+    for i, head in enumerate(heads):
+        if i == 0:
+            out.append(re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", head, count=1))
+            continue
+        kind = next((k for k, shape in OWN_LINES if shape.match(head)), None)
+        if head == SHIPS_HEADER:
+            in_ships = True
+            out.append(head)
+        elif in_ships and head.startswith("    ") and head.strip():
+            out.append(head)
+        else:
+            in_ships = False
+            if RESULT.match(head):
+                out.append(head)
+            elif kind:
+                seen[kind] += 1
+                out.append(head)
+    return None if any(n > 1 for n in seen.values()) else out
 
 
 def adopt(file=None):
     """One-time, by hand (`desk adopt`): for each item with no entry in the record, write the entry from the lines
-    of its block that have a shape of AgentView's, taking them as AgentView's own. Items that have an entry are left
-    alone, so a second run changes nothing. Meant for a page written before there was a record. Returns the keys adopted."""
-    done = []
+    of its block that AgentView wrote (by shape and place), taking them as its own. Items that have an entry are left
+    alone, so a second run changes nothing. An item with two lines of one kind is skipped: it is the person's to sort
+    out. Refuses when the record file exists but cannot be read (corrupt means nothing is ours, not "start again").
+    Returns (the keys adopted, the keys skipped)."""
+    f = Path(file) if file else path()
+    rec = f.parent / RECORD
+    if rec.exists() and not _load_record(f) and rec.read_text(encoding="utf-8").strip() not in ("{}", ""):
+        raise OSError(f"{rec} cannot be read; look at it before adopting")
+    done, skipped = [], []
 
     def change(text):
         record = _held.record
         for k, start, end in _spans(text):
             if _slot(k) in record:
                 continue
-            block = text[start:end]
-            logical = [l for l in _logical(block) if l.strip()]
-            kinds = _kinds(logical, Counter(_heads(block)))
-            record[_slot(k)] = {"lines": [_split(l)[0].rstrip("\n") for kd, l in zip(kinds, logical) if kd and kd[0] in ADOPTED], "prev": []}
+            lines = _adoptable(text[start:end])
+            if lines is None:
+                skipped.append(k)
+                continue
+            record[_slot(k)] = {"lines": lines, "prev": []}
             done.append(k)
         return text
-    edit(change, file)
-    return done
+    edit(change, f)
+    return done, skipped
 
 
 def put_item(key, block, section="merge", file=None):
