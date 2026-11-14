@@ -48,6 +48,12 @@ _Avoid_: merge queue, PR list
 One entry of the merge desk: what it does, the recommendation of the session that handed it over, and the commit it is pinned to.
 _Avoid_: row (a row is a goal's line)
 
+**Found item**:
+A desk item the daily scan put there: an open pull request, green, mergeable and over a day old, that no session handed over. It says "found by the scan, no recommendation yet" and carries only what AgentView read itself.
+
+**Tidy**:
+What the daily scan does to the desk after it looks for pull requests: a merged, installed or withdrawn item leaves the page a day after the log says so. An item with a comment thread that is not resolved, and an Install item still behind, stays.
+
 **Deploy**:
 A merge on a repository where the merge ships something, shown with what ships before it is pressed.
 

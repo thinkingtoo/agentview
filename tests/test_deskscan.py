@@ -6,6 +6,7 @@ The real desk file, the real GitHub and the real sheaf hub are never touched.
 """
 import datetime
 import json
+import threading
 import os
 import shutil
 import stat
@@ -155,6 +156,30 @@ class Found(Case):
         recs = [l for l in block.splitlines() if "Recommendation" in l]
         self.assertEqual(recs, [said[0]])                 # the one recommendation line IS the found line
         self.assertIn("Cancel summary per thread", block.splitlines()[0])
+
+    def test_a_found_item_says_what_the_scan_read_itself(self):
+        self.prs(REPO, pr(7, head="c" * 40))
+        deskscan.scan([REPO])
+        block = self.item(f"{REPO}#7").block
+        self.assertIn("CI green on ccccccc, GitHub says MERGEABLE, opened ", block)
+
+    def test_a_pr_handed_over_under_another_spelling_of_the_repo_is_not_found(self):
+        self.hand_over("Sweatshop-AI/Sheaf", 7, rec="wait")
+        self.prs(REPO, pr(7))
+        self.assertEqual(deskscan.scan([REPO]), [])
+        self.assertEqual(len(self.keys()), 1)
+        self.assertIn("Recommendation: wait.", self.item("Sweatshop-AI/Sheaf#7").block)
+
+    def test_the_scan_s_own_mixed_case_name_does_not_make_a_second_item_either(self):
+        self.hand_over(REPO, 7, rec="wait")
+        self.prs("Sweatshop-AI/Sheaf", pr(7))
+        self.assertEqual(deskscan.scan(["Sweatshop-AI/Sheaf"]), [])
+        self.assertEqual(self.keys(), [f"{REPO}#7"])
+
+    def test_a_pr_with_only_a_log_record_under_another_spelling_is_not_found(self):
+        self.log_at("withdrawn", "SWEATSHOP-AI/sheaf#7", 5)
+        self.prs(REPO, pr(7))
+        self.assertEqual(deskscan.scan([REPO]), [])
 
     def test_the_log_says_the_scan_found_it_and_what_it_pinned(self):
         self.prs(REPO, pr(7))
@@ -341,6 +366,94 @@ class Daily(Case):
         deskscan.stamp_path().write_text(json.dumps({"at": now + 10 * deskscan.DAY}))
         self.assertTrue(deskscan.run_if_due(now=now, repos=lambda: [REPO]))
 
+    def test_a_small_step_back_of_the_clock_does_not_run_the_day_again(self):
+        self.prs(REPO, pr(7))
+        now = time.time()
+        deskscan.run_if_due(now=now, repos=lambda: [REPO])
+        n = len(self.calls())
+        self.assertFalse(deskscan.run_if_due(now=now - 1, repos=lambda: [REPO]))
+        self.assertFalse(deskscan.run_if_due(now=now - 1800, repos=lambda: [REPO]))
+        self.assertEqual(len(self.calls()), n)
+
+    def test_a_day_with_no_repo_to_scan_is_tried_again_in_a_quarter_of_an_hour_not_tomorrow(self):
+        self.prs(REPO, pr(7))
+        now = time.time()
+        self.assertTrue(deskscan.run_if_due(now=now, repos=lambda: []))
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(deskscan.run_if_due(now=now + 60, repos=lambda: [REPO]))
+        self.assertTrue(deskscan.run_if_due(now=now + deskscan.RETRY + 1, repos=lambda: [REPO]))
+        self.assertEqual(self.keys(), [f"{REPO}#7"])
+        self.assertFalse(deskscan.run_if_due(now=now + deskscan.RETRY + 120, repos=lambda: [REPO]))
+
+    def test_the_default_repos_are_the_roster_s_plus_those_remembered(self):
+        now = time.time()
+        got = deskscan.known_repos(now, lambda: {"columns": [{"project": "repo:github.com/a/one"}]})
+        self.assertEqual(got, ["a/one"])
+        later = deskscan.known_repos(now + 5 * deskscan.DAY, lambda: {"columns": [{"project": "repo:github.com/a/two"}]})
+        self.assertEqual(later, ["a/two", "a/one"])
+        gone = deskscan.known_repos(now + 5 * deskscan.DAY + deskscan.KEEP,
+                                    lambda: {"columns": [{"project": "repo:github.com/a/three"}]})
+        self.assertEqual(gone, ["a/three"])
+
+    def test_a_cold_roster_forgets_nothing_it_remembered(self):
+        now = time.time()
+        deskscan.known_repos(now, lambda: {"columns": [{"project": "repo:github.com/a/one"}]})
+        self.assertEqual(deskscan.known_repos(now + 60, lambda: {"columns": []}), ["a/one"])
+        self.assertEqual(deskscan.known_repos(now + 120, lambda: None), ["a/one"])
+
+    def test_a_remembered_file_that_is_garbage_is_no_memory(self):
+        deskscan.repos_path().parent.mkdir(parents=True, exist_ok=True)
+        deskscan.repos_path().write_text('["x"]')
+        self.assertEqual(deskscan.known_repos(time.time(), lambda: {"columns": []}), [])
+        deskscan.repos_path().write_text('{"a/one": "yesterday", "a/two": true, "../x": 5}')
+        self.assertEqual(deskscan.known_repos(time.time(), lambda: {"columns": []}), [])
+
+    def test_the_watcher_s_call_returns_at_once_and_runs_one_scan_at_a_time(self):
+        started, release, ran = threading.Event(), threading.Event(), []
+        saved = deskscan.run_if_due
+
+        def slow():
+            ran.append(1)
+            started.set()
+            release.wait(10)
+        deskscan.run_if_due = slow
+        try:
+            t0 = time.time()
+            self.assertTrue(deskscan.scan_if_due())
+            self.assertLess(time.time() - t0, 1)
+            self.assertTrue(started.wait(5))
+            self.assertFalse(deskscan.scan_if_due())             # one at a time
+        finally:
+            release.set()
+            deskscan.run_if_due = saved
+        for _ in range(100):
+            if deskscan._running.acquire(blocking=False):
+                deskscan._running.release()
+                break
+            time.sleep(0.05)
+        self.assertEqual(ran, [1])
+
+    def test_a_thread_that_fails_is_logged_and_lets_the_next_day_try(self):
+        saved = deskscan.run_if_due
+
+        def boom():
+            raise RuntimeError("x")
+        deskscan.run_if_due = boom
+        try:
+            self.assertTrue(deskscan.scan_if_due())
+            for _ in range(100):
+                if self.errors:
+                    break
+                time.sleep(0.05)
+        finally:
+            deskscan.run_if_due = saved
+        self.assertTrue(self.errors)
+        for _ in range(100):
+            if deskscan._running.acquire(blocking=False):
+                deskscan._running.release()
+                break
+            time.sleep(0.05)
+
     def test_the_day_run_tidies_as_well_as_scans(self):
         k = f"{REPO}#9"
         self.hand_over(REPO, 9)
@@ -502,6 +615,44 @@ class Tidy(Case):
         self.assertEqual(deskscan.tidy(), [])
         self.assertEqual(self.keys().count(k), 2)
 
+    def swallowed(self, mark):
+        k = self.merged(1)
+        self.hand_over(REPO, 2, rec="merge")
+        deskfile.path().write_text(self.page().replace("handed over by a session", "handed over by a session " + mark, 1))
+        return k
+
+    def test_text_that_the_page_reads_as_an_opening_comment_never_takes_the_next_item_with_it(self):
+        for mark in (r"write \<!-- to open one", "the `<!--` mark", "an open <!-- never closed"):
+            self.setUp_again()
+            self.swallowed(mark)
+            before = self.page()
+            self.assertEqual(deskscan.tidy(), [], mark)
+            self.assertEqual(self.page(), before)
+            self.assertIn(f"{REPO}#2", before)
+
+    def setUp_again(self):
+        shutil.rmtree(self.tmp / "state", True)
+
+    def test_an_item_whose_block_holds_another_items_task_line_is_not_dropped(self):
+        self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n  - y\n- [ ] Merge a/b#2: z\n"))
+        self.assertTrue(deskscan.whole("- [ ] Merge a/b#1: x" + COMMENT_DONE + "\n  - y\n"))
+        self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n  - y <!-- open\n"))
+
+    def test_a_thread_written_between_the_look_and_the_drop_is_seen(self):
+        k = self.merged()
+        real = deskfile.edit
+
+        def sneaky(change, file=None):
+            deskfile.path().write_text(self.page().replace("Merged as ccccccc", "Merged as ccccccc" + COMMENT_OPEN, 1))
+            return real(change, file)
+        deskfile.edit = sneaky
+        try:
+            self.assertEqual(deskscan.tidy(), [])
+        finally:
+            deskfile.edit = real
+        self.assertEqual(self.keys(), [k])
+        self.assertNotIn("tidied", self.events(k))
+
     def test_tidying_twice_is_the_same_as_once(self):
         self.merged()
         self.assertEqual(len(deskscan.tidy()), 1)
@@ -635,6 +786,14 @@ class InstallItems(Case):
         self.receipt(MAIN)
         self.installed_item()
         self.assertEqual(deskscan.tidy(), ["install:sheafmd"])
+
+    def test_an_install_item_whose_restart_failed_stays_for_the_person_to_read(self):
+        self.receipt(MAIN)
+        self.installed_item()
+        deskfile.edit(lambda t: deskfile.settle(t, "install:sheafmd", f"Installed as {MAIN[:7]} at 10:00; the restart failed (no hub is running now)"))
+        self.assertEqual(deskscan.tidy(), [])
+        deskfile.edit(lambda t: deskfile.settle(t, "install:sheafmd", f"Installed as {MAIN[:7]} at 10:00; the restart may not have run: run sheaf stop, then sheaf start"))
+        self.assertEqual(deskscan.tidy(), [])
 
     def test_an_install_item_still_behind_is_never_tidied(self):
         self.receipt(OLD)                                   # the receipt still names the old commit

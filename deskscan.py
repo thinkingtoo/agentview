@@ -23,13 +23,21 @@ at the pinned commit, or `withdrawn`. It never removes
 
 Each tidy is a line `tidied` in the log, which `desk status` skips: it still says what became of the item.
 
+The tidy judges each item again on the text it is about to change, inside the desk's own edit, and drops
+nothing whose block is not whole: a block that holds a `<!--` no `-->` closes, or the task line of another item
+(text the page reads as a comment can swallow the next item into the block above it) is left alone.
+
 The day is kept in `desk-scan.json` beside the desk file, under `$XDG_STATE_HOME`, and is spent when the run
-starts, so a restart, or a run that dies, does not run it again. Nothing here runs `gh` under the desk lock:
-the lock is taken for each item written or dropped.
+starts, so a restart, or a run that dies, does not run it again; a day whose roster named no repo is spent
+for a quarter of an hour only. The repos are those of the projects on the overview now plus those seen there in
+the last `KEEP` days (`desk-scan-repos.json`): a repo with no session open at the moment is still known.
+The scan runs on a thread of its own, so presses go on while it reads GitHub, and nothing here runs `gh`
+under the desk lock: the lock is taken for each item written or dropped.
 """
 import datetime
 import json
 import re
+import threading
 import time
 
 import desk
@@ -43,6 +51,10 @@ PER_REPO = 20       # PRs read from one repo
 TOTAL = 60          # PRs read in all
 MAX_REPOS = 12
 STAMP = "desk-scan.json"
+REPOS = "desk-scan-repos.json"
+KEEP = 30 * DAY    # how long a repo seen on the overview stays known
+RETRY = 900         # a day with no repo to scan is tried again after this long
+SLACK = 3600        # a stamp this far ahead is a clock that jumped, not a day spent
 FOUND = "found by the scan, no recommendation yet."
 BY = "AgentView's scan"
 GOOD_CHECK = {"SUCCESS", "NEUTRAL", "SKIPPED"}
@@ -68,7 +80,7 @@ def due(now):
         at = float(json.loads(stamp_path().read_text(encoding="utf-8"))["at"])
     except (OSError, ValueError, KeyError, TypeError):
         return True
-    return not 0 <= now - at < DAY
+    return not -SLACK < now - at < DAY
 
 
 def spend(now):
@@ -87,15 +99,34 @@ def run_if_due(now=None, repos=None):
         deskwatch.log.error("desk-scan", OSError(f"could not write {stamp_path()}"))
         return False
     try:
-        scan((repos or project_repos)(), now)
+        known = (repos or (lambda: known_repos(now)))()
+        if not known:                   # providers cold or no session in a repo yet: try again soon, not tomorrow
+            spend(now - DAY + RETRY)
+        else:
+            scan(known, now)
     finally:
         tidy(now)
     return True
 
 
+_running = threading.Lock()
+
+
 def scan_if_due():
-    """The watcher's call. It holds nothing across `gh`: presses go on while it reads GitHub."""
-    return run_if_due()
+    """The watcher's call: when the day is due, the run goes on a thread of its own and this returns at once,
+    so presses are not held while `gh` is asked. One run at a time."""
+    if not due(time.time()) or not _running.acquire(blocking=False):
+        return False
+
+    def work():
+        try:
+            run_if_due()
+        except Exception as exc:        # the thread dies quietly, the watcher does not
+            deskwatch.log.error("desk-scan", exc)
+        finally:
+            _running.release()
+    threading.Thread(target=work, name="desk-scan", daemon=True).start()
+    return True
 
 
 # ----------------------------------------------------------------- the repos
@@ -127,6 +158,29 @@ def project_repos(roster=None):
         if repo not in out:
             out.append(repo)
     return out
+
+
+def repos_path():
+    return deskfile.path().parent / REPOS
+
+
+def known_repos(now, roster=None):
+    """The repos of the projects on the overview now, then those seen there within `KEEP`. What is seen now is
+    kept, with its day, beside the stamp."""
+    seen = {}
+    try:
+        got = json.loads(repos_path().read_text(encoding="utf-8"))
+        for repo, at in (got.items() if isinstance(got, dict) else []):
+            if isinstance(at, (int, float)) and not isinstance(at, bool) and 0 <= now - at < KEEP:
+                seen[repo] = at
+    except (OSError, ValueError):
+        pass
+    current = project_repos(roster)
+    seen.update({repo: now for repo in current})
+    if current:
+        repos_path().parent.mkdir(parents=True, exist_ok=True)
+        lines.write_atomic(repos_path(), json.dumps(seen))
+    return current + [r for r in sorted(seen) if r not in current]
 
 
 def clean(repos):
@@ -190,25 +244,27 @@ def candidate(p, now):
             or not isinstance(p.get("headRefOid"), str) or not HEAD.fullmatch(p["headRefOid"])):
         return None
     base = p.get("baseRefName")
-    return p["number"], p.get("title"), p["headRefOid"], base if isinstance(base, str) else ""
+    return p["number"], p.get("title"), p["headRefOid"], base if isinstance(base, str) else "", p["createdAt"][:10]
 
 
-def item_block(repo, n, title, head, base):
+def item_block(repo, n, title, head, base, opened):
     return "\n".join([
         f"- [ ] Merge {desk.key(repo, n)}: {desk.flatten(title if isinstance(title, str) else '') or '(no title)'}",
         f"  - Recommendation: {FOUND}",
         f"  - Pinned commit: {head}" + (f", into {desk.flatten(base, 80)}" if desk.flatten(base, 80) else ""),
+        f"  - Read by the scan: CI green on {head[:7]}, GitHub says MERGEABLE, opened {opened}.",
         f"  - Handed over by {BY}, {time.strftime('%Y-%m-%d %H:%M')}.",
     ]) + "\n"
 
 
-def add(repo, n, title, head, base):
+def add(repo, n, title, head, base, opened):
     """Put the found PR on the desk, unless the desk has anything to do with it already. Whether it did."""
     k = desk.key(repo, n)
+    same = k.lower()                    # GitHub names are not case-sensitive: `Owner/Repo#5` is `owner/repo#5`
     with deskfile.locked():
-        if any(i.key == k for i in deskfile.items()) or desk.history(k):
+        if any(i.key.lower() == same for i in deskfile.items()) or any(r["key"].lower() == same for r in desk.history()):
             return False
-        deskfile.put_item(k, item_block(repo, n, title, head, base))
+        deskfile.put_item(k, item_block(repo, n, title, head, base, opened))
         desk.log("ready", k, pinned=head, by=BY)
     return True
 
@@ -265,6 +321,18 @@ def open_thread(block):
     return False
 
 
+NOT_WELL = re.compile(r"failed|may not have run|no hub is running")
+CLOSED_COMMENT = re.compile(r"<!--.*?-->", re.S)
+
+
+def whole(block):
+    """True when the block is one item and no more. Text the page reads as a comment (`<!--` typed as text, in
+    code, or never closed) runs on over the items below it, and `deskfile` then cuts the block there: dropping
+    that block would drop them too."""
+    bare = CLOSED_COMMENT.sub("", block)
+    return "<!--" not in bare and not any(deskfile.key_of(l) for l in bare.split("\n")[1:])
+
+
 def settled_at(rec):
     try:
         return datetime.datetime.strptime(rec["at"], "%Y-%m-%dT%H:%M:%S%z").timestamp()
@@ -290,23 +358,36 @@ def over(it, rec, now):
     if ev == "installed":
         tool = deskinstall.tool_named(it.key.removeprefix("install:")) if it.key.startswith("install:") else None
         return (bool(tool) and bool(it.pinned) and tool.rev == it.pinned
-                and any(l.startswith(("  - Installed", "  - Already installed")) for l in said))
+                and any(l.startswith(("  - Installed", "  - Already installed")) for l in said)
+                and not any(NOT_WELL.search(l) for l in said))      # a failed restart is news the person has not read
     return False
 
 
 def tidy(now=None):
-    """Take the items whose story is over off the page. The keys taken."""
+    """Take the items whose story is over off the page. The keys taken. Each is judged again on the text
+    the drop is made on, under the desk lock."""
     now = time.time() if now is None else now
     gone = []
     with deskfile.locked():
-        every = [i.key for i in deskfile.items()]
+        keys = [i.key for i in deskfile.items()]
         last = {}
         for rec in desk.history():
             if rec["event"] in ("ready", "pressing", "merged", "installed", "refused", "withdrawn"):
                 last[rec["key"]] = rec
-        for it in deskfile.items():
-            if every.count(it.key) == 1 and it.key in last and over(it, last[it.key], now):
-                deskfile.drop_item(it.key)
-                desk.log("tidied", it.key, was=last[it.key]["event"])
-                gone.append(it.key)
+        for k in dict.fromkeys(keys):
+            if keys.count(k) != 1 or k not in last:
+                continue
+            dropped = []
+
+            def change(text, k=k):
+                dropped.clear()
+                found = [i for i in deskfile.parse(text) if i.key == k]
+                if len(found) != 1 or not whole(found[0].block) or not over(found[0], last[k], now):
+                    return text
+                dropped.append(k)
+                return deskfile.drop(text, k)
+            deskfile.edit(change)
+            if dropped:
+                desk.log("tidied", k, was=last[k]["event"])
+                gone.append(k)
     return gone
