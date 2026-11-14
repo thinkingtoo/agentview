@@ -15,7 +15,7 @@
 
 **Claimed by:** Kofi 2026-11-14 16:32
 
-**Status:** done
+**Status:** done (merged as 3a2b72f into dev, live 2026-11-14 17:00, MainPID 1718754; three Codex runs owed from 20:00, one on this range)
 
 - [x] An unterminated comment on one of our lines does not hide the items below it after a hand-over, and a later hand-over of such an item does not append a duplicate (test) — Leftovers: `test_a_comment_left_open_on_one_of_our_lines_hides_no_item_after_a_hand_over`, `..._an_item_hidden_by_a_comment_left_open_above_it_is_handed_over_once`, `..._closed_by_a_later_threads_arrow_hides_no_item`, `..._a_new_item_put_on_a_page_with_a_comment_left_open_is_visible`; red on 4dc0f92, green on 6ba94bb
 - [x] A copy of an old pin line stays the person's when they also edited our current pin line (test) — `test_a_copy_of_an_old_pin_line_stays_when_the_person_also_edited_the_current_pin_line`, `test_the_stale_pin_is_still_replaced_when_the_person_edited_the_recommendation`
