@@ -5,7 +5,9 @@ no network, no checkout, no GitHub. The classifier is `~/.claude/routines/branch
 folder made of the base branch's workflow files, never on a PR's checkout.
 """
 import json
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,11 +15,34 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 import deskships
+import stub_classifier
 
 TESTS_ONLY = "name: ci\non:\n  push:\n    branches: [main]\njobs:\n  t:\n    runs-on: x\n    steps:\n      - run: pytest\n"
 DEPLOYS = "name: deploy\non:\n  push:\n    branches: [main]\njobs:\n  d:\n    runs-on: x\n    steps:\n      - run: ./deploy.sh\n"
 PR_ONLY = "name: pr\non:\n  pull_request:\njobs:\n  d:\n    runs-on: x\n    steps:\n      - run: ./deploy.sh\n"
+
+
+REAL_CLASSIFIER = deskships.CLASSIFIER          # read before the stub takes its place
+
+
+def _real_classifier_usable():
+    """The machine's classifier, with the structure digest and a yaml parser: else the contract test skips."""
+    try:
+        if "structure sha256" not in REAL_CLASSIFIER.read_text():
+            return False
+        return subprocess.run([deskships.PYTHON, "-c", "import yaml"], capture_output=True, stdin=subprocess.DEVNULL, timeout=30).returncode == 0
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
+def setUpModule():
+    stub_classifier.use()
+
+
+def tearDownModule():
+    stub_classifier.restore()
 
 
 class FakeGh:
@@ -296,8 +321,9 @@ class Hardening(unittest.TestCase):
         self.assertIn("Could not tell what ships", "\n".join(deskships.read("o/r", "main", "p" * 40, gh)))
 
     def test_a_classifier_that_crashes_is_not_nothing_ships(self):
-        import tempfile
-        bad = Path(tempfile.mkdtemp()) / "bd.py"
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        bad = tmp / "bd.py"
         bad.write_text("raise SystemExit(1) if False else None\nimport nonexistent_module_x\n")
         saved = deskships.CLASSIFIER
         deskships.CLASSIFIER = bad
@@ -405,3 +431,30 @@ class Differ(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_real_classifier_usable(), "needs ~/.claude/routines/branch_deploys.py with the structure digest and pyyaml")
+class RealClassifier(unittest.TestCase):
+    """The one test that runs the machine's classifier: the stub the other tests use must print what it prints."""
+
+    def test_the_stub_prints_what_the_real_classifier_prints(self):
+        flows = {
+            "deploy.yml": DEPLOYS, "ci.yml": TESTS_ONLY, "pr.yml": PR_ONLY,
+            "mixed.yml": DEPLOYS.replace("./deploy.sh", "./deploy.sh && x\u00a0").replace("      - run: ./deploy.sh\n", "      # ./deploy.sh\n      - run: ./deploy.sh\n"),
+            "broken.yml": "on: [push\njobs: {\n",
+            "tabbed.yml": "\tname: x\non: push\n",
+            "list.yml": "name: l\non: [push, pull_request]\njobs:\n  d:\n    runs-on: x\n    steps:\n      - run: ./publish.sh\n",
+        }
+        for case, files in {"all": flows, "none": {"pr.yml": PR_ONLY}, "tests only": {"ci.yml": TESTS_ONLY}}.items():
+            with self.subTest(case):
+                tmp = Path(tempfile.mkdtemp(prefix="desk-ships-test-"))
+                self.addCleanup(shutil.rmtree, tmp, True)
+                (tmp / ".git").mkdir()
+                (tmp / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+                (tmp / ".github" / "workflows").mkdir(parents=True)
+                for name, text in files.items():
+                    (tmp / ".github" / "workflows" / name).write_text(text, encoding="utf-8")
+                ran = [subprocess.run([deskships.PYTHON, "-W", "ignore", str(c), str(tmp), "main", "--full"], capture_output=True, text=True,
+                                      stdin=subprocess.DEVNULL, timeout=30) for c in (REAL_CLASSIFIER, Path(stub_classifier.__file__))]
+                digest = lambda out: re.sub(r"sha256:[0-9a-f]{32}", "sha256:D", out)       # the hash is the classifier's own business
+                self.assertEqual((ran[0].returncode, digest(ran[0].stdout)), (ran[1].returncode, digest(ran[1].stdout)), ran[1].stderr)
