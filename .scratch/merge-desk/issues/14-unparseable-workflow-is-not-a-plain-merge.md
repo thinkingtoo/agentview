@@ -8,7 +8,9 @@
 
 **Blocked by:** 05, 13
 
-**Status:** ready-for-agent
+**Claimed by:** Samir 2026-11-14 01:52
+
+**Status:** in-progress
 
 - [ ] branch_deploys.py prints a parse-failure line for an unparseable workflow (its own test)
 - [ ] The desk shows such a repo as "could not tell", not Merge, and refuses its press
