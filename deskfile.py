@@ -517,10 +517,27 @@ def _slot(key):
     return key if key.startswith("install:") else key.lower()
 
 
-def _own(record, key):
-    """The Counter of line texts that are AgentView's for `key`, or None when there is no record of it."""
+def _prev_stands(entry, block):
+    """Whether `block` is the generation before the record's last (a write that did not finish: the record moved on,
+    the page did not). The lines of `prev` are AgentView's only then: a person's copy of an old pin line in a block of
+    the last generation is theirs, however often its text stands."""
+    if not entry["prev"]:
+        return False
+    texts = _heads(block)
+    if texts:
+        texts[0] = re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", texts[0], count=1)
+    return len(_mine(texts, [(entry["prev"], None)])) > len(_mine(texts, [(entry["lines"], entry.get("at"))]))
+
+
+def _own(record, key, block=None):
+    """The Counter of line texts that are AgentView's for `key`, or None when there is no record of it. With `block`, the
+    page's block of it, the lines of the generation before the last count only when that is the one the page holds."""
     got = (record or {}).get(_slot(key))
-    return None if got is None else Counter(got["lines"]) | Counter(got["prev"])
+    if got is None:
+        return None
+    if block is None or _prev_stands(got, block):
+        return Counter(got["lines"]) | Counter(got["prev"])
+    return Counter(got["lines"])
 
 
 def _record_block(record, key, block, at=None):
@@ -546,7 +563,7 @@ def put(text, key, block, section="merge", record=None):
     for k, start, end in _spans(text):
         if k == key or (k.lower() == key.lower() and not key.startswith("install:")):   # GitHub's names are not case-sensitive, a tool's are
             got, at = (record or {}).get(_slot(k)), []
-            kept = carry(text[start:end], block, _own(record, k), None if got is None else _orders(got), at)
+            kept = carry(text[start:end], block, _own(record, k, text[start:end]), None if got is None else _orders(got), at)
             _record_block(record, k, block, at if len(at) == len(_heads(block)) else None)
             return text[:start] + kept + text[end:]
     _record_block(record, key, block)
@@ -607,7 +624,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         at = len(kept) - 1                                              # our line is always the last one, bar the person's comments after it
         while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at]):
             at -= 1
-        own = _own(record, k)
+        own = _own(record, k, block)
         if RESULT.match(kept[at]) and own is not None and own[kept[at]] > 0:
             del kept[at]
         if record is not None and _slot(k) in record:

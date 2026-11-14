@@ -1167,6 +1167,25 @@ class CopyOfOurLine(unittest.TestCase):
         self.assertLess(recommendation, new)
         self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
 
+    THIRD_SHA = "c" * 40
+
+    def test_a_copy_of_an_old_pin_line_survives_a_third_hand_over(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("  - Recommendation:", self.PIN.format(self.OLD_SHA) + "  - Recommendation:", 1)      # the person's copy of pin A
+        text = self.over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        text = self.over(text, self.block(self.THIRD_SHA, rec="R3", when="03:00"), rec)
+        self.assertEqual(text.count(self.PIN.format(self.OLD_SHA)), 1)            # theirs stays through the third
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(text, rec)}["a/b#1"], self.THIRD_SHA)
+
+    def test_a_page_the_record_has_not_caught_up_with_is_still_replaced_whole(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)             # the record moved on, the write did not finish
+        got = self.over(text, self.block(self.THIRD_SHA, when="03:00"), rec)
+        self.assertEqual(got.count("Pinned commit"), 1)
+        self.assertEqual(got.count("Handed over"), 1)
+
     def test_a_copy_of_the_recommendation_line_after_ours_is_kept_and_ours_is_replaced(self):
         rec = {}
         text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
