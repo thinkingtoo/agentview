@@ -12,7 +12,7 @@
 
 **Claimed by:** Anika 2026-11-14 15:22
 
-**Status:** in-progress
+**Status:** done (merged as 226d83a)
 
 - [x] A 429 from the stream cap carries Retry-After (test)
   Evidence: tests/test_desk_relay.py::StreamsThroughTheRelay::test_the_refusal_of_a_stream_past_the_cap_says_when_to_try_again (red before, green: Retry-After 30)
