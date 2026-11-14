@@ -211,18 +211,32 @@ def _heads(block):
     return [_split(l)[0].rstrip("\n") for l in _logical(block) if l.strip()]
 
 
-def _kinds(logical, own=None):
+def _text(line):
+    """(head, whole): the line before its first `<!--`, and the line with every closed thread taken out. They differ
+    when sheaf put a thread in the middle of the line, after the words it quotes; `whole` is then the line as
+    AgentView wrote it. With a comment left open, `whole` is the head."""
+    head = _split(line)[0].rstrip("\n")
+    bare = CLOSED.sub("", line).rstrip("\n")
+    return head, (head if "<!--" in bare else bare)
+
+
+def _kinds(logical, own=None, tails=None):
     """The kind of each logical line of a block, as a tuple: `("task",)`, `("rec",)`, `("pin",)`, `("by",)`,
     `("ships",)` (the header), `("bullet", text, n)` (the n-th time this bullet is there) or `("result",)` for what
     AgentView wrote, None for what it did not. A kind counts once.
 
     `own` is the record of what AgentView wrote last (a Counter of line texts): with it, a line is AgentView's only
     when its text is in the record, whatever shape it has, and a bullet counts wherever it stands under the header.
-    Without it (an item written before the record existed) the exact shapes decide."""
+    Without it (an item written before the record existed) the exact shapes decide. A line in the record that has
+    no shape is `("own", text, n)`. `tails`, when given, gets one flag per line: true when the whole line, threads
+    taken out, is what is AgentView's (a thread stands in its middle), so the words after the thread are not the person's."""
     out, seen, in_ships = [], set(), False
     own = Counter(own) if own is not None else None
     for i, line in enumerate(logical):
-        head = _split(line)[0].rstrip("\n")
+        head, whole = _text(line)
+        mid = own is not None and i > 0 and whole != head and own[whole] > 0
+        if mid:
+            head = whole
         ours = own is None or own[head] > 0
         if i == 0:
             kind = ("task",)
@@ -238,6 +252,10 @@ def _kinds(logical, own=None):
             kind = ("result",)
         else:
             kind = next(((k,) for k, shape in OWN_LINES if shape.match(head)), None)
+            if kind is None and own is not None and head.strip():
+                kind = ("own", head, 1)
+                while kind in seen:
+                    kind = ("own", head, kind[2] + 1)
         if kind in seen:
             kind = None
         elif kind:
@@ -246,6 +264,8 @@ def _kinds(logical, own=None):
             own[head] -= 1
         in_ships = kind == ("ships",) or (in_ships and kind is not None and kind[0] == "bullet")
         out.append(kind)
+        if tails is not None:
+            tails.append(bool(kind and mid))
     return out
 
 
@@ -274,8 +294,8 @@ def _anchored(head, comment):
         return True
     before = re.sub(r"^\s*(?:[-*+] (?:\[[ xX]\] )?)?", "", head)
     before = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", before)             # sheaf quotes the words shown: a link's text, not its address
-    before = re.sub(r"[`*_~\\]", "", html.unescape(before))                 # and without the marks of bold, italic, code
-    return "".join(before.split()).endswith("".join(html.unescape(quote.group(1)).split()))
+    bare = lambda t: "".join(re.sub(r"[`*_~\\]", "", html.unescape(t)).split())     # without the marks of bold, italic, code; a plain `_` is lost too, on both sides
+    return bare(before).endswith(bare(quote.group(1)))
 
 
 def _orphaned(comment):
@@ -319,7 +339,8 @@ def carry(old, new, own=None):
     after = lambda k: k if k in new_kinds else (ships_end if k[0] == "bullet" else None)
     marks, theirs, orphans, blanks, last = {}, {}, [], [], ("task",)
     old_lines = _logical(old)
-    for kind, line in zip(_kinds(old_lines, own), old_lines):
+    tails = []
+    for (kind, line), mid in zip(zip(_kinds(old_lines, own, tails), old_lines), tails):
         if kind is None:
             if not line.strip():
                 blanks.append(line)                              # kept only when a line of the person's comes after it
@@ -332,15 +353,21 @@ def carry(old, new, own=None):
         rest = rest.rstrip("\n")
         if not rest:
             continue
+        if mid:                                                  # a thread in the middle of our line: the threads stay, the words round them are ours
+            head = _text(line)[1]
+            rest = "".join(m.group(0) for m in CLOSED.finditer(rest))
         if CLOSED.sub("", rest).count("<!--") or not home(kind):   # a thread left open would swallow the lines below it
             orphans.append("  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest) + "\n")   # its line is gone: nothing is left to quote
         else:
-            marks.setdefault(home(kind), []).append((head.rstrip("\n"), rest))
+            marks.setdefault(home(kind), []).append((head.rstrip("\n"), rest, line.rstrip("\n") if mid else None))
     out = []
     for kind, line in zip(new_kinds, new_lines):
         head = _split(line)[0].rstrip("\n")
         on_line = ""
-        for old_head, rest in marks.pop(kind, []):
+        for old_head, rest, original in marks.pop(kind, []):
+            if original and old_head == head and not on_line:
+                head, on_line = original, ""                        # the line did not change: it stands as it was, thread where it was
+                continue
             kept, lost = _settle_threads(rest, old_head, head)
             on_line += kept
             orphans.extend("  " + t + "\n" for t in lost)

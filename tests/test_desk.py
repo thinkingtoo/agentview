@@ -7,6 +7,7 @@ state folder.
 """
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -703,6 +704,42 @@ class OwnRecord(unittest.TestCase):
             got = self.hand_over(text, self.block(self.NEW_SHA, rec=rec, when="02:00"), rec_)
             self.assertNotIn("orphan=1", got, rec)
             self.assertIn(rec + self.thread(quote), got)
+
+    def test_a_thread_in_the_middle_of_our_line_does_not_make_the_line_the_persons(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA, rec="Merge now, fine", ships=["a.py: x"]), rec)
+        text = text.replace("Merge now,", "Merge now," + self.thread("Merge now,") + "", 1).replace("a.py", "a.py" + self.thread("a.py", "c2"), 1)
+        text = text.replace(f"{self.OLD_SHA}, into main", f"{self.OLD_SHA}" + self.thread(self.OLD_SHA[:8], "c3") + ", into main", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="Wait, later", ships=["b.py: y"], when="02:00"), rec)
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got)}["a/b#1"], self.NEW_SHA)
+        for gone in ("Merge now", "a.py: x", "fine", self.OLD_SHA, "01:00."):
+            self.assertNotIn(gone, re.sub(r"<!--.*?-->", "", got, flags=re.S))
+        self.assertEqual(got.count("sheaf-comment"), 3)
+        self.assertEqual(anchor_problems(got), [])
+        self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, rec="Wait, later", ships=["b.py: y"], when="02:00"), rec), got)
+
+    def test_a_line_with_a_thread_in_the_middle_that_did_not_change_stands_as_it_was(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA, rec="Merge now, fine"), rec)
+        text = text.replace("Merge now,", "Merge now," + self.thread("Merge now,"), 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="Merge now, fine", when="02:00"), rec)
+        self.assertIn("Merge now," + self.thread("Merge now,") + " fine\n", got)
+        self.assertNotIn("orphan=1", got)
+
+    def test_a_quote_with_an_underscore_stays_on_its_line(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA, rec="fix snake_case"), rec)
+        text = text.replace("snake_case\n", "snake_case" + self.thread("snake_case") + "\n", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="fix snake_case", when="02:00"), rec)
+        self.assertNotIn("orphan=1", got)
+
+    def test_a_line_of_ours_that_has_no_shape_is_replaced_when_the_record_lists_it(self):
+        rec = {}
+        mine = lambda sha, c: self.block(sha).replace("  - Pinned", f"  - Read by the scan: CI {c}\n  - Pinned")
+        text = self.hand_over(self.page(""), mine(self.OLD_SHA, "green"), rec)
+        got = self.hand_over(text, mine(self.NEW_SHA, "red"), rec)
+        self.assertNotIn("CI green", got)
+        self.assertEqual(got.count("Read by the scan"), 1)
 
     def test_a_thread_whose_words_are_still_the_end_of_the_new_line_stays_on_it(self):
         rec = {}
