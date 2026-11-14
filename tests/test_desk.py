@@ -5,8 +5,10 @@ The command runs as a process of its own with `XDG_STATE_HOME` under a throwaway
 `gh` first on PATH (a script that answers `pr view` from a file): never the real GitHub, never the real
 state folder.
 """
+import contextlib
 import json
 from collections import Counter
+from unittest import mock
 import os
 import re
 import shutil
@@ -638,6 +640,41 @@ class OwnRecord(unittest.TestCase):
         self.assertNotIn("    - two\n", got)
         self.assertEqual(got.count("    - uno\n") + got.count("    - due\n"), 2)
 
+    def test_a_page_with_crlf_line_ends_has_its_lines_replaced_not_a_block_appended(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        crlf = text.replace("\n", "\r\n")
+        got = self.hand_over(crlf, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        self.assertEqual((got.count("Recommendation"), got.count("Pinned commit"), got.count("Handed over")), (1, 1, 1))
+        self.assertNotIn(self.OLD_SHA, got)
+
+    def test_settle_on_an_item_with_no_record_replaces_the_earlier_result_line(self):
+        rec = {}
+        text = self.page(self.block(self.OLD_SHA))
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red again", record=rec)
+        self.assertEqual(text.count("Not merged:"), 1)
+        self.assertIn("Not merged: CI is red again", text)
+
+    def test_a_page_two_generations_behind_its_record_is_still_replaced_whole(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        self.hand_over(text, self.block(self.NEW_SHA, when="02:00"), rec)        # two writes that never reached the page
+        self.hand_over(text, self.block("c" * 40, when="03:00"), rec)
+        got = self.hand_over(text, self.block("d" * 40, when="04:00"), rec)
+        self.assertEqual((got.count("Recommendation"), got.count("Pinned commit"), got.count("Handed over")), (1, 1, 1))
+
+    def test_an_unterminated_comment_on_our_line_does_not_add_a_second_recommendation_and_closes_the_comment(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec) + "- [ ] Merge a/b#3: after\n"
+        text = text.replace("Recommendation: Merge it.\n", "Recommendation: Merge it.<!-- never closed\n", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        self.assertEqual(got.count("Recommendation:"), 1)
+        self.assertEqual([i.key for i in deskfile.parse(got, rec)], ["a/b#2", "a/b#1"])      # a/b#3 was inside the open comment already: it stays there
+        self.assertEqual(got.count("<!--"), got.count("-->"))                                  # but the comment is closed, so it swallows no more than that
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
+        self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec), got)
+
     def test_a_person_line_shaped_like_a_recommendation_survives(self):
         rec = {}
         text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
@@ -998,6 +1035,35 @@ class OwnRecord(unittest.TestCase):
         got = f.read_text()
         self.assertNotIn("    - two\n", got)
         self.assertNotIn("    - one\n", got)
+
+    def test_adopt_checks_the_record_under_the_lock(self):
+        f, rec = self.legacy()
+        real = deskfile.locked
+
+        @contextlib.contextmanager
+        def corrupting(file=None):
+            with real(file) as got:
+                rec.write_text("{not json")                      # changed after the check outside the lock would have run
+                yield got
+        with mock.patch.object(deskfile, "locked", corrupting):
+            with self.assertRaises(OSError):
+                deskfile.adopt(f)
+        self.assertEqual(rec.read_text(), "{not json")
+
+    def test_adopt_reports_a_case_duplicate_key_too(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text() + f.read_text().split("Deploy a/b#1", 1)[1].split("- [ ] Deploy a/b#2")[0].join(["- [ ] Deploy A/b#1", ""]))
+        done, skipped = deskfile.adopt(f)
+        self.assertEqual(sorted(k.lower() for k in done + skipped), ["a/b#1", "a/b#1", "a/b#2"])
+        self.assertEqual(len(done), 2)
+
+    def test_adopt_does_not_take_a_bullet_after_a_blank_line_in_the_ships_list(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - one\n\n    - the person's bullet\n  - Pinned commit:", 1))
+        deskfile.adopt(f)
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, ships=["x"], when="02:00"), file=f)
+        self.assertIn("    - the person's bullet\n", f.read_text())
+        self.assertNotIn("    - one\n", f.read_text())
 
     def test_adopt_reads_an_empty_record_with_a_space_in_it(self):
         f, rec = self.legacy()

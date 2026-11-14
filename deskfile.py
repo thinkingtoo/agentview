@@ -163,7 +163,7 @@ def ships_of(block):
     are not part of it."""
     out, inside = None, False
     for line in _logical(block):
-        head = _split(line)[0].rstrip("\n")
+        head = _split(line)[0].rstrip("\r\n")
         if head.rstrip() == SHIPS_HEADER:
             out, inside = [], True
         elif inside and head.startswith("    ") and head.strip():
@@ -232,15 +232,15 @@ def _split(line):
 
 def _heads(block):
     """The text of each logical line of a block before any thread on it: what AgentView wrote, when the block is its own."""
-    return [_split(l)[0].rstrip("\n") for l in _logical(block) if l.strip()]
+    return [_split(l)[0].rstrip("\r\n") for l in _logical(block) if l.strip()]
 
 
 def _text(line):
     """(head, whole): the line before its first `<!--`, and the line with every closed thread taken out. They differ
     when sheaf put a thread in the middle of the line, after the words it quotes; `whole` is then the line as
     AgentView wrote it. With a comment left open, `whole` is the head."""
-    head = _split(line)[0].rstrip("\n")
-    bare = CLOSED.sub("", line).rstrip("\n")
+    head = _split(line)[0].rstrip("\r\n")
+    bare = CLOSED.sub("", line).rstrip("\r\n")
     return head, (head if "<!--" in bare else bare)
 
 
@@ -457,7 +457,7 @@ def carry(old, new, own=None, orders=None, at=None):
             continue
         last = kind
         head, rest = _split(line)
-        rest = rest.rstrip("\n")
+        rest = rest.rstrip("\r\n")
         if not rest:
             continue
         if mid is not None:                                      # a thread in the middle of our line: the threads stay, and the person's words after ours
@@ -472,12 +472,13 @@ def carry(old, new, own=None, orders=None, at=None):
         if words:                                                # the person's words stay as a line of theirs after ours, so the line is ours again next time
             (theirs.setdefault(after(kind), []) if after(kind) else orphans).append("  " + words + "\n")
         if CLOSED.sub("", rest).count("<!--") or not home(kind):   # a thread left open would swallow the lines below it
-            orphans.append("  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest) + "\n")   # its line is gone: nothing is left to quote
+            gone = CLOSED.sub(lambda m: _orphaned(m.group(0)), rest)
+            orphans.append("  " + gone + (" -->" if "<!--" in CLOSED.sub("", rest) and gone.rfind("<!--") > gone.rfind("-->") else "") + "\n")   # its line is gone: nothing is left to quote; a comment never closed is closed here, or it swallows the items below
         else:
-            marks.setdefault(home(kind), []).append((head.rstrip("\n"), rest, line.rstrip("\n") if mid == "" else None))
+            marks.setdefault(home(kind), []).append((head.rstrip("\r\n"), rest, line.rstrip("\n") if mid == "" else None))
     out, standing = [], Counter()
     def stand(line, ours=False):
-        head = _split(line)[0].rstrip("\n")
+        head = _split(line)[0].rstrip("\r\n")
         if ours and at is not None and line.strip():
             at.append(standing[head])
         standing[head] += 1
@@ -489,7 +490,7 @@ def carry(old, new, own=None, orders=None, at=None):
                 out.append(t)
                 stand(t)
             continue
-        head = _split(line)[0].rstrip("\n")
+        head = _split(line)[0].rstrip("\r\n")
         on_line = ""
         for old_head, rest, original in marks.pop(kind, []):
             if original and old_head == head and not on_line:
@@ -540,16 +541,17 @@ def _own(record, key, block=None):
     return Counter(got["lines"])
 
 
-def _record_block(record, key, block, at=None):
+def _record_block(record, key, block, at=None, behind=False):
     """`at` is, for each line of `block`, how many identical lines stand before it on the page it is written onto
     (`carry` gives it): the record keeps it, so a copy of a line the person puts next to ours cannot take its place
-    later. Without it the block stands alone on the page: all zero."""
+    later. Without it the block stands alone on the page: all zero. `behind`: the page still held the generation before
+    the record's last (a write that did not reach it): that one stays in `prev` too, so the page is still read as ours."""
     if record is None:
         return
     heads, was = _heads(block), record.get(_slot(key))
     at = _ordinals(heads) if at is None else at
     if was is None or was["lines"] != heads or was.get("at") != at:
-        prev = was["lines"] if was and was["lines"] != heads else (was["prev"] if was else [])
+        prev = was["lines"] + (was["prev"] if behind else []) if was and was["lines"] != heads else (was["prev"] if was else [])
         record[_slot(key)] = {"lines": heads, "prev": prev, "at": at}
 
 
@@ -563,8 +565,9 @@ def put(text, key, block, section="merge", record=None):
     for k, start, end in _spans(text):
         if k == key or (k.lower() == key.lower() and not key.startswith("install:")):   # GitHub's names are not case-sensitive, a tool's are
             got, at = (record or {}).get(_slot(k)), []
+            behind = got is not None and _prev_stands(got, text[start:end])
             kept = carry(text[start:end], block, _own(record, k, text[start:end]), None if got is None else _orders(got), at)
-            _record_block(record, k, block, at if len(at) == len(_heads(block)) else None)
+            _record_block(record, k, block, at if len(at) == len(_heads(block)) else None, behind)
             return text[:start] + kept + text[end:]
     _record_block(record, key, block)
     heading = SECTIONS[section]
@@ -630,6 +633,8 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         if record is not None and _slot(k) in record:
             entry = record[_slot(k)]
             entry["lines"] = [l for l in entry["lines"] if not RESULT.match(l)] + ["  - " + result]
+        elif record is not None:                                          # no record of the item: the result line is the one line of it that is ours
+            record[_slot(k)] = {"lines": ["  - " + result], "prev": []}
         if untick and kept[0][3] in "xX":
             kept[0] = kept[0][:3] + " " + kept[0][4:]
         return text[:start] + "\n".join(kept + ["  - " + result]) + tail + text[end:]
@@ -680,6 +685,11 @@ def edit(change, file=None):
             _held.record = mine
 
 
+def _only_results(entry):
+    """Whether a record entry holds nothing but result lines: `settle` made it for an item that had no record."""
+    return all(RESULT.match(l) for l in entry["lines"])
+
+
 def _is_empty_record(file):
     try:
         text = file.read_text(encoding="utf-8")
@@ -692,13 +702,16 @@ def _adoptable(block):
     """The lines of `block` AgentView wrote, judged by shape and place, or None when the block holds two lines of one
     kind (a person's copy beside ours: which is ours cannot be told). A bullet counts only inside the `What ships:` list;
     the task line is taken with its box unticked, as AgentView wrote it."""
-    heads, out, seen, in_ships = _heads(block), [], Counter(), False
-    for i, head in enumerate(heads):
+    out, seen, in_ships = [], Counter(), False
+    for i, line in enumerate(_logical(block)):
+        head = _split(line)[0].rstrip("\r\n")
         if i == 0:
             out.append(re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", head, count=1))
             continue
-        if not head.strip():                                 # a thread on a line of its own: it ends nothing, as `ships_of` reads it
-            continue
+        if not head.strip():
+            if "<!--" not in line:                           # a blank line ends the list, as `ships_of` reads it
+                in_ships = False
+            continue                                         # a thread on a line of its own ends nothing
         kind = next((k for k, shape in OWN_LINES if shape.match(head)), None)
         if head == SHIPS_HEADER:
             in_ships = True
@@ -737,14 +750,16 @@ def adopt(file=None):
     Returns (the keys adopted, the keys skipped)."""
     f = Path(file) if file else path()
     rec = f.parent / RECORD
-    if rec.exists() and not _load_record(f) and not _is_empty_record(rec):
-        raise OSError(f"{rec} cannot be read; look at it before adopting")
     done, skipped = [], []
 
     def change(text):
+        if rec.exists() and not _load_record(f) and not _is_empty_record(rec):      # looked at under the lock: nobody changes it between this and the write
+            raise OSError(f"{rec} cannot be read; look at it before adopting")
         record = _held.record
         for k, start, end in _spans(text):
-            if _slot(k) in record:
+            if _slot(k) in record and not _only_results(record[_slot(k)]):
+                if any(_slot(d) == _slot(k) for d in done):
+                    skipped.append(k)                        # a second item under the same record entry (the case of its key differs): it cannot have one of its own
                 continue
             lines = _adoptable(text[start:end])
             if lines is None:
