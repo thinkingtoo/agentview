@@ -57,9 +57,10 @@ PASSED = ("Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-
 
 
 class Refused(Exception):
-    def __init__(self, status, why, headers=()):
+    def __init__(self, status, why, headers=(), generation=None):
         super().__init__(why)
         self.status, self.why, self.headers = status, why, headers
+        self.generation = generation                # the hub's generation this refusal was about, when the hub knows it
 
 
 class Desk(NamedTuple):
@@ -142,6 +143,9 @@ def plan(method, target, data, desk):
     return Plan("POST", path, _post_body(data or b"", desk.address, path), False)
 
 
+_STALE = object()                                # a run's answer that a reset has made out of date
+
+
 class _Flight:
     """One run of a slow question, and what it came to, for every request that asked it meanwhile."""
     def __init__(self, generation):
@@ -162,12 +166,22 @@ class SheafHub:
         self._flights = {}
         self._generation = 0
 
-    def reset(self):
+    @property
+    def generation(self):
         with self._lock:
+            return self._generation
+
+    def reset(self, seen=None):
+        """Forget what is kept. `seen` is the generation the failing request saw: a 503 about an older one
+        has been acted on already, and does not invalidate the run that began after it."""
+        with self._lock:
+            if seen is not None and seen != self._generation:
+                return
             self._generation += 1                   # a run that began before this has an answer out of date
             self._kept = {"desk": None, "cookie": None}
 
     def _ask(self, what, make, fresh=False):
+        began = self.generation
         for _ in range(FOLLOW_ROUNDS):
             with self._lock:
                 if not fresh and self._kept[what] is not None:
@@ -179,27 +193,37 @@ class SheafHub:
                 if leader:
                     flight = self._flights[what] = _Flight(self._generation)
             if leader:
-                return self._lead(what, make, flight)
+                got = self._lead(what, make, flight)
+                if got is not _STALE:
+                    return got
+                continue                            # a reset came while it ran: ask again, as a follower would
             if not flight.done.wait(SIGNIN_WAIT):
-                raise Refused(503, "sheaf is slow to answer where the desk's hub is or how to sign in")
+                slow = Refused(503, "sheaf is slow to answer where the desk's hub is or how to sign in")
+                slow.generation = flight.generation
+                raise slow
             if flight.error is not None:
                 raise flight.error                  # a failure is every waiting request's answer, reset or not
             with self._lock:
                 if flight.generation != self._generation:
                     continue                        # a reset came while this one waited: its value is out of date
             return flight.value
-        raise Refused(503, "sheaf's answer kept going out of date while this request waited for it")
+        late = Refused(503, "sheaf's answer kept going out of date while this request waited for it")
+        late.generation = began                     # the generations it saw are over: that is no reason for another reset
+        raise late
 
     def _lead(self, what, make, flight):
         try:
             flight.value = make()
         except BaseException as err:
+            if isinstance(err, Refused) and err.generation is None:    # a nested run's own, if it has one
+                err.generation = flight.generation
             flight.error = err
             raise
         else:
             with self._lock:
-                if flight.generation == self._generation:
-                    self._kept[what] = flight.value
+                if flight.generation != self._generation:
+                    return _STALE
+                self._kept[what] = flight.value
             return flight.value
         finally:
             with self._lock:
@@ -321,7 +345,13 @@ def _ask(desk, plan_, cookie, last_event):
 def _relay(plan_, desk, last_event):
     """The hub's answer to the plan, signing in again once when it says it does not know the relay."""
     for fresh in (False, True):
-        conn, res = _ask(desk, plan_, HUB.cookie(fresh=fresh), last_event)
+        cookie = HUB.cookie(fresh=fresh)
+        known = HUB.generation                  # the hub state this cookie and desk belong to
+        try:
+            conn, res = _ask(desk, plan_, cookie, last_event)
+        except (OSError, http.client.HTTPException) as err:
+            err.generation = known
+            raise
         if res.status != 401 or fresh:
             return conn, res
         res.read()
@@ -340,6 +370,7 @@ def serve(h, method):
 
 def _serve(h, method, held):
     path = h.path.partition("?")[0]
+    seen = HUB.generation                       # what this request's 503 is about, until it has the desk
     try:
         data = None
         if method == "POST":
@@ -356,6 +387,7 @@ def _serve(h, method, held):
                 raise Refused(408, "the body did not arrive") from None
         plan_ = plan(method, h.path, data, HUB.desk)
         desk = HUB.desk()
+        seen = HUB.generation                   # a kept answer was made in this generation, or a later one
         if plan_.stream:
             STREAMS.take(client := client_of(h))
             held.append(client)
@@ -368,11 +400,11 @@ def _serve(h, method, held):
             conn, res = _relay(plan_, desk, h.headers.get("Last-Event-ID"))
         except (socket.timeout, TimeoutError):
             raise Refused(504, "the laptop's sheaf hub is slow to answer: look at the desk before pressing again") from None
-        except (OSError, http.client.HTTPException):
-            raise Refused(503, "the laptop's sheaf hub did not answer") from None
+        except (OSError, http.client.HTTPException) as err:
+            raise Refused(503, "the laptop's sheaf hub did not answer", generation=getattr(err, "generation", seen)) from None
     except Refused as why:
         if why.status == 503:
-            HUB.reset()                         # where the hub is, and its cookie, are asked for again
+            HUB.reset(seen if why.generation is None else why.generation)   # where the hub is, and its cookie, are asked for again
         log.event("desk-relay-refused", method=method, path=path, status=why.status, why=why.why)
         if why.status in (411, 413):
             h.close_connection = True

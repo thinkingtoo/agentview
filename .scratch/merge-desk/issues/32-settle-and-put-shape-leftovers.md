@@ -20,6 +20,16 @@ Reviews and heads:
 - (class c, Sonnet 27 F5, `502` and `640`) Rewritten lines and the result line are written with a bare `\n` on a CRLF page: mixed line endings.
 - (class c, Sonnet 27 F6, `760-763`) `adopt`: case-duplicate keys under an existing record entry hit a plain `continue` and are not reported.
 
+Findings of the Codex reviews of 26 and 24 (Boris, 2026-11-14), checked at the merged head and at origin/dev 63d026b:
+- (class b, Codex on 26, /home/tiroir/Projects/agentview-wt/boris-26-codex-1.md, `deskfile.py:~320`, VERIFIED at 0e20d0d and on dev) `twice` is built from `_text(line)[0]`, the text before the first `<!--`. When sheaf has put a thread in the middle of our pin line and the person pastes a plain copy of it, the two texts differ, so `_mine()` is never asked and the copy is taken for ours. The next hand-over deletes the person's copy and keeps our stale threaded line. Repro: `put` a block (pin a), put a thread after "Pinned" in our pin line (`Pinned<!-- sheaf-comment id=c1 by="T" at=2026-11-14T01:00 status=open quote="Pinned"\nhi\n--> commit: ...`), paste the plain pin line above the Recommendation, `put` again with pin b: the plain copy is gone, the threaded line with pin a stays.
+- (class c, Codex on 24, /home/tiroir/Projects/agentview-wt/boris-24-codex-1.md, `tests/test_desk_relay.py:362-369`, VERIFIED at 226d83a and on dev) `TheHubsOps.SHEAF_PYTHON` hard-codes `~/.local/share/uv/tools/sheafmd/bin/python` and skips silently when sheaf is installed elsewhere, so the guard on `COMMENT_OPS` can pass without running.
+Findings of Nuno's Sonnet round 2 on 31 (/home/tiroir/Projects/agentview-wt/nuno-31-sonnet-2.md, e68b723...b87a1c1, all three fail on the safe side: text is kept or an item stays hidden):
+- (class b) `_open_at` (31c): any unmatched `-->` later on the page (a person's `see A --> B`) makes a real left-open comment read as a closed note; the hidden item stays hidden and `put` adds a second copy. Nothing is deleted.
+- (class b) `_adoptable` (31a): a person's line with exactly one of deskships' shapes (`    - Outside GitHub: my text`) is still adopted, which text alone cannot tell apart. Find a way to tell them apart, or write it down as a known limit, as ticket 33 did.
+- (class c) `_prev_stands` (31b): a page one write behind whose Recommendation and Handed-over lines were removed is no longer judged behind, and the old pin stays as the person's.
+
+- (design, Tarek, from /home/tiroir/Projects/agentview-wt/gaspar-33/handoff-gaspar-2026-11-14.md) `deskscan.over()` (ticket 33, 0f5a61b) reads an item's own result lines through private deskfile names (`_kinds`, `_logical`, `_own`, `_orders`, `_prev_stands`, `_slot`, `_text`, `_held.record`): deskfile gets one public function that returns them.
+
 **Blocked by:** 31 (Waits on: 31; same deskfile.py)
 
 **Status:** ready-for-agent
@@ -35,4 +45,10 @@ Reviews and heads:
 - [ ] An open comment on a task line closed only by a later thread's `-->` is closed after the next hand-over, and is not left to reopen when sheaf deletes the thread (red test)
 - [ ] Class c: two result lines after `_unhidden` closes a left-open comment on the result line become one (test, or the line why not)
 - [ ] Class c: a CRLF page keeps one kind of line end for rewritten lines and the result line; `adopt` reports case-duplicate keys under an existing entry (tests)
+- [ ] Class b, from 26: a person's plain copy of our pin line, with a sheaf thread in the middle of our own pin line, is recognised as theirs: the next hand-over keeps the copy and replaces our threaded line (red test, the repro above)
+- [ ] Class c, from 24: `TheHubsOps` finds sheaf the way the relay does (the interpreter of the configured `sheaf` executable), or says why it skips (test or the line why)
+- [ ] A public `deskfile` function returns an item's own result lines, and `deskscan.over()` uses it instead of the private names `_kinds`, `_logical`, `_own`, `_orders`, `_prev_stands`, `_slot`, `_text` and `_held.record` (existing tidy tests stay green; `grep` shows no private deskfile name left in deskscan.py)
+- [ ] Class b, from 31 round 2: a stray `-->` later on the page (`see A --> B`) does not keep a left-open comment hiding its item, and `put` adds no second copy (red test)
+- [ ] Class b, from 31 round 2: a person's line shaped exactly like a ships line is told from ours, or the known limit is written under "Known limit" with the line why (test or the line why)
+- [ ] Class c, from 31 round 2: a page one write behind with its Recommendation and Handed-over lines removed is still judged behind (red test, or the line why not)
 - [ ] Each fix is red on its review's head, green after, with the commands and results in the report

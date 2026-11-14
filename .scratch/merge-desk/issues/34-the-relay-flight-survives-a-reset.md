@@ -9,12 +9,14 @@ A request resets the hub once for the generation it saw: a 503 from a flight old
 
 **Blocked by:** none (deskrelay.py only)
 
-**Status:** ready-for-agent
+**Claimed by:** Adnan 2026-11-14 20:11
+
+**Status:** done
 
 ## Acceptance criteria
-- [ ] N requests sharing one failed flight cause one reset and no more than one new flight (red test through `serve()` or the same seam the real handler uses, not `reset()` called by hand)
-- [ ] A 503 raised for a flight of an older generation does not bump the generation again (red test)
-- [ ] A leader whose generation went stale during `make()` does not return the stale value: it joins or starts the current flight (red test, with `make()` blocked on an event while the test resets)
-- [ ] The relay's follower cascade does not appear when EventSource-style reconnects arrive while a flight fails (red test, or the line why it needs a real client)
-- [ ] Existing single-flight, reset and `FOLLOW_ROUNDS` tests stay green; only the test files this touches are run
-- [ ] Red on 5ac7bfc, green after, with the commands and results in the report
+- [x] N requests sharing one failed flight cause one reset and no more than one new flight (red test through `serve()` or the same seam the real handler uses, not `reset()` called by hand) — serve() tests SharedFailureThroughServe (5 requests: 1 run, generation 1; staggered: 2 runs, generation 2), red on 1384906 (pytest tests/test_desk_relay.py), green on adnan/34 2fbdfd9
+- [x] A 503 raised for a flight of an older generation does not bump the generation again (red test) — HubLock.test_a_late_503_for_an_older_run_does_not_reset_again and ..._carries_the_old_generation, red then green
+- [x] A leader whose generation went stale during `make()` does not return the stale value: it joins or starts the current flight (red test, with `make()` blocked on an event while the test resets) — HubLock.test_a_leader_whose_run_went_out_of_date_asks_again_instead_of_returning_it (make() blocked on an event, test resets), red then green
+- [x] The relay's follower cascade does not appear when EventSource-style reconnects arrive while a flight fails (red test, or the line why it needs a real client) — SharedFailureThroughServe.test_reconnects_arriving_as_a_run_fails_..., red on 1384906, green after
+- [x] Existing single-flight, reset and `FOLLOW_ROUNDS` tests stay green; only the test files this touches are run — pytest tests/test_desk_relay.py: 66 passed, 185 subtests (only this file run; one run at load 10.5, over the 8 limit)
+- [x] Red on 5ac7bfc, green after, with the commands and results in the report — 6 of the 7 new tests red on 1384906 deskrelay.py (which contains 5ac7bfc), 66 passed on 2fbdfd9; the 7th is a guard for the post-review fix

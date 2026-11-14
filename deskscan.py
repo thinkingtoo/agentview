@@ -424,19 +424,29 @@ def settled_at(rec):
         return None
 
 
-def results(block):
-    return [l for l in block.split("\n") if deskfile.RESULT.match(l)]
+def results(it, record):
+    """The result lines of the item that AgentView wrote, as the item's record reads its block (`deskfile._kinds`,
+    the reading `settle` and `put` use): a line is ours only where the record lists its text, in the place its order
+    gives it, and a second copy of it is the person's. An item with no record, or whose page is the generation before the record's last, has none. The head of each line, its
+    threads taken out."""
+    got = (record or {}).get(deskfile._slot(it.key))
+    if got is None or deskfile._prev_stands(got, it.block):        # no record, or a write that did not finish: nothing here is proof
+        return []
+    logical = deskfile._logical(it.block)
+    kinds = deskfile._kinds(logical, deskfile._own(record, it.key, it.block), orders=deskfile._orders(got))
+    return [deskfile._text(l)[0] for k, l in zip(kinds, logical) if k == ("result",)]
 
 
-def over(it, rec, now):
-    """Is the item's story over, by its last log record, and a day ago?"""
+def over(it, rec, now, record):
+    """Is the item's story over, by its last log record, and a day ago? `record` is what AgentView wrote
+    (`deskfile.edit` holds it): a result line the person typed is no proof."""
     at = settled_at(rec)
     if at is None or now - at < DAY or it.ticked or open_thread(it.block):
         return False
     ev = rec["event"]
     if ev == "withdrawn":
         return True
-    said = results(it.block)
+    said = results(it, record)
     if ev == "merged":
         return not it.key.startswith("install:") and any(l.startswith(("  - Merged", "  - Already merged")) for l in said)
     if ev == "installed":
@@ -466,7 +476,7 @@ def tidy(now=None):
             def change(text, k=k):
                 dropped.clear()
                 found = [i for i in deskfile.items_in(text) if i.key == k]
-                if len(found) != 1 or not whole(found[0].block) or not over(found[0], last[k], now):
+                if len(found) != 1 or not whole(found[0].block) or not over(found[0], last[k], now, getattr(deskfile._held, "record", None)):
                     return text
                 dropped.append(k)
                 return deskfile.drop(text, k)

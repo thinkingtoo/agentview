@@ -9,8 +9,8 @@
 
 **Claimed by:** Leire 2026-11-14
 
-**Status:** open
+**Status:** done
 
-- [ ] test_deskwatch: a missing classifier file skips the digest tests instead of erroring the module (run with the classifier path pointed at a missing file)
-- [ ] the .git/HEAD test uses a stub classifier that records the checkout it was given and its HEAD, and asserts on that record
-- [ ] the digest-mark test covers wrong indentation, suffix text and non-hex text, each still a change
+- [x] test_deskwatch: a missing classifier file skips the digest tests instead of erroring the module (run with the classifier path pointed at a missing file) (leire/30 9b70ce0: helper classifier_has_the_digest(); with HOME pointed at an empty dir the module loads and that test is skipped=1)
+- [x] the .git/HEAD test uses a stub classifier that records the checkout it was given and its HEAD, and asserts on that record (leire/30: stub classifier records HEAD, workflows and argv; mutation without the HEAD write fails it)
+- [x] the digest-mark test covers wrong indentation, suffix text and non-hex text, each still a change (leire/30: nine near-miss lines plus the exact control; loosening STRUCTURE_LINE fails two of them)

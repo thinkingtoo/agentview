@@ -31,12 +31,14 @@ Order: this ticket goes first; the ticket after it waits on it, same file.
 
 **Claimed by:** Nuno 2026-11-14 20:10
 
-**Status:** in-progress
+**Status:** done
 
 ## Acceptance criteria
-- [ ] A person's 4-space note under What ships on a legacy page is not adopted, and a hand-over after `adopt` keeps it (red test on the 19a page, with the note `    - NOTE: deploy manually`)
-- [ ] A page where the person changed two lines of our current generation and added a copy of an old pin line is not judged behind, and a hand-over keeps the copy (red test, 27a scenario)
-- [ ] After failed writes A to B and B to C with the page at A, a successful write records `prev` as one generation, never C+B+A, and a person's copy of a B or A line is kept once the page is at C (red test)
-- [ ] The 28a text above: `drop` of `a/b#9` returns the note's lines intact, and `put` leaves the note closed and exposes no item from it (red tests on the exact string above, both functions)
-- [ ] An open comment closed only by a later thread's `-->` is still told apart from a closed note (the existing tests of ticket 28 stay green)
-- [ ] Each fix is red on its review's head, green after, with the commands and results in the report
+- [x] A person's 4-space note under What ships on a legacy page is not adopted, and a hand-over after `adopt` keeps it (red test on the 19a page, with the note `    - NOTE: deploy manually`)
+- [x] A page where the person changed two lines of our current generation and added a copy of an old pin line is not judged behind, and a hand-over keeps the copy (red test, 27a scenario)
+- [x] After failed writes A to B and B to C with the page at A, a successful write records `prev` as one generation, never C+B+A, and a person's copy of a B or A line is kept once the page is at C (red test)
+- [x] The 28a text above: `drop` of `a/b#9` returns the note's lines intact, and `put` leaves the note closed and exposes no item from it (red tests on the exact string above, both functions)
+- [x] An open comment closed only by a later thread's `-->` is still told apart from a closed note (the existing tests of ticket 28 stay green)
+- [x] Each fix is red on its review's head, green after, with the commands and results in the report
+
+Evidence (Nuno, 2026-11-14): branch nuno/31 head b87a1c1 (on origin). New tests are red on the review heads 5059517, 6501f8b and on 3a2b72f (the prev-generation test is red on 5059517 and 6501f8b only: an earlier ticket already fixed it on dev) and green on b87a1c1. Reviews: /home/tiroir/Projects/agentview-wt/nuno-31-codex-1.md (3 class a, all fixed, red tests first), round 2 by a fresh Sonnet (Codex out of tokens until Nov 15 01:00): /home/tiroir/Projects/agentview-wt/nuno-31-sonnet-2.md, no class a. Codex run on the final head is still owed (sensitive).
