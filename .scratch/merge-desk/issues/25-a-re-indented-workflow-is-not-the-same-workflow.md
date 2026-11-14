@@ -5,7 +5,9 @@ Also from Codex on 21's merged diff (/home/tiroir/Projects/agentview-wt/yara-21-
 
 **Blocked by:** 22
 
-**Status:** ready-for-agent
+**Claimed by:** Bram 2026-11-14 16:11
+
+**Status:** in-progress
 
 - [ ] Moving a step under another job between hand-over and press refuses it (test through deskwatch.check_ships)
 - [ ] An unchanged workflow keeps the same digest across runs and machines (test)
