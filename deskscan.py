@@ -14,10 +14,14 @@ base branch): on a repo whose base deploys it is a Deploy item with its "What sh
 and the log's `ready` record keeps the raw lines and the base for the press to compare. A PR whose base is missing
 or whose reading fails is left out for the day and logged, never a Merge item by default. The scan cannot see a
 deploy that runs outside GitHub, so the press refuses a found item (a `ready` record by the scan) unless its repo is
-in `desk_found_repos` (`deskwatch.vouched`).
+in `desk_found_repos` (`deskwatch.vouched`). The press tells a found item by `found: true` on its `ready` record, and
+by `by == BY` for the records ticket 12 wrote before that field; a test pins the wording of `BY`. A found item of
+ticket 08 with no ships record (no `ships` list) is written again by the next scan while nothing but the scan has
+touched it (`stale_found`).
 
 The scan is bounded: at most `MAX_REPOS` repos, `PER_REPO` PRs read from each and `TOTAL` read in all, whatever
-`gh` returns. One repo's `gh` failure (or an answer that cannot be read) is logged and the next repo goes on.
+`gh` returns. One repo's `gh` failure (or an answer that cannot be read, or any other error it causes) is logged and the next
+repo goes on; so is one PR whose handling fails, and the next PR goes on.
 
 **The tidy** removes an item from the page when its story is over and a day has passed since the log said so:
 `merged` with its "Merged as" line on the page, `installed` with its "Installed as" line and the tool's receipt

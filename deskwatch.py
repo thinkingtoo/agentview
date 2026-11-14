@@ -204,7 +204,7 @@ def check_ships(k, repo, base, pinned):
     ready = handed_over(k, pinned)
     if ready is None or not isinstance(ready.get("base"), str):
         raise NotMerged("no record of what ships was kept at the hand-over; hand it over again")
-    if (ready.get("found") is True or ready.get("by") == deskscan.BY) and not vouched(repo):     # the scan cannot see a deploy that runs outside GitHub
+    if (ready.get("found") is True or ready.get("by") == deskscan.BY) and not vouched(repo):     # `found` since ticket 17, `by` for older records; the scan cannot see a deploy that runs outside GitHub
         raise NotMerged("found by the scan on a repo that may ship outside GitHub: ask the session that made the PR to hand it over")
     if ready["base"] != base:
         raise NotMerged(f"the base branch changed after the hand-over (handed over into {ready['base']}, now {base}); hand it over again")
