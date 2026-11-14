@@ -9,6 +9,7 @@ guards of AgentView's own routes unchanged. No sheaf, no network beyond loopback
 import http.client
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -598,6 +599,15 @@ class HubLock(unittest.TestCase):
         t.join(5)
         self.assertEqual(([d.port for d in out], errs, len(runs)), ([4002], [], 2))   # not the former port 4001
 
+    def test_a_refusal_a_nested_run_already_tagged_keeps_its_generation(self):
+        hub = self.hub()
+
+        def make():
+            raise deskrelay.Refused(503, "inner", generation=7)       # the desk run inside a cookie run, later than it
+        with self.assertRaises(deskrelay.Refused) as caught:
+            hub._ask("cookie", make)
+        self.assertEqual(caught.exception.generation, 7)
+
 
 class SharedFailureThroughServe(unittest.TestCase):
     """The real `SheafHub` behind `serve()`: the request path resets the hub on a 503, not the test by hand."""
@@ -630,6 +640,54 @@ class SharedFailureThroughServe(unittest.TestCase):
         for t in threads:
             t.join(10)
         self.assertEqual((sorted(got), len(runs), hub._generation), ([503] * 5, 1, 1))
+
+    def test_reconnects_arriving_as_a_run_fails_start_one_new_run_and_do_not_reset_it(self):
+        gates, runs = [threading.Event(), threading.Event()], []
+        for g in gates:
+            self.addCleanup(g.set)
+
+        def locate(self_):
+            runs.append(1)
+            gates[len(runs) - 1].wait(10)
+            raise deskrelay.Refused(503, "the desk's hub could not be found: down")
+        hub = deskrelay.SheafHub()
+        for patcher in (mock.patch.object(deskrelay.SheafHub, "_locate", locate), mock.patch.object(deskrelay, "HUB", hub)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        got = []
+        spawn = lambda: threading.Thread(target=lambda: got.append(self.call("GET", PAGE)[0].status), daemon=True)
+        first = [spawn() for _ in range(3)]
+        for t in first:
+            t.start()
+        time.sleep(0.4)
+        gates[0].set()                                                # the run fails: its followers wake one by one
+        later = [spawn() for _ in range(3)]                           # EventSource reconnects keep arriving
+        for t in later:
+            t.start()
+            time.sleep(0.02)
+        time.sleep(0.4)
+        gates[1].set()
+        for t in first + later:
+            t.join(10)
+        self.assertEqual((sorted(got), len(runs), hub._generation), ([503] * 6, 2, 2))   # one run, one reset, per failure
+
+    def test_a_dead_hub_found_after_another_request_reset_is_still_forgotten(self):
+        dead = socket.socket()
+        dead.bind(("127.0.0.1", 0))
+        port = dead.getsockname()[1]
+        dead.close()                                                  # nothing listens there
+        hub, runs = deskrelay.SheafHub(), []
+
+        def locate(self_):
+            runs.append(1)
+            if len(runs) == 1:
+                hub.reset()                                           # another request's 503 lands while this one looks
+            return DESK._replace(port=port)
+        for patcher in (mock.patch.object(deskrelay.SheafHub, "_locate", locate), mock.patch.object(deskrelay, "HUB", hub)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.assertEqual(self.call("GET", PAGE)[0].status, 503)
+        self.assertEqual((len(runs), hub._generation), (2, 2))        # found in generation 1, failed there, reset from there
 
 
 class StreamCap(unittest.TestCase):

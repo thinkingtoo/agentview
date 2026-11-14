@@ -57,10 +57,10 @@ PASSED = ("Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-
 
 
 class Refused(Exception):
-    def __init__(self, status, why, headers=()):
+    def __init__(self, status, why, headers=(), generation=None):
         super().__init__(why)
         self.status, self.why, self.headers = status, why, headers
-        self.generation = None                  # the hub's generation this refusal was about, when the hub knows it
+        self.generation = generation                # the hub's generation this refusal was about, when the hub knows it
 
 
 class Desk(NamedTuple):
@@ -215,7 +215,7 @@ class SheafHub:
         try:
             flight.value = make()
         except BaseException as err:
-            if isinstance(err, Refused):
+            if isinstance(err, Refused) and err.generation is None:    # a nested run's own, if it has one
                 err.generation = flight.generation
             flight.error = err
             raise
@@ -345,7 +345,13 @@ def _ask(desk, plan_, cookie, last_event):
 def _relay(plan_, desk, last_event):
     """The hub's answer to the plan, signing in again once when it says it does not know the relay."""
     for fresh in (False, True):
-        conn, res = _ask(desk, plan_, HUB.cookie(fresh=fresh), last_event)
+        cookie = HUB.cookie(fresh=fresh)
+        known = HUB.generation                  # the hub state this cookie and desk belong to
+        try:
+            conn, res = _ask(desk, plan_, cookie, last_event)
+        except (OSError, http.client.HTTPException) as err:
+            err.generation = known
+            raise
         if res.status != 401 or fresh:
             return conn, res
         res.read()
@@ -364,7 +370,7 @@ def serve(h, method):
 
 def _serve(h, method, held):
     path = h.path.partition("?")[0]
-    seen = HUB.generation                       # what this request's 503, if it gets one, is about
+    seen = HUB.generation                       # what this request's 503 is about, until it has the desk
     try:
         data = None
         if method == "POST":
@@ -381,6 +387,7 @@ def _serve(h, method, held):
                 raise Refused(408, "the body did not arrive") from None
         plan_ = plan(method, h.path, data, HUB.desk)
         desk = HUB.desk()
+        seen = HUB.generation                   # a kept answer was made in this generation, or a later one
         if plan_.stream:
             STREAMS.take(client := client_of(h))
             held.append(client)
@@ -393,8 +400,8 @@ def _serve(h, method, held):
             conn, res = _relay(plan_, desk, h.headers.get("Last-Event-ID"))
         except (socket.timeout, TimeoutError):
             raise Refused(504, "the laptop's sheaf hub is slow to answer: look at the desk before pressing again") from None
-        except (OSError, http.client.HTTPException):
-            raise Refused(503, "the laptop's sheaf hub did not answer") from None
+        except (OSError, http.client.HTTPException) as err:
+            raise Refused(503, "the laptop's sheaf hub did not answer", generation=getattr(err, "generation", seen)) from None
     except Refused as why:
         if why.status == 503:
             HUB.reset(seen if why.generation is None else why.generation)   # where the hub is, and its cookie, are asked for again
