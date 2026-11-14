@@ -4,7 +4,9 @@
 
 **Blocked by:** 16
 
-**Status:** ready-for-agent
+**Claimed by:** Nuno 2026-11-14 02:59
+
+**Status:** in-progress
 
 - [ ] A person's 4-space note under What ships survives a re-hand-over (test)
 - [ ] A person line shaped like "  - Recommendation: ..." survives (test)
