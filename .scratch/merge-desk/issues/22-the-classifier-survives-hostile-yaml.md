@@ -6,6 +6,8 @@
 3. Printing a non-ASCII hint line under an ASCII stdout exits 1 (read as "nothing fires" by a push check): write with errors replaced.
 4. (Carried from 18/21) a re-indent that moves a key under another mapping is not caught by the desk's hint comparison; fixing it changes --full output, so it needs deskships to change with it.
 
+**Also from 21 (Yara):** since 21 every pattern with more than 3 quantifiers reads as Unsure (fires), so `v[0-9]+.[0-9]+.[0-9]+-rc[0-9]+` over-asks. A linear-time matcher for GitHub's filter syntax would let those read normally; `a+aa+aa+aa+aa+b` against 320 'a' (pinned in test_branch_deploys.py) must stay fast.
+
 **Blocked by:** 21
 
 **Status:** ready-for-agent
