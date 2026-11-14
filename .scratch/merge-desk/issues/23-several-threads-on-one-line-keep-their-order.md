@@ -9,7 +9,9 @@
 
 **Blocked by:** 19, 27 (same deskfile.py carry code: one at a time, Tarek)
 
-**Status:** ready-for-agent
+**Claimed by:** Rune 2026-11-14 16:17
+
+**Status:** in-progress
 
 - [ ] Two threads and the person's words on one line keep their order across two re-hand-overs (test)
 - [ ] A non-sheaf HTML comment is never marked orphan (test)

@@ -7,7 +7,7 @@
 - (class c, c3) A CRLF page ends with mixed line endings after a hand-over (our new lines are LF). Also `adopt`'s `done` and `skipped` lists are filled twice when `edit` retries (this one predates ticket 27).
 - (class b, Sonnet round 2, predates 27) `TASK` ends in `(?::|$)` and `$` does not match before a `\r`: a colon-less task line on a CRLF page (`- [ ] Merge a/b#1\r\n`, `- [ ] Install foo\r\n`) is not read as an item. Check first whether AgentView writes a task line without a colon.
 
-**Blocked by:** 27
+**Blocked by:** 27, 23 (same deskfile.py carry code: one at a time, Tarek)
 
 **Status:** open
 
