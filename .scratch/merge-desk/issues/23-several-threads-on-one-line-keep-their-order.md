@@ -11,9 +11,11 @@
 
 **Claimed by:** Rune 2026-11-14 16:17
 
-**Status:** in-progress
+**Status:** done
 
 - [x] Two threads and the person's words on one line keep their order across two re-hand-overs (test): tests/test_desk.py ThreadsOnOneLine.test_two_threads_and_the_persons_words_on_one_line_keep_their_order_across_two_hand_overs, red on f4866b0, passes at 21658f4 (branch rune/23)
 - [x] A non-sheaf HTML comment is never marked orphan (test): ThreadsOnOneLine.test_a_comment_that_is_not_a_sheaf_thread_is_never_marked_orphan, red before, passes at 21658f4
 - [x] An unclosed `<!--` in a person's line leaves the following items intact (test): ThreadsOnOneLine.test_an_unclosed_comment_in_a_persons_line_leaves_the_following_items_intact, red before, passes at 21658f4
 - [x] GLOSSARY has Record and Orphan: GLOSSARY.md already has 'Desk record' (the .merge-desk.own.json) and 'Orphan (desk)' on origin/dev; no edit needed
+
+**Done 2026-11-14 (Rune):** merged into dev as 21658f4 (code; fast-forward, origin/dev was f4866b0), restarted 16:32:08, MainPID 1142321 (was 782253), 8765 answers 200, claude count 45 before and after with identical pids, startup line `desk /usr/bin/gh`. Tests: tests/test_desk (128), test_deskwatch (83), test_deskships (42), test_deskinstall, test_deskscan, test_deskrotate all OK. History check: last line `clean`. Sonnet review: /home/tiroir/Projects/agentview-wt/rune-23-sonnet-1.md, GO. `hooks/desk status` identical around the restart except install:sheafmd, re-handed over by the scan at 16:31:07 (pinned 027198f -> 0f3a90a), before the restart; #293 still reads 11ff860. Leftovers: ticket 28.
