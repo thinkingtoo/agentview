@@ -12,12 +12,12 @@ Note: deskscan.py only; may run beside the other open tickets. If it needs a `de
 
 **Claimed by:** Gaspar 2026-11-14 20:11
 
-**Status:** in-progress
+**Status:** done
 
 ## Acceptance criteria
-- [ ] A person's `  - Merged at 12:00` line, with an old `merged` event and no result line of ours in the record, does not make `over()` true, and `tidy()` keeps the item and its notes (red test)
-- [ ] The same for the `installed` branch: a person's `  - Installed` line does not make the story over (red test)
-- [ ] An item whose result line is ours (the record says so), a day after the event, is still tidied (existing tests stay green)
-- [ ] An item with no ownership record is not tidied on the strength of its result lines (red test)
-- [ ] `tidy()` still judges again under the desk lock on the text the drop is made on (existing test stays green)
-- [ ] Red on 5059517, green after, with the commands and results in the report
+- [x] A person's `  - Merged at 12:00` line, with an old `merged` event and no result line of ours in the record, does not make `over()` true, and `tidy()` keeps the item and its notes (red test) — test_a_merged_line_the_person_typed_does_not_make_the_story_over (+ ..._wrote_over_ours...): red on 1384906, green on e510918
+- [x] The same for the `installed` branch: a person's `  - Installed` line does not make the story over (red test) — test_an_installed_line_the_person_typed... and ..._added_by_the_person_to_an_item_we_never_settled...: red on 1384906, green
+- [x] An item whose result line is ours (the record says so), a day after the event, is still tidied (existing tests stay green) — the 116 existing tests of tests/test_deskscan.py stay green (merged item older than a day leaves; install item at its pin leaves)
+- [x] An item with no ownership record is not tidied on the strength of its result lines (red test) — test_an_item_with_no_record_is_not_tidied_on_the_strength_of_its_result_lines: red on 1384906, green
+- [x] `tidy()` still judges again under the desk lock on the text the drop is made on (existing test stays green) — existing tidy tests green; change() still calls over() on the text under the lock
+- [x] Red on 5059517, green after, with the commands and results in the report — on dev 1384906 (5059517's deskscan is what dev holds): `python3 -I tests/test_deskscan.py` = 6 FAILED of 124 with deskscan.py from 1384906; on e510918 = 125 tests OK
