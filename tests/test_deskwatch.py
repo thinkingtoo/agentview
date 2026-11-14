@@ -137,7 +137,7 @@ class Case(unittest.TestCase):
         with deskfile.locked():
             deskfile.put_item(k, desk.item_block(repo, n, f"what {n} does", "merge", "CI green", pinned, "dev", after,
                                                  "Faisal", "2026-11-13 10:40"))
-            desk.log("ready", k, pinned=pinned, ships=[])
+            desk.log("ready", k, pinned=pinned, ships=[], base="dev")
         return k
 
     def workflow(self, name, text, repo=REPO):
@@ -156,7 +156,7 @@ class Case(unittest.TestCase):
         with deskfile.locked():
             deskfile.put_item(k, desk.item_block(repo, n, f"what {n} does", "merge", "CI green", pinned, "dev", None,
                                                  "Faisal", "2026-11-13 10:40", ships=ships))
-            desk.log("ready", k, pinned=pinned, ships=ships)
+            desk.log("ready", k, pinned=pinned, ships=ships, base="dev")
         return k
 
     def tick_box(self, n, repo=REPO):
@@ -295,11 +295,28 @@ class Ships(Case):
         k = self.hand_over(272)
         deskfile.edit(lambda t: t)
         lines = [l for l in desk.log_path().read_text().splitlines()]
-        desk.log_path().write_text("\n".join(l.replace(', "ships": []', "") for l in lines) + "\n")
+        desk.log_path().write_text("\n".join(l.replace(', "ships": [], "base": "dev"', "") for l in lines) + "\n")
         self.tick_box(272)
         deskwatch.tick()
         self.assertEqual(self.merge_calls(), [])
         self.assertRegex(self.item(272).block, r"Not merged: .*hand it over again")
+
+    def test_a_pr_retargeted_after_the_hand_over_is_refused(self):
+        self.deploy()
+        self.pr(272)
+        p = self.prs / f"{REPO.replace('/', '_')}#272.json"
+        p.write_text(p.read_text().replace('"dev"', '"elsewhere"'))
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: .*base")
+
+    def test_a_log_line_with_a_unicode_line_separator_in_it_is_still_one_record(self):
+        k = self.deploy()
+        desk.log("withdrawn", "x/y#1", by="a\u2028b\x85c")
+        self.assertEqual([r["event"] for r in desk.history(k)], ["ready"])
+        self.assertEqual(len(desk.history("x/y#1")), 1)
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
 
     def test_a_merge_item_stays_a_merge_item_when_the_workflows_only_test(self):
         self.pr(272)

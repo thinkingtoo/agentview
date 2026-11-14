@@ -175,12 +175,12 @@ def taken_back(k, pinned):
         raise TakenBack("the press was taken back before the merge")
 
 
-def handed_over_ships(k, pinned):
-    """The raw lines `desk ready` read for this pinned commit and stored in the log, or None for a hand-over made
-    before they were stored."""
+def handed_over(k, pinned):
+    """The `ready` record of this pinned commit: it holds the raw lines `desk ready` read and the base they were read
+    from. None when there is none, or when it predates them."""
     ready = next((r for r in reversed(desk.history(k)) if r["event"] == "ready" and r.get("pinned") == pinned), None)
     lines = ready.get("ships") if ready else None
-    return lines if isinstance(lines, list) and all(isinstance(l, str) for l in lines) else None
+    return ready if isinstance(lines, list) and all(isinstance(l, str) for l in lines) else None
 
 
 def check_ships(k, repo, base, pinned):
@@ -190,9 +190,12 @@ def check_ships(k, repo, base, pinned):
     shows nothing must still ship nothing."""
     if not base:
         raise NotMerged("GitHub gave no base branch to read what ships from")
-    shown = handed_over_ships(k, pinned)
-    if shown is None:
+    ready = handed_over(k, pinned)
+    if ready is None or not isinstance(ready.get("base"), str):
         raise NotMerged("no record of what ships was kept at the hand-over; hand it over again")
+    if ready["base"] != base:
+        raise NotMerged(f"the base branch changed after the hand-over (handed over into {ready['base']}, now {base}); hand it over again")
+    shown = ready["ships"]
     try:
         now = deskships.read(repo, base, pinned, gh, commits=bool(shown))
     except deskships.Unreadable as why:
