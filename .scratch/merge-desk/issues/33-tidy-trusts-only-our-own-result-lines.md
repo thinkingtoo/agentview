@@ -21,3 +21,6 @@ Note: deskscan.py only; may run beside the other open tickets. If it needs a `de
 - [x] An item with no ownership record is not tidied on the strength of its result lines (red test) — test_an_item_with_no_record_is_not_tidied_on_the_strength_of_its_result_lines: red on 1384906, green
 - [x] `tidy()` still judges again under the desk lock on the text the drop is made on (existing test stays green) — existing tidy tests green; change() still calls over() on the text under the lock
 - [x] Red on 5059517, green after, with the commands and results in the report — on dev 1384906 (5059517's deskscan is what dev holds): `python3 -I tests/test_deskscan.py` = 6 FAILED of 124 with deskscan.py from 1384906; on e510918 = 125 tests OK
+
+## Known limit
+If our result line is removed and the person types the identical text at its place, neither the text nor the record's order can tell it from ours, and `tidy()` reads it as ours. Accepted by Tarek 2026-11-14.
