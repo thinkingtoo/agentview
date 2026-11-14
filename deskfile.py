@@ -117,6 +117,13 @@ def locked(file=None):
             _held.depth = 0
 
 
+def _refuse_unreadable_record():
+    """`put` and `drop` delete lines on the strength of the record: a record `edit` found but could not read means
+    nothing is known to be AgentView's, and writing one now would replace it with this item's entry alone."""
+    if getattr(_held, "unreadable", None):
+        raise OSError(f"{_held.unreadable} cannot be read; look at it before handing over or withdrawing")
+
+
 def _read(file):
     try:
         return file.read_text(encoding="utf-8")
@@ -163,10 +170,17 @@ def _open_at(text):
     only sits inside the note."""
     marks = list(re.finditer(r"<!--|-->", text))
 
+    def next_item(pos):
+        return next((o for o, l, _ in _walk(text) if o > pos and (TASK.match(l) or HEADING.match(l))), len(text))
+
     def closed_after(n):
-        """Whether an arrow with no opener left stands after mark `n`: the comment the thread sits in was closed by its own."""
-        depth = 0
+        """Whether an arrow with no opener left stands after mark `n`, before the next item or heading: the comment the
+        thread sits in was closed by its own. One further down the page (`see A --> B` under another item) is a
+        stray: it closes nothing that was open here."""
+        depth, limit = 0, next_item(marks[n].end())
         for m in marks[n + 1:]:
+            if m.start() >= limit:
+                break
             if m.group(0) == "<!--":
                 depth += 1
             elif not depth:
@@ -179,7 +193,8 @@ def _open_at(text):
         if m.group(0) == "<!--":
             if not inside:
                 at = m.start()
-            elif THREAD.match(text, m.start()) and any(TASK.match(l) or HEADING.match(l) for l in text[at:m.start()].split("\n")[1:]):
+            elif THREAD.match(text, m.start()) and (any(TASK.match(l) or HEADING.match(l) for l in text[at:m.start()].split("\n")[1:])
+                                                    or TASK.match(text[text.rfind("\n", 0, at) + 1:])):     # an item or heading came between, or the comment was left open on a task line
                 broken = True
             inside = True
         else:
@@ -299,16 +314,23 @@ def _split(line):
     return (line, "") if at < 0 else (line[:at], line[at:])
 
 
+def _head(line):
+    """The text of a logical line before its first `<!--`, without its line end. The `What ships:` header is read
+    without the space a person or a thread may leave after it (`ships_of` reads it so)."""
+    head = _split(line)[0].rstrip("\r\n")
+    return SHIPS_HEADER if head.rstrip() == SHIPS_HEADER else head
+
+
 def _heads(block):
     """The text of each logical line of a block before any thread on it: what AgentView wrote, when the block is its own."""
-    return [_split(l)[0].rstrip("\r\n") for l in _logical(block) if l.strip()]
+    return [_head(l) for l in _logical(block) if l.strip()]
 
 
 def _text(line):
     """(head, whole): the line before its first `<!--`, and the line with every closed thread taken out. They differ
     when sheaf put a thread in the middle of the line, after the words it quotes; `whole` is then the line as
     AgentView wrote it. With a comment left open, `whole` is the head."""
-    head = _split(line)[0].rstrip("\r\n")
+    head = _head(line)
     bare = CLOSED.sub("", line).rstrip("\r\n")
     return head, (head if "<!--" in bare else bare)
 
@@ -386,16 +408,16 @@ def _kinds(logical, own=None, tails=None, orders=None):
             tails.extend(None for _ in logical)
         return [None for _ in logical]
     own = Counter(own)
-    texts = []
-    for i, line in enumerate(logical):
-        head = _text(line)[0]
-        texts.append(re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", head, count=1) if i == 0 else head)
-    twice = {h for h, n in Counter(texts).items() if n > 1 and h.strip()}
-    mine = _mine(texts, orders) if orders and twice else None       # who of identical lines is ours: the record's order says
-    for i, line in enumerate(logical):
+
+    def read(i, line):
+        """(head, mid) of a logical line: the text that is AgentView's on it, and the words the person typed after it
+        when a thread sits in the middle of its line (None when it has none)."""
         head, whole = _text(line)
         if i == 0:                                               # the box is the person's to tick: a ticked task line is still ours
             head, whole = (re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", t, count=1) for t in (head, whole))
+        if own[head] <= 0 < own[head.rstrip()] and "<!--" in line:      # a space before a comment on our line: the comment is the person's
+            head = head.rstrip()
+            whole = whole.rstrip() if whole != head else head
         mid = None
         if whole != head and own[head] <= 0:
             if own[whole] > 0:
@@ -405,8 +427,12 @@ def _kinds(logical, own=None, tails=None, orders=None):
                 if got is not None:
                     mid = whole[len(got):]
                     whole = got
-        if mid is not None:
-            head = whole
+        return (whole if mid is not None else head), mid
+    texts = [read(i, line)[0] for i, line in enumerate(logical)]      # a line with a thread in its middle counts as the line it is, so a plain copy of it is seen as the second
+    twice = {h for h, n in Counter(texts).items() if n > 1 and h.strip()}
+    mine = _mine(texts, orders) if orders and twice else None       # who of identical lines is ours: the record's order says
+    for i, line in enumerate(logical):
+        head, mid = read(i, line)
         ours = own[head] > 0 and not (mine is not None and head in twice and i not in mine)      # a copy of ours that the order says is not
         if not ours:
             kind = None
@@ -669,6 +695,25 @@ def _own(record, key, block=None):
     return Counter(got["lines"])
 
 
+def own_results(record, key, block):
+    """The result lines AgentView wrote in `block`, the page's block of the item `key`, as `record` reads it: the head
+    of each, its threads taken out. A line is the record's only where it lists its text, in the place its order gives
+    it, and a second copy of it is the person's. An item with no record has none; neither has one whose page may be the
+    generation before the record's last (`_prev_may_stand`: a write that may not have finished is no proof, and
+    for a reader that deletes nothing, in doubt means keep the item)."""
+    got = (record or {}).get(_slot(key))
+    if got is None or _prev_may_stand(got, block):
+        return []
+    logical = _logical(block)
+    kinds = _kinds(logical, _own(record, key, block), orders=_orders(got))
+    return [_text(l)[0] for k, l in zip(kinds, logical) if k == ("result",)]
+
+
+def held_record():
+    """The record of what AgentView wrote, as `edit` holds it for the change it is applying; None outside one."""
+    return getattr(_held, "record", None)
+
+
 def _record_block(record, key, block, at=None, behind=False):
     """`at` is, for each line of `block`, how many identical lines stand before it on the page it is written onto
     (`carry` gives it): the record keeps it, so a copy of a line the person puts next to ours cannot take its place
@@ -688,6 +733,7 @@ def put(text, key, block, section="merge", record=None):
     added at the end of its section. A section that is not there yet is made. `record` is what AgentView wrote last
     (`edit` gives it); it is brought up to date with `block`."""
     record = getattr(_held, "record", None) if record is None else record
+    _refuse_unreadable_record()
     if not block.endswith("\n"):
         block += "\n"
     text = _unhidden(text, key)
@@ -716,7 +762,8 @@ def put(text, key, block, section="merge", record=None):
                len(text))
     nxt = end < len(text)
     body = text[at:end]
-    tail = body[len(body.rstrip("\r\n")):]          # the blank line before the next heading
+    tail = body[len(body.rstrip("\r\n")):]          # the line end of the last line and the blank line before the next heading
+    tail = tail[len(nl):] if tail.startswith(nl) else tail      # the new block brings its own line end
     new = body.rstrip("\r\n") + (nl if body.strip() else "") + block
     return _unhidden(text[:at] + new + (tail if nxt else "") + text[end:], key)           # a comment left open above it would hide it
 
@@ -731,6 +778,7 @@ def _heading_end(text, heading):
 
 def drop(text, key, record=None):
     record = getattr(_held, "record", None) if record is None else record
+    _refuse_unreadable_record()
     text = _unhidden(text, key)
     for k, start, end in _spans(text):
         if k == key:
@@ -747,8 +795,9 @@ RESULT = re.compile(r"^  - (?:(?:Already merged|Merged)(?: as [0-9a-f]{7})? at \
 def settle(text, key, result, untick=False, pinned=None, record=None):
     """`text` with the result of a press written as the last sub-line of item `key` (the
     last result sub-line of an earlier press is replaced), and its box unticked when `untick`; with `pinned`, only an item still pinned at that commit. Text with
-    no such item comes back as it was. A result line is replaced only if AgentView wrote it (the record says so, else
-    its shape); the new one goes in the record."""
+    no such item comes back as it was. A result line is replaced only if the record says AgentView wrote it, whatever
+    its shape, wherever it stands in the block, a thread on it or not; with no record of the item nothing is its own,
+    so the new result goes after the lines that are there. The new one goes in the record."""
     record = getattr(_held, "record", None) if record is None else record
     text = _unhidden(text, key)
     for k, start, end in _spans(text):
@@ -766,13 +815,14 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         trailing = []
         while len(kept) > 1 and not kept[-1].strip():                    # blank lines after the item (a lone `\r` on a CRLF page) stay after the result
             trailing.insert(0, kept.pop())
-        at = len(kept) - 1                                              # our line is always the last one, bar the person's comments after it
-        while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at], re.S):
-            at -= 1
-        own, left, cr, put_at = _own(record, k, block), [], "\r" if crlf else "", None
-        head, rest = _split(kept[at])
-        whole = _text(kept[at])[1]                                       # the line with its threads out: a thread in the middle of our words does not make them another line
-        if RESULT.match(whole) and own is not None and own[whole] > 0:
+        got = (record or {}).get(_slot(k))
+        own = _own(record, k, block)
+        kinds = _kinds(kept, own, orders=None if got is None else _orders(got))
+        at = next((i for i in range(len(kept) - 1, 0, -1) if kinds[i] == ("result",)), None)      # the result AgentView wrote: wherever it stands among the person's lines, comments and blank lines
+        left, cr, put_at = [], "\r" if crlf else "", None
+        if at is not None:
+            head, rest = _split(kept[at])
+            whole = _text(kept[at])[1]                                   # the line with its threads out: a thread in the middle of our words does not make them another line
             del kept[at]
             put_at = at                                                  # the new result goes where the old one stood, its orphaned threads after it
             if whole == head:
@@ -814,7 +864,9 @@ def edit(change, file=None):
     `change` read and update the record of what AgentView wrote; it is saved beside the file, before the file."""
     with locked(file) as f:
         stored = _load_record(f)
-        mine = getattr(_held, "record", None)
+        mine, was = getattr(_held, "record", None), getattr(_held, "unreadable", None)
+        rec = f.parent / RECORD
+        _held.unreadable = rec if rec.exists() and not stored and not _is_empty_record(rec) else None
         try:
             # Sheaf writes this file too, with a lock of its own: a tick or a comment that lands
             # between our read and our replace would be lost, so look again just before replacing.
@@ -824,8 +876,8 @@ def edit(change, file=None):
                 after = change(before)
                 if after != before and _read(f) != before:
                     continue
-                if record != stored and not lines.write_atomic(f.parent / RECORD, json.dumps(record)):
-                    raise OSError(f"could not write {f.parent / RECORD}")
+                if record != stored and not _held.unreadable and not lines.write_atomic(rec, json.dumps(record)):      # a record that cannot be read is left as it is
+                    raise OSError(f"could not write {rec}")
                 if after == before:
                     return after
                 if not lines.write_atomic(f, after):
@@ -833,7 +885,7 @@ def edit(change, file=None):
                 return after
             raise OSError(f"{f} keeps changing under us; try again")
         finally:
-            _held.record = mine
+            _held.record, _held.unreadable = mine, was
 
 
 def _only_results(entry):
@@ -873,7 +925,7 @@ def _adoptable(block):
     task line is taken with its box unticked, as AgentView wrote it."""
     out, seen, in_ships, parent = [], Counter(), False, ""
     for i, line in enumerate(_logical(block)):
-        head = _split(line)[0].rstrip("\r\n")
+        head = _head(line)
         if i == 0:
             out.append(re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", head, count=1))
             continue
@@ -931,11 +983,14 @@ def adopt(file=None):
         skipped.clear()                                      # `edit` may run this again on a page that moved under it
         if rec.exists() and not _load_record(f) and not _is_empty_record(rec):      # looked at under the lock: nobody changes it between this and the write
             raise OSError(f"{rec} cannot be read; look at it before adopting")
-        record = _held.record
+        record, seen = _held.record, set()
         for k, start, end in _spans(text):
+            twin = _slot(k) in seen
+            seen.add(_slot(k))
+            if twin and _slot(k) in record:
+                skipped.append(k)                            # a second item under the same record entry (the case of its key differs), whether the entry was there or made here: it cannot have one of its own
+                continue
             if _slot(k) in record and not _only_results(record[_slot(k)]):
-                if any(_slot(d) == _slot(k) for d in done):
-                    skipped.append(k)                        # a second item under the same record entry (the case of its key differs): it cannot have one of its own
                 continue
             lines = _adoptable(text[start:end])
             if lines is None:

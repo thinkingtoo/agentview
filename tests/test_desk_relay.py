@@ -361,16 +361,39 @@ class Relayed(unittest.TestCase):
 
 
 class TheHubsOps(unittest.TestCase):
-    SHEAF_PYTHON = Path.home() / ".local/share/uv/tools/sheafmd/bin/python"
+    @staticmethod
+    def sheaf_python():
+        """The interpreter of the `sheaf` the relay runs (`deskcmd.SHEAF`, found on PATH): the one its script names on
+        its first line. (None, why) when there is none to ask."""
+        exe = deskrelay.deskcmd.SHEAF
+        if not exe:
+            return None, "sheaf is not on PATH here, so the relay would not find it either"
+        try:
+            first = Path(exe).read_text(encoding="utf-8", errors="replace").split("\n", 1)[0]
+        except OSError as why:
+            return None, f"{exe} cannot be read: {why}"
+        if not first.startswith("#!") or not Path(first[2:].strip()).is_file():
+            return None, f"{exe} does not start with the path of its Python (first line: {first[:80]!r})"
+        return first[2:].strip(), ""
 
-    @unittest.skipUnless(SHEAF_PYTHON.exists(), "sheaf is not installed here")
     def test_the_relays_comment_ops_are_the_ones_of_the_hub_the_desk_runs_on(self):
         # COMMENT_OPS is a copy of sheaf's hub/handler.py OPS: a sixth op added there must fail here, not be
         # refused by the relay without anyone noticing
-        got = subprocess.run([str(self.SHEAF_PYTHON), "-I", "-c", "from sheafmd.hub.handler import OPS; print(*OPS)"],
+        python, why = self.sheaf_python()
+        if python is None:
+            self.skipTest(why)
+        got = subprocess.run([python, "-I", "-c", "from sheafmd.hub.handler import OPS; print(*OPS)"],
                              capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
         self.assertEqual(got.returncode, 0, got.stderr)
         self.assertEqual(tuple(got.stdout.split()), deskrelay.COMMENT_OPS)
+
+    def test_a_sheaf_that_is_not_there_says_why_it_skips(self):
+        with mock.patch.object(deskrelay.deskcmd, "SHEAF", None):
+            self.assertEqual(self.sheaf_python()[0], None)
+            self.assertIn("not on PATH", self.sheaf_python()[1])
+        with mock.patch.object(deskrelay.deskcmd, "SHEAF", str(Path(__file__))):
+            self.assertIn("does not start with", self.sheaf_python()[1])
+
 
 
 class HubLock(unittest.TestCase):

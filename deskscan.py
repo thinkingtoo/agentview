@@ -425,16 +425,10 @@ def settled_at(rec):
 
 
 def results(it, record):
-    """The result lines of the item that AgentView wrote, as the item's record reads its block (`deskfile._kinds`,
-    the reading `settle` and `put` use): a line is ours only where the record lists its text, in the place its order
-    gives it, and a second copy of it is the person's. An item with no record, or whose page is the generation before the record's last, has none. The head of each line, its
-    threads taken out."""
-    got = (record or {}).get(deskfile._slot(it.key))
-    if got is None or deskfile._prev_may_stand(got, it.block):        # no record, or a write that may not have finished: nothing here is proof
-        return []
-    logical = deskfile._logical(it.block)
-    kinds = deskfile._kinds(logical, deskfile._own(record, it.key, it.block), orders=deskfile._orders(got))
-    return [deskfile._text(l)[0] for k, l in zip(kinds, logical) if k == ("result",)]
+    """The result lines of the item that AgentView wrote, as the item's record reads its block (`deskfile.own_results`,
+    the reading `settle` and `put` use). An item with no record, or whose page may be the generation before the record's
+    last, has none."""
+    return deskfile.own_results(record, it.key, it.block)
 
 
 def over(it, rec, now, record):
@@ -476,7 +470,7 @@ def tidy(now=None):
             def change(text, k=k):
                 dropped.clear()
                 found = [i for i in deskfile.items_in(text) if i.key == k]
-                if len(found) != 1 or not whole(found[0].block) or not over(found[0], last[k], now, getattr(deskfile._held, "record", None)):
+                if len(found) != 1 or not whole(found[0].block) or not over(found[0], last[k], now, deskfile.held_record()):
                     return text
                 dropped.append(k)
                 return deskfile.drop(text, k)

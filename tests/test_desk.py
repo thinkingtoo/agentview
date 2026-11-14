@@ -961,7 +961,7 @@ class OwnRecord(unittest.TestCase):
             self.assertEqual([i.key for i in deskfile.parse(got, rec)], ["a/b#1", "a/b#2"])
             self.assertEqual(deskfile.parse(got, rec)[0].pinned, self.NEW_SHA)
 
-    def test_a_corrupt_record_replaces_and_removes_nothing_and_the_next_hand_over_is_recorded(self):
+    def test_a_corrupt_record_replaces_and_removes_nothing_and_a_hand_over_after_it_is_gone_is_recorded(self):
         tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
         old = os.environ.get("XDG_RUNTIME_DIR")
@@ -971,6 +971,11 @@ class OwnRecord(unittest.TestCase):
         deskfile.put_item("a/b#1", self.block(self.OLD_SHA), file=f)
         (tmp / "state" / ".merge-desk.own.json").write_text("{not json")
         self.assertEqual(deskfile.items(f)[0].pinned, "")
+        before = f.read_text()
+        with self.assertRaisesRegex(OSError, "cannot be read"):       # ticket 32: the record is left for a person to look at, as `adopt` does
+            deskfile.put_item("a/b#1", self.block(self.NEW_SHA), file=f)
+        self.assertEqual(((tmp / "state" / ".merge-desk.own.json").read_text(), f.read_text()), ("{not json", before))
+        (tmp / "state" / ".merge-desk.own.json").unlink()             # looked at, and given up on
         deskfile.put_item("a/b#1", self.block(self.NEW_SHA), file=f)
         self.assertIn(f"Pinned commit: {self.OLD_SHA}", f.read_text())
         self.assertEqual(deskfile.items(f)[0].pinned, self.NEW_SHA)
@@ -1746,6 +1751,164 @@ class Leftovers(unittest.TestCase):
         self.assertEqual(self.lone_ends(got), [])
         got = deskfile.put(text, "install:bar", "- [ ] Install bar: z\n", section="install", record=rec)
         self.assertEqual(self.lone_ends(got), [])
+
+
+class SettleAndPutShapes(unittest.TestCase):
+    """Ticket 32: the leftovers of the shapes `settle`, `put`, `carry` and `adopt` read, one test each."""
+
+    OLD_SHA, NEW_SHA, THIRD_SHA = "a" * 40, "b" * 40, "c" * 40
+    PIN = "  - Pinned commit: {}, into main\n"
+    THREAD = '<!-- sheaf-comment id=c9 by="Thierry" at=2026-11-14T01:00 status=open quote="{}"\nhi\nthere\n-->'
+    LONE_LF = re.compile(r"(?<!\r)\n")
+
+    def block(self, sha, rec="Merge it.", when="01:00", ships=()):
+        return (f"- [ ] Deploy a/b#1: what it does\n  - Recommendation: {rec}\n" + self.PIN.format(sha)
+                + "".join(ships) + f"  - Handed over by a session, 2026-11-14 {when}.\n")
+
+    def page(self, body, blank=""):
+        return "# D\n\n## Pull requests waiting for your merge\n" + body + blank + "- [ ] Merge a/b#2: next\n  - Pinned commit: " + "d" * 40 + ", into main\n"
+
+    def results(self, text):
+        return re.findall(r"^  - ((?:Not merged|Merged|Already merged)[^\n\r]*)", text, re.M)
+
+    def test_settle_replaces_a_result_that_a_multiline_thread_follows_and_the_record_owns_the_new_one(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        text = text.replace("  - Not merged: CI is red\n", "  - Not merged: CI is red\n" + self.THREAD.format("red") + "\n", 1)
+        got = deskfile.settle(text, "a/b#1", "Merged at 12:00", record=rec)
+        self.assertEqual(self.results(got), ["Merged at 12:00"])
+        self.assertIn("hi\nthere", got)
+        self.assertEqual([l for l in rec["a/b#1"]["lines"] if l.startswith("  - M") or l.startswith("  - N")], ["  - Merged at 12:00"])
+
+    def test_settle_replaces_a_result_with_a_thread_in_its_middle_and_says_so_without_a_record(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        text = text.replace("Not merged:", "Not merged:" + self.THREAD.format("Not merged:").replace("\n", " "), 1)
+        got = deskfile.settle(text, "a/b#1", "Merged at 12:00", record=rec)
+        self.assertEqual(self.results(got), ["Merged at 12:00"])
+        none = deskfile.settle(text, "a/b#1", "Merged at 12:00", record={})
+        self.assertEqual(len(self.results(none)), 2)              # no record: nothing says the old result is ours, so it stays (the docstring says so)
+
+    def test_settle_replaces_the_result_when_a_line_of_the_person_follows_it_after_a_blank_line(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        text = text.replace("  - Not merged: CI is red\n", "  - Not merged: CI is red\n\n  my own note\n", 1)
+        got = deskfile.settle(text, "a/b#1", "Merged at 12:00", record=rec)
+        self.assertEqual(self.results(got), ["Merged at 12:00"])
+        self.assertIn("  my own note\n", got)
+
+    def test_settle_replaces_a_result_whose_open_comment_the_unhiding_closed_with_one_result_line(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        text = text.replace("CI is red\n", "CI is red <!-- oops\n", 1)
+        got = deskfile.settle(text, "a/b#1", "Merged at 12:00", record=rec)
+        self.assertEqual(len([l for l in got.split("\n") if l.startswith("  - Merged") or l.startswith("  - Not merged: CI")]), 1)
+
+    def test_settle_on_a_crlf_page_with_a_blank_line_after_the_item_replaces_and_places_above_the_blank_line(self):
+        text = self.page(self.block(self.OLD_SHA), blank="\n").replace("\n", "\r\n")
+        rec = written(text)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        got = deskfile.settle(text, "a/b#1", "Merged at 12:00", untick=True, record=rec)
+        self.assertEqual(self.results(got), ["Merged at 12:00"])
+        self.assertIn("  - Merged at 12:00\r\n\r\n- [ ] Merge a/b#2", got)
+        self.assertEqual(self.LONE_LF.findall(got), [])
+
+    def test_put_of_a_new_item_into_a_crlf_section_lands_right_under_the_last_item(self):
+        text = ("# D\r\n\r\n## Pull requests waiting for your merge\r\n" + self.block(self.OLD_SHA).replace("\n", "\r\n")
+                + "\r\n## Local installs waiting for you\r\n")
+        rec = written(text)
+        got = deskfile.put(text, "a/b#3", "- [ ] Merge a/b#3: new\n  - Pinned commit: " + "e" * 40 + ", into main\n", record=rec)
+        self.assertIn("a session, 2026-11-14 01:00.\r\n- [ ] Merge a/b#3: new\r\n", got)
+        self.assertIn(", into main\r\n\r\n## Local installs", got)
+        self.assertEqual(self.LONE_LF.findall(got), [])
+
+    def test_a_header_with_a_trailing_space_is_adopted_with_its_bullets_and_not_handed_over_twice(self):
+        ships = ("  - What ships: " + self.THREAD.format("What ships:").replace("\n", " ") + "\n", "    - Outside GitHub: the docs\n")
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        f = tmp / "merge-desk.md"
+        f.write_text(self.page(self.block(self.OLD_SHA, ships=ships)))
+        done, skipped = deskfile.adopt(f)
+        self.assertEqual((done, skipped), (["a/b#1", "a/b#2"], []))
+        entry = json.loads((tmp / deskfile.RECORD).read_text())["a/b#1"]
+        self.assertIn("    - Outside GitHub: the docs", entry["lines"])
+        new = self.block(self.NEW_SHA, ships=("  - What ships:\n", "    - Outside GitHub: the docs\n"), when="02:00")
+        deskfile.put_item("a/b#1", new, file=f)
+        got = f.read_text()
+        self.assertEqual((got.count("Outside GitHub: the docs"), len(re.findall(r"^  - What ships:", got, re.M)), got.count("Handed over by")), (1, 1, 1))
+
+    def test_carry_closes_an_open_comment_on_a_line_of_the_person_and_on_one_with_a_space_before_it(self):
+        for mine in ("  r <!-- oops\n", "  r<!-- oops\n", "  - Note: mine <!-- oops\n"):
+            with self.subTest(mine):
+                text = self.page(self.block(self.OLD_SHA))
+                rec = written(text)
+                text = text.replace(self.PIN.format(self.OLD_SHA), self.PIN.format(self.OLD_SHA) + mine, 1)
+                got = deskfile.put(text, "a/b#1", self.block(self.NEW_SHA, when="02:00"), record=rec)
+                self.assertIsNone(deskfile._open_at(got))
+                self.assertEqual([(i.key, i.pinned) for i in deskfile.parse(got, rec)], [("a/b#1", self.NEW_SHA), ("a/b#2", "d" * 40)])
+
+    def test_an_open_comment_on_a_task_line_that_a_later_threads_arrow_closed_is_closed_for_good(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = text.replace("what it does\n", "what it does <!-- oops\n", 1).replace("  - Handed over", "  " + self.THREAD.format("x") + "\n  - Handed over", 1)
+        got = deskfile.put(text, "a/b#1", self.block(self.NEW_SHA, when="02:00"), record=rec)
+        gone = re.sub(r"<!-- sheaf-comment.*?-->\n?", "", got, flags=re.S)         # sheaf deletes the thread
+        self.assertIsNone(deskfile._open_at(gone))
+        self.assertEqual([i.key for i in deskfile.parse(gone, rec)], ["a/b#1", "a/b#2"])
+
+    def test_a_stray_arrow_later_on_the_page_does_not_keep_a_left_open_comment_hiding_its_item(self):
+        text = self.page(self.block(self.OLD_SHA)) + "- [ ] Merge a/b#3: third\n  see A --> B\n"
+        rec = written(text)
+        text = text.replace("Merge it.\n", "Merge it.<!-- oops\n", 1).replace("- [ ] Merge a/b#3", "  " + self.THREAD.format("x") + "\n- [ ] Merge a/b#3", 1)
+        block2 = "- [ ] Merge a/b#2: next\n  - Pinned commit: " + "e" * 40 + ", into main\n"
+        got = deskfile.put(text, "a/b#2", block2, record=rec)
+        self.assertEqual(got.count("Merge a/b#2"), 1)
+
+    def test_a_corrupt_record_is_not_overwritten_by_a_hand_over_and_the_press_says_why(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        f = tmp / "merge-desk.md"
+        deskfile.put_item("a/b#1", self.block(self.OLD_SHA), file=f)
+        (tmp / deskfile.RECORD).write_text("{not json")
+        before = f.read_text()
+        with self.assertRaisesRegex(OSError, "cannot be read"):
+            deskfile.put_item("a/b#2", "- [ ] Merge a/b#2: next\n  - Pinned commit: " + "e" * 40 + ", into main\n", file=f)
+        with self.assertRaisesRegex(OSError, "cannot be read"):
+            deskfile.drop_item("a/b#1", file=f)
+        self.assertEqual(((tmp / deskfile.RECORD).read_text(), f.read_text()), ("{not json", before))
+
+    def test_adopt_reports_a_case_duplicate_under_an_entry_that_exists(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        f = tmp / "merge-desk.md"
+        deskfile.put_item("a/b#1", self.block(self.OLD_SHA), file=f)
+        f.write_text(f.read_text() + "- [ ] Merge A/b#1: again\n  - Pinned commit: " + "e" * 40 + ", into main\n")
+        self.assertEqual(deskfile.adopt(f), ([], ["A/b#1"]))
+
+    def test_a_persons_plain_copy_of_our_pin_line_is_theirs_when_a_thread_sits_in_the_middle_of_ours(self):
+        rec = {}
+        text = deskfile.put(self.page(""), "a/b#1", self.block(self.OLD_SHA), record=rec)
+        mine = self.PIN.format(self.OLD_SHA).replace("Pinned commit", "Pinned" + self.THREAD.format("Pinned").replace("\n", " ") + " commit", 1)
+        text = text.replace(self.PIN.format(self.OLD_SHA), mine, 1).replace("  - Recommendation:", self.PIN.format(self.OLD_SHA) + "  - Recommendation:", 1)
+        got = deskfile.put(text, "a/b#1", self.block(self.NEW_SHA, rec="R2", when="02:00"), record=rec)
+        self.assertEqual(got.count("Pinned commit: " + self.OLD_SHA), 1)       # the person's copy stays
+        self.assertEqual(got.count("Pinned commit: " + self.NEW_SHA), 1)       # and ours is the new one
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
+
+    def test_the_results_of_an_item_come_from_one_public_function_and_deskscan_reads_no_private_name(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        text = deskfile.settle(text, "a/b#1", "Merged at 12:00", record=rec)
+        item = deskfile.parse(text, rec)[0]
+        self.assertEqual(deskfile.own_results(rec, item.key, item.block), ["  - Merged at 12:00"])
+        typed = text.replace("  - Merged at 12:00\n", "  - Merged at 12:00\n  - Merged at 13:00\n", 1)
+        self.assertEqual(deskfile.own_results(rec, item.key, deskfile.parse(typed, rec)[0].block), ["  - Merged at 12:00"])
+        self.assertEqual(deskfile.own_results({}, item.key, item.block), [])
+        self.assertEqual(re.findall(r"deskfile\._\w+", (ROOT / "deskscan.py").read_text()), [])
 
 
 if __name__ == "__main__":
