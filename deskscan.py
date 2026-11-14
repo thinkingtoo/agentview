@@ -186,11 +186,14 @@ def known_repos(now, roster=None):
     if current:
         repos_path().parent.mkdir(parents=True, exist_ok=True)
         lines.write_atomic(repos_path(), json.dumps(seen))
-    full = current + [r for r in sorted(seen) if r not in current]
-    if len(full) > MAX_REPOS:                   # more repos than a day may ask: another start of the list each day
-        shift = int(now // DAY) % len(full)
-        full = full[shift:] + full[:shift]
-    return full
+    tail = [r for r in sorted(seen) if r not in current]
+    if len(current) + len(tail) > MAX_REPOS:    # more repos than a day may ask: another start each day, in the
+        if len(current) >= MAX_REPOS:                              # remembered ones, so the repos in use are asked daily
+            shift = int(now // DAY) % len(current)
+            return current[shift:] + current[:shift]
+        shift = int(now // DAY) % len(tail)
+        return current + tail[shift:] + tail[:shift]
+    return current + tail
 
 
 def clean(repos):
@@ -332,20 +335,18 @@ def open_thread(block):
 
 
 NOT_WELL = re.compile(r"failed|may not have run|no hub is running")
-TOP = re.compile(r"^(?:[-*+] |#{1,6} )")
-CLOSED_COMMENT = re.compile(r"<!--.*?-->", re.S)
+SHEAF_COMMENT = re.compile(r"<!--\s*(?:sheaf|rd)-comment\b.*?-->", re.S)
 
 
 def whole(block):
-    """True when the block is one item and no more. Text the page reads as a comment (`<!--` typed as text, in
-    code, or never closed) runs on over the items below it, and `deskfile` then cuts the block there: dropping
-    that block would drop them too. So a block with a line after its first that starts a list item or a heading
-    is refused as it stands, comments or not (a `-->` further down can close the stray one and hide that line from
-    a reader that strips comments), and so is one with a `<!--` no `-->` closes."""
-    rest = block.split("\n")[1:]
-    if any(TOP.match(l) for l in rest):         # sheaf writes no comment line that starts a list item or heading
-        return False
-    return "<!--" not in CLOSED_COMMENT.sub("", block)
+    """True when the block is one item and nothing else. `deskfile` ends a block only at an unindented list item or
+    heading, and reads any `<!--` as the start of a comment up to the next `-->`: so text the person wrote
+    after the item (a paragraph, a numbered list, a quote), another item or heading that a stray `<!--` swallowed,
+    all land in the block above, and dropping it would drop them. A block is whole when, outside sheaf's own
+    comments (whose lines sheaf guards), no line after the first is anything but indented by two spaces or a tab, blank or a comment's,
+    and no `<!--` is left that no sheaf comment owns."""
+    bare = SHEAF_COMMENT.sub("", block)
+    return "<!--" not in bare and all(not l.strip() or l.startswith(("  ", "\t")) for l in bare.splitlines()[1:])
 
 
 def settled_at(rec):

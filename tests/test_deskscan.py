@@ -678,11 +678,49 @@ class Tidy(Case):
         deskfile.path().write_text(self.page().replace(r"write \<!-- here", "dev --> main"))
         self.assertEqual(deskscan.tidy(), [k])      # an arrow typed as text does not stop a clean item going
 
+    def test_what_the_person_wrote_after_a_settled_item_goes_nowhere(self):
+        for text in ("Ask Hans about the invoices before Friday.", "1. call Sven", " ## Later", "Later\n=====",
+                     "> quoted", " - [ ] Merge o/r#2: typed by hand", "\\<!-- loose"):
+            self.setUp_again()
+            k = self.merged(1)
+            deskfile.path().write_text(self.page().rstrip("\n") + "\n" + text + "\n")
+            before = self.page()
+            self.assertEqual(deskscan.tidy(), [], text)
+            self.assertEqual(self.page(), before)
+
+    def test_an_item_with_a_multi_line_resolved_thread_and_a_blank_line_still_goes(self):
+        k = self.merged(1)
+        thread = ('<!-- sheaf-comment id=c1 by="Ada" at=2026-11-14T09:00 status=resolved quote="q"\nIs this safe?\n'
+                  '@Claude 2026-11-14T09:30: yes\n-->')
+        deskfile.path().write_text(self.page().replace("Merged as ccccccc at 10:00", "Merged as ccccccc at 10:00\n" + thread, 1))
+        self.assertEqual(deskscan.tidy(), [k])
+
+    def test_install_keys_differing_by_case_are_two_items(self):
+        deskfile.put_item("install:Foo", "- [x] Install Foo: a\n", section="install")
+        deskfile.put_item("install:foo", "- [ ] Install foo: b\n", section="install")
+        self.assertEqual(sorted(self.keys()), ["install:Foo", "install:foo"])
+
+    def test_the_repos_in_use_are_asked_every_day_and_the_remembered_ones_take_turns(self):
+        deskscan.MAX_REPOS = 4
+        now = time.time()
+        old = [f"repo:github.com/a/old{n}" for n in range(8)]
+        deskscan.known_repos(now - 60, lambda: {"columns": [{"project": i} for i in old]})
+        reached = set()
+        for day in range(8):
+            got = deskscan.known_repos(now + day * deskscan.DAY, lambda: {"columns": [
+                {"project": "repo:github.com/a/live1"}, {"project": "repo:github.com/a/live2"}]})
+            window = deskscan.clean(got)
+            self.assertEqual(window[:2], ["a/live1", "a/live2"])
+            reached |= set(window)
+        self.assertEqual(len(reached), 10)
+
     def test_a_block_with_a_heading_or_list_line_of_its_own_is_not_whole(self):
         self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n## Later\n"))
         self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n- note\n"))
         self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n* note\n"))
-        self.assertTrue(deskscan.whole("- [ ] Merge a/b#1: x\n  - note\n\ntext\n"))
+        self.assertTrue(deskscan.whole("- [ ] Merge a/b#1: x\n  - note\n    more\n\n"))
+        self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n  - note\n\ntext\n"))
+        self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n - one space\n"))
 
     def test_an_item_whose_block_holds_another_items_task_line_is_not_dropped(self):
         self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n  - y\n- [ ] Merge a/b#2: z\n"))
