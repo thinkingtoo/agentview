@@ -170,7 +170,7 @@ def put(text, key, block, section="merge"):
     if not block.endswith("\n"):
         block += "\n"
     for k, start, end in _spans(text):
-        if k == key:
+        if k.lower() == key.lower():            # GitHub names are not case-sensitive: `Owner/Repo#5` is `owner/repo#5`
             return text[:start] + block + text[end:]
     heading = SECTIONS[section]
     at = _heading_end(text, heading)

@@ -97,6 +97,7 @@ def run_if_due(now=None, repos=None):
         return False
     if not spend(now):                  # a day that cannot be kept would be spent again at every tick
         deskwatch.log.error("desk-scan", OSError(f"could not write {stamp_path()}"))
+        _blocked[0] = time.monotonic() + RETRY
         return False
     try:
         known = (repos or (lambda: known_repos(now)))()
@@ -110,12 +111,13 @@ def run_if_due(now=None, repos=None):
 
 
 _running = threading.Lock()
+_blocked = [0.0]        # monotonic time before which a day that could not be written down is not tried again
 
 
 def scan_if_due():
     """The watcher's call: when the day is due, the run goes on a thread of its own and this returns at once,
     so presses are not held while `gh` is asked. One run at a time."""
-    if not due(time.time()) or not _running.acquire(blocking=False):
+    if time.monotonic() < _blocked[0] or not due(time.time()) or not _running.acquire(blocking=False):
         return False
 
     def work():
@@ -125,7 +127,11 @@ def scan_if_due():
             deskwatch.log.error("desk-scan", exc)
         finally:
             _running.release()
-    threading.Thread(target=work, name="desk-scan", daemon=True).start()
+    try:
+        threading.Thread(target=work, name="desk-scan", daemon=True).start()
+    except RuntimeError:
+        _running.release()
+        raise
     return True
 
 
@@ -180,7 +186,11 @@ def known_repos(now, roster=None):
     if current:
         repos_path().parent.mkdir(parents=True, exist_ok=True)
         lines.write_atomic(repos_path(), json.dumps(seen))
-    return current + [r for r in sorted(seen) if r not in current]
+    full = current + [r for r in sorted(seen) if r not in current]
+    if len(full) > MAX_REPOS:                   # more repos than a day may ask: another start of the list each day
+        shift = int(now // DAY) % len(full)
+        full = full[shift:] + full[:shift]
+    return full
 
 
 def clean(repos):
@@ -235,7 +245,7 @@ def age(created, now):
 
 
 def candidate(p, now):
-    """(number, title, head, base) of a PR that is green, mergeable, not a draft and over a day old, else None."""
+    """(number, title, head, base, opened) of a PR that is green, mergeable, not a draft and over a day old, else None."""
     if not isinstance(p, dict) or isinstance(p.get("number"), bool) or not isinstance(p.get("number"), int):
         return None
     old = age(p.get("createdAt"), now)
@@ -322,15 +332,20 @@ def open_thread(block):
 
 
 NOT_WELL = re.compile(r"failed|may not have run|no hub is running")
+TOP = re.compile(r"^(?:[-*+] |#{1,6} )")
 CLOSED_COMMENT = re.compile(r"<!--.*?-->", re.S)
 
 
 def whole(block):
     """True when the block is one item and no more. Text the page reads as a comment (`<!--` typed as text, in
     code, or never closed) runs on over the items below it, and `deskfile` then cuts the block there: dropping
-    that block would drop them too."""
-    bare = CLOSED_COMMENT.sub("", block)
-    return "<!--" not in bare and not any(deskfile.key_of(l) for l in bare.split("\n")[1:])
+    that block would drop them too. So a block with a line after its first that starts a list item or a heading
+    is refused as it stands, comments or not (a `-->` further down can close the stray one and hide that line from
+    a reader that strips comments), and so is one with a `<!--` no `-->` closes."""
+    rest = block.split("\n")[1:]
+    if any(TOP.match(l) for l in rest):         # sheaf writes no comment line that starts a list item or heading
+        return False
+    return "<!--" not in CLOSED_COMMENT.sub("", block)
 
 
 def settled_at(rec):
@@ -386,7 +401,11 @@ def tidy(now=None):
                     return text
                 dropped.append(k)
                 return deskfile.drop(text, k)
-            deskfile.edit(change)
+            try:
+                deskfile.edit(change)
+            except OSError as why:             # this item stays; the others are still judged
+                deskwatch.log.error("desk-scan", why, key=k)
+                continue
             if dropped:
                 desk.log("tidied", k, was=last[k]["event"])
                 gone.append(k)

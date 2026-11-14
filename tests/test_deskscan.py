@@ -181,6 +181,14 @@ class Found(Case):
         self.prs(REPO, pr(7))
         self.assertEqual(deskscan.scan([REPO]), [])
 
+    def test_a_session_handing_over_a_found_pr_under_another_spelling_replaces_it(self):
+        self.prs(REPO, pr(7))
+        deskscan.scan([REPO])
+        self.hand_over("Sweatshop-AI/Sheaf", 7, rec="wait")
+        self.assertEqual(len(self.keys()), 1)
+        self.assertNotIn("found by the scan", self.page())
+        self.assertIn("Recommendation: wait.", self.page())
+
     def test_the_log_says_the_scan_found_it_and_what_it_pinned(self):
         self.prs(REPO, pr(7))
         deskscan.scan([REPO])
@@ -394,6 +402,28 @@ class Daily(Case):
         gone = deskscan.known_repos(now + 5 * deskscan.DAY + deskscan.KEEP,
                                     lambda: {"columns": [{"project": "repo:github.com/a/three"}]})
         self.assertEqual(gone, ["a/three"])
+
+    def test_more_known_repos_than_a_day_may_ask_are_all_reached_over_the_days(self):
+        deskscan.MAX_REPOS = 4
+        ids = [f"repo:github.com/a/r{n:02d}" for n in range(10)]
+        now = time.time()
+        reached = set()
+        for day in range(10):
+            got = deskscan.known_repos(now + day * deskscan.DAY, lambda: {"columns": [{"project": i} for i in ids]})
+            reached |= set(deskscan.clean(got))
+        self.assertEqual(len(reached), 10)
+
+    def test_a_stamp_that_cannot_be_written_is_not_tried_at_every_tick(self):
+        saved = (deskscan.spend, deskscan.run_if_due, deskscan._blocked[0])
+        calls = []
+        deskscan.spend = lambda now: False
+        try:
+            self.assertFalse(deskscan.run_if_due(now=time.time(), repos=lambda: [REPO]))
+            t = [x for x in threading.enumerate() if x.name == "desk-scan"]
+            self.assertFalse(deskscan.scan_if_due())
+            self.assertEqual([x for x in threading.enumerate() if x.name == "desk-scan"], t)
+        finally:
+            deskscan.spend, deskscan.run_if_due, deskscan._blocked[0] = saved
 
     def test_a_cold_roster_forgets_nothing_it_remembered(self):
         now = time.time()
@@ -632,6 +662,27 @@ class Tidy(Case):
 
     def setUp_again(self):
         shutil.rmtree(self.tmp / "state", True)
+
+    def test_a_stray_comment_mark_closed_by_a_later_arrow_still_keeps_the_item_below(self):
+        k = self.merged(1)
+        self.hand_over(REPO, 2, rec="merge")
+        resolved = COMMENT_DONE
+        text = self.page().replace("handed over by a session", r"write \<!-- here", 1)
+        head, _, tail = text.rpartition("Handed over by a session")          # the last one: item 2's own line
+        text = head + "Handed over by a session " + resolved + tail
+        deskfile.path().write_text(text)
+        before = self.page()
+        self.assertEqual(deskscan.tidy(), [])
+        self.assertEqual(self.page(), before)
+        self.assertIn(f"{REPO}#2", before)
+        deskfile.path().write_text(self.page().replace(r"write \<!-- here", "dev --> main"))
+        self.assertEqual(deskscan.tidy(), [k])      # an arrow typed as text does not stop a clean item going
+
+    def test_a_block_with_a_heading_or_list_line_of_its_own_is_not_whole(self):
+        self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n## Later\n"))
+        self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n- note\n"))
+        self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n* note\n"))
+        self.assertTrue(deskscan.whole("- [ ] Merge a/b#1: x\n  - note\n\ntext\n"))
 
     def test_an_item_whose_block_holds_another_items_task_line_is_not_dropped(self):
         self.assertFalse(deskscan.whole("- [ ] Merge a/b#1: x\n  - y\n- [ ] Merge a/b#2: z\n"))
