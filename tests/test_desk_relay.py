@@ -411,12 +411,16 @@ class HubLock(unittest.TestCase):
             gate.wait(10)
             raise deskrelay.Refused(503, "the desk's hub could not be found: slow")
         hub = self.hub(locate=locate)
-        threads, out, errs = self.in_threads(5, hub.desk)
+        first, out, errs = self.in_threads(1, hub.desk)
+        while not runs:
+            time.sleep(0.01)
+        more, _, _ = self.in_threads(4, hub.desk)                      # these ask while the first run is going
+        threads = first + more
         time.sleep(0.3)
         gate.set()
         for t in threads:
             t.join(5)
-        self.assertEqual((len(runs), len(errs), out), (1, 5, []))     # not five runs, not five waits one after the other
+        self.assertEqual((len(runs), len(errs)), (1, 5))     # not five runs, not five waits one after the other
         self.assertTrue(all(isinstance(e, deskrelay.Refused) and e.status == 503 for e in errs))
 
     def test_a_failed_run_is_not_kept_and_the_next_request_tries_again(self):

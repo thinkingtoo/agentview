@@ -35,7 +35,7 @@ import log
 
 BODY_MAX = 64 * 1024
 POSTS = ("tick", "comment", "seen")
-COMMENT_OPS = ("add", "reply", "status", "edit", "delete")     # the hub's five; see the README for why all five pass
+COMMENT_OPS = ("add", "reply", "status", "edit", "delete")     # the hub's OPS (sheaf hub/handler.py), all five: see the README
 GETS = ("doc", "live")
 PAGE_ENTRY = "/desk"
 TIMEOUT = 15                     # the sign-in's connecting and answer
@@ -44,8 +44,10 @@ ASK_TIMEOUT = 60                 # the hub's answer to a request: a tick or a co
 READ_TIMEOUT = 30                # the phone's own body, once it has said how long it is
 STREAM_TIMEOUT = 70              # the hub's event stream says something every 25 s
 SIGNIN_WAIT = 120                # a device waiting on another's `sheaf open` or sign-in gives up after this
-STREAMS_PER_CLIENT = 6           # one page holds one stream, and a stream whose phone went away is let go only
-STREAMS_TOTAL = 24               # at the hub's next write (25 s), so a reconnecting device briefly holds two
+# One page holds one stream, and a stream whose phone went away is let go only at the hub's next write
+# (25 s), so a reconnecting device briefly holds two.
+STREAMS_PER_CLIENT = 6
+STREAMS_TOTAL = 24
 CHUNK = 8192
 LAST_EVENT = re.compile(r"[0-9A-Za-z:._-]{1,64}")
 PASSED = ("Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-Policy",
@@ -168,12 +170,14 @@ class SheafHub:
             if not fresh and self._kept[what] is not None:
                 return self._kept[what]
             flight = self._flights.get(what)
+            if flight is not None and flight.generation != self._generation:
+                flight = None                       # begun before a reset: its answer is out of date for this request
             leader = flight is None
             if leader:
                 flight = self._flights[what] = _Flight(self._generation)
         if not leader:
             if not flight.done.wait(SIGNIN_WAIT):
-                raise Refused(503, "the desk's hub is slow to say where it is")
+                raise Refused(503, "sheaf is slow to answer where the desk's hub is or how to sign in")
             if flight.error is not None:
                 raise flight.error
             return flight.value
@@ -189,7 +193,8 @@ class SheafHub:
             return flight.value
         finally:
             with self._lock:
-                del self._flights[what]
+                if self._flights.get(what) is flight:
+                    del self._flights[what]
             flight.done.set()
 
     def desk(self):
