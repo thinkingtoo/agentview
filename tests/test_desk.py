@@ -1169,6 +1169,13 @@ class OwnRecord(unittest.TestCase):
         block = "- [ ] Deploy a/b#1: work\n  - Recommendation: current\n  - Pinned commit: " + "a" * 7 + ", into main\n  - Handed over by a session, 10:00.\n"
         self.assertFalse(deskfile._prev_stands(entry, block))
 
+    def test_a_page_with_all_of_the_earlier_generation_and_a_line_of_the_last_is_still_behind(self):
+        """A write that never reached the page: the page is the earlier generation whole, and a result line the record moved on with stands on it."""
+        entry = {"prev": ["- [ ] Deploy a/b#1: work", "  - Recommendation: old", "  - Pinned commit: " + "a" * 7 + ", into main"],
+                 "lines": ["- [ ] Deploy a/b#1: work", "  - Merged as ddddddd at 11:00"], "at": [0, 0]}
+        block = "- [ ] Deploy a/b#1: work\n  - Recommendation: old\n  - Pinned commit: " + "a" * 7 + ", into main\n  - Merged as ddddddd at 11:00\n"
+        self.assertTrue(deskfile._prev_stands(entry, block))
+
     def test_adopt_does_not_take_a_persons_line_that_only_begins_like_one_of_ours(self):
         f, rec = self.legacy()
         f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - This pull request changes workflow files: PRIVATE do not publish\n    - Commits that go out (soon) maybe\n    - Fires on push to nothing\n  - Pinned commit:", 1))

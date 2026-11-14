@@ -622,9 +622,10 @@ def _specific(texts, other):
 def _prev_stands(entry, block):
     """Whether `block` is the generation before the record's last (a write that did not finish: the record moved on,
     the page did not). The lines of `prev` are AgentView's only then: a person's copy of an old pin line in a block of
-    the last generation is theirs, however often its text stands. The page is behind when it holds most of the lines only
-    the earlier generation wrote and none that only the last wrote: a person who removed two lines of ours and typed a
-    copy of an old pin line has not made the page an old one, and a page with a line of the last is not one."""
+    the last generation is theirs, however often its text stands. The page is behind when it holds all the lines only
+    the earlier generation wrote, or most of them and none that only the last wrote: a person who removed two lines of
+    ours and typed a copy of an old pin line has not made the page an old one, and a page that holds a line of the last
+    and lacks one of the earlier is not one."""
     if not entry["prev"]:
         return False
     texts = _heads(block)
@@ -637,7 +638,9 @@ def _prev_stands(entry, block):
     earlier, last = _specific(entry["prev"], entry["lines"]), _specific(entry["lines"], entry["prev"])
     old = Counter(texts[i] for i in _mine(texts, [(entry["prev"], None)])) & earlier
     new = Counter(texts[i] for i in _mine(texts, [(entry["lines"], entry.get("at"))])) & last
-    return not new and 2 * sum(old.values()) > sum(earlier.values())   # most of what only the earlier one wrote is there and nothing only the last wrote: one copied line of it is not a page, nor is a page that holds a line of the last
+    if not earlier:
+        return False
+    return old == earlier or (not new and 2 * sum(old.values()) > sum(earlier.values()))   # all of what only the earlier one wrote is there, or most of it and nothing only the last wrote: one copied line of it is not a page, nor is a page that holds a line of the last and lacks some of the earlier
 
 
 def _own(record, key, block=None):
