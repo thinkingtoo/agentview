@@ -6,6 +6,8 @@
 
 **Notes from 13's round 3 (class c, not fixed there):** `desk.flatten` folds NBSP and runs of spaces, so a change only in those compares equal; a base retarget between the check and the merge goes through (`--match-head-commit` pins the head only); `HINT_CUT` copies the classifier's 140 (a width=141 test guards it). Priority: the monorepo's tiroir-central-deploy.yml has hint lines of 155-156 chars, so until this ticket lands every such item refuses as "too long to check".
 
+**Also from 12 (Wanda, F2):** found items (deskscan.add via deskships.read) take the same path: an unparseable workflow must make a found item "could not tell" too.
+
 **Blocked by:** 05, 13
 
 **Claimed by:** Samir 2026-11-14 01:52
