@@ -5,17 +5,44 @@ no network, no checkout, no GitHub. The classifier is `~/.claude/routines/branch
 folder made of the base branch's workflow files, never on a PR's checkout.
 """
 import json
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 import deskships
+import stub_classifier
 
 TESTS_ONLY = "name: ci\non:\n  push:\n    branches: [main]\njobs:\n  t:\n    runs-on: x\n    steps:\n      - run: pytest\n"
 DEPLOYS = "name: deploy\non:\n  push:\n    branches: [main]\njobs:\n  d:\n    runs-on: x\n    steps:\n      - run: ./deploy.sh\n"
 PR_ONLY = "name: pr\non:\n  pull_request:\njobs:\n  d:\n    runs-on: x\n    steps:\n      - run: ./deploy.sh\n"
+
+
+REAL_CLASSIFIER = deskships.CLASSIFIER          # read before the stub takes its place
+
+
+def _real_classifier_usable():
+    """The machine's classifier, with the structure digest and a yaml parser: else the contract test skips."""
+    try:
+        if "structure sha256" not in REAL_CLASSIFIER.read_text():
+            return False
+        return subprocess.run([deskships.PYTHON, "-c", "import yaml"], capture_output=True, stdin=subprocess.DEVNULL, timeout=30).returncode == 0
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+
+
+def setUpModule():
+    stub_classifier.use()
+
+
+def tearDownModule():
+    stub_classifier.restore()
 
 
 class FakeGh:
@@ -114,9 +141,46 @@ class Classify(unittest.TestCase):
         forged = f"  - a.yml:9: ssh evil{deskships.STRUCTURE_MARK}{'a' * 32}"
         self.assertIn("ssh evil", deskships.changed([head], [head, forged]))
 
+    def test_a_line_that_nearly_is_a_digest_line_is_still_a_change(self):
+        head = "- Fires on push to main: a.yml"
+        mark, digest = deskships.STRUCTURE_MARK, "a" * 32
+        near = {
+            "indented one space too far": f"   - a.yml{mark}{digest}",
+            "indented one space short": f" - a.yml{mark}{digest}",
+            "text after the digest": f"  - a.yml{mark}{digest} ssh evil",
+            "text before the dash": f"x  - a.yml{mark}{digest}",
+            "a digest with a non-hex character": f"  - a.yml{mark}{'a' * 31}g",
+            "a digest one character short": f"  - a.yml{mark}{'a' * 31}",
+            "a digest one character long": f"  - a.yml{mark}{'a' * 33}",
+            "an upper-case digest": f"  - a.yml{mark}{'A' * 32}",
+            "a name that is not a workflow": f"  - a.txt{mark}{digest}",
+        }
+        for why, line in near.items():
+            with self.subTest(why):
+                self.assertNotEqual(deskships.changed([head], [head, line]), "")
+        self.assertEqual(deskships.changed([head], [head, f"  - a.yml{mark}{digest}"]), "")      # the exact line, against a record from before the digest
+
     def test_the_classifier_gets_a_checkout_with_a_head_in_its_dot_git(self):
+        tmp = Path(tempfile.mkdtemp(prefix="desk-ships-test-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        seen, stub = tmp / "seen.json", tmp / "classifier.py"
+        stub.write_text(
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "root = Path(sys.argv[1])\n"
+            "head = root / '.git' / 'HEAD'\n"
+            f"Path({str(seen)!r}).write_text(json.dumps({{'argv': sys.argv[2:], 'head': head.read_text() if head.is_file() else None,\n"
+            "    'workflows': sorted(p.name for p in (root / '.github' / 'workflows').iterdir())}))\n"
+            "print('d.yml')\nprint('  9: - run: ./deploy.sh')\n")
+        saved = deskships.CLASSIFIER
+        self.addCleanup(setattr, deskships, "CLASSIFIER", saved)
+        deskships.CLASSIFIER = stub
         got = deskships.read("o/r", "main", "p" * 40, FakeGh({"d.yml": DEPLOYS}, [("a" * 40, "x")]))
-        self.assertEqual(got[0], "- Fires on push to main: d.yml")                  # an empty .git reads as "could not tell"
+        self.assertEqual(got[0], "- Fires on push to main: d.yml")
+        record = json.loads(seen.read_text())
+        self.assertEqual(record["head"], "ref: refs/heads/main\n")                  # an empty .git reads as "could not tell"
+        self.assertEqual(record["workflows"], ["d.yml"])
+        self.assertEqual(record["argv"], ["main", "--full"])
 
     def test_a_long_list_of_workflows_is_listed_not_refused(self):
         flows = {f"deploy-{i:03}-" + "x" * 20 + ".yml": DEPLOYS for i in range(20)}
@@ -257,8 +321,9 @@ class Hardening(unittest.TestCase):
         self.assertIn("Could not tell what ships", "\n".join(deskships.read("o/r", "main", "p" * 40, gh)))
 
     def test_a_classifier_that_crashes_is_not_nothing_ships(self):
-        import tempfile
-        bad = Path(tempfile.mkdtemp()) / "bd.py"
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        bad = tmp / "bd.py"
         bad.write_text("raise SystemExit(1) if False else None\nimport nonexistent_module_x\n")
         saved = deskships.CLASSIFIER
         deskships.CLASSIFIER = bad
@@ -366,3 +431,30 @@ class Differ(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_real_classifier_usable(), "needs ~/.claude/routines/branch_deploys.py with the structure digest and pyyaml")
+class RealClassifier(unittest.TestCase):
+    """The one test that runs the machine's classifier: the stub the other tests use must print what it prints."""
+
+    def test_the_stub_prints_what_the_real_classifier_prints(self):
+        flows = {
+            "deploy.yml": DEPLOYS, "ci.yml": TESTS_ONLY, "pr.yml": PR_ONLY,
+            "mixed.yml": DEPLOYS.replace("./deploy.sh", "./deploy.sh && x\u00a0").replace("      - run: ./deploy.sh\n", "      # ./deploy.sh\n      - run: ./deploy.sh\n"),
+            "broken.yml": "on: [push\njobs: {\n",
+            "tabbed.yml": "\tname: x\non: push\n",
+            "list.yml": "name: l\non: [push, pull_request]\njobs:\n  d:\n    runs-on: x\n    steps:\n      - run: ./publish.sh\n",
+        }
+        for case, files in {"all": flows, "none": {"pr.yml": PR_ONLY}, "tests only": {"ci.yml": TESTS_ONLY}}.items():
+            with self.subTest(case):
+                tmp = Path(tempfile.mkdtemp(prefix="desk-ships-test-"))
+                self.addCleanup(shutil.rmtree, tmp, True)
+                (tmp / ".git").mkdir()
+                (tmp / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+                (tmp / ".github" / "workflows").mkdir(parents=True)
+                for name, text in files.items():
+                    (tmp / ".github" / "workflows" / name).write_text(text, encoding="utf-8")
+                ran = [subprocess.run([deskships.PYTHON, "-W", "ignore", str(c), str(tmp), "main", "--full"], capture_output=True, text=True,
+                                      stdin=subprocess.DEVNULL, timeout=30) for c in (REAL_CLASSIFIER, Path(stub_classifier.__file__))]
+                digest = lambda out: re.sub(r"sha256:[0-9a-f]{32}", "sha256:D", out)       # the hash is the classifier's own business
+                self.assertEqual((ran[0].returncode, digest(ran[0].stdout)), (ran[1].returncode, digest(ran[1].stdout)), ran[1].stderr)

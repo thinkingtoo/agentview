@@ -49,7 +49,7 @@ One entry of the merge desk: what it does, the recommendation of the session tha
 _Avoid_: row (a row is a goal's line)
 
 **Desk record**:
-The text of the lines AgentView wrote under each desk item, kept beside the desk file (`.merge-desk.own.json`). A line is AgentView's only when the record lists it, so a line the person wrote is never replaced or read as the pin, whatever shape it has. An item with no record is read by the exact shapes.
+The text of the lines AgentView wrote under each desk item, kept beside the desk file (`.merge-desk.own.json`). A line is AgentView's only when the record lists it, so a line the person wrote is never replaced or read as the pin, whatever shape it has. An item with no record is read by the exact shapes, except by the daily tidy: it never takes such an item off the page on the strength of its result lines.
 _Avoid_: manifest, marker
 
 **Orphan** (desk):

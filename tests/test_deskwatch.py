@@ -16,12 +16,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 import desk
 import deskfile
 import deskships
 import deskwatch
+import stub_classifier
 
-SHA = "ead9a1f" + "0" * 33
+
+SHA ="ead9a1f" + "0" * 33
 SHA2 = "b" * 40
 MERGED_AS = "41678e3" + "1" * 33
 REPO = "sweatshop-ai/sheaf"
@@ -94,9 +97,11 @@ def setUpModule():
     global _runtime
     _runtime = tempfile.mkdtemp()
     os.environ["XDG_RUNTIME_DIR"] = _runtime
+    stub_classifier.use()
 
 
 def tearDownModule():
+    stub_classifier.restore()
     os.environ.pop("XDG_RUNTIME_DIR", None)
     shutil.rmtree(_runtime, True)
 
@@ -549,7 +554,6 @@ class Ships(Case):
         deskwatch.tick()
         self.assertEqual(len(self.merge_calls()), 1)
 
-    @unittest.skipUnless("structure sha256" in deskships.CLASSIFIER.read_text(), "needs branch_deploys.py with the structure digest (ticket 25, ~/.claude)")
     def test_a_key_moved_under_another_mapping_between_the_hand_over_and_the_press_is_refused(self):
         self.pr(272)
         two = DEPLOY_YML + "  b:\n    runs-on: x\n"                  # job b after job d, which holds the deploy step
