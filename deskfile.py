@@ -228,14 +228,24 @@ def _kinds(logical, own=None, tails=None):
     `own` is the record of what AgentView wrote last (a Counter of line texts): with it, a line is AgentView's only
     when its text is in the record, whatever shape it has, and a bullet counts wherever it stands under the header.
     Without it (an item written before the record existed) the exact shapes decide. A line in the record that has
-    no shape is `("own", text, n)`. `tails`, when given, gets one flag per line: true when the whole line, threads
-    taken out, is what is AgentView's (a thread stands in its middle), so the words after the thread are not the person's."""
+    no shape is `("own", text, n)`. `tails`, when given, gets one entry per line: None for a line whose text before its
+    first thread is what is AgentView's, else the words the person typed after what AgentView wrote, for a line that
+    has a thread in its middle (they are `""` when it holds nothing of the person's). The line, threads taken out,
+    is then AgentView's line, longest recorded one first, and the thread's place on it does not matter."""
     out, seen, in_ships = [], set(), False
     own = Counter(own) if own is not None else None
     for i, line in enumerate(logical):
         head, whole = _text(line)
-        mid = own is not None and i > 0 and whole != head and own[whole] > 0
-        if mid:
+        mid = None
+        if own is not None and whole != head and own[head] <= 0:
+            if own[whole] > 0:
+                mid = ""
+            else:
+                got = max((r for r in own if own[r] > 0 and r.strip() and len(r) >= len(head) and whole.startswith(r)), key=len, default=None)
+                if got is not None:
+                    mid = whole[len(got):]
+                    whole = got
+        if mid is not None:
             head = whole
         ours = own is None or own[head] > 0
         if i == 0:
@@ -265,7 +275,7 @@ def _kinds(logical, own=None, tails=None):
         in_ships = kind == ("ships",) or (in_ships and kind is not None and kind[0] == "bullet")
         out.append(kind)
         if tails is not None:
-            tails.append(bool(kind and mid))
+            tails.append(mid if kind else None)
     return out
 
 
@@ -332,7 +342,7 @@ def carry(old, new, own=None):
     if not new.endswith("\n"):
         new += "\n"
     new_lines = _logical(new)
-    new_kinds = _kinds(new_lines)
+    new_kinds = _kinds(new_lines, Counter(_heads(new)))
     ships = ("ships",)
     home = lambda k: k if k in new_kinds else (ships if k[0] == "bullet" and ships in new_kinds else None)
     ships_end = next((k for k in reversed(new_kinds) if k and k[0] in ("ships", "bullet")), None)      # a line that followed a bullet now gone goes after the last one: the list stays whole
@@ -353,13 +363,15 @@ def carry(old, new, own=None):
         rest = rest.rstrip("\n")
         if not rest:
             continue
-        if mid:                                                  # a thread in the middle of our line: the threads stay, the words round them are ours
-            head = _text(line)[1]
+        if mid is not None:                                      # a thread in the middle of our line: the threads stay, and the person's words after ours
+            head = _text(line)[1][:len(_text(line)[1]) - len(mid)]
             rest = "".join(m.group(0) for m in CLOSED.finditer(rest))
+            if mid.strip():                                      # the person's words stay as a line of theirs after ours, so the line is ours again next time
+                (theirs.setdefault(after(kind), []) if after(kind) else orphans).append("  " + mid.strip() + "\n")
         if CLOSED.sub("", rest).count("<!--") or not home(kind):   # a thread left open would swallow the lines below it
             orphans.append("  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest) + "\n")   # its line is gone: nothing is left to quote
         else:
-            marks.setdefault(home(kind), []).append((head.rstrip("\n"), rest, line.rstrip("\n") if mid else None))
+            marks.setdefault(home(kind), []).append((head.rstrip("\n"), rest, line.rstrip("\n") if mid == "" else None))
     out = []
     for kind, line in zip(new_kinds, new_lines):
         head = _split(line)[0].rstrip("\n")

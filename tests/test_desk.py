@@ -741,6 +741,34 @@ class OwnRecord(unittest.TestCase):
         self.assertNotIn("CI green", got)
         self.assertEqual(got.count("Read by the scan"), 1)
 
+    def test_words_the_person_typed_after_a_mid_line_thread_stay_and_the_old_pin_goes(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace(f"{self.OLD_SHA}, into main", f"{self.OLD_SHA}" + self.thread(self.OLD_SHA[:8], "c3") + ", into main (checked)", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got)}["a/b#1"], self.NEW_SHA)
+        self.assertEqual(got.count("Pinned commit:"), 1)
+        self.assertIn("(checked)", got)
+        self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, when="02:00"), rec), got)
+
+    def test_an_unchanged_line_with_no_shape_keeps_its_thread_and_the_persons_next_line_stays_put(self):
+        rec = {}
+        mine = lambda sha: self.block(sha).replace("  - Pinned", "  - Read by the scan: opened x.\n  - Pinned")
+        text = self.hand_over(self.page(""), mine(self.OLD_SHA), rec)
+        text = text.replace("opened x.\n", "opened x." + self.thread("opened x.") + "\n  - my note\n", 1)
+        got = self.hand_over(text, mine(self.NEW_SHA), rec)
+        self.assertNotIn("orphan=1", got)
+        self.assertLess(got.index("my note"), got.index("Pinned commit"))
+        self.assertEqual(self.hand_over(got, mine(self.NEW_SHA), rec), got)
+
+    def test_a_thread_in_the_middle_of_the_task_line_does_not_double_its_words(self):
+        rec = {}
+        block = "- [ ] Merge a/b#1: fix the bug\n  - Pinned commit: " + self.OLD_SHA + "\n"
+        text = self.hand_over(self.page(""), block, rec)
+        text = text.replace("fix the bug", "fix the" + self.thread("fix the") + " bug", 1)
+        got = self.hand_over(text, block, rec)
+        self.assertEqual(got, text)
+
     def test_a_thread_whose_words_are_still_the_end_of_the_new_line_stays_on_it(self):
         rec = {}
         text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
