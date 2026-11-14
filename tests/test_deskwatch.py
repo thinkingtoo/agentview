@@ -339,6 +339,15 @@ class Ships(Case):
         self.assertEqual(self.merge_calls(), [])
         self.assertIn("Not merged: could not read what ships", self.item(272).block)
 
+    def test_a_press_taken_back_during_the_wait_leaves_no_note_and_no_what_ships_read(self):
+        self.deploy()
+        (self.prs / "unknown-272").write_text("1")
+        deskwatch.sleep = lambda s: deskfile.edit(lambda t: t.replace("- [x] Deploy", "- [ ] Deploy"))
+        before = len(self.calls())
+        deskwatch.tick()
+        self.assertNotIn("Not merged", self.item(272).block)
+        self.assertEqual([c for c in self.calls()[before:] if c["args"][0] == "api"], [])
+
     def test_a_press_taken_back_while_what_ships_is_read_does_not_merge(self):
         self.deploy()
         real = deskwatch.gh

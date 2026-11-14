@@ -151,7 +151,7 @@ def read(repo, base, pinned, run, outside="", commits=None):
     deploy, cannot = _classify(_workflows(repo, base, run), base)
     commit_lines, flows, cut = _compare(repo, base, pinned, run)
     if flows:
-        deploy = deploy + [_line("- ", "This pull request changes workflow files: " + ", ".join(flows), 300)]
+        deploy = deploy + [FLOWS] + [_line("  - ", f, 300) for f in flows]
     if cut and not cannot:
         cannot = f"GitHub lists only {FILES_CUT} changed files, so a changed workflow could be missed"
     if not (deploy or cannot or outside or commits):
@@ -164,24 +164,30 @@ def read(repo, base, pinned, run, outside="", commits=None):
     return head + deploy + commit_lines
 
 
-FLOWS = "- This pull request changes workflow files: "
+FLOWS = "- This pull request changes workflow files:"
 UNKNOWN = "- Could not tell what ships"
 
 
 def _same(line):
-    """A line as the page may have re-saved it (markdown escapes, `**` for `__`, raw HTML dropped): letters and digits only."""
-    return re.sub(r"[^0-9a-z]+", "", line.lower())
+    """A line as the page may have re-saved it: backslashes, `*`, `_`, backticks and raw HTML tags taken out and
+    spaces folded. Every other character counts, so `&&` and `||` stay different."""
+    return " ".join(re.sub(r"<[^>]*>|[\\*_`]", "", line).split())
 
 
 def _split(lines):
     """(lines compared as they are, commit shas, changed workflow files, whether commits were hidden behind "and N more")."""
-    rest, shas, flows, cut, inside = [], [], set(), False, False
+    rest, shas, flows, cut, inside, in_flows = [], [], set(), False, False, False
     for l in lines:
         if l.startswith(OUTSIDE):
             continue
-        if l.startswith(FLOWS):
-            flows |= {f.strip() for f in l[len(FLOWS):].split(",")}
-        elif l.startswith(COMMITS):
+        in_files = in_flows and l.startswith("  - ")
+        if in_files:
+            flows.add(_same(l[4:]))
+            continue
+        in_flows = l == FLOWS
+        if in_flows:
+            continue
+        if l.startswith(COMMITS):
             inside = True
         elif inside and l.startswith("  - "):
             cut = cut or l.startswith("  - and ")

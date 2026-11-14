@@ -168,6 +168,13 @@ def check_after(k, repo):
         raise NotMerged(f"#{it.after} must go in first")
 
 
+def taken_back(k, pinned):
+    """The person may have unticked or replaced the item while the press waited."""
+    now = item(k)
+    if not now or not now.ticked or now.pinned != pinned:
+        raise TakenBack("the press was taken back before the merge")
+
+
 def check_ships(k, repo, base, pinned):
     """Refuse when what merging ships is not what the hand-over showed. Read now, just before the merge,
     from the base branch's workflow files and the commits; a Merge item that shows nothing must still ship nothing."""
@@ -211,11 +218,10 @@ def check_and_merge(k, pinned):
         raise NotMerged(f"GitHub still says UNKNOWN after {WAIT_MAX} s")
     if pr.get("mergeable") != "MERGEABLE":
         raise NotMerged(f"GitHub says {pr.get('mergeable')}")
+    taken_back(k, pinned)
     check_after(k, repo)                                    # handed over again with an order while we waited
     check_ships(k, repo, pr.get("baseRefName"), pinned)     # read again just before the merge, not at the start: time passed in the wait
-    now = item(k)                                           # the person may have taken the press back while we waited, and reading what ships takes seconds
-    if not now or not now.ticked or now.pinned != pinned:
-        raise TakenBack("the press was taken back before the merge")
+    taken_back(k, pinned)                                   # and again: reading what ships takes seconds
     code, out = gh("pr", "merge", str(n), "-R", repo, "--merge", "--match-head-commit", pinned)
     after = view(repo, n)                                   # an unreadable answer leaves the press open
     for _ in range(POST_POLLS if code == 0 else 0):         # accepted, but GitHub may still show it open for a moment

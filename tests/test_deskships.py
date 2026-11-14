@@ -114,7 +114,8 @@ class Hardening(unittest.TestCase):
     def test_a_pr_that_adds_a_workflow_is_a_deploy_because_the_merge_runs_the_merged_files(self):
         gh = FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")], files=["src/a.py", ".github/workflows/release.yml"])
         got = deskships.read("o/r", "main", "p" * 40, gh)
-        self.assertIn("- This pull request changes workflow files: .github/workflows/release.yml", got)
+        self.assertIn("- This pull request changes workflow files:", got)
+        self.assertIn("  - .github/workflows/release.yml", got)
 
     def test_a_file_list_cut_by_github_is_not_read_as_no_workflow_change(self):
         gh = FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")], files=[f"f{i}" for i in range(300)])
@@ -159,14 +160,25 @@ class Differ(unittest.TestCase):
         self.assertEqual(deskships.changed(old, new), "")
 
     def test_workflow_files_that_left_the_range_are_not_a_change_but_a_new_one_is(self):
-        old = ["- This pull request changes workflow files: .github/workflows/a.yml, .github/workflows/b.yml"]
+        head = "- This pull request changes workflow files:"
+        old = [head, "  - .github/workflows/a.yml", "  - .github/workflows/_shared_.yml"]
         self.assertEqual(deskships.changed(old, []), "")
-        self.assertEqual(deskships.changed(old, old[:1]), "")
-        self.assertIn("c.yml", deskships.changed(old, ["- This pull request changes workflow files: .github/workflows/c.yml"]))
+        self.assertEqual(deskships.changed(old, [head, "  - .github/workflows/a.yml", "  - .github/workflows/*shared*.yml"]), "")
+        self.assertIn("c.yml", deskships.changed(old, [head, "  - .github/workflows/c.yml"]))
 
     def test_a_could_not_tell_answer_now_is_always_a_change(self):
         both = ["- Could not tell what ships: the classifier is missing"]
         self.assertIn("could not tell", deskships.changed(both, both).lower())
+
+    def test_a_changed_operator_is_a_change(self):
+        old = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: test -f x && ./deploy.sh"]
+        new = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: test -f x || ./deploy.sh"]
+        self.assertIn("||", deskships.changed(old, new))
+
+    def test_many_workflow_files_are_each_on_a_line_of_their_own(self):
+        gh = FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")], files=[f".github/workflows/w{i:03}.yml" for i in range(60)])
+        got = deskships.read("o/r", "main", "p" * 40, gh)
+        self.assertEqual(sum(1 for l in got if l.startswith("  - .github/workflows/w")), 60)
 
     def test_punctuation_the_page_rewrote_in_a_workflow_line_is_no_change(self):
         old = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./**init**.sh"]
