@@ -181,6 +181,88 @@ def items(file=None):
     return parse(_read(Path(file) if file else path()))
 
 
+OWN = re.compile(r"  - (?:Recommendation: |Pinned commit: |What ships:$|Handed over by )")
+SHIPS_LINE = "    "
+
+
+def _logical(block):
+    """The block as logical lines: a physical line, and the ones after it that start inside a comment it opened,
+    so a thread that sheaf wrote across several lines stays one piece with the line it is about."""
+    out = []
+    for _, line, inside in _walk(block):
+        if inside and out:
+            out[-1] += line
+        else:
+            out.append(line)
+    return out
+
+
+def _kind(bare, in_ships):
+    """What an old line of the block is, by its text outside comments: the key of the line AgentView wrote
+    (`task`, `rec`, `pin`, `ships`, `ships:<text>`, `by`, `result`), or None for a line it did not write."""
+    if "<!--" in bare:                                           # a comment left open: not ours to read
+        return None
+    line = bare.rstrip()
+    if in_ships and line.startswith(SHIPS_LINE):
+        return "ships:" + line
+    for name, start in (("rec", "  - Recommendation: "), ("pin", "  - Pinned commit: "), ("by", "  - Handed over by ")):
+        if line.startswith(start):
+            return name
+    if line == SHIPS_HEADER:
+        return "ships"
+    return "result" if RESULT.match(line) else None
+
+
+def _classify(logical):
+    """[(kind, bare text, the comments and what follows them)] for each logical line of a block; the first
+    is the task line. A kind of None is a line the person wrote."""
+    out, in_ships = [], False
+    for i, line in enumerate(logical):
+        bare = re.sub(r"<!--.*?-->", "", line, flags=re.S)
+        kind = "task" if i == 0 else _kind(bare, in_ships)
+        in_ships = kind in ("ships", ) or (in_ships and kind is not None and kind.startswith("ships:"))
+        out.append((kind, bare, line))
+    return out
+
+
+def _marks(line):
+    """The comments of a logical line, whole, in order."""
+    return [m.group(0) for m in re.finditer(r"<!--.*?-->", line, flags=re.S)]
+
+
+def carry(old, new):
+    """`new` (the block AgentView writes now) with what `old` (the block on the page) holds that AgentView did not
+    write: the comment threads sheaf keeps in it, and lines the person wrote. Only AgentView's own lines are
+    replaced. A thread stays on the line of its kind (`Recommendation`, `Pinned commit`, ...), and on the same
+    line of text when the line comes back the same; one whose line is gone from the new block goes on a line
+    of its own at the end of the item, and a line of the person's stays after the line of its kind it followed."""
+    if not new.endswith("\n"):
+        new += "\n"
+    olds = _classify(_logical(old))
+    while olds and olds[-1][0] is None and not olds[-1][1].strip():
+        olds.pop()                                               # the blank lines before the next item are the page's, not the item's
+    news = _classify(_logical(new))
+    present = {k for k, _, _ in news}
+    home = lambda k: k if k in present else ("ships" if k.startswith("ships:") and "ships" in present else None)
+    marks, theirs, strays, last = {}, {}, [], "task"
+    for kind, bare, line in olds:
+        if kind is None:
+            if bare.strip() or theirs.get(home(last)) or strays:         # blank lines count only between lines of the person's
+                (theirs.setdefault(home(last), []) if home(last) else strays).append(line)
+            continue
+        last = kind
+        for m in _marks(line):
+            if home(kind):
+                marks.setdefault(home(kind), []).append(m)
+            else:
+                strays.append("  " + m)
+    out = []
+    for kind, _, line in news:
+        out.append(line.rstrip("\n") + "".join(marks.pop(kind, [])) + "\n")
+        out.extend(theirs.pop(kind, []))
+    return "".join(out + [l if l.endswith("\n") else l + "\n" for l in strays])
+
+
 def put(text, key, block, section="merge"):
     """`text` with the item `key` set to `block`: replaced where it stands, else
     added at the end of its section. A section that is not there yet is made."""
@@ -188,7 +270,7 @@ def put(text, key, block, section="merge"):
         block += "\n"
     for k, start, end in _spans(text):
         if k == key or (k.lower() == key.lower() and not key.startswith("install:")):   # GitHub's names are not case-sensitive, a tool's are
-            return text[:start] + block + text[end:]
+            return text[:start] + carry(text[start:end], block) + text[end:]
     heading = SECTIONS[section]
     at = _heading_end(text, heading)
     if at is not None and not text.endswith("\n") and at == len(text):

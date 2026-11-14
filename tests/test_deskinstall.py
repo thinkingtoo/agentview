@@ -271,6 +271,16 @@ class Scan(Case):
         self.assertEqual(len([i for i in deskfile.items()]), 1)
         self.assertIn("3 commits behind", it.block)
 
+    def test_main_moving_keeps_the_thread_on_the_item(self):
+        self.found()
+        thread = '<!-- sheaf-comment id=c1 by="Thierry" at=2026-11-14T01:00 status=open quote="no recommendation yet."\nNot before the release.\n-->'
+        deskfile.edit(lambda t: t.replace("no recommendation yet.\n", "no recommendation yet." + thread + "\n", 1))
+        newer = "9" * 40
+        self.history([OLD, MID, MAIN, newer])
+        it = self.found()
+        self.assertEqual(it.pinned, newer)
+        self.assertIn(thread, deskfile.path().read_text())
+
     def test_main_moved_a_ticked_item_is_left_to_the_press(self):
         self.found()
         self.tick_box()
