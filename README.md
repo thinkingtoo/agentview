@@ -1123,6 +1123,12 @@ not restart until you know how it got there.
   is unticked. It never presses an unsettled item again. `gh` is the one found in
   `/usr/local/bin:/usr/bin:/bin` when the server starts (the startup line `desk` names
   it), never an entry of the service's PATH, which leads with `~/.local/bin`.
+  The log stays short: past 2 MiB (`desk.MAX_LOG`) the first reader rotates it. The
+  whole old log is kept as `merge-desk.log.<time>` beside it, and the new log starts with,
+  per key, the last record, the last status record, the last press record and, while the
+  key is on the page or its press is open, its last `ready` whole (the press compares what
+  ships with it). A poll therefore reads at most the 2 MiB, however old the desk is; the
+  first read of a log that was already larger reads it once to rotate it.
 - **Reload the page once** in every tab that was open before the restart that
   brings the overview as the only view. Such a tab keeps the page it was
   served, and that page reads `blocks`, which the roster no longer has: every

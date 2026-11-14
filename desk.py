@@ -15,6 +15,7 @@ The state lives under `$XDG_STATE_HOME/agentview/`, never under `~/.claude`.
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -98,13 +99,107 @@ def log(event, k, **fields):
         fh.write(line + "\n")
 
 
-def history(k=None):
+STATUS = ("ready", "pressing", "merged", "installed", "refused", "withdrawn")
+PRESSED = STATUS[:-1]           # what `deskwatch.last_event` looks at: a withdrawal is not one
+MAX_LOG = 2 * 1024 * 1024       # bytes: past this the log is rotated, so a poll never reads more
+_floor = 0                      # size of the log just after this process rotated it
+
+
+def _read_log():
     try:
-        raw = log_path().read_text(encoding="utf-8").split("\n")   # not splitlines: U+2028 and \x85 inside a record would cut it
+        return log_path().read_text(encoding="utf-8")
     except FileNotFoundError:
-        return []
+        return ""
+
+
+def _size():
+    try:
+        return log_path().stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
+def _sieve(line):
+    """(key, event) of a line of the log, or None when `history` would skip it."""
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        return None
+    if isinstance(rec, dict) and isinstance(rec.get("event"), str) and isinstance(rec.get("key"), str):
+        return rec["key"], rec["event"]
+    return None
+
+
+def rotate():
+    """Start a new log that holds what the desk still asks of the old one, and keep the old one beside it as
+    `merge-desk.log.<time>`. Per key, in the order the keys first appeared: its last record, its last status
+    record (the last record may be a `tidied`), its last press record (`last_event` skips a `withdrawn`), and
+    its last `ready` whole while the key is on the page or its press is open, because the press compares what
+    ships with that record and nothing else holds the raw lines. A `ready` carried only because it is the
+    last press record loses its `ships`: a press that finds none says "hand it over again".
+    Under the desk lock, so no record is written between the read and the replace; the new log is complete
+    before it takes the old one's place, so a crash leaves one of the two."""
+    global _floor
+    import time as _time
+    with deskfile.locked():
+        p = log_path()
+        if _size() <= MAX_LOG or _size() <= 2 * _floor:
+            return
+        first, last_any, last_status, last_pressed, last_ready = {}, {}, {}, {}, {}
+        with open(p, "rb") as fh:
+            at = 0
+            for raw in iter(fh.readline, b""):
+                got = _sieve(raw.decode("utf-8", "replace"))
+                if got:
+                    k, event = got
+                    first.setdefault(k, at)
+                    last_any[k] = at
+                    if event in STATUS:
+                        last_status[k] = (at, event)
+                    if event in PRESSED:
+                        last_pressed[k] = at
+                    if event == "ready":
+                        last_ready[k] = at
+                at += len(raw)
+            on_page = {i.key for i in deskfile.items()}
+            keep, whole, ready_at = {}, set(), set(last_ready.values())
+            for k in first:
+                at_ = {last_any[k], last_status[k][0]} if k in last_status else {last_any[k]}
+                if k in last_pressed:
+                    at_.add(last_pressed[k])
+                if k in last_ready and (k in on_page or last_status[k][1] in ("ready", "pressing")):
+                    at_.add(last_ready[k])
+                    whole.add(last_ready[k])
+                keep[k] = sorted(at_)
+            tmp = p.with_name(p.name + ".new")
+            with open(tmp, "wb") as out:
+                for k in sorted(first, key=first.get):
+                    for at_ in keep[k]:
+                        fh.seek(at_)
+                        raw = fh.readline()
+                        if at_ not in whole and at_ in ready_at:
+                            rec = json.loads(raw)
+                            rec.pop("ships", None)
+                            raw = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+                        out.write(raw)
+                out.flush()
+                os.fsync(out.fileno())
+        stamp = _time.strftime("%Y%m%dT%H%M%S")
+        archive = p.with_name(f"{p.name}.{stamp}")
+        n = 1
+        while archive.exists():
+            n += 1
+            archive = p.with_name(f"{p.name}.{stamp}-{n}")
+        os.link(p, archive)
+        os.replace(tmp, p)
+        _floor = _size()
+
+
+def history(k=None):
+    if _size() > MAX_LOG:
+        rotate()
     out = []
-    for line in raw:
+    for line in _read_log().split("\n"):   # not splitlines: U+2028 and \x85 inside a record would cut it
         try:
             rec = json.loads(line)
         except ValueError:
