@@ -8,7 +8,9 @@
 
 **Blocked by:** 14
 
-**Status:** ready-for-agent
+**Claimed by:** Yuki 2026-11-14 02:43
+
+**Status:** in-progress
 
 - [ ] A non-UTF-8 workflow gives a parse-failure line, not exit 1 (test)
 - [ ] `branches: [release-[0-9]+]` matches `release-12` as GitHub does (test)
