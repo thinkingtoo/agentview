@@ -263,6 +263,8 @@ def _kinds(logical, own=None, tails=None):
     own = Counter(own)
     for i, line in enumerate(logical):
         head, whole = _text(line)
+        if i == 0:                                               # the box is the person's to tick: a ticked task line is still ours
+            head, whole = (re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", t, count=1) for t in (head, whole))
         mid = None
         if whole != head and own[head] <= 0:
             if own[whole] > 0:

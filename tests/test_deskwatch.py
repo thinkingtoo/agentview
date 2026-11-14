@@ -1073,8 +1073,9 @@ class Settle(unittest.TestCase):
         self.assertIn("- [ ] Merge a/b#1: one\n  - Pinned commit: " + SHA + "\n  <!-- c1 -->\n  - Not merged: x\n\n- [ ] Merge a/b#2", got)
 
     def test_replaces_an_earlier_result_and_leaves_the_neighbour_alone(self):
-        once = deskfile.settle(self.TEXT, "a/b#1", "Not merged: x")
-        twice = deskfile.settle(once, "a/b#1", "Merged as abc1234 at 10:00")
+        rec = {deskfile._slot(k): {"lines": deskfile._heads(self.TEXT[s:e]), "prev": []} for k, s, e in deskfile._spans(self.TEXT)}   # a page AgentView wrote
+        once = deskfile.settle(self.TEXT, "a/b#1", "Not merged: x", record=rec)
+        twice = deskfile.settle(once, "a/b#1", "Merged as abc1234 at 10:00", record=rec)
         self.assertEqual(twice.count("  - "), 3)
         self.assertNotIn("Not merged", twice)
         self.assertTrue(twice.endswith(self.TEXT.split("\n\n")[-1]))

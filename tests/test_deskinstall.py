@@ -301,6 +301,18 @@ class Scan(Case):
         deskinstall.scan()
         self.assertIsNotNone(self.item())                       # ticked: the watcher decides, not the scan
 
+    def test_an_item_with_no_record_is_handed_over_again_by_the_scan_and_a_press_works(self):
+        self.found()
+        (deskfile.path().parent / deskfile.RECORD).unlink()             # a page written before the record existed
+        self.assertEqual(self.item().pinned, "")                        # nothing is AgentView's on it: no pin, so a press would refuse
+        it = self.found()                                               # the scan hands it over again through put_item
+        self.assertEqual(it.pinned, MAIN)
+        self.assertTrue((deskfile.path().parent / deskfile.RECORD).exists())
+        self.tick_box()
+        deskwatch.tick()
+        self.assertEqual(self.events()[-1], "installed")
+        self.assertEqual(self.rev(), MAIN)
+
     def test_a_finished_install_is_replaced_when_main_moves_again(self):
         self.found()
         self.tick_box()

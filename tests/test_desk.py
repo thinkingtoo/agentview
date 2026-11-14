@@ -77,9 +77,9 @@ def written(text):
     return {deskfile._slot(k): {"lines": deskfile._heads(text[s:e]), "prev": []} for k, s, e in deskfile._spans(text)}
 
 
-def put_after(text, key, block, **kw):
-    """`deskfile.put` on a page AgentView wrote (it has a record of it)."""
-    return deskfile.put(text, key, block, record=written(text), **kw)
+def put_after(text, key, block, ours=None, **kw):
+    """`deskfile.put` on a page AgentView wrote (it has a record of it). `ours`: the page as AgentView wrote it, when the person has typed into `text` since."""
+    return deskfile.put(text, key, block, record=written(text if ours is None else ours), **kw)
 
 
 def parse_after(text):
@@ -451,7 +451,7 @@ class RehandOver(unittest.TestCase):
 
     def test_a_line_the_person_wrote_in_the_item_stays(self):
         old = self.block(self.OLD_SHA) + "  - Friday is fine for me, not before.\n"
-        got = put_after(self.page(old), "a/b#1", self.block(self.NEW_SHA))
+        got = put_after(self.page(old), "a/b#1", self.block(self.NEW_SHA), ours=self.page(self.block(self.OLD_SHA)))
         self.assertIn("  - Friday is fine for me, not before.\n", got)
         self.assertEqual(got.count("Friday is fine"), 1)
 
@@ -484,8 +484,8 @@ class RehandOver(unittest.TestCase):
 
     def test_text_after_a_threads_closing_arrow_stays(self):
         old = self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it." + self.THREAD + " PERSON: only after Friday\n", 1)
-        got = put_after(self.page(old), "a/b#1", self.block(self.NEW_SHA))
-        self.assertIn(self.THREAD + " PERSON: only after Friday\n", got)
+        got = put_after(self.page(old), "a/b#1", self.block(self.NEW_SHA), ours=self.page(self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it." + self.THREAD + "\n", 1)))
+        self.assertIn(self.THREAD + "\n  PERSON: only after Friday\n", got)      # the words after the arrow are the person's line, kept whole
 
     def test_a_thread_on_a_line_of_its_own_stays_where_it_stood(self):
         old = self.block(self.OLD_SHA).replace("  - Pinned", "  " + self.THREAD + "\n  - Pinned", 1)
@@ -496,9 +496,9 @@ class RehandOver(unittest.TestCase):
     def test_a_person_line_shaped_like_ours_but_not_exactly_stays_and_keeps_its_place(self):
         old = (self.block(self.OLD_SHA) + "  - Recommendation: PERSON: do not merge yet\n    because the migration is tomorrow\n"
                + "  - Pinned commit: see the thread above\n")
-        got = put_after(self.page(old), "a/b#1", self.block(self.NEW_SHA))
+        got = put_after(self.page(old), "a/b#1", self.block(self.NEW_SHA), ours=self.page(self.block(self.OLD_SHA)))
         self.assertIn("  - Recommendation: PERSON: do not merge yet\n    because the migration is tomorrow\n  - Pinned commit: see the thread above\n", got)
-        self.assertEqual(put_after(got, "a/b#1", self.block(self.NEW_SHA)), got)
+        self.assertEqual(put_after(got, "a/b#1", self.block(self.NEW_SHA), ours=self.page(self.block(self.NEW_SHA))), got)
 
     def test_a_thread_moved_to_the_end_is_still_there_after_a_second_hand_over(self):
         old = self.block(self.OLD_SHA).replace("  - Handed", "  - What ships:\n    - old deployment" + self.THREAD + "\n  - Handed", 1)
@@ -599,6 +599,15 @@ class OwnRecord(unittest.TestCase):
         self.assertIn("    - run migration 2\n", got)
         self.assertEqual(got.count("NOTE: run it by hand"), 1)
         self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, ships=["restart worker", "run migration 2"]), rec), got)
+
+    def test_a_ticked_box_is_not_a_change_of_the_task_line(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("- [ ] Deploy a/b#1", "- [x] Deploy a/b#1", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA).replace("what it does", "what it does now"), rec)
+        self.assertIn("- [ ] Deploy a/b#1: what it does now\n", got)
+        self.assertNotIn("[x]", got)
+        self.assertEqual(got.count("Deploy a/b#1"), 1)
 
     def test_a_note_between_two_ships_bullets_does_not_turn_the_next_bullet_into_the_persons(self):
         rec = {}
@@ -968,7 +977,7 @@ class Comments(unittest.TestCase):
 
     def test_a_pinned_line_in_a_comment_pins_nothing(self):
         text = ("- [x] Merge a/b#1: r\n  <!--\n  - Pinned commit: " + "a" * 40 + "\n  -->\n  - Pinned commit: " + "b" * 40 + "\n")
-        self.assertEqual(deskfile.parse(text)[0].pinned, "b" * 40)
+        self.assertEqual(parse_after(text)[0].pinned, "b" * 40)
 
     def test_a_heading_at_the_end_without_a_newline_is_the_section(self):
         got = deskfile.put("# D\n## Pull requests waiting for your merge", "a/b#1", "- [ ] Merge a/b#1: x\n")
