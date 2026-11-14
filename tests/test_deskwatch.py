@@ -361,7 +361,7 @@ class Ships(Case):
         self.tick_box(272)
         deskwatch.tick()
         self.assertEqual(self.merge_calls(), [])
-        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*could not tell")
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: now: Could not tell what ships")
 
     def test_a_merge_item_stays_a_merge_item_when_the_workflows_only_test(self):
         self.pr(272)
