@@ -6,8 +6,8 @@
 
 **Claimed by:** Alonso 2026-11-14 02:05
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] A re-hand-over of an item with an open comment thread keeps the thread, word for word (test through deskfile.put)
-- [ ] The install scan re-pinning an Install item keeps its thread the same way
-- [ ] The item's own lines (pinned, What ships, Recommendation) are the new ones
+- [x] A re-hand-over of an item with an open comment thread keeps the thread, word for word (test through deskfile.put): tests/test_desk.py class RehandOver, 17 tests, fail on the old put, pass now
+- [x] The install scan re-pinning an Install item keeps its thread the same way: tests/test_deskinstall.py test_main_moving_keeps_the_thread_on_the_item (through deskinstall.scan), fails without the fix
+- [x] The item's own lines (pinned, What ships, Recommendation) are the new ones: test_the_items_own_lines_are_the_new_ones, test_what_ships_lines_are_the_new_ones
