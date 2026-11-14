@@ -9,6 +9,7 @@ guards of AgentView's own routes unchanged. No sheaf, no network beyond loopback
 import http.client
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -46,8 +47,19 @@ class Plan(unittest.TestCase):
         self.assertEqual(self.ok("GET", f"/_/doc?doc={ADDRESS.replace('/', '%2F')}").target, f"/_/doc?doc=agentview%2Fmerge-desk.md")
         self.assertEqual(self.ok("GET", "/_/live?doc=agentview%2Fmerge-desk.md").stream, True)
         for route in ("tick", "comment", "seen"):
-            plan = self.ok("POST", f"/_/{route}", body(action=0, word="Merge"))
+            plan = self.ok("POST", f"/_/{route}", body(action=0, word="Merge", op="reply"))
             self.assertEqual((plan.target, plan.stream), (f"/_/{route}", False))
+
+    def test_a_comment_passes_with_each_of_the_five_ops_and_with_no_other(self):
+        # Decision (Tarek, 2026-11-14): only Thierry's own devices reach the relay, and he resolves and edits his
+        # comments from the phone, so all five of the hub's ops pass; a sixth is refused here, not left to the hub
+        for op in ("add", "reply", "status", "edit", "delete"):
+            with self.subTest(op=op):
+                self.assertEqual(self.ok("POST", "/_/comment", body(op=op, id="c1")).target, "/_/comment")
+        for op in ("purge", "Reply", "reply ", "", None, 1, ["reply"], {"op": "reply"}):
+            with self.subTest(op=op):
+                self.assertEqual(self.refused("POST", "/_/comment", body(op=op, id="c1")), 400)
+        self.assertEqual(self.refused("POST", "/_/comment", body(id="c1")), 400)
 
     def test_the_page_is_asked_without_a_query(self):
         self.assertEqual(self.ok("GET", PAGE + "?next=/other.md").target, PAGE)
@@ -344,6 +356,294 @@ class Relayed(unittest.TestCase):
                 conn.putheader(k, v)
             conn.endheaders()
             self.assertEqual(conn.getresponse().status, 408)
+
+
+class TheHubsOps(unittest.TestCase):
+    SHEAF_PYTHON = Path.home() / ".local/share/uv/tools/sheafmd/bin/python"
+
+    @unittest.skipUnless(SHEAF_PYTHON.exists(), "sheaf is not installed here")
+    def test_the_relays_comment_ops_are_the_ones_of_the_hub_the_desk_runs_on(self):
+        # COMMENT_OPS is a copy of sheaf's hub/handler.py OPS: a sixth op added there must fail here, not be
+        # refused by the relay without anyone noticing
+        got = subprocess.run([str(self.SHEAF_PYTHON), "-I", "-c", "from sheafmd.hub.handler import OPS; print(*OPS)"],
+                             capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=30)
+        self.assertEqual(got.returncode, 0, got.stderr)
+        self.assertEqual(tuple(got.stdout.split()), deskrelay.COMMENT_OPS)
+
+
+class HubLock(unittest.TestCase):
+    """`SheafHub` asks `sheaf` where the hub is and for a sign-in: each can take a minute. What it has
+    kept is never behind that wait, and devices that ask while it runs share the one answer."""
+
+    def hub(self, locate=None, sign_in=None):
+        hub = deskrelay.SheafHub()
+        for name, fn in (("_locate", locate), ("_sign_in", sign_in)):
+            if fn:
+                patcher = mock.patch.object(deskrelay.SheafHub, name, fn if name == "_locate" else staticmethod(fn))
+                patcher.start()
+                self.addCleanup(patcher.stop)
+        return hub
+
+    def in_threads(self, count, call):
+        out, errs = [], []
+
+        def run():
+            try:
+                out.append(call())
+            except BaseException as err:
+                errs.append(err)
+        threads = [threading.Thread(target=run, daemon=True) for _ in range(count)]
+        for t in threads:
+            t.start()
+        return threads, out, errs
+
+    def test_what_is_kept_is_answered_while_the_hub_is_being_signed_in_to(self):
+        gate, started = threading.Event(), threading.Event()
+        self.addCleanup(gate.set)
+
+        def sign_in(port):
+            started.set()
+            gate.wait(10)
+            return "sheaf_4242=new"
+        hub = self.hub(locate=lambda self_: DESK._replace(port=4242), sign_in=sign_in)
+        self.assertEqual(hub.desk().port, 4242)
+        (t,), out, _ = self.in_threads(1, lambda: hub.cookie())
+        self.assertTrue(started.wait(5))
+        began = time.monotonic()
+        self.assertEqual(hub.desk().port, 4242)                    # the desk is kept: no wait for the sign-in
+        self.assertLess(time.monotonic() - began, 1.0)
+        gate.set()
+        t.join(5)
+        self.assertEqual(out, ["sheaf_4242=new"])
+
+    def test_devices_asking_while_sheaf_open_runs_share_that_one_run(self):
+        gate, runs = threading.Event(), []
+        self.addCleanup(gate.set)
+
+        def locate(self_):
+            runs.append(1)
+            gate.wait(10)
+            raise deskrelay.Refused(503, "the desk's hub could not be found: slow")
+        hub = self.hub(locate=locate)
+        first, out, errs = self.in_threads(1, hub.desk)
+        while not runs:
+            time.sleep(0.01)
+        more, _, more_errs = self.in_threads(4, hub.desk)                      # these ask while the first run is going
+        threads = first + more
+        time.sleep(0.3)
+        gate.set()
+        for t in threads:
+            t.join(5)
+        errs += more_errs
+        self.assertEqual((len(runs), len(errs)), (1, 5))     # not five runs, not five waits one after the other
+        self.assertTrue(all(isinstance(e, deskrelay.Refused) and e.status == 503 for e in errs))
+
+    def test_a_failed_run_is_not_kept_and_the_next_request_tries_again(self):
+        answers = [deskrelay.Refused(503, "down"), DESK]
+
+        def locate(self_):
+            got = answers.pop(0)
+            if isinstance(got, Exception):
+                raise got
+            return got
+        hub = self.hub(locate=locate)
+        with self.assertRaises(deskrelay.Refused):
+            hub.desk()
+        self.assertEqual(hub.desk(), DESK)
+
+    def test_a_reset_while_a_run_is_going_is_not_undone_by_its_late_answer(self):
+        gate, started, runs = threading.Event(), threading.Event(), []
+        self.addCleanup(gate.set)
+
+        def locate(self_):
+            runs.append(1)
+            started.set()
+            if len(runs) == 1:
+                gate.wait(10)
+            return DESK._replace(port=4000 + len(runs))
+        hub = self.hub(locate=locate)
+        (t,), out, _ = self.in_threads(1, hub.desk)
+        self.assertTrue(started.wait(5))
+        hub.reset()                                                   # a 503 elsewhere: what was asked is out of date
+        gate.set()
+        t.join(5)
+        self.assertEqual(hub.desk().port, 4002)                       # the late answer was not kept; it asked again
+
+    def test_a_device_that_joined_a_run_before_a_reset_does_not_take_that_runs_late_answer(self):
+        gate, started, runs = threading.Event(), threading.Event(), []
+        self.addCleanup(gate.set)
+
+        def locate(self_):
+            runs.append(1)
+            n = len(runs)
+            started.set()
+            if n == 1:
+                gate.wait(10)
+            return DESK._replace(port=4000 + n)
+        hub = self.hub(locate=locate)
+        (leader,), led, _ = self.in_threads(1, hub.desk)
+        self.assertTrue(started.wait(5))
+        (follower,), followed, _ = self.in_threads(1, hub.desk)      # joins the first run
+        time.sleep(0.2)
+        hub.reset()                                                   # the hub moved: that run's answer is out of date
+        gate.set()
+        leader.join(5)
+        follower.join(5)
+        self.assertEqual([d.port for d in followed], [4002])          # it asked again; it did not take 4001
+        self.assertEqual(len(runs), 2)
+
+    def test_a_run_that_failed_is_every_waiting_devices_answer_even_after_a_reset(self):
+        # the first device to be told 503 resets the hub; the others, waking after it, take the same failure
+        # rather than each starting a run of its own that can take a minute
+        gate, runs = threading.Event(), []
+        self.addCleanup(gate.set)
+
+        def locate(self_):
+            runs.append(1)
+            gate.wait(10)
+            raise deskrelay.Refused(503, "the desk's hub could not be found: down")
+        hub = self.hub(locate=locate)
+        first, _, errs = self.in_threads(1, hub.desk)
+        while not runs:
+            time.sleep(0.01)
+        more, _, more_errs = self.in_threads(3, hub.desk)
+        time.sleep(0.2)
+        hub.reset()                                                   # what the first 503 does
+        gate.set()
+        for t in first + more:
+            t.join(5)
+        errs += more_errs
+        self.assertEqual((len(runs), len(errs)), (1, 4))
+        self.assertTrue(all(isinstance(e, deskrelay.Refused) and e.status == 503 for e in errs))
+
+    def test_a_device_sent_round_again_by_resets_that_keep_coming_gives_up_with_a_503(self):
+        # each run a device joins is reset before it ends, over and over: it asks again three times, then is told 503
+        class Watched(threading.Event):
+            def __init__(self):
+                super().__init__()
+                self.waited = threading.Event()
+
+            def wait(self, timeout=None):
+                self.waited.set()
+                return super().wait(timeout)
+        hub = self.hub(locate=lambda self_: self.fail("a follower starts no run of its own"))
+
+        def run_begun():
+            flight = deskrelay._Flight(hub._generation)
+            flight.done = Watched()
+            with hub._lock:
+                hub._flights["desk"] = flight
+            return flight
+        flight = run_begun()
+        (t,), out, errs = self.in_threads(1, hub.desk)
+        rounds = 0
+        while rounds < 10 and flight.done.waited.wait(1):
+            rounds += 1
+            hub.reset()                                               # the hub moved again: this run is out of date
+            nxt = run_begun()
+            flight.done.set()
+            flight = nxt
+        t.join(5)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(rounds, 3)
+        self.assertEqual((out, len(errs)), ([], 1))
+        self.assertTrue(isinstance(errs[0], deskrelay.Refused) and errs[0].status == 503)
+
+
+class StreamCap(unittest.TestCase):
+    def test_one_client_holds_so_many_streams_and_no_more(self):
+        streams = deskrelay.Streams(per_client=2, total=10)
+        streams.take("100.1.1.1")
+        streams.take("100.1.1.1")
+        with self.assertRaises(deskrelay.Refused) as caught:
+            streams.take("100.1.1.1")
+        self.assertEqual(caught.exception.status, 429)
+        streams.take("100.2.2.2")                                    # another device is not held back by the first
+        streams.drop("100.1.1.1")
+        streams.take("100.1.1.1")                                    # a stream that ended frees its place
+
+    def test_the_streams_of_all_clients_together_have_a_cap(self):
+        streams = deskrelay.Streams(per_client=5, total=3)
+        for client in ("a", "b", "c"):
+            streams.take(client)
+        with self.assertRaises(deskrelay.Refused) as caught:
+            streams.take("d")
+        self.assertEqual(caught.exception.status, 429)
+
+    def test_dropping_more_than_was_taken_is_harmless(self):
+        streams = deskrelay.Streams(per_client=1, total=1)
+        streams.drop("nobody")
+        streams.take("a")
+        with self.assertRaises(deskrelay.Refused):
+            streams.take("b")
+
+
+class WhereTheHubIs(unittest.TestCase):
+    def test_a_malformed_answer_of_sheaf_open_is_a_503_and_not_an_exception(self):
+        for said in (f"opened http://127.0.0.1:4242/agentview/%ff/{deskrelay.deskfile.NAME}\n",
+                     f"opened http://127.0.0.1:4242/%c3%28/{deskrelay.deskfile.NAME}\n"):
+            with self.subTest(said=said), mock.patch.object(deskrelay.deskcmd, "page", return_value=said):
+                with self.assertRaises(deskrelay.Refused) as caught:
+                    deskrelay.SheafHub()._locate()
+                self.assertEqual(caught.exception.status, 503)
+
+
+class StreamsThroughTheRelay(Relayed):
+    LIVE = f"/_/live?doc={ADDRESS.replace('/', '%2F')}"
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(deskrelay, "STREAMS", deskrelay.Streams(per_client=2, total=10))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def open_stream(self, **kwargs):
+        res, _ = self.call("GET", self.LIVE, read=False, **kwargs)
+        return res
+
+    def test_a_client_past_its_cap_is_told_to_wait_and_the_hub_is_not_asked(self):
+        first, second = self.open_stream(), self.open_stream()
+        self.assertEqual((first.status, second.status), (200, 200))
+        asked = len(StubHub.seen)
+        self.assertEqual(self.open_stream().status, 429)
+        self.assertEqual(len(StubHub.seen), asked)
+        self.assertEqual(self.call("GET", PAGE)[0].status, 200)       # the page itself is not a stream
+
+    def test_the_refusal_of_a_stream_past_the_cap_says_when_to_try_again(self):
+        self.open_stream(), self.open_stream()
+        res = self.open_stream()
+        self.assertEqual(res.status, 429)
+        self.assertEqual(res.getheader("Retry-After"), str(deskrelay.RETRY_AFTER))
+        self.assertGreater(deskrelay.RETRY_AFTER, 0)
+
+    def test_a_place_is_free_again_when_a_stream_ends(self):
+        first, second = self.open_stream(), self.open_stream()
+        StubHub.stream_gate.set()
+        for res in (first, second):
+            res.read()                                                 # the hub ended it, the relay let go
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            res = self.open_stream()
+            if res.status == 200:
+                break
+            res.read()
+            time.sleep(0.05)
+        self.assertEqual(res.status, 200)
+
+    def test_a_place_is_free_again_when_the_hub_does_not_answer(self):
+        self.stub.shutdown()
+        self.stub.server_close()
+        for _ in range(4):                                             # more than the cap: each failed one let go
+            self.assertEqual(self.open_stream().status, 503)
+
+    def test_the_client_is_the_address_the_proxy_saw_and_not_one_the_caller_wrote(self):
+        h = mock.Mock(client_address=("127.0.0.1", 5555))
+        h.headers = {"X-Forwarded-For": "6.6.6.6, 100.64.0.9"}
+        self.assertEqual(deskrelay.client_of(h), "100.64.0.9")        # the last hop is the one our own proxy appended
+        h.headers = {"X-Forwarded-For": "not an address"}
+        self.assertEqual(deskrelay.client_of(h), "127.0.0.1")
+        h.headers = {}
+        self.assertEqual(deskrelay.client_of(h), "127.0.0.1")
 
 
 if __name__ == "__main__":

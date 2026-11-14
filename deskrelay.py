@@ -20,6 +20,7 @@ What a press from the phone can do is what a press on the laptop does: it ticks 
 watcher (`deskwatch`) merges the commit that was pinned.
 """
 import http.client
+import ipaddress
 import json
 import re
 import socket
@@ -34,6 +35,7 @@ import log
 
 BODY_MAX = 64 * 1024
 POSTS = ("tick", "comment", "seen")
+COMMENT_OPS = ("add", "reply", "status", "edit", "delete")     # the hub's OPS (sheaf hub/handler.py), all five: see the README
 GETS = ("doc", "live")
 PAGE_ENTRY = "/desk"
 TIMEOUT = 15                     # the sign-in's connecting and answer
@@ -41,6 +43,13 @@ ASK_TIMEOUT = 60                 # the hub's answer to a request: a tick or a co
                                  # rendered first, and a read of the same document waits for that write
 READ_TIMEOUT = 30                # the phone's own body, once it has said how long it is
 STREAM_TIMEOUT = 70              # the hub's event stream says something every 25 s
+SIGNIN_WAIT = 120                # a device waiting on another's `sheaf open` or sign-in gives up after this
+FOLLOW_ROUNDS = 3                # runs a device joins that a reset makes out of date, before it is told 503
+# One page holds one stream, and a stream whose phone went away is let go only at the hub's next write
+# (25 s), so a reconnecting device briefly holds two.
+STREAMS_PER_CLIENT = 6
+STREAMS_TOTAL = 24
+RETRY_AFTER = 30                 # seconds a refused stream waits: one whose phone went away is let go at the hub's next write (25 s)
 CHUNK = 8192
 LAST_EVENT = re.compile(r"[0-9A-Za-z:._-]{1,64}")
 PASSED = ("Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-Policy",
@@ -48,9 +57,9 @@ PASSED = ("Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-
 
 
 class Refused(Exception):
-    def __init__(self, status, why):
+    def __init__(self, status, why, headers=()):
         super().__init__(why)
-        self.status, self.why = status, why
+        self.status, self.why, self.headers = status, why, headers
 
 
 class Desk(NamedTuple):
@@ -87,7 +96,7 @@ def _no_constant(name):
     raise ValueError(name)
 
 
-def _post_body(data, address):
+def _post_body(data, address, route):
     if len(data) > BODY_MAX:
         raise Refused(413, "that is too much for the desk")
     try:
@@ -101,6 +110,8 @@ def _post_body(data, address):
     if obj.get("tell", False) is not False:
         # A Tell runs the hub account's own agent session on the laptop: not a thing the desk page needs
         raise Refused(403, "the desk relay does not send a Tell")
+    if route == "/_/comment" and not (isinstance(obj.get("op"), str) and obj["op"] in COMMENT_OPS):
+        raise Refused(400, f"a comment's op is one of {', '.join(COMMENT_OPS)}")
     return json.dumps(obj).encode("utf-8")      # what was checked is what is sent, never the caller's own bytes
 
 
@@ -128,27 +139,76 @@ def plan(method, target, data, desk):
         if path in [f"/_/{g}" for g in GETS] and _only_doc(query, desk.address):
             return Plan("GET", f"{path}?doc={urllib.parse.quote(desk.address, safe='')}", None, path == "/_/live")
         raise nope
-    return Plan("POST", path, _post_body(data or b"", desk.address), False)
+    return Plan("POST", path, _post_body(data or b"", desk.address, path), False)
+
+
+class _Flight:
+    """One run of a slow question, and what it came to, for every request that asked it meanwhile."""
+    def __init__(self, generation):
+        self.generation, self.done, self.value, self.error = generation, threading.Event(), None, None
 
 
 class SheafHub:
     """The laptop's hub, as `sheaf` itself says where it is and how to sign in. Both are asked for
-    once and kept; a hub that moved or a key that was rotated is asked for again."""
+    once and kept; a hub that moved or a key that was rotated is asked for again.
+
+    Each question can take a minute (`sheaf open` up to 60 s, the sign-in up to 45 s), so the lock
+    guards the bookkeeping only and is never held across one. Requests that ask the same thing
+    while it runs share that one run, and what is kept is answered at once."""
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._desk = None
-        self._cookie = None
+        self._kept = {"desk": None, "cookie": None}
+        self._flights = {}
+        self._generation = 0
 
     def reset(self):
         with self._lock:
-            self._desk = self._cookie = None
+            self._generation += 1                   # a run that began before this has an answer out of date
+            self._kept = {"desk": None, "cookie": None}
+
+    def _ask(self, what, make, fresh=False):
+        for _ in range(FOLLOW_ROUNDS):
+            with self._lock:
+                if not fresh and self._kept[what] is not None:
+                    return self._kept[what]
+                flight = self._flights.get(what)
+                if flight is not None and flight.generation != self._generation:
+                    flight = None                   # begun before a reset: its answer is out of date for this request
+                leader = flight is None
+                if leader:
+                    flight = self._flights[what] = _Flight(self._generation)
+            if leader:
+                return self._lead(what, make, flight)
+            if not flight.done.wait(SIGNIN_WAIT):
+                raise Refused(503, "sheaf is slow to answer where the desk's hub is or how to sign in")
+            if flight.error is not None:
+                raise flight.error                  # a failure is every waiting request's answer, reset or not
+            with self._lock:
+                if flight.generation != self._generation:
+                    continue                        # a reset came while this one waited: its value is out of date
+            return flight.value
+        raise Refused(503, "sheaf's answer kept going out of date while this request waited for it")
+
+    def _lead(self, what, make, flight):
+        try:
+            flight.value = make()
+        except BaseException as err:
+            flight.error = err
+            raise
+        else:
+            with self._lock:
+                if flight.generation == self._generation:
+                    self._kept[what] = flight.value
+            return flight.value
+        finally:
+            with self._lock:
+                if self._flights.get(what) is flight:
+                    del self._flights[what]
+            flight.done.set()
 
     def desk(self):
-        with self._lock:
-            if self._desk is None:
-                self._desk = self._locate()
-            return self._desk
+        return self._ask("desk", self._locate)
 
     def _locate(self):
         try:
@@ -159,16 +219,15 @@ class SheafHub:
         if not m or not m.group(2).endswith("/" + deskfile.NAME) or not 0 < int(m.group(1)) < 65536:
             raise Refused(503, "sheaf did not say where the desk page is")
         page = m.group(2)
-        return Desk(int(m.group(1)), page, urllib.parse.unquote(page[1:], errors="strict"))
+        try:
+            address = urllib.parse.unquote(page[1:], errors="strict")
+        except UnicodeDecodeError:
+            raise Refused(503, "sheaf did not say where the desk page is") from None
+        return Desk(int(m.group(1)), page, address)
 
     def cookie(self, fresh=False):
         """`name=value`, the hub's cookie for this relay."""
-        with self._lock:
-            if fresh or self._cookie is None:
-                if self._desk is None:
-                    self._desk = self._locate()
-                self._cookie = self._sign_in(self._desk.port)
-            return self._cookie
+        return self._ask("cookie", lambda: self._sign_in(self.desk().port), fresh)
 
     @staticmethod
     def _sign_in(port):
@@ -199,6 +258,44 @@ class SheafHub:
 
 
 HUB = SheafHub()
+
+
+class Streams:
+    """How many event streams are open, in all and for each client: each holds a thread here and a
+    connection to the hub for as long as the page is open."""
+
+    def __init__(self, per_client=STREAMS_PER_CLIENT, total=STREAMS_TOTAL):
+        self._lock = threading.Lock()
+        self._per_client, self._total = per_client, total
+        self._open = {}
+
+    def take(self, client):
+        with self._lock:
+            if self._open.get(client, 0) >= self._per_client or sum(self._open.values()) >= self._total:
+                raise Refused(429, "too many desk streams are open: close the other desk pages and try again",
+                              (("Retry-After", str(RETRY_AFTER)),))
+            self._open[client] = self._open.get(client, 0) + 1
+
+    def drop(self, client):
+        with self._lock:
+            left = self._open.get(client, 0) - 1
+            if left > 0:
+                self._open[client] = left
+            else:
+                self._open.pop(client, None)
+
+
+STREAMS = Streams()
+
+
+def client_of(h):
+    """Who is asking: the address the `tailscale serve` proxy set in X-Forwarded-For (it replaces what the
+    caller sent; the last entry is read all the same), else the connection's own."""
+    seen = h.headers.get("X-Forwarded-For", "").rpartition(",")[2].strip()
+    try:
+        return str(ipaddress.ip_address(seen))
+    except ValueError:
+        return h.client_address[0]
 
 
 def _ask(desk, plan_, cookie, last_event):
@@ -233,6 +330,15 @@ def _relay(plan_, desk, last_event):
 
 def serve(h, method):
     """Answer the request `h` (a `server.Handler`) holds. The caller has judged Host and, for a POST, Origin."""
+    held = []                                   # the stream places this request took
+    try:
+        _serve(h, method, held)
+    finally:
+        for client in held:
+            STREAMS.drop(client)
+
+
+def _serve(h, method, held):
     path = h.path.partition("?")[0]
     try:
         data = None
@@ -250,6 +356,9 @@ def serve(h, method):
                 raise Refused(408, "the body did not arrive") from None
         plan_ = plan(method, h.path, data, HUB.desk)
         desk = HUB.desk()
+        if plan_.stream:
+            STREAMS.take(client := client_of(h))
+            held.append(client)
         if plan_.target == PAGE_ENTRY:
             h.send_response(302)
             h.send_header("Location", desk.page)
@@ -268,7 +377,16 @@ def serve(h, method):
         if why.status in (411, 413):
             h.close_connection = True
         # The reason is the status line, which is latin-1: what sheaf said may hold more than that
-        return h.send_error(why.status, why.why.encode("ascii", "replace").decode().replace("\n", " "))
+        said = why.why.encode("ascii", "replace").decode().replace("\n", " ")
+        if not why.headers:
+            return h.send_error(why.status, said)
+        h.send_response(why.status, said)       # send_error takes no headers
+        for name, value in why.headers:
+            h.send_header(name, value)
+        h.send_header("Content-Length", "0")
+        h.send_header("Connection", "close")
+        h.close_connection = True
+        return h.end_headers()
     try:
         h.send_response(res.status)
         for name in PASSED:
