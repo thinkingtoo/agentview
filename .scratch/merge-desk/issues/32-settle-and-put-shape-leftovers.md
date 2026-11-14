@@ -32,25 +32,46 @@ Findings of Nuno's Sonnet round 2 on 31 (/home/tiroir/Projects/agentview-wt/nuno
 
 **Blocked by:** 31 (Waits on: 31; same deskfile.py)
 
-**Claimed by:** Boris 2026-11-14 20:38
+**Claimed by:** Rumi 2026-11-14 20:49 (from Boris, by Tarek)
 
-**Status:** in-progress
+**Status:** done
 
 ## Acceptance criteria
-- [ ] `settle` replaces a result that is followed by a multiline thread and keeps the record's ownership of it (red test)
-- [ ] A corrupt record file is not overwritten by `put`; the other items keep their entries and the press says why it refused (red test, as `adopt` refuses)
-- [ ] A What ships header with a trailing space is adopted with its bullets, and a re-hand-over does not duplicate them (red test)
-- [ ] `settle` on a CRLF page with a blank line after the item replaces the old result and puts the new one above the blank line (red test)
-- [ ] `put` of a new item into a CRLF section lands right under the last item, not after the blank line before the next heading (red test)
-- [ ] `carry` closes an open comment on a person's line and on one with a space before `<!--` (red test for both)
-- [ ] With no record, or a thread on the result line, `settle` replaces the old result as its docstring says, or the docstring says what it does (test or the line why)
-- [ ] An open comment on a task line closed only by a later thread's `-->` is closed after the next hand-over, and is not left to reopen when sheaf deletes the thread (red test)
-- [ ] Class c: two result lines after `_unhidden` closes a left-open comment on the result line become one (test, or the line why not)
-- [ ] Class c: a CRLF page keeps one kind of line end for rewritten lines and the result line; `adopt` reports case-duplicate keys under an existing entry (tests)
-- [ ] Class b, from 26: a person's plain copy of our pin line, with a sheaf thread in the middle of our own pin line, is recognised as theirs: the next hand-over keeps the copy and replaces our threaded line (red test, the repro above)
-- [ ] Class c, from 24: `TheHubsOps` finds sheaf the way the relay does (the interpreter of the configured `sheaf` executable), or says why it skips (test or the line why)
-- [ ] A public `deskfile` function returns an item's own result lines, and `deskscan.over()` uses it instead of the private names `_kinds`, `_logical`, `_own`, `_orders`, `_prev_stands`, `_slot`, `_text` and `_held.record` (existing tidy tests stay green; `grep` shows no private deskfile name left in deskscan.py)
-- [ ] Class b, from 31 round 2: a stray `-->` later on the page (`see A --> B`) does not keep a left-open comment hiding its item, and `put` adds no second copy (red test)
-- [ ] Class b, from 31 round 2: a person's line shaped exactly like a ships line is told from ours, or the known limit is written under "Known limit" with the line why (test or the line why)
-- [ ] Class c, from 31 round 2: a page one write behind with its Recommendation and Handed-over lines removed is still judged behind (red test, or the line why not)
-- [ ] Each fix is red on its review's head, green after, with the commands and results in the report
+- [x] `settle` replaces a result that is followed by a multiline thread and keeps the record's ownership of it (red test)
+  - Evidence: already green on the starting head (ticket 28 fixed it): SettleAndPutShapes.test_settle_replaces_a_result_that_a_multiline_thread_follows…; settle now finds the old result by `_kinds` (cfe9848)
+- [x] A corrupt record file is not overwritten by `put`; the other items keep their entries and the press says why it refused (red test, as `adopt` refuses)
+  - Evidence: red then green: test_a_corrupt_record_is_not_overwritten_by_a_hand_over… (put/drop raise `cannot be read`; settle writes the page, leaves the record: test_a_press_still_writes…). The old test that expected the overwrite was changed to the new contract
+- [x] A What ships header with a trailing space is adopted with its bullets, and a re-hand-over does not duplicate them (red test)
+  - Evidence: red then green: test_a_header_with_a_trailing_space_is_adopted… (`_head`)
+- [x] `settle` on a CRLF page with a blank line after the item replaces the old result and puts the new one above the blank line (red test)
+  - Evidence: already green on the starting head: test_settle_on_a_crlf_page_with_a_blank_line…
+- [x] `put` of a new item into a CRLF section lands right under the last item, not after the blank line before the next heading (red test)
+  - Evidence: red then green (a doubled blank line before the next heading, LF and CRLF): test_put_of_a_new_item_into_a_crlf_section…
+- [x] `carry` closes an open comment on a person's line and on one with a space before `<!--` (red test for both)
+  - Evidence: already green on the starting head (open comments are closed on the person's lines): test_carry_closes_an_open_comment… three shapes
+- [x] With no record, or a thread on the result line, `settle` replaces the old result as its docstring says, or the docstring says what it does (test or the line why)
+  - Evidence: docstring now says it; test_settle_replaces_a_result_with_a_thread_in_its_middle_and_says_so_without_a_record
+- [x] An open comment on a task line closed only by a later thread's `-->` is closed after the next hand-over, and is not left to reopen when sheaf deletes the thread (red test)
+  - Evidence: red then green: test_an_open_comment_on_a_task_line_that_a_later_threads_arrow_closed…
+- [x] Class c: two result lines after `_unhidden` closes a left-open comment on the result line become one (test, or the line why not)
+  - Evidence: red then green: test_settle_replaces_a_result_whose_open_comment_the_unhiding_closed…
+- [x] Class c: a CRLF page keeps one kind of line end for rewritten lines and the result line; `adopt` reports case-duplicate keys under an existing entry (tests)
+  - Evidence: CRLF already green (lone-end checks in the CRLF tests); adopt red then green: test_adopt_reports_a_case_duplicate…
+- [x] Class b, from 26: a person's plain copy of our pin line, with a sheaf thread in the middle of our own pin line, is recognised as theirs: the next hand-over keeps the copy and replaces our threaded line (red test, the repro above)
+  - Evidence: red then green: test_a_persons_plain_copy_of_our_pin_line_is_theirs_when_a_thread_sits_in_the_middle_of_ours
+- [x] Class c, from 24: `TheHubsOps` finds sheaf the way the relay does (the interpreter of the configured `sheaf` executable), or says why it skips (test or the line why)
+  - Evidence: test_desk_relay.TheHubsOps: sheaf's interpreter from the `sheaf` on PATH (deskcmd.SHEAF), a skip says why; test_a_sheaf_that_is_not_there_says_why_it_skips
+- [x] A public `deskfile` function returns an item's own result lines, and `deskscan.over()` uses it instead of the private names `_kinds`, `_logical`, `_own`, `_orders`, `_prev_stands`, `_slot`, `_text` and `_held.record` (existing tidy tests stay green; `grep` shows no private deskfile name left in deskscan.py)
+  - Evidence: `deskfile.own_results` and `held_record`; `grep 'deskfile\._' deskscan.py` is empty; tests/test_deskscan.py untouched, 125 OK; test_the_results_of_an_item_come_from_one_public_function…
+- [x] Class b, from 31 round 2: a stray `-->` later on the page (`see A --> B`) does not keep a left-open comment hiding its item, and `put` adds no second copy (red test)
+  - Evidence: red then green: test_a_stray_arrow_later_on_the_page_does_not_keep_a_left_open_comment_hiding_its_item (`_open_at` counts a stray arrow only before the next item)
+- [x] Class b, from 31 round 2: a person's line shaped exactly like a ships line is told from ours, or the known limit is written under "Known limit" with the line why (test or the line why)
+  - Evidence: Known limit (below), no code
+- [x] Class c, from 31 round 2: a page one write behind with its Recommendation and Handed-over lines removed is still judged behind (red test, or the line why not)
+  - Evidence: Known limit (below), no code
+- [x] Each fix is red on its review's head, green after, with the commands and results in the report
+  - Evidence: each new test was run before its fix (red) and after (green); `python3 -m unittest tests.test_desk.SettleAndPutShapes` 15 OK; boris/32 at the head in the report
+
+## Known limit
+- A person's line shaped exactly like a `deskships` line (`    - Outside GitHub: my text` under `What ships:`) is still adopted by `adopt`: the text alone cannot tell it from ours, and `adopt` is a one-time hand command whose result the person can read.
+- A page one write behind whose Recommendation and Handed-over lines are gone is not judged behind, and a stale page carrying a press result line is not either (two pin lines show after the next hand-over): the same text is what a person leaves who removed two of our lines and typed a copy of an old pin line, and judging that page behind makes `put` delete the person's text (the A1 hotfix). Nothing is lost either way; the old pin stays as the person's line.
