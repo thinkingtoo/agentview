@@ -12,9 +12,9 @@
 
 **Claimed by:** Samir 2026-11-14 01:52
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] branch_deploys.py prints a parse-failure line for an unparseable workflow (its own test)
-- [ ] The desk shows such a repo as "could not tell", not Merge, and refuses its press
-- [ ] A deploy line longer than any cut is compared in full (or by hash): a change after character 140 refuses
-- [ ] A "could not tell" refusal names what the person can do instead
+- [x] branch_deploys.py prints a parse-failure line for an unparseable workflow (its own test) (`routines/tests/test_branch_deploys.py::test_full_marks_a_workflow_that_cannot_be_parsed` and 3 more; `--full` only, default output unchanged on 4 real repos, ~/.claude 56ddfaf)
+- [x] The desk shows such a repo as "could not tell", not Merge, and refuses its press (`tests/test_deskships.py::test_a_workflow_that_cannot_be_parsed_is_could_not_tell_and_names_the_file`, `tests/test_deskwatch.py::test_a_workflow_that_cannot_be_parsed_is_a_deploy_item_that_cannot_be_pressed`: Deploy item, press refused)
+- [x] A deploy line longer than any cut is compared in full (or by hash): a change after character 140 refuses (`test_a_change_after_the_cut_is_a_change`, `..._no_break_space_...`, `test_a_line_made_to_look_like_a_digested_one_is_not_the_same_line` red without its guard; `test_a_long_deploy_line_that_is_unchanged_is_pressed`; a 155-char line now lists and presses)
+- [x] A "could not tell" refusal names what the person can do instead (`test_every_could_not_tell_says_what_the_person_can_do`, `test_a_could_not_tell_refusal_still_says_what_to_do_after_a_long_reason`, press-time Unreadable too)
