@@ -425,6 +425,19 @@ class Ships(Case):
         self.assertIn("Not merged: could not read what ships", it.block)
         self.assertIn("merge it on GitHub yourself", it.block)
 
+    def test_an_unreadable_press_with_a_long_reason_still_shows_the_whole_advice(self):
+        self.deploy()
+        (self.prs / "api-fails").write_text("")
+        real = deskwatch.gh
+
+        def gh(*a):
+            code, out = real(*a)
+            return (code, "HTTP 403: API rate limit exceeded " + "r" * 200) if code else (code, out)
+        deskwatch.gh = gh
+        self.addCleanup(setattr, deskwatch, "gh", real)
+        deskwatch.tick()
+        self.assertRegex(self.item(272).block, r"Not merged: could not read what ships: .*split the pull request\.")
+
     def test_a_workflow_file_that_is_not_utf8_refuses_the_press_it_does_not_crash_it(self):
         k = self.deploy()
         real = deskwatch.gh

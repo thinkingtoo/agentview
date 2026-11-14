@@ -200,7 +200,7 @@ def check_ships(k, repo, base, pinned):
     try:
         now = deskships.read(repo, base, pinned, gh, commits=bool(shown))
     except deskships.Unreadable as why:
-        raise NotMerged(f"could not read what ships: {desk.flatten(str(why), 160)}. {deskships.HELP}.") from None
+        raise NotMerged(f"could not read what ships: {desk.flatten(str(why), 100).rstrip('. …')}. {deskships.HELP}.") from None      # the page cuts a line at 300: the advice must fit
     gone = deskships.changed(shown, now)
     if gone:
         raise NotMerged(f"what ships changed: {gone}")
