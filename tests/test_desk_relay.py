@@ -455,6 +455,29 @@ class HubLock(unittest.TestCase):
         t.join(5)
         self.assertEqual(hub.desk().port, 4002)                       # the late answer was not kept; it asked again
 
+    def test_a_device_that_joined_a_run_before_a_reset_does_not_take_that_runs_late_answer(self):
+        gate, started, runs = threading.Event(), threading.Event(), []
+        self.addCleanup(gate.set)
+
+        def locate(self_):
+            runs.append(1)
+            n = len(runs)
+            started.set()
+            if n == 1:
+                gate.wait(10)
+            return DESK._replace(port=4000 + n)
+        hub = self.hub(locate=locate)
+        (leader,), led, _ = self.in_threads(1, hub.desk)
+        self.assertTrue(started.wait(5))
+        (follower,), followed, _ = self.in_threads(1, hub.desk)      # joins the first run
+        time.sleep(0.2)
+        hub.reset()                                                   # the hub moved: that run's answer is out of date
+        gate.set()
+        leader.join(5)
+        follower.join(5)
+        self.assertEqual([d.port for d in followed], [4002])          # it asked again; it did not take 4001
+        self.assertEqual(len(runs), 2)
+
 
 class StreamCap(unittest.TestCase):
     def test_one_client_holds_so_many_streams_and_no_more(self):

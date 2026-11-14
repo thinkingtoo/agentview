@@ -166,21 +166,28 @@ class SheafHub:
             self._kept = {"desk": None, "cookie": None}
 
     def _ask(self, what, make, fresh=False):
-        with self._lock:
-            if not fresh and self._kept[what] is not None:
-                return self._kept[what]
-            flight = self._flights.get(what)
-            if flight is not None and flight.generation != self._generation:
-                flight = None                       # begun before a reset: its answer is out of date for this request
-            leader = flight is None
+        while True:
+            with self._lock:
+                if not fresh and self._kept[what] is not None:
+                    return self._kept[what]
+                flight = self._flights.get(what)
+                if flight is not None and flight.generation != self._generation:
+                    flight = None                   # begun before a reset: its answer is out of date for this request
+                leader = flight is None
+                if leader:
+                    flight = self._flights[what] = _Flight(self._generation)
             if leader:
-                flight = self._flights[what] = _Flight(self._generation)
-        if not leader:
+                return self._lead(what, make, flight)
             if not flight.done.wait(SIGNIN_WAIT):
                 raise Refused(503, "sheaf is slow to answer where the desk's hub is or how to sign in")
+            with self._lock:
+                if flight.generation != self._generation:
+                    continue                        # a reset came while this one waited: ask again
             if flight.error is not None:
                 raise flight.error
             return flight.value
+
+    def _lead(self, what, make, flight):
         try:
             flight.value = make()
         except BaseException as err:
