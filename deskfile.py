@@ -187,7 +187,7 @@ def put(text, key, block, section="merge"):
     if not block.endswith("\n"):
         block += "\n"
     for k, start, end in _spans(text):
-        if k == key:
+        if k == key or (k.lower() == key.lower() and not key.startswith("install:")):   # GitHub's names are not case-sensitive, a tool's are
             return text[:start] + block + text[end:]
     heading = SECTIONS[section]
     at = _heading_end(text, heading)

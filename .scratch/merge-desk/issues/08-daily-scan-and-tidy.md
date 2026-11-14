@@ -6,7 +6,9 @@
 
 **Claimed by:** Rania 2026-11-14 00:45
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] A found item never carries a recommendation of its own
-- [ ] Tidying never touches an item with an open comment thread
+- [x] A found item never carries a recommendation of its own
+  - Evidence: `tests/test_deskscan.py` `Found.test_a_found_item_says_so_on_its_own_line_and_recommends_nothing` (one line, "found by the scan, no recommendation yet", no verdict) and `test_a_pr_handed_over_is_never_also_found`; merged into dev at bd9b095, live since 01:43:19. First scan on the live desk: pending, retried at 01:58 (the 01:43 run found a cold roster).
+- [x] Tidying never touches an item with an open comment thread
+  - Evidence: `tests.test_deskscan.Threads` (every shape sheaf stores: inline, own line, multi-line, `<br>`, `rd-comment`, orphan, unknown status, unclosed) and `Tidy` (text after an item, swallowed items, damaged threads); five Opus bug-hunt rounds, files `rania-08-opus-1..5.md` in `/home/tiroir/Projects/agentview-wt/`.
