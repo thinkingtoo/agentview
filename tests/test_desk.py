@@ -512,6 +512,13 @@ class RehandOver(unittest.TestCase):
         self.assertEqual(deskfile.parse(got)[0].ships, ["- new deployment", "- second"])
         self.assertEqual(deskfile.put(got, "a/b#1", new), got)
 
+    def test_a_thread_on_the_second_of_two_identical_bullets_stays_on_the_second(self):
+        old = ("- [ ] Deploy a/b#1: x\n  - What ships:\n    - restart worker\n    - restart worker" + self.THREAD + "\n  - Pinned commit: " + self.OLD_SHA + "\n")
+        new = old.replace(self.THREAD, "").replace(self.OLD_SHA, self.NEW_SHA)
+        got = deskfile.put(self.page(old), "a/b#1", new)
+        self.assertEqual(got, self.page(old.replace(self.OLD_SHA, self.NEW_SHA)))
+        self.assertEqual(deskfile.put(got, "a/b#1", new), got)
+
     def test_a_thread_whose_closing_arrow_was_lost_is_kept_too(self):
         old = self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it.<!-- sheaf-comment id=c1 by=\"T\" at=2026-11-14T01:00 status=open quote=\"x\"\nhalf a thread\n", 1)
         got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))

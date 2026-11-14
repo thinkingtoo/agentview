@@ -209,11 +209,13 @@ def _kinds(logical):
             kind = "ships"
         elif in_ships and head.startswith("    ") and head.strip():
             kind = "ships:" + head
+            while kind in seen:                                  # the same bullet twice: the second is its own kind
+                kind += "'"
         elif RESULT.match(head):
             kind = "result"
         else:
             kind = next((k for k, shape in OWN_LINES if shape.match(head)), None)
-        if kind in seen and not kind.startswith("ships:"):
+        if kind in seen:
             kind = None
         elif kind:
             seen.add(kind)
