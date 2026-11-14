@@ -10,7 +10,9 @@
 
 **Blocked by:** 21
 
-**Status:** ready-for-agent
+**Claimed by:** Carmen 2026-11-14 10:48
+
+**Status:** in-progress
 
 - [ ] A billion-laughs alias in branches: answers within 1 s as could-not-parse (test with a timeout)
 - [ ] 300 `*-*-*-x` entries answer within 1 s (test)
