@@ -1157,6 +1157,21 @@ class InstallItems(Case):
         self.assertEqual(deskscan.tidy(), [])
         self.assertEqual(self.keys(), ["install:sheafmd"])
 
+    def test_an_installed_line_added_by_the_person_to_an_item_we_never_settled_does_not_make_it_over(self):
+        self.receipt(MAIN)
+        block = deskinstall.item_block(deskinstall.Tool("sheafmd", "sheafmd", REPO, OLD), MAIN, 3, "2026-11-12 10:00")
+        deskfile.put_item("install:sheafmd", block, section="install")
+        self.log_at("installed", "install:sheafmd", 30, sha=MAIN)
+        deskfile.path().write_text(self.page().rstrip("\n") + f"\n  - Installed as {MAIN[:7]} at 11:11\n")
+        self.assertEqual(deskscan.tidy(), [])
+        self.assertEqual(self.keys(), ["install:sheafmd"])
+
+    def test_a_failed_restart_line_the_person_typed_is_not_ours_to_read_as_news(self):
+        self.receipt(MAIN)
+        self.installed_item()
+        deskfile.path().write_text(self.page().rstrip("\n") + f"\n  - Installed as {MAIN[:7]} at 11:11; the restart failed (typed by me)\n")
+        self.assertEqual(deskscan.tidy(), ["install:sheafmd"])      # only our own line can say the restart failed
+
     def test_an_install_item_whose_restart_failed_stays_for_the_person_to_read(self):
         self.receipt(MAIN)
         self.installed_item()

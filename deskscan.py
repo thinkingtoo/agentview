@@ -425,12 +425,16 @@ def settled_at(rec):
 
 
 def results(it, record):
-    """The result lines of the item that AgentView wrote: the record of the item says so, else the line is the
-    person's, whatever shape it has. An item with no record has none."""
-    own = deskfile._own(record, it.key, it.block)
-    if own is None:
+    """The result lines of the item that AgentView wrote, as the item's record reads its block (`deskfile._kinds`,
+    the reading `settle` and `put` use): a line is ours only where the record lists its text, in the place its order
+    gives it, and a second copy of it is the person's. An item with no record has none. The head of each line, its
+    threads taken out."""
+    got = (record or {}).get(deskfile._slot(it.key))
+    if got is None:
         return []
-    return [l for l in it.block.split("\n") if deskfile.RESULT.match(l) and own[l] > 0]
+    logical = deskfile._logical(it.block)
+    kinds = deskfile._kinds(logical, deskfile._own(record, it.key, it.block), orders=deskfile._orders(got))
+    return [deskfile._text(l)[0] for k, l in zip(kinds, logical) if k == ("result",)]
 
 
 def over(it, rec, now, record):
