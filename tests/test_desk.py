@@ -371,7 +371,8 @@ class Place(Case):
         self.pr("sweatshop-ai/sheaf", 272)
         self.ready()
         made = {p.relative_to(self.state).as_posix() for p in self.state.rglob("*") if p.is_file()}
-        self.assertEqual(made, {"agentview/merge-desk.md", "agentview/merge-desk.log", "agentview/.merge-desk.lock"})
+        self.assertEqual(made, {"agentview/merge-desk.md", "agentview/merge-desk.log", "agentview/.merge-desk.lock",
+                                "agentview/.merge-desk.own.json"})
 
     def test_gh_is_resolved_to_an_absolute_path_once(self):
         import desk
@@ -402,6 +403,8 @@ class RehandOver(unittest.TestCase):
         self.assertEqual(got.count("sheaf-comment"), 1)
         self.assertEqual([i.key for i in deskfile.parse(got)], ["a/b#1", "a/b#2"])
 
+    ORPHAN = THREAD.replace("status=open ", "status=open orphan=1 ")
+
     def test_the_items_own_lines_are_the_new_ones(self):
         old = self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it." + self.THREAD + "\n", 1)
         got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA, rec="Wait.", when="02:00"))
@@ -411,11 +414,11 @@ class RehandOver(unittest.TestCase):
         self.assertNotIn("01:00.", got)
         self.assertIn("02:00.", got)
         self.assertIn("Recommendation: Wait.", got)
-        self.assertIn(self.THREAD, got)
+        self.assertIn(self.ORPHAN, got)                 # the words it quoted are gone from the line
 
     def test_a_thread_on_the_task_line_and_on_the_pinned_line_both_stay(self):
-        t1 = self.THREAD
-        t2 = self.THREAD.replace("id=c1", "id=c2").replace("Friday", "Monday")
+        t1 = self.THREAD.replace('quote="Merge it."', 'quote="what it does"')
+        t2 = self.THREAD.replace("id=c1", "id=c2").replace("Friday", "Monday").replace('quote="Merge it."', 'quote="into main"')
         old = self.block(self.OLD_SHA)
         old = old.replace("what it does\n", "what it does" + t1 + "\n", 1).replace(", into main\n", ", into main" + t2 + "\n", 1)
         got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
@@ -426,9 +429,9 @@ class RehandOver(unittest.TestCase):
         old = self.block(self.OLD_SHA).replace("2026-11-14 01:00.\n", "2026-11-14 01:00." + self.THREAD + "\n", 1)
         old = old.replace("  - Handed over", "  - What ships:\n    - the server" + self.THREAD.replace("id=c1", "id=c9") + "\n  - Handed over")
         got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))     # a block with no What ships
-        self.assertIn(self.THREAD, got)
-        self.assertIn(self.THREAD.replace("id=c1", "id=c9"), got)
-        self.assertNotIn("the server", got.replace(self.THREAD.replace("id=c1", "id=c9"), ""))
+        self.assertIn(self.THREAD, got)                                                 # its line is the same: the thread stays on it
+        self.assertIn(self.ORPHAN.replace("id=c1", "id=c9"), got)                       # its line is gone
+        self.assertNotIn("the server", got.replace(self.ORPHAN.replace("id=c1", "id=c9"), ""))
         self.assertEqual([i.key for i in deskfile.parse(got)], ["a/b#1", "a/b#2"])
 
     def test_a_line_the_person_wrote_in_the_item_stays(self):
@@ -485,7 +488,7 @@ class RehandOver(unittest.TestCase):
     def test_a_thread_moved_to_the_end_is_still_there_after_a_second_hand_over(self):
         old = self.block(self.OLD_SHA).replace("  - Handed", "  - What ships:\n    - old deployment" + self.THREAD + "\n  - Handed", 1)
         once = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
-        self.assertIn(self.THREAD, once)
+        self.assertIn(self.ORPHAN, once)
         self.assertEqual(deskfile.put(once, "a/b#1", self.block(self.NEW_SHA)), once)
 
     def test_an_unclosed_thread_on_the_task_line_is_kept_and_hides_none_of_the_new_lines(self):
@@ -523,6 +526,221 @@ class RehandOver(unittest.TestCase):
         old = self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it.<!-- sheaf-comment id=c1 by=\"T\" at=2026-11-14T01:00 status=open quote=\"x\"\nhalf a thread\n", 1)
         got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
         self.assertIn("half a thread", got)
+
+
+def squash(s):
+    return "".join(s.split())
+
+
+def anchor_problems(text):
+    """Sheaf's anchor rule for a thread (SPEC 5.2, `edit._occurrence`): the passage it quotes is the words just before it,
+    in the text its own line shows. A thread flagged `orphan=1` stands on a line of its own and says its text is gone.
+    Returns the quotes of the threads that sit on a line whose words do not end with them."""
+    import html
+    import re
+    bad = []
+    for line in text.split("\n"):
+        for m in re.finditer(r'<!-- sheaf-comment [^\n]*?(orphan=1 )?quote="([^"\n]*)"', line):
+            if m.group(1):
+                continue
+            before = re.sub(r"<!--.*?-->", "", line[:m.start()])
+            before = re.sub(r"^\s*(?:[-*+] (?:\[[ xX]\] )?)?", "", before)
+            if not squash(before).endswith(squash(html.unescape(m.group(2)))):
+                bad.append(m.group(2))
+    return bad
+
+
+class OwnRecord(unittest.TestCase):
+    """AgentView keeps a record of the lines it wrote last, so a line is its own only when it is one of those:
+    nothing the person wrote is ever taken for it, whatever shape it has."""
+
+    OLD_SHA, NEW_SHA = "a" * 40, "b" * 40
+    THREAD = ('<!-- sheaf-comment id=c1 by="Thierry" at=2026-11-14T01:00 status=open quote="QUOTE"\n'
+              'Wait for Friday.\n'
+              '-->')
+
+    def thread(self, quote, cid="c1"):
+        return self.THREAD.replace("QUOTE", quote).replace("id=c1", f"id={cid}")
+
+    def block(self, sha, rec="Merge it.", when="01:00", ships=()):
+        out = f"- [ ] Deploy a/b#1: what it does\n  - Recommendation: {rec}\n"
+        if ships:
+            out += "  - What ships:\n" + "".join(f"    - {b}\n" for b in ships)
+        return out + f"  - Pinned commit: {sha}, into main\n  - Handed over by a session, 2026-11-14 {when}.\n"
+
+    def page(self, body):
+        return "# D\n\n## Pull requests waiting for your merge\n" + body + "- [ ] Merge a/b#2: next\n"
+
+    def hand_over(self, text, block, rec):
+        return deskfile.put(text, "a/b#1", block, record=rec)
+
+    def test_a_note_of_the_persons_under_what_ships_survives_a_new_hand_over(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA, ships=["restart worker", "run migration"]), rec)
+        text = text.replace("    - run migration\n", "    - run migration\n    - NOTE: run it by hand, not by the script\n")
+        got = self.hand_over(text, self.block(self.NEW_SHA, ships=["restart worker", "run migration 2"]), rec)
+        self.assertIn("    - NOTE: run it by hand, not by the script\n", got)
+        self.assertNotIn("run migration\n", got)
+        self.assertIn("    - run migration 2\n", got)
+        self.assertEqual(got.count("NOTE: run it by hand"), 1)
+        self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, ships=["restart worker", "run migration 2"]), rec), got)
+
+    def test_a_note_between_two_ships_bullets_does_not_turn_the_next_bullet_into_the_persons(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA, ships=["one", "two"]), rec)
+        text = text.replace("    - one\n", "    - one\n    - NOTE from the person\n")
+        got = self.hand_over(text, self.block(self.NEW_SHA, ships=["uno", "due"]), rec)
+        self.assertIn("NOTE from the person", got)
+        self.assertNotIn("    - one\n", got)
+        self.assertNotIn("    - two\n", got)
+        self.assertEqual(got.count("    - uno\n") + got.count("    - due\n"), 2)
+
+    def test_a_person_line_shaped_like_a_recommendation_survives(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("  - Pinned commit:", "  - Recommendation: wait, the client is away\n  - Pinned commit:", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="Merge now."), rec)
+        self.assertIn("  - Recommendation: wait, the client is away\n", got)
+        self.assertIn("  - Recommendation: Merge now.\n", got)
+        self.assertNotIn("Recommendation: Merge it.", got)
+        self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, rec="Merge now."), rec), got)
+
+    def test_person_lines_shaped_like_the_pinned_line_the_handed_over_line_and_a_result_survive(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        mine = [f"  - Pinned commit: {'c' * 40}, my own note\n", "  - Handed over by me, 2026-11-14 03:00.\n", "  - Not merged: I decided so\n"]
+        text += "".join(mine)                                                # the item is the last on the page
+        got = self.hand_over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        for line in mine:
+            self.assertIn(line, got)
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got)}["a/b#1"], self.NEW_SHA)      # the first pinned line is still the one that counts
+        self.assertNotIn("01:00.", got)
+
+    def test_an_item_with_no_record_falls_back_to_the_shapes(self):
+        old = self.block(self.OLD_SHA) + "  - Not merged: CI is red\n"
+        got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA), record={})
+        self.assertNotIn("Not merged", got)
+        self.assertNotIn(self.OLD_SHA, got)
+
+    def test_a_press_result_is_part_of_the_record_and_is_replaced(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        got = self.hand_over(text, self.block(self.NEW_SHA), rec)
+        self.assertNotIn("Not merged", got)
+
+    def test_a_line_the_person_changed_in_place_is_theirs_from_then_on(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("Recommendation: Merge it.", "Recommendation: Merge it, after Friday.")
+        got = self.hand_over(text, self.block(self.NEW_SHA), rec)
+        self.assertIn("Recommendation: Merge it, after Friday.\n", got)
+
+    def test_the_record_does_not_change_when_the_same_block_is_put_again(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        before = json.dumps(rec, sort_keys=True)
+        self.hand_over(text, self.block(self.OLD_SHA), rec)
+        self.assertEqual(json.dumps(rec, sort_keys=True), before)
+
+    def test_a_dropped_item_leaves_no_record(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        deskfile.drop(text, "a/b#1", record=rec)
+        self.assertEqual(rec, {})
+
+    def test_the_record_is_kept_beside_the_file_by_edit(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        old = os.environ.get("XDG_RUNTIME_DIR")
+        os.environ["XDG_RUNTIME_DIR"] = str(tmp / "run")
+        self.addCleanup(lambda: os.environ.pop("XDG_RUNTIME_DIR") if old is None else os.environ.update(XDG_RUNTIME_DIR=old))
+        f = tmp / "state" / "merge-desk.md"
+        deskfile.put_item("a/b#1", self.block(self.OLD_SHA, ships=["one"]), file=f)
+        f.write_text(f.read_text().replace("    - one\n", "    - one\n    - NOTE: mine\n"))
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, ships=["uno"]), file=f)
+        got = f.read_text()
+        self.assertIn("    - NOTE: mine\n", got)
+        self.assertIn("    - uno\n", got)
+        self.assertNotIn("    - one\n", got)
+        deskfile.edit(lambda t: deskfile.settle(t, "a/b#1", "Not merged: CI is red"), f)
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, when="09:00", ships=["uno"]), file=f)
+        self.assertNotIn("Not merged", f.read_text())
+        self.assertIn("NOTE: mine", f.read_text())
+        deskfile.drop_item("a/b#1", file=f)
+        self.assertEqual(json.loads((tmp / "state" / ".merge-desk.own.json").read_text()), {})
+
+    def test_a_corrupt_record_is_read_as_none(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        old = os.environ.get("XDG_RUNTIME_DIR")
+        os.environ["XDG_RUNTIME_DIR"] = str(tmp / "run")
+        self.addCleanup(lambda: os.environ.pop("XDG_RUNTIME_DIR") if old is None else os.environ.update(XDG_RUNTIME_DIR=old))
+        f = tmp / "state" / "merge-desk.md"
+        deskfile.put_item("a/b#1", self.block(self.OLD_SHA), file=f)
+        (tmp / "state" / ".merge-desk.own.json").write_text("{not json")
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA), file=f)
+        self.assertIn(self.NEW_SHA, f.read_text())
+        self.assertNotIn(self.OLD_SHA, f.read_text())
+
+    def test_a_thread_on_a_line_whose_words_changed_keeps_an_anchor_sheaf_finds(self):
+        rec = {}
+        old = self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it." + self.thread("Merge it.") + "\n", 1)
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("Merge it.\n", "Merge it." + self.thread("Merge it.") + "\n", 1)
+        self.assertEqual(anchor_problems(text), [])
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="Wait, the migration is tomorrow."), rec)
+        self.assertEqual(anchor_problems(got), [])
+        self.assertIn("orphan=1", got)
+        self.assertIn("Wait for Friday.", got)
+        self.assertEqual(got.count("sheaf-comment"), 1)
+        self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, rec="Wait, the migration is tomorrow."), rec), got)
+
+    def test_a_thread_whose_words_are_still_the_end_of_the_new_line_stays_on_it(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("Merge it.\n", "Merge it." + self.thread("Merge it.") + "\n", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        self.assertIn("Merge it." + self.thread("Merge it."), got)
+        self.assertNotIn("orphan=1", got)
+        self.assertEqual(anchor_problems(got), [])
+
+    def test_a_thread_on_a_ships_bullet_that_is_gone_keeps_an_anchor(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA, ships=["restart worker"]), rec)
+        text = text.replace("restart worker\n", "restart worker" + self.thread("restart worker") + "\n", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, ships=["restart the queue"]), rec)
+        self.assertEqual(anchor_problems(got), [])
+        self.assertIn("Wait for Friday.", got)
+        self.assertEqual(got.count("sheaf-comment"), 1)
+        self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, ships=["restart the queue"]), rec), got)
+
+    def test_a_thread_with_the_quote_in_entities_is_checked_decoded(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA, rec="a & b"), rec)
+        text = text.replace("a & b\n", "a & b" + self.thread("a &amp; b") + "\n", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="a & b", when="02:00"), rec)
+        self.assertNotIn("orphan=1", got)
+
+    def test_two_threads_on_one_line_each_keep_their_own_anchor(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("Merge it.\n", "Merge it." + self.thread("Merge it.") + self.thread("it.", "c2") + "\n", 1)
+        got = self.hand_over(text, self.block(self.NEW_SHA, rec="Wait."), rec)
+        self.assertEqual(anchor_problems(got), [])
+        self.assertEqual(got.count("sheaf-comment"), 2)
+        self.assertEqual(got.count("orphan=1"), 1)                           # "it." is not the end of "Wait."
+
+    def test_a_ships_bullet_ending_in_a_quote_mark_next_to_repeated_bullets_keeps_its_own_thread(self):
+        old = ("- [ ] Deploy a/b#1: x\n  - What ships:\n    - go\n    - go" + self.thread("go", "c1") + "\n    - go'" + self.thread("go'", "c2") + "\n"
+               "  - Pinned commit: " + self.OLD_SHA + "\n")
+        new = old.replace(self.thread("go", "c1"), "").replace(self.thread("go'", "c2"), "").replace(self.OLD_SHA, self.NEW_SHA)
+        got = deskfile.put(self.page(old), "a/b#1", new)
+        self.assertEqual(got, self.page(old.replace(self.OLD_SHA, self.NEW_SHA)))
+
+    def test_text_after_a_threads_closing_arrow_on_a_bullet_is_not_part_of_the_bullet(self):
+        text = ("- [ ] Deploy a/b#1: x\n  - What ships:\n    - restart" + self.thread("restart") + " PERSON: only after Friday\n    - second\n")
+        self.assertEqual(deskfile.parse(text)[0].ships, ["- restart", "- second"])
 
 
 class Comments(unittest.TestCase):
