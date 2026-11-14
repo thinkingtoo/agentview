@@ -185,6 +185,40 @@ class Differ(unittest.TestCase):
         new = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./__init__.sh"]
         self.assertEqual(deskships.changed(old, new), "")
 
+    def _line_change(self, old, new):
+        head = "- Fires on push to main: deploy.yml"
+        return deskships.changed([head, "  - " + old], [head, "  - " + new])
+
+    def test_a_character_the_page_never_writes_is_a_change(self):
+        for old, new in [
+            ("run: ./deploy_prod.sh", "run: ./deployprod.sh"),
+            ("--env=prod_eu", "--env=prodeu"),
+            ("${{ secrets.DEPLOY_KEY_PROD }}", "${{ secrets.DEPLOYKEY_PROD }}"),
+            ("run: echo `./deploy.sh`", "run: echo ./deploy.sh"),
+            ("rsync dist/* host:/srv", "rsync dist/ host:/srv"),
+            ("./build.sh < in.txt; ./deploy.sh --target prod > out.log", "./build.sh < in.txt; ./deploy.sh --target staging-eu > out.log"),
+        ]:
+            with self.subTest(old=old):
+                self.assertNotEqual(self._line_change(old, new), "")
+
+    def test_a_span_added_to_a_line_is_a_change(self):
+        self.assertNotEqual(self._line_change("run: ./deploy.sh", "run: ./deploy.sh <prod>x"), "")
+        self.assertNotEqual(self._line_change("run: ./deploy.sh", "run: ./deploy.sh < in.txt"), "")
+        self.assertNotEqual(self._line_change("run: ./deploy.sh", "run: ./deploy.sh < in > out"), "")
+
+    def test_what_the_page_writes_back_is_no_change(self):
+        for old, new in [
+            ("./__init__.sh", "./**init**.sh"),
+            ("rsync dist/* host:/srv", r"rsync dist/\* host:/srv"),
+            ("${{ secrets.K }}", r"\${{ secrets.K }}"),
+            ("a < b > c", r"a \< b \> c"),
+            ("uses _shared_ flow", "uses *shared* flow"),
+            ("run: ./deploy.sh <staging>", "run: ./deploy.sh"),
+            ("run: ./deploy_prod.sh", "run: ./deploy_prod.sh"),
+        ]:
+            with self.subTest(old=old):
+                self.assertEqual(self._line_change(old, new), "")
+
     def test_commits_that_dropped_out_of_the_range_are_not_a_change(self):
         old = ["- Fires on push to main: deploy.yml", "- Commits that go out (2):", "  - aaaaaaa One", "  - bbbbbbb Two"]
         new = ["- Fires on push to main: deploy.yml", "- Commits that go out (1):", "  - bbbbbbb Two"]
