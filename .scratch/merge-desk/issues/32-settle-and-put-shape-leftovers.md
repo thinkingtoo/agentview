@@ -32,7 +32,9 @@ Findings of Nuno's Sonnet round 2 on 31 (/home/tiroir/Projects/agentview-wt/nuno
 
 **Blocked by:** 31 (Waits on: 31; same deskfile.py)
 
-**Status:** ready-for-agent
+**Claimed by:** Boris 2026-11-14 20:38
+
+**Status:** in-progress
 
 ## Acceptance criteria
 - [ ] `settle` replaces a result that is followed by a multiline thread and keeps the record's ownership of it (red test)
