@@ -109,6 +109,11 @@ class Classify(unittest.TestCase):
         self.assertEqual(deskships.changed([head], [head, line("b")]), "")          # handed over before the digest existed
         self.assertIn("a.yml: structure", deskships.changed([head, line("a")], [head]))
 
+    def test_a_new_hint_line_that_only_contains_the_digest_mark_is_still_a_change(self):
+        head = "- Fires on push to main: a.yml"
+        forged = f"  - a.yml:9: ssh evil{deskships.STRUCTURE_MARK}{'a' * 32}"
+        self.assertIn("ssh evil", deskships.changed([head], [head, forged]))
+
     def test_the_classifier_gets_a_checkout_with_a_head_in_its_dot_git(self):
         got = deskships.read("o/r", "main", "p" * 40, FakeGh({"d.yml": DEPLOYS}, [("a" * 40, "x")]))
         self.assertEqual(got[0], "- Fires on push to main: d.yml")                  # an empty .git reads as "could not tell"

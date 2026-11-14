@@ -49,6 +49,7 @@ HINT = re.compile(r"^\s+(\d+): (.*)$")
 UNPARSED = re.compile(r"^\s+! could not parse: (.*)$")
 STRUCTURE = re.compile(r"^\s+= structure sha256:([0-9a-f]{32})$")      # --full: one digest of the keys and their nesting, per workflow
 STRUCTURE_MARK = ": structure sha256:"
+STRUCTURE_LINE = re.compile(r"  - " + WORKFLOW.pattern + re.escape(STRUCTURE_MARK) + r"[0-9a-f]{32}")   # the whole line: a hint that only contains the mark is not one
 
 
 def _line(prefix, text, limit=LINE):
@@ -232,8 +233,8 @@ def changed(old, new):
     only a new one counts, and no commit counts when the stored range was cut."""
     old_rest, old_shas, old_flows, old_cut = _split(old)
     new_rest, new_shas, new_flows, _ = _split(new)
-    if not any(STRUCTURE_MARK in l for l in old_rest):       # a hand-over from before the digest existed: nothing to compare it with
-        new_rest = [l for l in new_rest if STRUCTURE_MARK not in l]
+    if not any(STRUCTURE_LINE.fullmatch(l) for l in old_rest):       # a hand-over from before the digest existed: nothing to compare it with
+        new_rest = [l for l in new_rest if not STRUCTURE_LINE.fullmatch(l)]
     old_set = set(old_rest)
     new_set = set(new_rest)
     gone = [l.strip(" -") for l in old_rest if l not in new_set]
