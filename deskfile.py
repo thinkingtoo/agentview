@@ -162,6 +162,18 @@ def _open_at(text):
     that has its own `-->` after the thread's (a stray arrow with no opener left): the person closed it, the thread
     only sits inside the note."""
     marks = list(re.finditer(r"<!--|-->", text))
+
+    def closed_after(n):
+        """Whether an arrow with no opener left stands after mark `n`: the comment the thread sits in was closed by its own."""
+        depth = 0
+        for m in marks[n + 1:]:
+            if m.group(0) == "<!--":
+                depth += 1
+            elif not depth:
+                return True
+            else:
+                depth -= 1
+        return False
     inside, at, broken = False, None, False
     for n, m in enumerate(marks):
         if m.group(0) == "<!--":
@@ -171,7 +183,7 @@ def _open_at(text):
                 broken = True
             inside = True
         else:
-            if inside and broken and not (n + 1 < len(marks) and marks[n + 1].group(0) == "-->"):
+            if inside and broken and not closed_after(n):
                 return at
             inside = broken = False
     return at if inside else None
@@ -610,9 +622,9 @@ def _specific(texts, other):
 def _prev_stands(entry, block):
     """Whether `block` is the generation before the record's last (a write that did not finish: the record moved on,
     the page did not). The lines of `prev` are AgentView's only then: a person's copy of an old pin line in a block of
-    the last generation is theirs, however often its text stands. The page is behind when it holds more of the lines only
-    the earlier generation wrote than of those only the last wrote, and most of the earlier ones: a person who removed
-    two lines of ours and typed a copy of an old pin line has not made the page an old one."""
+    the last generation is theirs, however often its text stands. The page is behind when it holds most of the lines only
+    the earlier generation wrote and none that only the last wrote: a person who removed two lines of ours and typed a
+    copy of an old pin line has not made the page an old one, and a page with a line of the last is not one."""
     if not entry["prev"]:
         return False
     texts = _heads(block)
@@ -625,7 +637,7 @@ def _prev_stands(entry, block):
     earlier, last = _specific(entry["prev"], entry["lines"]), _specific(entry["lines"], entry["prev"])
     old = Counter(texts[i] for i in _mine(texts, [(entry["prev"], None)])) & earlier
     new = Counter(texts[i] for i in _mine(texts, [(entry["lines"], entry.get("at"))])) & last
-    return sum(old.values()) > sum(new.values()) and 2 * sum(old.values()) > sum(earlier.values())   # most of what only the earlier one wrote is there: one copied line of it is not a page
+    return not new and 2 * sum(old.values()) > sum(earlier.values())   # most of what only the earlier one wrote is there and nothing only the last wrote: one copied line of it is not a page, nor is a page that holds a line of the last
 
 
 def _own(record, key, block=None):
@@ -819,8 +831,10 @@ def _is_empty_record(file):
         return False
 
 
-SHIPS_TOP = re.compile(r"    - (?:Outside GitHub: |Could not tell what ships|Fires on push to |This pull request changes workflow files:|Commits that go out \()")
-SHIPS_UNDER = (("Fires on push to ", re.compile(r"      - [A-Za-z0-9_.-]+\.ya?ml(?::\d+: |: structure sha256:)")),
+YAML = r"[A-Za-z0-9_.-]+\.ya?ml"
+SHIPS_TOP = re.compile(r"    - (?:Outside GitHub: .*|Could not tell what ships: .*To go on, merge it on GitHub yourself.*"
+                       r"|Fires on push to \S+: " + YAML + r"(?:, " + YAML + r")*|This pull request changes workflow files:|Commits that go out \(\d+\):)$")
+SHIPS_UNDER = (("Fires on push to ", re.compile(r"      - " + YAML + r"(?::\d+: |: structure sha256:)")),
                ("Commits that go out (", re.compile(r"      - (?:[0-9a-f]{7} |and \d+ more$)")),
                ("This pull request changes workflow files:", re.compile(r"      - \.github/workflows/")))
 

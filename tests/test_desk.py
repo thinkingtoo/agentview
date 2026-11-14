@@ -1162,6 +1162,22 @@ class OwnRecord(unittest.TestCase):
             got = self.hand_over(mine, self.block(self.FOURTH_SHA, ships=self.ships(), when="05:00"), copy.deepcopy(rec))
             self.assertEqual(got.count(copy_), 1, sha)
 
+    def test_a_page_with_a_line_only_the_last_generation_wrote_is_not_behind_whatever_old_lines_it_holds(self):
+        """Codex round 1: two copied old lines beat one surviving line of the last generation on a count; the page is still the last one."""
+        entry = {"prev": ["- [ ] Deploy a/b#1: work", "  - Pinned commit: " + "a" * 7 + ", into main", "  - Handed over by a session, 10:00.", "  - Recommendation: old"],
+                 "lines": ["- [ ] Deploy a/b#1: work", "  - Pinned commit: " + "b" * 7 + ", into main", "  - Handed over by a session, 11:00.", "  - Recommendation: current"], "at": [0, 0, 0, 0]}
+        block = "- [ ] Deploy a/b#1: work\n  - Recommendation: current\n  - Pinned commit: " + "a" * 7 + ", into main\n  - Handed over by a session, 10:00.\n"
+        self.assertFalse(deskfile._prev_stands(entry, block))
+
+    def test_adopt_does_not_take_a_persons_line_that_only_begins_like_one_of_ours(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - This pull request changes workflow files: PRIVATE do not publish\n    - Commits that go out (soon) maybe\n    - Fires on push to nothing\n  - Pinned commit:", 1))
+        deskfile.adopt(f)
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, ships=["Outside GitHub: x"], when="02:00"), file=f)
+        got = f.read_text()
+        for note in ("PRIVATE do not publish", "Commits that go out (soon) maybe", "Fires on push to nothing"):
+            self.assertIn(note, got)
+
 
 class Comments(unittest.TestCase):
     """Sheaf keeps the person's comments inside the file; their text is never structure."""
@@ -1667,6 +1683,11 @@ class Leftovers(unittest.TestCase):
         left = "<!-- oops\n- [ ] Merge a/b#9: old\nand\n  <!-- sheaf-comment id=c9 by=\"T\" status=open quote=\"x\" -->\n- [ ] Merge a/b#1: real\n"
         self.assertEqual(deskfile._open_at(left), 0)
         self.assertIsNone(deskfile._open_at(self.NOTE))
+
+    def test_a_closed_note_that_holds_two_closed_literal_comments_is_not_read_as_left_open(self):
+        text = '<!-- private note\n- [ ] Merge a/b#9: old\nperson tail\nliteral <!-- sheaf-comment x -->\nanother <!-- ordinary -->\nmore tail\n-->\n- [ ] Merge a/b#1: real\n'
+        self.assertIsNone(deskfile._open_at(text))
+        self.assertEqual(deskfile.drop(text, "a/b#9", record={}), text)
 
     def test_settle_on_a_crlf_page_whose_last_line_has_no_line_end_keeps_one_kind(self):
         rec = {}
