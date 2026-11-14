@@ -285,14 +285,33 @@ def on_desk(k):
     return any(i.key.lower() == same for i in deskfile.items()) or any(r["key"].lower() == same for r in desk.history())
 
 
+def stale_found(k):
+    """True when the item on the page is one this scan wrote before it kept a ships record (ticket 08): the desk
+    holds nothing of it but ready records by the scan, none with the lines `deskships.read` gave, the box is
+    not ticked, the recommendation is still the found line and no thread is on it. It refuses for ever ("hand it
+    over again"), and nothing a person did is on it, so the scan may write it again. Call under the desk lock."""
+    same = k.lower()
+    mine = [i for i in deskfile.items() if i.key.lower() == same]
+    if len(mine) != 1 or mine[0].ticked or f"  - Recommendation: {FOUND}" not in mine[0].block.split("\n"):
+        return False
+    if not whole(mine[0].block) or open_thread(mine[0].block):
+        return False
+    recs = [r for r in desk.history() if r["key"].lower() == same]
+    return bool(recs) and all(
+        r["event"] == "ready" and (r.get("found") is True or r.get("by") == BY)
+        and not (isinstance(r.get("ships"), list) and all(isinstance(l, str) for l in r["ships"]))
+        for r in recs)
+
+
 def add(repo, n, title, head, base, opened):
     """Put the found PR on the desk, unless the desk has anything to do with it already. Whether it did.
+    A found item of ticket 08, with no ships record, counts as nothing: it is written again.
     What merging it ships is read first, as a hand-over's is, so a PR on a repo that deploys becomes a Deploy
     item; one that cannot be read, or has no base branch to read it from, is left out and logged: never a
     Merge item by default. `gh` runs outside the desk lock; the desk is looked at again inside it."""
     k = desk.key(repo, n)
     with deskfile.locked():
-        if on_desk(k):
+        if on_desk(k) and not stale_found(k):
             return False
     try:
         if not base:
@@ -302,10 +321,10 @@ def add(repo, n, title, head, base, opened):
         deskwatch.log.error("desk-scan", why, key=k)
         return False
     with deskfile.locked():
-        if on_desk(k):
+        if on_desk(k) and not stale_found(k):
             return False
         deskfile.put_item(k, item_block(repo, n, title, head, base, opened, ships))
-        desk.log("ready", k, pinned=head, by=BY, ships=ships, base=base)   # raw, as `desk ready` keeps them: the press compares these
+        desk.log("ready", k, pinned=head, by=BY, found=True, ships=ships, base=base)   # raw, as `desk ready` keeps them: the press compares these
     return True
 
 
@@ -318,13 +337,18 @@ def scan(repos, now=None):
             break
         try:
             prs = list_prs(repo)
-            for p in prs[:budget]:
-                budget -= 1
+        except Exception as why:        # Failed, OSError, and what gh's answer made of the code: this repo only
+            deskwatch.log.error("desk-scan", why, key=repo)
+            continue
+        for p in prs[:budget]:
+            budget -= 1
+            got = None
+            try:
                 got = candidate(p, now)
                 if got and add(repo, *got):
                     found.append(desk.key(repo, got[0]))
-        except (Failed, OSError) as why:
-            deskwatch.log.error("desk-scan", why, key=repo)
+            except Exception as why:    # this PR only: the next one and the other repos are still read
+                deskwatch.log.error("desk-scan", why, key=desk.key(repo, got[0]) if got else repo)
     return found
 
 

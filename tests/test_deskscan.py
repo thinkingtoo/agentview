@@ -391,6 +391,93 @@ class Classified(Case):
         self.assertEqual(self.events(f"{REPO}#7"), ["ready"])
 
 
+class Survives(Case):
+    """The scan goes on past what it did not expect (ticket 17)."""
+
+    def test_the_wording_of_by_is_pinned(self):
+        self.assertEqual(deskscan.BY, "AgentView's scan")      # the press told a found item by it before `found: true`
+
+    def test_the_ready_record_says_found(self):
+        self.prs(REPO, pr(7))
+        deskscan.scan([REPO])
+        self.assertIs(desk.history(f"{REPO}#7")[0].get("found"), True)
+
+    def test_an_unexpected_error_on_one_pr_leaves_its_neighbours_found(self):
+        def read(repo, base, pinned, run, **kw):
+            if pinned == "7".rjust(40, "b"):
+                raise KeyError("ships")
+            return []
+        deskships.read = read
+        self.prs(REPO, pr(7), pr(8))
+        self.prs(OTHER, pr(3))
+        self.assertEqual(deskscan.scan([REPO, OTHER]), [f"{REPO}#8", f"{OTHER}#3"])
+        self.assertEqual(self.keys(), [f"{REPO}#8", f"{OTHER}#3"])
+        self.assertEqual(self.errors[0][1].get("key"), f"{REPO}#7")
+
+    def test_an_unexpected_error_on_one_repo_leaves_the_other_repos_found(self):
+        real = deskscan.list_prs
+
+        def list_prs(repo):
+            if repo == REPO:
+                raise AttributeError("'NoneType' object has no attribute 'get'")
+            return real(repo)
+        deskscan.list_prs = list_prs
+        self.addCleanup(setattr, deskscan, "list_prs", real)
+        self.prs(OTHER, pr(3))
+        self.assertEqual(deskscan.scan([REPO, OTHER]), [f"{OTHER}#3"])
+        self.assertEqual(self.errors[0][1].get("key"), REPO)
+
+    def test_malformed_json_for_one_repo_leaves_the_others_written(self):
+        (self.fake / f"prs-{REPO.replace('/', '_')}.json").write_text('[{"number": 7, "title"')
+        self.prs(OTHER, pr(3))
+        self.assertEqual(deskscan.scan([REPO, OTHER]), [f"{OTHER}#3"])
+        self.assertEqual(self.keys(), [f"{OTHER}#3"])
+
+    def stale(self, n=7, **kw):
+        """A found item as ticket 08 wrote it: on the page, a ready record by the scan with no `ships` and no `found`."""
+        head = f"{n:x}".rjust(40, "b")
+        deskfile.put_item(f"{REPO}#{n}", deskscan.item_block(REPO, n, "Fix the thing", head, "main", "2026-11-12"))
+        self.log_at("ready", f"{REPO}#{n}", 30, pinned=head, by=deskscan.BY, **kw)
+        return head
+
+    def test_a_found_item_with_no_ships_record_is_rewritten_by_the_next_scan_with_one(self):
+        self.stale()
+        self.prs(REPO, pr(7))
+        self.assertEqual(deskscan.scan([REPO]), [f"{REPO}#7"])
+        self.assertEqual(self.keys(), [f"{REPO}#7"])
+        rec = desk.history(f"{REPO}#7")[-1]
+        self.assertEqual((rec["ships"], rec["base"], rec.get("found")), ([], "main", True))
+        self.assertEqual(self.events(f"{REPO}#7"), ["ready", "ready"])
+
+    def test_a_found_item_that_has_a_ships_record_is_left_alone(self):
+        self.stale(ships=[], base="main")
+        self.prs(REPO, pr(7))
+        self.assertEqual(deskscan.scan([REPO]), [])
+        self.assertEqual(self.events(f"{REPO}#7"), ["ready"])
+
+    def test_a_stale_found_item_a_person_has_ticked_or_talked_on_is_left_alone(self):
+        self.stale()
+        self.tick = deskfile.edit(lambda t: t.replace("- [ ] Merge", "- [x] Merge", 1))
+        self.prs(REPO, pr(7))
+        self.assertEqual(deskscan.scan([REPO]), [])
+        self.assertTrue(self.item(f"{REPO}#7").ticked)
+        deskfile.edit(lambda t: t.replace("- [x] Merge", "- [ ] Merge", 1).rstrip("\n") + "\n  <!-- sheaf-comment id=c1 by=\"Ada\" status=open -->\n")
+        self.assertEqual(deskscan.scan([REPO]), [])
+        self.assertIn("sheaf-comment", self.item(f"{REPO}#7").block)
+
+    def test_a_handed_over_item_with_no_ships_record_is_not_the_scans_to_rewrite(self):
+        self.hand_over(REPO, 7)
+        self.log_at("ready", f"{REPO}#7", 30, pinned="7".rjust(40, "b"), by="a session")
+        self.prs(REPO, pr(7))
+        self.assertEqual(deskscan.scan([REPO]), [])
+
+    def test_a_stale_found_item_whose_pr_is_no_longer_found_stays(self):
+        self.stale()
+        self.prs(REPO, pr(7, mergeable="CONFLICTING"))
+        self.assertEqual(deskscan.scan([REPO]), [])
+        self.assertEqual(self.keys(), [f"{REPO}#7"])
+
+
 class Bounded(Case):
     def test_gh_is_asked_for_open_prs_with_a_limit(self):
         self.prs(REPO)

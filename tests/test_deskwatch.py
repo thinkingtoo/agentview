@@ -281,6 +281,22 @@ class Ships(Case):
         self.assertFalse(self.item(272).ticked)
         self.assertEqual(self.events(k), ["ready", "pressing", "refused"])
 
+    def test_a_found_item_is_told_by_a_field_not_by_the_wording_of_deskscan_by(self):
+        import deskscan
+        self.vouch({"desk_found_repos": []})
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        k = self.found()
+        self.assertIs(desk.history(k)[0].get("found"), True)
+        old = deskscan.BY
+        deskscan.BY = "AgentView's daily scan, reworded"
+        self.addCleanup(setattr, deskscan, "BY", old)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertIn("found by the scan on a repo that may ship outside GitHub", self.item(272).block)
+
     def test_a_found_item_on_a_deploying_repo_nobody_vouched_for_is_refused_too(self):
         self.vouch({"desk_found_repos": []})
         self.pr(272)
