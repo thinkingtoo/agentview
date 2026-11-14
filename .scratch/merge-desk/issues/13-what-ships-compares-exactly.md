@@ -8,6 +8,6 @@
 
 **Status:** done
 
-- [x] `deploy_prod.sh` changed to `deployprod.sh` between hand-over and press refuses the press (Differ.test_a_character_the_page_never_writes_is_a_change, 6 R4-1 pairs + redirect, red then green; branch britta/13-ships-exact)
-- [x] A `<...>` span added to a deploy line refuses the press (spaced/attribute spans and `<in ... >out` refuse; a bare `<name>` stays equal because pandoc drops it: see report)
-- [x] A line the page rewrote (escaped punctuation, `_` → `*`) still compares equal (test_what_the_page_writes_back_is_no_change)
+- [x] `deploy_prod.sh` changed to `deployprod.sh` between hand-over and press refuses the press (the press compares the raw lines stored in the `ready` record with a fresh raw read; tests/test_deskships.py test_the_stored_lines_are_compared_exactly_not_after_stripping, tests/test_deskwatch.py Ships)
+- [x] A `<...>` span added to a deploy line, or `\$TOKEN` vs `$TOKEN`, `dist/_` vs `dist/*`, refuses the press; the same raw line (`<staging>` included) passes
+- [x] The page's text is never compared (`_same` removed); an item handed over before the lines were stored refuses with "hand it over again" (test_an_item_handed_over_before_the_lines_were_stored_must_be_handed_over_again)
