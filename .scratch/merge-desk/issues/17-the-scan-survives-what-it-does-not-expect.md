@@ -8,8 +8,8 @@
 
 **Claimed by:** Xavier 2026-11-14 02:47
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] A gh answer with malformed JSON for one repo leaves the other repos' found items written (test with fake gh)
-- [ ] Changing deskscan.BY fails a test (or found items are told apart by a field, not by wording)
-- [ ] A found item without a ships record is rewritten by the next scan with one
+- [x] A gh answer with malformed JSON for one repo leaves the other repos' found items written (test with fake gh) — tests/test_deskscan.py Survives: malformed_json, unexpected error per PR (KeyError) and per repo (AttributeError); 201 pass with test_deskwatch
+- [x] Changing deskscan.BY fails a test (or found items are told apart by a field, not by wording) — `found: true` on the ready record, plus test_the_wording_of_by_is_pinned; the by==BY fallback stays for ticket-12 records and is pinned too
+- [x] A found item without a ships record is rewritten by the next scan with one — Survives.test_a_found_item_with_no_ships_record_is_rewritten...; only while unticked, no thread, no other log event
