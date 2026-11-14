@@ -6,6 +6,7 @@ The command runs as a process of its own with `XDG_STATE_HOME` under a throwaway
 state folder.
 """
 import json
+from collections import Counter
 import os
 import re
 import shutil
@@ -1135,6 +1136,78 @@ class Lock(unittest.TestCase):
         [t.start() for t in ts]
         [t.join() for t in ts]
         self.assertEqual(sorted(i.key for i in deskfile.items(f)), sorted(f"o/r#{i}" for i in range(1, 21)))
+
+
+class CopyOfOurLine(unittest.TestCase):
+    """A person's byte-identical copy of a line AgentView wrote is theirs (ticket 26): the record says in what order
+    AgentView wrote its lines and how many identical lines stood before each, so a copy out of its place is not ours."""
+
+    OLD_SHA, NEW_SHA = "a" * 40, "b" * 40
+    PIN = "  - Pinned commit: {}, into main\n"
+
+    def block(self, sha, rec="Merge it.", when="01:00"):
+        return (f"- [ ] Deploy a/b#1: what it does\n  - Recommendation: {rec}\n" + self.PIN.format(sha)
+                + f"  - Handed over by a session, 2026-11-14 {when}.\n")
+
+    def page(self, body):
+        return "# D\n\n## Pull requests waiting for your merge\n" + body + "- [ ] Merge a/b#2: next\n"
+
+    def over(self, text, block, rec):
+        return deskfile.put(text, "a/b#1", block, record=rec)
+
+    def test_a_copy_of_the_pin_line_above_the_recommendation_is_kept_and_ours_is_replaced(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("  - Recommendation:", self.PIN.format(self.OLD_SHA) + "  - Recommendation:", 1)      # the person's copy, first
+        got = self.over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        old, new, recommendation = (got.index(self.PIN.format(self.OLD_SHA)), got.index(self.PIN.format(self.NEW_SHA)),
+                                    got.index("Recommendation: R2"))
+        self.assertEqual(got.count(self.PIN.format(self.OLD_SHA)), 1)           # theirs stays, in its place
+        self.assertLess(old, recommendation)
+        self.assertLess(recommendation, new)
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
+
+    def test_a_copy_of_the_recommendation_line_above_ours_is_kept_and_ours_is_replaced(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("  - Pinned commit", "  - Recommendation: Merge it.\n  - Pinned commit", 1)           # the person's copy, after ours
+        got = self.over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        self.assertEqual(got.count("Recommendation: Merge it."), 1)
+        self.assertEqual(got.count("Recommendation: R2"), 1)
+
+    def test_the_pin_is_read_from_the_recorded_place_not_the_first_line_of_that_text(self):
+        record = {"a/b#1": {"lines": ["- [ ] Deploy a/b#1: what it does", "  - Recommendation: Merge it.",
+                                      self.PIN.format(self.NEW_SHA).rstrip("\n"), "  - Handed over by a session, 2026-11-14 01:00."],
+                            "prev": [], "at": [0, 0, 0, 0]}}
+        block = self.block(self.NEW_SHA).replace("  - Recommendation", self.PIN.format(self.NEW_SHA) + "  - Recommendation", 1)
+        logical = deskfile._logical(block)
+        kinds = deskfile._kinds(logical, Counter(record["a/b#1"]["lines"]), orders=deskfile._orders(record["a/b#1"]))
+        self.assertEqual([i for i, k in enumerate(kinds) if k == ("pin",)], [3])        # the line after the recommendation
+
+    def test_a_record_written_before_ordinals_is_still_read_and_is_rewritten_with_them(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        del rec["a/b#1"]["at"]
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(text, rec)}["a/b#1"], self.OLD_SHA)
+        got = self.over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
+        self.assertEqual(got.count("Pinned commit"), 1)
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
+        self.assertEqual(rec["a/b#1"]["at"], [0, 0, 0, 0])
+
+    def test_the_record_keeps_the_place_of_ours_among_identical_lines_the_person_left(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("  - Handed over", self.PIN.format(self.OLD_SHA) + "  - Handed over", 1)        # a copy after ours
+        self.over(text, self.block(self.OLD_SHA, when="02:00"), rec)
+        self.assertEqual(rec["a/b#1"]["at"][2], 0)                                                     # ours is the first, the copy stays after
+
+    def test_adopt_writes_the_places(self):
+        d = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, d, True)
+        f = d / "merge-desk.md"
+        f.write_text(self.page(self.block(self.OLD_SHA)))
+        self.assertEqual(deskfile.adopt(f), (["a/b#1", "a/b#2"], []))
+        self.assertEqual(json.loads((d / ".merge-desk.own.json").read_text())["a/b#1"]["at"], [0, 0, 0, 0])
 
 
 if __name__ == "__main__":

@@ -175,14 +175,14 @@ def ships_of(block):
     return out
 
 
-def _pin_line(block, own):
+def _pin_line(block, own, orders=None):
     """The text of AgentView's `Pinned commit:` line of `block`, comments taken out, or None. With the record of what
     it wrote (`own`), that is the pin line the record lists and no other ("" when it is gone): a person's line shaped
     like it pins nothing. None when there is no record of the item: nothing is pinned then."""
     if own is None:
         return None
     logical = _logical(block)
-    for kind, line in zip(_kinds(logical, own), logical):
+    for kind, line in zip(_kinds(logical, own, orders=orders), logical):
         if kind == ("pin",):
             return CLOSED.sub("", line)
     return ""
@@ -197,7 +197,7 @@ def parse(text, record=None):
         block = text[start:end]
         visible = re.sub(r"<!--.*?-->", "", block, flags=re.S)              # a comment pins nothing, and orders nothing
         got = (record or {}).get(_slot(key))                                 # the pin is read from what was written last, not from the generation before it
-        mine = _pin_line(block, None if got is None else Counter(got["lines"]))
+        mine = _pin_line(block, None if got is None else Counter(got["lines"]), None if got is None else _orders(got, prev=False))
         pin, order = PINNED.search(mine or ""), AFTER.search(visible)     # an order only refuses a press, so a person's line may add one
         found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block, int(order.group(1)) if order else 0, ships_of(block)))
     return found
@@ -244,7 +244,59 @@ def _text(line):
     return head, (head if "<!--" in bare else bare)
 
 
-def _kinds(logical, own=None, tails=None):
+def _ordinals(heads):
+    """For each text of `heads`, the number of the same text before it."""
+    seen, out = Counter(), []
+    for h in heads:
+        out.append(seen[h])
+        seen[h] += 1
+    return out
+
+
+def _orders(entry, prev=True):
+    """The ordered texts a record entry holds, with the ordinal of each among identical texts of the block it was
+    written for (`at`, None for a record written before ordinals were kept): `(texts, at)` for the last block, and for
+    the one before it (`prev`, no ordinals)."""
+    out = [(entry["lines"], entry.get("at"))]
+    if prev and entry["prev"]:
+        out.append((entry["prev"], None))
+    return out
+
+
+def _mine(heads, orders):
+    """The indices of `heads` (one per logical line of a block) that are AgentView's where the same text stands more
+    than once: the record's lines, in the order it wrote them, are matched in order onto the block's, so a copy of
+    one that the person put out of its place is not taken for it. Among places that match as well, the one with the
+    ordinal the record keeps (none: the first). A copy next to ours, with nothing between that gives the order away,
+    cannot be told from ours by its text: that is the one case left to the ordinal. The best of the orders wins."""
+    best = set()
+    for order, at in orders:
+        n, m = len(order), len(heads)
+        reach = [[0] * (m + 1) for _ in range(n + 1)]
+        for i in range(n - 1, -1, -1):
+            for j in range(m - 1, -1, -1):
+                reach[i][j] = reach[i + 1][j + 1] + 1 if order[i] == heads[j] else max(reach[i + 1][j], reach[i][j + 1])
+        got, i, j, ords = set(), 0, 0, _ordinals(heads)
+        while i < n and j < m:
+            if order[i] == heads[j] and reach[i][j] == reach[i + 1][j + 1] + 1:
+                pick = j
+                if at is not None and i < len(at):
+                    for k in range(j, m):
+                        if heads[k] == order[i] and ords[k] == at[i] and reach[i][j] == reach[i + 1][k + 1] + 1:
+                            pick = k
+                            break
+                got.add(pick)
+                i, j = i + 1, pick + 1
+            elif reach[i + 1][j] >= reach[i][j + 1]:
+                i += 1
+            else:
+                j += 1
+        if len(got) > len(best):
+            best = got
+    return best
+
+
+def _kinds(logical, own=None, tails=None, orders=None):
     """The kind of each logical line of a block, as a tuple: `("task",)`, `("rec",)`, `("pin",)`, `("by",)`,
     `("ships",)` (the header), `("bullet", text, n)` (the n-th time this bullet is there) or `("result",)` for what
     AgentView wrote, None for what it did not. A kind counts once.
@@ -255,13 +307,22 @@ def _kinds(logical, own=None, tails=None):
     None. A line in the record that has no shape is `("own", text, n)`. `tails`, when given, gets one entry per line: None for a line whose text before its
     first thread is what is AgentView's, else the words the person typed after what AgentView wrote, for a line that
     has a thread in its middle (they are `""` when it holds nothing of the person's). The line, threads taken out,
-    is then AgentView's line, longest recorded one first, and the thread's place on it does not matter."""
+    is then AgentView's line, longest recorded one first, and the thread's place on it does not matter.
+
+    `orders` (`_orders`) is the record's lines in the order it wrote them: a text that stands twice in the block is
+    AgentView's only at the place `_mine` gives it, so the person's copy of a line is theirs."""
     out, seen = [], set()
     if own is None:
         if tails is not None:
             tails.extend(None for _ in logical)
         return [None for _ in logical]
     own = Counter(own)
+    texts = []
+    for i, line in enumerate(logical):
+        head = _text(line)[0]
+        texts.append(re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", head, count=1) if i == 0 else head)
+    twice = {h for h, n in Counter(texts).items() if n > 1 and h.strip()}
+    mine = _mine(texts, orders) if orders and twice else None       # who of identical lines is ours: the record's order says
     for i, line in enumerate(logical):
         head, whole = _text(line)
         if i == 0:                                               # the box is the person's to tick: a ticked task line is still ours
@@ -277,7 +338,7 @@ def _kinds(logical, own=None, tails=None):
                     whole = got
         if mid is not None:
             head = whole
-        ours = own[head] > 0
+        ours = own[head] > 0 and not (mine is not None and head in twice and i not in mine)      # a copy of ours that the order says is not
         if not ours:
             kind = None
         elif i == 0:
@@ -360,7 +421,7 @@ def _settle_threads(rest, old_head, new_head):
     return kept + rest[at:], lost
 
 
-def carry(old, new, own=None):
+def carry(old, new, own=None, orders=None, at=None):
     """`new`, the block AgentView writes now, with what `old`, the block on the page, holds that AgentView did not
     write: the threads sheaf keeps on its lines, and the lines the person wrote. Only AgentView's own lines are
     replaced: the lines in `own`, the record of what it wrote last (the task line only when it is as recorded). With
@@ -369,7 +430,8 @@ def carry(old, new, own=None):
     and the text after it, goes on the new line of the same kind when its quoted words still end that line; else
     the thread goes on a line of its own as an orphan, as sheaf writes one whose text is gone, and so does one whose
     kind is not in the new block (or that is never closed). A line of the person's stays after the line of the kind
-    it followed."""
+    it followed. `orders` is the record's lines in order (see `_kinds`); `at`, a list, is given what the record
+    keeps of the block that comes out: for each line of `new`, how many identical lines stand before it."""
     if not new.endswith("\n"):
         new += "\n"
     new_lines = _logical(new)
@@ -382,7 +444,7 @@ def carry(old, new, own=None):
     old_lines = _logical(old)
     tails = []
     task = None                                                  # the task line as the page has it, when it is the person's
-    for i, ((kind, line), mid) in enumerate(zip(zip(_kinds(old_lines, own, tails), old_lines), tails)):
+    for i, ((kind, line), mid) in enumerate(zip(zip(_kinds(old_lines, own, tails, orders), old_lines), tails)):
         if i == 0 and kind is None:
             task = line if line.endswith("\n") else line + "\n"
             continue
@@ -413,11 +475,19 @@ def carry(old, new, own=None):
             orphans.append("  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest) + "\n")   # its line is gone: nothing is left to quote
         else:
             marks.setdefault(home(kind), []).append((head.rstrip("\n"), rest, line.rstrip("\n") if mid == "" else None))
-    out = []
+    out, standing = [], Counter()
+    def stand(line, ours=False):
+        head = _split(line)[0].rstrip("\n")
+        if ours and at is not None and line.strip():
+            at.append(standing[head])
+        standing[head] += 1
     for kind, line in zip(new_kinds, new_lines):
         if kind == ("task",) and task is not None:              # the person changed it, or there is no record: it stays, key and all
             out.append(task)
-            out.extend(theirs.pop(kind, []))
+            stand(new_lines[0], True)
+            for t in theirs.pop(kind, []):
+                out.append(t)
+                stand(t)
             continue
         head = _split(line)[0].rstrip("\n")
         on_line = ""
@@ -429,7 +499,10 @@ def carry(old, new, own=None):
             on_line += kept
             orphans.extend("  " + t + "\n" for t in lost)
         out.append(head + on_line + "\n")
-        out.extend(theirs.pop(kind, []))
+        stand(head, True)
+        for t in theirs.pop(kind, []):
+            out.append(t)
+            stand(t)
     return "".join(l if l.endswith("\n") else l + "\n" for l in out + orphans)
 
 
@@ -450,12 +523,17 @@ def _own(record, key):
     return None if got is None else Counter(got["lines"]) | Counter(got["prev"])
 
 
-def _record_block(record, key, block):
+def _record_block(record, key, block, at=None):
+    """`at` is, for each line of `block`, how many identical lines stand before it on the page it is written onto
+    (`carry` gives it): the record keeps it, so a copy of a line the person puts next to ours cannot take its place
+    later. Without it the block stands alone on the page: all zero."""
     if record is None:
         return
     heads, was = _heads(block), record.get(_slot(key))
-    if was is None or was["lines"] != heads:
-        record[_slot(key)] = {"lines": heads, "prev": was["lines"] if was else []}
+    at = _ordinals(heads) if at is None else at
+    if was is None or was["lines"] != heads or was.get("at") != at:
+        prev = was["lines"] if was and was["lines"] != heads else (was["prev"] if was else [])
+        record[_slot(key)] = {"lines": heads, "prev": prev, "at": at}
 
 
 def put(text, key, block, section="merge", record=None):
@@ -467,8 +545,9 @@ def put(text, key, block, section="merge", record=None):
         block += "\n"
     for k, start, end in _spans(text):
         if k == key or (k.lower() == key.lower() and not key.startswith("install:")):   # GitHub's names are not case-sensitive, a tool's are
-            kept = carry(text[start:end], block, _own(record, k))
-            _record_block(record, k, block)
+            got, at = (record or {}).get(_slot(k)), []
+            kept = carry(text[start:end], block, _own(record, k), None if got is None else _orders(got), at)
+            _record_block(record, k, block, at if len(at) == len(_heads(block)) else None)
             return text[:start] + kept + text[end:]
     _record_block(record, key, block)
     heading = SECTIONS[section]
@@ -548,7 +627,12 @@ def _load_record(file):
         return {}
     ok = isinstance(got, dict) and all(isinstance(v, dict) and all(isinstance(v.get(f), list) and all(isinstance(x, str) for x in v[f])
                                                                     for f in ("lines", "prev")) for v in got.values())
-    return got if ok else {}
+    if not ok:
+        return {}
+    for v in got.values():                                  # `at` came with ticket 26: a record without it, or with one that is not a list of numbers, reads as before
+        if "at" in v and not (isinstance(v["at"], list) and all(type(x) is int and x >= 0 for x in v["at"])):
+            del v["at"]
+    return got
 
 
 def edit(change, file=None):
@@ -614,6 +698,20 @@ def _adoptable(block):
     return None if any(n > 1 for n in seen.values()) else out
 
 
+def _adopted_at(block, lines):
+    """For each of `lines` (what `_adoptable` took from `block`, in order), how many identical lines stand before it in the block."""
+    heads, at, j = _heads(block), [], 0
+    if heads:
+        heads[0] = re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", heads[0], count=1)
+    before = Counter()
+    for h in heads:
+        if j < len(lines) and h == lines[j]:
+            at.append(before[h])
+            j += 1
+        before[h] += 1
+    return at
+
+
 def adopt(file=None):
     """One-time, by hand (`desk adopt`): for each item with no entry in the record, write the entry from the lines
     of its block that AgentView wrote (by shape and place), taking them as its own. Items that have an entry are left
@@ -635,7 +733,7 @@ def adopt(file=None):
             if lines is None:
                 skipped.append(k)
                 continue
-            record[_slot(k)] = {"lines": lines, "prev": []}
+            record[_slot(k)] = {"lines": lines, "prev": [], "at": _adopted_at(text[start:end], lines)}
             done.append(k)
         return text
     edit(change, f)
