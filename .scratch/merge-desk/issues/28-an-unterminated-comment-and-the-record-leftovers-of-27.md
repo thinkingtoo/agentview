@@ -15,15 +15,16 @@
 
 **Claimed by:** Kofi 2026-11-14 16:32
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] An unterminated comment on one of our lines does not hide the items below it after a hand-over, and a later hand-over of such an item does not append a duplicate (test)
-- [ ] A copy of an old pin line stays the person's when they also edited our current pin line (test)
-- [ ] `prev` stays bounded while writes keep failing (test)
-- [ ] A CRLF page keeps one kind of line end after a hand-over (test)
-- [ ] A colon-less task line on a CRLF page is still an item, or AgentView never writes one (test or the line why)
-- [ ] `adopt` returns each key once when `edit` retries (test)
-- [ ] An unterminated comment on the task line or the result line is not left open by a hand-over or a settle, and a second hand-over does not append the block again (test)
-- [ ] The ` -->` `carry` adds on a CRLF page leaves no lone `\r` (test, with c3)
-- [ ] `settle` replaces a result line with a thread in its middle (test)
-- [ ] A second settle with the same result keeps the result where it was; a thread after the person's words stays with them, or the docstring says why not (test or the line why)
+- [x] An unterminated comment on one of our lines does not hide the items below it after a hand-over, and a later hand-over of such an item does not append a duplicate (test) — Leftovers: `test_a_comment_left_open_on_one_of_our_lines_hides_no_item_after_a_hand_over`, `..._an_item_hidden_by_a_comment_left_open_above_it_is_handed_over_once`, `..._closed_by_a_later_threads_arrow_hides_no_item`, `..._a_new_item_put_on_a_page_with_a_comment_left_open_is_visible`; red on 4dc0f92, green on 6ba94bb
+- [x] A copy of an old pin line stays the person's when they also edited our current pin line (test) — `test_a_copy_of_an_old_pin_line_stays_when_the_person_also_edited_the_current_pin_line`, `test_the_stale_pin_is_still_replaced_when_the_person_edited_the_recommendation`
+- [x] `prev` stays bounded while writes keep failing (test) — `test_prev_stays_one_generation_long_while_writes_keep_failing` (8 failing writes, prev no longer than one generation)
+- [x] A CRLF page keeps one kind of line end after a hand-over (test) — `test_a_crlf_page_keeps_one_kind_of_line_end_after_a_hand_over_and_a_settle`, `test_a_missing_section_on_a_crlf_page_is_made_with_crlf`, `test_settle_on_a_crlf_page_puts_the_result_above_the_blank_line_after_the_item`
+- [x] A colon-less task line on a CRLF page is still an item, or AgentView never writes one (test or the line why) — TASK now ends in `(?::|\s*$)`, test `test_a_task_line_without_a_colon_on_a_crlf_page_is_still_an_item`; AgentView also never writes a colon-less one (desk.py:266, deskscan.py:277, deskinstall.py:139 all write the colon)
+- [x] `adopt` returns each key once when `edit` retries (test) — `test_adopt_returns_each_key_once_when_edit_retries` (retry simulated by running `change` twice in one `edit`: with the real `edit`, adopt returns its text unchanged so `edit` cannot retry it today; the lists are cleared at the top of `change` all the same)
+- [x] An unterminated comment on the task line or the result line is not left open by a hand-over or a settle, and a second hand-over does not append the block again (test) — `test_a_comment_left_open_on_the_task_line_is_closed_and_the_block_is_not_added_twice`, `test_a_comment_left_open_on_the_result_line_does_not_send_the_next_result_to_the_next_item`
+- [x] The ` -->` `carry` adds on a CRLF page leaves no lone `\r` (test, with c3) — `test_the_closing_added_on_a_crlf_page_leaves_no_lone_carriage_return`, `test_carry_alone_closes_an_open_comment_without_a_lone_carriage_return`
+- [x] `settle` replaces a result line with a thread in its middle (test) — `test_settle_replaces_a_result_line_with_a_thread_in_its_middle`
+- [x] A second settle with the same result keeps the result where it was; a thread after the person's words stays with them, or the docstring says why not (test or the line why) — `test_a_second_settle_with_the_same_result_keeps_it_above_the_thread_left_by_the_first`; the thread after the person's words stays as it is: the words are a line of their own so c3's quote cannot follow them, and the `_without_words` docstring now says so
+Follow-up (not a box of this ticket; class b by shape only): On a CRLF page with no final line end whose last item is a one-line block (an Install item, or a Merge with no pin), `put` and `settle` read the line end from that block alone and write bare LF; fall back to `_eol(text)` when the block has no line end. Left open: Sonnet round 3 found it after its GO, it needs that exact shape.
