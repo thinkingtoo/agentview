@@ -9,6 +9,10 @@ line where a handed-over item carries its recommendation, and carries no other: 
 holds the reviews, the scan holds none. Green means at least one check and every check finished well (success,
 neutral or skipped); no checks at all is not green. A PR whose key is on the page or anywhere in the desk log
 (handed over, withdrawn, refused, merged) is never found: what a session once decided about it stays decided.
+Each is read for what merging it ships, as `desk ready` reads it (`deskships.read`, at the pinned commit into its
+base branch): on a repo whose base deploys it is a Deploy item with its "What ships" lines, otherwise a Merge item,
+and the log's `ready` record keeps the raw lines and the base for the press to compare. A PR whose base is missing
+or whose reading fails is left out for the day and logged, never a Merge item by default.
 
 The scan is bounded: at most `MAX_REPOS` repos, `PER_REPO` PRs read from each and `TOTAL` read in all, whatever
 `gh` returns. One repo's `gh` failure (or an answer that cannot be read) is logged and the next repo goes on.
@@ -291,7 +295,7 @@ def add(repo, n, title, head, base, opened):
     try:
         if not base:
             raise deskships.Unreadable("GitHub gave no base branch")
-        ships = deskships.read(repo, base, head, desk.gh)
+        ships = deskships.read(repo, base, head, deskwatch.gh)
     except deskships.Unreadable as why:
         deskwatch.log.error("desk-scan", why, key=k)
         return False

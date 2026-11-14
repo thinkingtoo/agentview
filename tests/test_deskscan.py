@@ -307,11 +307,11 @@ class Classified(Case):
         self.assertIn("  - What ships:\n    " + self.SHIPS[0] + "\n    " + self.SHIPS[1], block)
         self.assertIn("no recommendation yet", block)
 
-    def test_it_is_read_at_the_pinned_commit_and_the_base_with_the_desk_s_gh(self):
+    def test_it_is_read_at_the_pinned_commit_and_the_base_with_the_watcher_s_gh(self):
         self.reading(self.SHIPS)
         self.prs(REPO, pr(7, head="c" * 40, base="release"))
         deskscan.scan([REPO])
-        self.assertEqual([(a[0], a[1], a[2], a[3]) for a in self.asked], [(REPO, "release", "c" * 40, desk.gh)])
+        self.assertEqual([(a[0], a[1], a[2], a[3]) for a in self.asked], [(REPO, "release", "c" * 40, deskwatch.gh)])
 
     def test_a_found_pr_on_a_test_only_repo_stays_a_merge_item(self):
         self.reading([])

@@ -249,6 +249,65 @@ class Ships(Case):
         self.assertEqual(len(self.merge_calls()), 1)
         self.assertEqual(self.events(k), ["ready", "pressing", "merged"])
 
+    def found(self, n=272, head=SHA):
+        """A PR the daily scan puts on the desk (ticket 12), read through the (fake) GitHub as a hand-over is."""
+        import deskscan
+        self.assertTrue(deskscan.add(REPO, n, "Found one", head, "dev", "2026-11-12"))
+        return f"{REPO}#{n}"
+
+    def test_a_found_item_on_a_deploying_repo_is_pressable_at_an_unchanged_head(self):
+        self.pr(272)
+        self.workflow("deploy.yml", DEPLOY_YML)
+        self.commits("Fix the thing")
+        k = self.found()
+        self.assertTrue(self.item(272).block.startswith("- [ ] Deploy "))
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+        self.assertEqual(self.events(k), ["ready", "pressing", "merged"])
+
+    def test_a_found_item_on_a_deploying_repo_refuses_after_what_ships_changed(self):
+        self.pr(272)
+        self.workflow("deploy.yml", DEPLOY_YML)
+        self.commits("Fix the thing")
+        k = self.found()
+        self.workflow("deploy.yml", DEPLOY_YML.replace("./deploy.sh", "./deploy.sh --to-prod"))
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*--to-prod")
+        self.assertEqual(self.events(k), ["ready", "pressing", "refused"])
+
+    def test_a_found_item_on_a_test_only_repo_is_pressable_and_refuses_when_a_deploy_appears(self):
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        self.found()
+        self.assertTrue(self.item(272).block.startswith("- [ ] Merge "))
+        self.workflow("deploy.yml", DEPLOY_YML)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed")
+
+    def test_a_found_item_on_a_test_only_repo_is_pressable_at_an_unchanged_head(self):
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        self.found()
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+
+    def test_a_found_item_pinned_at_a_stale_head_is_refused(self):
+        self.pr(272, head=SHA2)                 # GitHub moved on after the scan read the head
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        self.found(head=SHA)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+
     def test_a_workflow_line_changed_after_the_hand_over_refuses_the_press_and_unticks(self):
         k = self.deploy()
         self.workflow("deploy.yml", DEPLOY_YML.replace("./deploy.sh", "./deploy.sh --to-prod"))
