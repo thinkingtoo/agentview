@@ -4,7 +4,9 @@
 
 **Blocked by:** 05
 
-**Status:** ready-for-agent
+**Claimed by:** Britta 2026-11-14 01:35
+
+**Status:** in-progress
 
 - [ ] `deploy_prod.sh` changed to `deployprod.sh` between hand-over and press refuses the press
 - [ ] A `<...>` span added to a deploy line refuses the press
