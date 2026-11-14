@@ -25,9 +25,13 @@ Reviews and heads:
 
 `put` on the same page exposes the hidden item and the note's contents (rewrites the note to `<!-- private note -->` and turns the list line into a real item). Sonnet rated this class c; Codex class a, and the repro shows deletion of the person's text. The existing regression test has the nested opener before the list line, so it does not cover this order. Treat the comment as broken only when the thread is whole (opener and its closing `-->` on the same line) and it hides the later text, or find another test that tells a left-open comment from a closed note.
 
-**Blocked by:** none (31 goes first; 32 waits on it, same file)
+**Blocked by:** none
 
-**Status:** ready-for-agent
+Order: this ticket goes first; the ticket after it waits on it, same file.
+
+**Claimed by:** Nuno 2026-11-14 20:10
+
+**Status:** in-progress
 
 ## Acceptance criteria
 - [ ] A person's 4-space note under What ships on a legacy page is not adopted, and a hand-over after `adopt` keeps it (red test on the 19a page, with the note `    - NOTE: deploy manually`)

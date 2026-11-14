@@ -6,7 +6,9 @@ Failing scenario: an item has an old `merged` event in the history log (a day or
 
 `over()` reads the record of the item (`deskfile` `_own`) and counts a result-shaped line only when the record says the line is ours. An item with no record is never tidied by its result lines.
 
-**Blocked by:** none (deskscan.py only; may run beside 31, 32 and 34. If it needs a `deskfile` function from 31, take it as it is on dev.)
+**Blocked by:** none
+
+Note: deskscan.py only; may run beside the other open tickets. If it needs a `deskfile` function from ticket 31, take it as it is on dev.
 
 **Status:** ready-for-agent
 
