@@ -6,7 +6,7 @@
 
 **Claimed by:** Britta 2026-11-14 01:35
 
-**Status:** done
+**Status:** in-progress
 
 - [x] `deploy_prod.sh` changed to `deployprod.sh` between hand-over and press refuses the press (the press compares the raw lines stored in the `ready` record with a fresh raw read; tests/test_deskships.py test_the_stored_lines_are_compared_exactly_not_after_stripping, tests/test_deskwatch.py Ships)
 - [x] A `<...>` span added to a deploy line, or `\$TOKEN` vs `$TOKEN`, `dist/_` vs `dist/*`, refuses the press; the same raw line (`<staging>` included) passes
