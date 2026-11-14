@@ -462,15 +462,51 @@ class Ships(Case):
         deskwatch.tick()
         self.assertEqual(len(self.merge_calls()), 1)
 
-    def test_a_deploy_line_too_long_to_check_refuses_the_press_with_that_reason(self):
+    def _long_deploy(self, tail=""):
+        self.workflow("deploy.yml", DEPLOY_YML.replace("./deploy.sh", "./deploy.sh && " + "x" * 200 + tail))
+
+    def test_a_long_deploy_line_that_is_unchanged_is_pressed(self):
         self.pr(272)
-        self.workflow("deploy.yml", DEPLOY_YML.replace("./deploy.sh", "./deploy.sh && " + "x" * 200))
+        self._long_deploy()
         self.commits("x")
         self.hand_over_with_ships(272)
         self.tick_box(272)
         deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+
+    def test_a_deploy_line_changed_after_the_cut_refuses_the_press_with_that_reason(self):
+        self.pr(272)
+        self._long_deploy()
+        self.commits("x")
+        self.hand_over_with_ships(272)
+        self.tick_box(272)
+        self._long_deploy(" && ./other.sh")
+        deskwatch.tick()
         self.assertEqual(self.merge_calls(), [])
-        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*too long to check")
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: ")
+
+    def test_a_could_not_tell_refusal_still_says_what_to_do_after_a_long_reason(self):
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        self.hand_over_with_ships(272)
+        self.tick_box(272)
+        self.workflow("broken.yml", "on: [push\n" + "# " + "y" * 300 + "\njobs: {\n")
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*split the pull request")
+
+    def test_a_workflow_that_cannot_be_parsed_is_a_deploy_item_that_cannot_be_pressed(self):
+        self.pr(272)
+        self.workflow("broken.yml", "on: [push\njobs: {\n")
+        self.commits("x")
+        self.hand_over_with_ships(272)
+        self.assertTrue(self.item(272).block.startswith("- [ ] Deploy "), self.item(272).block)
+        self.assertIn("Could not tell what ships: broken.yml could not be parsed", self.item(272).block)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: now: Could not tell what ships")
 
     def test_a_merge_item_stays_a_merge_item_when_the_workflows_only_test(self):
         self.pr(272)
@@ -521,6 +557,20 @@ class Ships(Case):
         it = self.item(272)
         self.assertFalse(it.ticked)
         self.assertIn("Not merged: could not read what ships", it.block)
+        self.assertIn("merge it on GitHub yourself", it.block)
+
+    def test_an_unreadable_press_with_a_long_reason_still_shows_the_whole_advice(self):
+        self.deploy()
+        (self.prs / "api-fails").write_text("")
+        real = deskwatch.gh
+
+        def gh(*a):
+            code, out = real(*a)
+            return (code, "HTTP 403: API rate limit exceeded " + "r" * 200) if code else (code, out)
+        deskwatch.gh = gh
+        self.addCleanup(setattr, deskwatch, "gh", real)
+        deskwatch.tick()
+        self.assertRegex(self.item(272).block, r"Not merged: could not read what ships: .*split the pull request\.")
 
     def test_a_workflow_file_that_is_not_utf8_refuses_the_press_it_does_not_crash_it(self):
         k = self.deploy()
