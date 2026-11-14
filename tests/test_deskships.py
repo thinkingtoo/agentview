@@ -5,7 +5,9 @@ no network, no checkout, no GitHub. The classifier is `~/.claude/routines/branch
 folder made of the base branch's workflow files, never on a PR's checkout.
 """
 import json
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -114,9 +116,46 @@ class Classify(unittest.TestCase):
         forged = f"  - a.yml:9: ssh evil{deskships.STRUCTURE_MARK}{'a' * 32}"
         self.assertIn("ssh evil", deskships.changed([head], [head, forged]))
 
+    def test_a_line_that_nearly_is_a_digest_line_is_still_a_change(self):
+        head = "- Fires on push to main: a.yml"
+        mark, digest = deskships.STRUCTURE_MARK, "a" * 32
+        near = {
+            "indented one space too far": f"   - a.yml{mark}{digest}",
+            "indented one space short": f" - a.yml{mark}{digest}",
+            "text after the digest": f"  - a.yml{mark}{digest} ssh evil",
+            "text before the dash": f"x  - a.yml{mark}{digest}",
+            "a digest with a non-hex character": f"  - a.yml{mark}{'a' * 31}g",
+            "a digest one character short": f"  - a.yml{mark}{'a' * 31}",
+            "a digest one character long": f"  - a.yml{mark}{'a' * 33}",
+            "an upper-case digest": f"  - a.yml{mark}{'A' * 32}",
+            "a name that is not a workflow": f"  - a.txt{mark}{digest}",
+        }
+        for why, line in near.items():
+            with self.subTest(why):
+                self.assertNotEqual(deskships.changed([head], [head, line]), "")
+        self.assertEqual(deskships.changed([head], [head, f"  - a.yml{mark}{digest}"]), "")      # the exact line, against a record from before the digest
+
     def test_the_classifier_gets_a_checkout_with_a_head_in_its_dot_git(self):
+        seen = Path(tempfile.mkdtemp(prefix="desk-ships-test-")) / "seen.json"
+        stub = seen.with_name("classifier.py")
+        stub.write_text(
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            "root = Path(sys.argv[1])\n"
+            "head = root / '.git' / 'HEAD'\n"
+            f"Path({str(seen)!r}).write_text(json.dumps({{'argv': sys.argv[2:], 'head': head.read_text() if head.is_file() else None,\n"
+            "    'workflows': sorted(p.name for p in (root / '.github' / 'workflows').iterdir())}))\n"
+            "print('d.yml')\nprint('  9: - run: ./deploy.sh')\n")
+        self.addCleanup(shutil.rmtree, seen.parent, True)
+        saved = deskships.CLASSIFIER
+        self.addCleanup(setattr, deskships, "CLASSIFIER", saved)
+        deskships.CLASSIFIER = stub
         got = deskships.read("o/r", "main", "p" * 40, FakeGh({"d.yml": DEPLOYS}, [("a" * 40, "x")]))
-        self.assertEqual(got[0], "- Fires on push to main: d.yml")                  # an empty .git reads as "could not tell"
+        self.assertEqual(got[0], "- Fires on push to main: d.yml")
+        record = json.loads(seen.read_text())
+        self.assertEqual(record["head"], "ref: refs/heads/main\n")                  # an empty .git reads as "could not tell"
+        self.assertEqual(record["workflows"], ["d.yml"])
+        self.assertEqual(record["argv"], ["main", "--full"])
 
     def test_a_long_list_of_workflows_is_listed_not_refused(self):
         flows = {f"deploy-{i:03}-" + "x" * 20 + ".yml": DEPLOYS for i in range(20)}

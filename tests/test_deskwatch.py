@@ -21,7 +21,16 @@ import deskfile
 import deskships
 import deskwatch
 
-SHA = "ead9a1f" + "0" * 33
+
+def classifier_has_the_digest():
+    """False when the classifier is missing or unreadable: the test that needs the digest then skips."""
+    try:
+        return "structure sha256" in deskships.CLASSIFIER.read_text()
+    except OSError:
+        return False
+
+
+SHA ="ead9a1f" + "0" * 33
 SHA2 = "b" * 40
 MERGED_AS = "41678e3" + "1" * 33
 REPO = "sweatshop-ai/sheaf"
@@ -549,7 +558,7 @@ class Ships(Case):
         deskwatch.tick()
         self.assertEqual(len(self.merge_calls()), 1)
 
-    @unittest.skipUnless("structure sha256" in deskships.CLASSIFIER.read_text(), "needs branch_deploys.py with the structure digest (ticket 25, ~/.claude)")
+    @unittest.skipUnless(classifier_has_the_digest(), "needs branch_deploys.py with the structure digest (ticket 25, ~/.claude)")
     def test_a_key_moved_under_another_mapping_between_the_hand_over_and_the_press_is_refused(self):
         self.pr(272)
         two = DEPLOY_YML + "  b:\n    runs-on: x\n"                  # job b after job d, which holds the deploy step
