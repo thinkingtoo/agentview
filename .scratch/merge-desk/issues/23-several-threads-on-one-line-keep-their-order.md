@@ -7,7 +7,7 @@
 - settle does not replace a result line that carries a thread.
 - GLOSSARY lacks "record" (.merge-desk.own.json) and "orphan".
 
-**Blocked by:** 19
+**Blocked by:** 19, 27 (same deskfile.py carry code: one at a time, Tarek)
 
 **Status:** ready-for-agent
 

@@ -11,7 +11,7 @@
 - `desk adopt` with case-duplicate keys (`A/b#1` and `a/b#1`) reports only the first as adopted.
 - `desk adopt` (Sonnet round 8, c12): a blank line inside the ships list ends it for `ships_of` but not for `_adoptable`, so a person's bullet after a blank line is adopted as ours and dropped on the next hand-over.
 
-**Blocked by:** 19
+**Blocked by:** 19, 26 (same deskfile.py ownership code: one at a time, Tarek)
 
 **Status:** ready-for-agent
 
