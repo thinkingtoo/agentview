@@ -13,7 +13,9 @@
 
 **Blocked by:** 27, 23 (same deskfile.py carry code: one at a time, Tarek)
 
-**Status:** open
+**Claimed by:** Kofi 2026-11-14 16:32
+
+**Status:** in-progress
 
 - [ ] An unterminated comment on one of our lines does not hide the items below it after a hand-over, and a later hand-over of such an item does not append a duplicate (test)
 - [ ] A copy of an old pin line stays the person's when they also edited our current pin line (test)
