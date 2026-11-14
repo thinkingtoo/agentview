@@ -579,6 +579,14 @@ def edit(change, file=None):
             _held.record = mine
 
 
+def _is_empty_record(file):
+    try:
+        text = file.read_text(encoding="utf-8")
+        return not text.strip() or json.loads(text) == {}
+    except (OSError, ValueError):
+        return False
+
+
 def _adoptable(block):
     """The lines of `block` AgentView wrote, judged by shape and place, or None when the block holds two lines of one
     kind (a person's copy beside ours: which is ours cannot be told). A bullet counts only inside the `What ships:` list;
@@ -587,6 +595,8 @@ def _adoptable(block):
     for i, head in enumerate(heads):
         if i == 0:
             out.append(re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", head, count=1))
+            continue
+        if not head.strip():                                 # a thread on a line of its own: it ends nothing, as `ships_of` reads it
             continue
         kind = next((k for k, shape in OWN_LINES if shape.match(head)), None)
         if head == SHIPS_HEADER:
@@ -612,7 +622,7 @@ def adopt(file=None):
     Returns (the keys adopted, the keys skipped)."""
     f = Path(file) if file else path()
     rec = f.parent / RECORD
-    if rec.exists() and not _load_record(f) and rec.read_text(encoding="utf-8").strip() not in ("{}", ""):
+    if rec.exists() and not _load_record(f) and not _is_empty_record(rec):
         raise OSError(f"{rec} cannot be read; look at it before adopting")
     done, skipped = [], []
 

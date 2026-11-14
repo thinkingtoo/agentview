@@ -989,6 +989,20 @@ class OwnRecord(unittest.TestCase):
             deskfile.adopt(f)
         self.assertEqual(rec.read_text(), "{not json")
 
+    def test_adopt_keeps_the_ships_list_whole_across_a_thread_on_a_line_of_its_own(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - one\n  " + self.thread("x") + "\n    - two\n  - Pinned commit:", 1))
+        deskfile.adopt(f)
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, ships=["x"], when="02:00"), file=f)
+        got = f.read_text()
+        self.assertNotIn("    - two\n", got)
+        self.assertNotIn("    - one\n", got)
+
+    def test_adopt_reads_an_empty_record_with_a_space_in_it(self):
+        f, rec = self.legacy()
+        rec.write_text("{ }")
+        self.assertEqual(deskfile.adopt(f), (["a/b#1", "a/b#2"], []))
+
     def test_adopt_takes_a_ticked_task_line_so_a_hand_over_updates_the_title(self):
         f, rec = self.legacy()
         f.write_text(f.read_text().replace("- [ ] Deploy a/b#1", "- [x] Deploy a/b#1", 1))
