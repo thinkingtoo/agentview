@@ -465,7 +465,7 @@ def tidy(now=None):
 
             def change(text, k=k):
                 dropped.clear()
-                found = [i for i in deskfile.parse(text) if i.key == k]
+                found = [i for i in deskfile.items_in(text) if i.key == k]
                 if len(found) != 1 or not whole(found[0].block) or not over(found[0], last[k], now):
                     return text
                 dropped.append(k)

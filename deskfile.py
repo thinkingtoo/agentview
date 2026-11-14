@@ -178,7 +178,7 @@ def ships_of(block):
 def _pin_line(block, own):
     """The text of AgentView's `Pinned commit:` line of `block`, comments taken out, or None. With the record of what
     it wrote (`own`), that is the pin line the record lists and no other ("" when it is gone): a person's line shaped
-    like it pins nothing. None when there is no record: the first line of the shape counts then."""
+    like it pins nothing. None when there is no record of the item: nothing is pinned then."""
     if own is None:
         return None
     logical = _logical(block)
@@ -189,14 +189,15 @@ def _pin_line(block, own):
 
 
 def parse(text, record=None):
-    """The items of `text`. `record` is what AgentView wrote last (`edit` gives it): an item that has an entry in it
-    is pinned by its own `Pinned commit:` line only (a line the person wrote or changed pins nothing)."""
+    """The items of `text`. `record` is what AgentView wrote last (`edit` gives it): an item is pinned by its own
+    `Pinned commit:` line only (a line the person wrote or changed pins nothing). An item with no entry in it, or no
+    record at all, is pinned at nothing (""), and a press on it is refused until it is handed over again."""
     found = []
     for key, start, end in _spans(text):
         block = text[start:end]
         visible = re.sub(r"<!--.*?-->", "", block, flags=re.S)              # a comment pins nothing, and orders nothing
         mine = _pin_line(block, _own(record, key))
-        pin, order = PINNED.search(visible if mine is None else mine), AFTER.search(visible)     # an order only refuses a press, so a person's line may add one
+        pin, order = PINNED.search(mine or ""), AFTER.search(visible)     # an order only refuses a press, so a person's line may add one
         found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block, int(order.group(1)) if order else 0, ships_of(block)))
     return found
 
@@ -205,6 +206,11 @@ def items(file=None):
     """The items on the page now, in page order. Read-only: no lock needed."""
     file = Path(file) if file else path()
     return parse(_read(file), _load_record(file))
+
+
+def items_in(text):
+    """The items of `text` as `parse` reads them with the record `edit` holds: for a `change` that judges the text it is given."""
+    return parse(text, getattr(_held, "record", None))
 
 
 # The lines AgentView writes under an item, by kind. A line is its own only in the exact shape it writes it;
@@ -242,19 +248,23 @@ def _kinds(logical, own=None, tails=None):
     `("ships",)` (the header), `("bullet", text, n)` (the n-th time this bullet is there) or `("result",)` for what
     AgentView wrote, None for what it did not. A kind counts once.
 
-    `own` is the record of what AgentView wrote last (a Counter of line texts): with it, a line is AgentView's only
-    when its text is in the record, whatever shape it has, and a bullet counts wherever it stands under the header.
-    Without it (an item written before the record existed) the exact shapes decide. A line in the record that has
-    no shape is `("own", text, n)`. `tails`, when given, gets one entry per line: None for a line whose text before its
+    `own` is the record of what AgentView wrote last (a Counter of line texts): a line is AgentView's only when its
+    text is in the record, whatever shape it has (the task line too), and a bullet counts wherever it stands under the
+    header. Without it (no record of the item, or a record that cannot be read) no line is AgentView's: every kind is
+    None. A line in the record that has no shape is `("own", text, n)`. `tails`, when given, gets one entry per line: None for a line whose text before its
     first thread is what is AgentView's, else the words the person typed after what AgentView wrote, for a line that
     has a thread in its middle (they are `""` when it holds nothing of the person's). The line, threads taken out,
     is then AgentView's line, longest recorded one first, and the thread's place on it does not matter."""
-    out, seen, in_ships = [], set(), False
-    own = Counter(own) if own is not None else None
+    out, seen = [], set()
+    if own is None:
+        if tails is not None:
+            tails.extend(None for _ in logical)
+        return [None for _ in logical]
+    own = Counter(own)
     for i, line in enumerate(logical):
         head, whole = _text(line)
         mid = None
-        if own is not None and whole != head and own[head] <= 0:
+        if whole != head and own[head] <= 0:
             if own[whole] > 0:
                 mid = ""
             else:
@@ -264,14 +274,14 @@ def _kinds(logical, own=None, tails=None):
                     whole = got
         if mid is not None:
             head = whole
-        ours = own is None or own[head] > 0
-        if i == 0:
-            kind = ("task",)
-        elif not ours:
+        ours = own[head] > 0
+        if not ours:
             kind = None
+        elif i == 0:
+            kind = ("task",)
         elif head == SHIPS_HEADER:
             kind = ("ships",)
-        elif head.startswith("    ") and head.strip() and (own is not None or in_ships):
+        elif head.startswith("    ") and head.strip():
             kind = ("bullet", head, 1)
             while kind in seen:                                  # the same bullet twice: the second is its own kind
                 kind = ("bullet", head, kind[2] + 1)
@@ -279,7 +289,7 @@ def _kinds(logical, own=None, tails=None):
             kind = ("result",)
         else:
             kind = next(((k,) for k, shape in OWN_LINES if shape.match(head)), None)
-            if kind is None and own is not None and head.strip():
+            if kind is None and head.strip():
                 kind = ("own", head, 1)
                 while kind in seen:
                     kind = ("own", head, kind[2] + 1)
@@ -287,9 +297,8 @@ def _kinds(logical, own=None, tails=None):
             kind = None
         elif kind:
             seen.add(kind)
-        if kind and own is not None and i:
+        if kind and i:
             own[head] -= 1
-        in_ships = kind == ("ships",) or (in_ships and kind is not None and kind[0] == "bullet")
         out.append(kind)
         if tails is not None:
             tails.append(mid if kind else None)
@@ -351,7 +360,9 @@ def _settle_threads(rest, old_head, new_head):
 def carry(old, new, own=None):
     """`new`, the block AgentView writes now, with what `old`, the block on the page, holds that AgentView did not
     write: the threads sheaf keeps on its lines, and the lines the person wrote. Only AgentView's own lines are
-    replaced: the lines in `own`, the record of what it wrote last, or, with no record, the exact shapes. A thread,
+    replaced: the lines in `own`, the record of what it wrote last (the task line only when it is as recorded). With
+    no record (`own` is None) none is: the page's lines all stay, and the new block's lines, its task line apart,
+    go in after them. A thread,
     and the text after it, goes on the new line of the same kind when its quoted words still end that line; else
     the thread goes on a line of its own as an orphan, as sheaf writes one whose text is gone, and so does one whose
     kind is not in the new block (or that is never closed). A line of the person's stays after the line of the kind
@@ -367,7 +378,11 @@ def carry(old, new, own=None):
     marks, theirs, orphans, blanks, last = {}, {}, [], [], ("task",)
     old_lines = _logical(old)
     tails = []
-    for (kind, line), mid in zip(zip(_kinds(old_lines, own, tails), old_lines), tails):
+    task = None                                                  # the task line as the page has it, when it is the person's
+    for i, ((kind, line), mid) in enumerate(zip(zip(_kinds(old_lines, own, tails), old_lines), tails)):
+        if i == 0 and kind is None:
+            task = line if line.endswith("\n") else line + "\n"
+            continue
         if kind is None:
             if not line.strip():
                 blanks.append(line)                              # kept only when a line of the person's comes after it
@@ -397,6 +412,10 @@ def carry(old, new, own=None):
             marks.setdefault(home(kind), []).append((head.rstrip("\n"), rest, line.rstrip("\n") if mid == "" else None))
     out = []
     for kind, line in zip(new_kinds, new_lines):
+        if kind == ("task",) and task is not None:              # the person changed it, or there is no record: it stays, key and all
+            out.append(task)
+            out.extend(theirs.pop(kind, []))
+            continue
         head = _split(line)[0].rstrip("\n")
         on_line = ""
         for old_head, rest, original in marks.pop(kind, []):
@@ -507,7 +526,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at]):
             at -= 1
         own = _own(record, k)
-        if RESULT.match(kept[at]) and (own is None or own[kept[at]] > 0):
+        if RESULT.match(kept[at]) and own is not None and own[kept[at]] > 0:
             del kept[at]
         if record is not None and _slot(k) in record:
             entry = record[_slot(k)]
