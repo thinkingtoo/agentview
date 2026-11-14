@@ -10,9 +10,9 @@
 
 **Blocked by:** 11
 
-**Claimed by:** Anika 2026-11-14
+**Claimed by:** Anika 2026-11-14 15:22
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 - [x] A 429 from the stream cap carries Retry-After (test)
   Evidence: tests/test_desk_relay.py::StreamsThroughTheRelay::test_the_refusal_of_a_stream_past_the_cap_says_when_to_try_again (red before, green: Retry-After 30)
