@@ -184,7 +184,7 @@ def read(repo, base, pinned, run, outside="", commits=None):
     if outside:
         head.append(_line(OUTSIDE, outside, 300))
     if cannot:
-        why = desk.flatten(cannot, 150).rstrip(". ")
+        why = desk.flatten(cannot, 100).rstrip(". …")
         head.append(_line("- ", f"Could not tell what ships: {why}. {HELP}.", 400))
     return head + deploy + commit_lines
 
@@ -233,4 +233,4 @@ def changed(old, new):
         came += [f"commit {text}" for sha, text in new_shas if sha not in {s for s, _ in old_shas}]
     came += [l.strip(" -") for l in new_rest if l.startswith(UNKNOWN)]
     parts = (["now: " + "; ".join(dict.fromkeys(came))] if came else []) + (["no longer: " + "; ".join(gone)] if gone else [])
-    return desk.flatten("; ".join(parts), 240)
+    return desk.flatten("; ".join(parts), 400)       # room for a could-not-tell reason and what the person can do

@@ -351,6 +351,17 @@ class Ships(Case):
         self.assertEqual(self.merge_calls(), [])
         self.assertRegex(self.item(272).block, r"Not merged: what ships changed: ")
 
+    def test_a_could_not_tell_refusal_still_says_what_to_do_after_a_long_reason(self):
+        self.pr(272)
+        self.workflow("ci.yml", TEST_YML)
+        self.commits("x")
+        self.hand_over_with_ships(272)
+        self.tick_box(272)
+        self.workflow("broken.yml", "on: [push\n" + "# " + "y" * 300 + "\njobs: {\n")
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*split the pull request")
+
     def test_a_workflow_that_cannot_be_parsed_is_a_deploy_item_that_cannot_be_pressed(self):
         self.pr(272)
         self.workflow("broken.yml", "on: [push\njobs: {\n")
@@ -412,6 +423,7 @@ class Ships(Case):
         it = self.item(272)
         self.assertFalse(it.ticked)
         self.assertIn("Not merged: could not read what ships", it.block)
+        self.assertIn("merge it on GitHub yourself", it.block)
 
     def test_a_workflow_file_that_is_not_utf8_refuses_the_press_it_does_not_crash_it(self):
         k = self.deploy()

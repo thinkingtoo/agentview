@@ -125,6 +125,16 @@ class Classify(unittest.TestCase):
                 self.assertNotIn("ci.yml", tell[0])
                 self.assertNotIn("- Fires on push to main: broken.yml", got)
 
+    def test_a_long_reason_does_not_push_what_to_do_out_of_the_line_or_leave_dots_after_a_cut(self):
+        saved = deskships._classify
+        self.addCleanup(setattr, deskships, "_classify", saved)
+        deskships._classify = lambda files, base: ([], "the classifier failed: " + "z" * 300)
+        got = deskships.read("o/r", "main", "p" * 40, FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")]))
+        tell = self._tell(got)[0]
+        self.assertNotIn("….", tell)
+        self.assertTrue(tell.endswith("split the pull request."), tell)
+        self.assertIn("split the pull request.", deskships.changed([], got))
+
     def test_a_workflow_that_cannot_be_parsed_and_has_a_deploy_word_is_could_not_tell_too(self):
         got = deskships.read("o/r", "main", "p" * 40, FakeGh({"b.yml": "on: [push\n# x\nrun: ./deploy.sh\n  bad: [\n"}, [("a" * 40, "x")]))
         self.assertEqual(len(self._tell(got)), 1, got)
