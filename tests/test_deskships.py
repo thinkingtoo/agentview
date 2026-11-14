@@ -84,6 +84,17 @@ class Classify(unittest.TestCase):
             with self.subTest(run=new_run[:30]):
                 self.assertNotEqual(deskships.changed(old, self._lines(new_run)[0]), "")
 
+    def test_a_line_made_to_look_like_a_digested_one_is_not_the_same_line(self):
+        old, shown = self._lines(self._run_of_width(300))
+        forged = shown[0][len("  - deploy.yml:9: - run: "):]             # the run whose own line is exactly what the old line shows
+        new, forged_shown = self._lines(forged)
+        self.assertNotEqual(shown, forged_shown)
+        self.assertNotEqual(deskships.changed(old, new), "")
+
+    def test_a_trailing_no_break_space_is_a_change(self):
+        run = "./deploy.sh"
+        self.assertNotEqual(deskships.changed(self._lines(run)[0], self._lines(run + "\u00a0")[0]), "")
+
     def test_a_short_line_that_the_page_would_fold_is_compared_unfolded(self):
         run = "./deploy.sh  --env prod"
         old = self._lines(run)[0]

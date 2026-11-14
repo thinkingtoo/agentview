@@ -10,7 +10,7 @@ merged commit, so a pull request that changes `.github/workflows/` is a Deploy i
 says (the file names come from the compare call, no content of the head is read).
 
 A line the page cannot show whole (longer than the page's cut, or one the page would fold: a run of spaces,
-a no-break space) ends in `(full line sha256:<16 hex>)`, a digest of the line as the classifier gave it
+a no-break space) ends in `(full line sha256:<32 hex>)`, a digest of the line as the classifier gave it
 (`--full`: never cut), so the press compares the whole line though the page shows part of it.
 
 Classification reads workflow files only. The base branch's `.github/workflows` are fetched through
@@ -42,7 +42,8 @@ OUTSIDE = "- Outside GitHub: "
 COMMITS = "- Commits that go out"
 SHOWN = 100                 # commits listed; the rest are counted
 LINE = 140
-HELP = "To go on, read the workflows and merge it on GitHub yourself, or ask the session to fix this or split the pull request"
+DIGEST = " (full line sha256:"
+HELP = "To go on, merge it on GitHub yourself after reading the workflows, or ask the session to fix this or split the pull request"
 WORKFLOW = re.compile(r"[A-Za-z0-9_.-]+\.ya?ml")
 HINT = re.compile(r"^\s+(\d+): (.*)$")
 UNPARSED = re.compile(r"^\s+! could not parse: (.*)$")
@@ -55,9 +56,9 @@ def _line(prefix, text, limit=LINE):
 
 def _shown(prefix, text, limit=LINE):
     """Like `_line`, but a line that `_line` would cut or fold carries a digest of the whole of it."""
-    if desk.flatten(text, 10**6) == text and len(text) <= limit:
+    if desk.flatten(text, 10**6) == text and len(text) <= limit and DIGEST not in text:     # a text that already holds the mark could pose as a digested line
         return prefix + text
-    suffix = f" (full line sha256:{hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()[:16]})"
+    suffix = f"{DIGEST}{hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()[:32]})"
     return prefix + desk.flatten(text, limit - len(suffix)) + suffix
 
 
@@ -126,8 +127,8 @@ def _classify(files, base):
     hits, current, unparsed = {}, None, {}
     for raw in got.stdout.splitlines():
         if raw and not raw[0].isspace():
-            current = hits.setdefault(raw.strip(), [])
             name = raw.strip()
+            current = hits.setdefault(name, [])
         elif current is not None and (bad := UNPARSED.match(raw)):
             unparsed[name] = bad.group(1)
         elif current is not None and (hint := HINT.match(raw)):
@@ -183,7 +184,8 @@ def read(repo, base, pinned, run, outside="", commits=None):
     if outside:
         head.append(_line(OUTSIDE, outside, 300))
     if cannot:
-        head.append(_line("- ", f"Could not tell what ships: {desk.flatten(cannot, 150).rstrip(". ")}. {HELP}.", 400))
+        why = desk.flatten(cannot, 150).rstrip(". ")
+        head.append(_line("- ", f"Could not tell what ships: {why}. {HELP}.", 400))
     return head + deploy + commit_lines
 
 
