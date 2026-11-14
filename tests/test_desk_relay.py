@@ -502,6 +502,39 @@ class HubLock(unittest.TestCase):
         self.assertEqual((len(runs), len(errs)), (1, 4))
         self.assertTrue(all(isinstance(e, deskrelay.Refused) and e.status == 503 for e in errs))
 
+    def test_a_device_sent_round_again_by_resets_that_keep_coming_gives_up_with_a_503(self):
+        # each run a device joins is reset before it ends, over and over: it asks again three times, then is told 503
+        class Watched(threading.Event):
+            def __init__(self):
+                super().__init__()
+                self.waited = threading.Event()
+
+            def wait(self, timeout=None):
+                self.waited.set()
+                return super().wait(timeout)
+        hub = self.hub(locate=lambda self_: self.fail("a follower starts no run of its own"))
+
+        def run_begun():
+            flight = deskrelay._Flight(hub._generation)
+            flight.done = Watched()
+            with hub._lock:
+                hub._flights["desk"] = flight
+            return flight
+        flight = run_begun()
+        (t,), out, errs = self.in_threads(1, hub.desk)
+        rounds = 0
+        while rounds < 10 and flight.done.waited.wait(1):
+            rounds += 1
+            hub.reset()                                               # the hub moved again: this run is out of date
+            nxt = run_begun()
+            flight.done.set()
+            flight = nxt
+        t.join(5)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(rounds, 3)
+        self.assertEqual((out, len(errs)), ([], 1))
+        self.assertTrue(isinstance(errs[0], deskrelay.Refused) and errs[0].status == 503)
+
 
 class StreamCap(unittest.TestCase):
     def test_one_client_holds_so_many_streams_and_no_more(self):

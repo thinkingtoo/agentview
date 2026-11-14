@@ -44,6 +44,7 @@ ASK_TIMEOUT = 60                 # the hub's answer to a request: a tick or a co
 READ_TIMEOUT = 30                # the phone's own body, once it has said how long it is
 STREAM_TIMEOUT = 70              # the hub's event stream says something every 25 s
 SIGNIN_WAIT = 120                # a device waiting on another's `sheaf open` or sign-in gives up after this
+FOLLOW_ROUNDS = 3                # runs a device joins that a reset makes out of date, before it is told 503
 # One page holds one stream, and a stream whose phone went away is let go only at the hub's next write
 # (25 s), so a reconnecting device briefly holds two.
 STREAMS_PER_CLIENT = 6
@@ -166,7 +167,7 @@ class SheafHub:
             self._kept = {"desk": None, "cookie": None}
 
     def _ask(self, what, make, fresh=False):
-        while True:
+        for _ in range(FOLLOW_ROUNDS):
             with self._lock:
                 if not fresh and self._kept[what] is not None:
                     return self._kept[what]
@@ -186,6 +187,7 @@ class SheafHub:
                 if flight.generation != self._generation:
                     continue                        # a reset came while this one waited: its value is out of date
             return flight.value
+        raise Refused(503, "sheaf's answer kept going out of date while this request waited for it")
 
     def _lead(self, what, make, flight):
         try:
