@@ -232,6 +232,17 @@ class Ready(Case):
         self.assertEqual(self.ready(272, "sweatshop-ai/sheaf", "x", "yes").returncode, 1)
 
 
+class Adopt(Case):
+    def test_desk_adopt_takes_a_legacy_page_once_and_says_so(self):
+        self.pr("sweatshop-ai/sheaf", 272)
+        self.assertEqual(self.ready().returncode, 0)
+        (self.page.parent / ".merge-desk.own.json").unlink()
+        first = self.run_desk("adopt")
+        self.assertEqual((first.returncode, first.stdout.strip()), (0, "adopted: sweatshop-ai/sheaf#272"))
+        second = self.run_desk("adopt")
+        self.assertEqual((second.returncode, second.stdout.strip()), (0, "adopted: nothing, every item has a record"))
+
+
 class Hostile(Case):
     """Text a session hands over can never make a second task line or break the item."""
 
@@ -917,6 +928,51 @@ class OwnRecord(unittest.TestCase):
         self.assertEqual(deskfile.items(f)[0].pinned, self.NEW_SHA)
         deskfile.put_item("a/b#1", self.block(self.OLD_SHA, when="03:00"), file=f)
         self.assertEqual(deskfile.items(f)[0].pinned, self.OLD_SHA)
+
+    def legacy(self):
+        """A page written before there was a record: (its file, the record's path)."""
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        old = os.environ.get("XDG_RUNTIME_DIR")
+        os.environ["XDG_RUNTIME_DIR"] = str(tmp / "run")
+        self.addCleanup(lambda: os.environ.pop("XDG_RUNTIME_DIR") if old is None else os.environ.update(XDG_RUNTIME_DIR=old))
+        f = tmp / "state" / "merge-desk.md"
+        deskfile.put_item("a/b#1", self.block(self.OLD_SHA, rec="R1"), file=f)
+        deskfile.put_item("a/b#2", self.block(self.OLD_SHA, rec="R1").replace("a/b#1", "a/b#2"), file=f)
+        rec = f.parent / ".merge-desk.own.json"
+        rec.unlink()
+        return f, rec
+
+    def test_adopt_on_a_legacy_page_then_a_hand_over_replaces_the_old_lines(self):
+        f, rec = self.legacy()
+        self.assertEqual(deskfile.adopt(f), ["a/b#1", "a/b#2"])
+        self.assertEqual({i.key: i.pinned for i in deskfile.items(f)}, {"a/b#1": self.OLD_SHA, "a/b#2": self.OLD_SHA})
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, rec="R2", when="02:00"), file=f)
+        got = f.read_text()
+        self.assertEqual(got.count(f"Pinned commit: {self.OLD_SHA}"), 1)           # a/b#2's only
+        one = got[got.index("Deploy a/b#1"):got.index("Deploy a/b#2")]
+        self.assertEqual((one.count("Recommendation"), one.count("Handed over"), one.count("Pinned commit")), (1, 1, 1))
+        self.assertIn("Recommendation: R2", one)
+
+    def test_adopt_leaves_an_item_that_has_a_record_alone(self):
+        f, rec = self.legacy()
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, rec="R2"), file=f)      # a/b#1 has an entry again, a/b#2 has none
+        before = json.loads(rec.read_text())["a/b#1"]
+        self.assertEqual(deskfile.adopt(f), ["a/b#2"])
+        self.assertEqual(json.loads(rec.read_text())["a/b#1"], before)
+
+    def test_adopt_run_twice_gives_the_same_record_and_the_same_page(self):
+        f, rec = self.legacy()
+        deskfile.adopt(f)
+        first, page = rec.read_text(), f.read_text()
+        self.assertEqual(deskfile.adopt(f), [])
+        self.assertEqual((rec.read_text(), f.read_text()), (first, page))
+
+    def test_adopt_does_not_take_a_line_of_no_known_shape(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace("  - Pinned commit:", "  - my own note\n  - Pinned commit:", 1))
+        deskfile.adopt(f)
+        self.assertNotIn("my own note", "".join(json.loads(rec.read_text())["a/b#1"]["lines"]))
 
     def test_a_task_line_the_person_changed_stays_theirs_and_the_item_keeps_one_task_line(self):
         rec = {}

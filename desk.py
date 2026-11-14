@@ -4,6 +4,7 @@
     desk status [OWNER/REPO N]
     desk withdraw OWNER/REPO N
     desk page [--no-browser]
+    desk adopt
 
 `ready` pins the PR's head as it is now and puts one item on the desk page
 (`deskfile`); handing the same PR over again replaces the item and re-pins. It
@@ -390,6 +391,7 @@ def main(argv=None, out=None, err=None):
     w.add_argument("number")
     g = sub.add_parser("page", help="open the desk page in sheaf; prints its address")
     g.add_argument("--no-browser", action="store_true")
+    sub.add_parser("adopt", help="once, by hand, on a page written before the record: take each item's recognised lines as AgentView's")
     a = p.parse_args(argv)
     try:
         if a.cmd == "ready":
@@ -404,6 +406,9 @@ def main(argv=None, out=None, err=None):
                 raise Refused("give both OWNER/REPO and N, or neither")
             for line in ([status_line(key(check_repo(a.repo), check_number(a.number)))] if a.repo else status_all()):
                 print(line, file=out)
+        elif a.cmd == "adopt":
+            got = deskfile.adopt()
+            print("adopted: " + (", ".join(got) if got else "nothing, every item has a record"), file=out)
         else:
             print(page(browser=not a.no_browser), file=out)
     except (Refused, OSError) as why:

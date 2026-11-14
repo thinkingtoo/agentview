@@ -5,6 +5,7 @@
     desk status [OWNER/REPO N]
     desk withdraw OWNER/REPO N
     desk page [--no-browser]
+    desk adopt
 
 `ready` pins the PR's head as it is now; handing the same PR over again replaces the item and
 re-pins. A repo whose base branch deploys makes the item a Deploy item with a "What ships" list;

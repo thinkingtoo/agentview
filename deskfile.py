@@ -579,6 +579,30 @@ def edit(change, file=None):
             _held.record = mine
 
 
+ADOPTED = ("task", "rec", "pin", "by", "ships", "bullet", "result")
+
+
+def adopt(file=None):
+    """One-time, by hand (`desk adopt`): for each item with no entry in the record, write the entry from the lines
+    of its block that have a shape of AgentView's, taking them as AgentView's own. Items that have an entry are left
+    alone, so a second run changes nothing. Meant for a page written before there was a record. Returns the keys adopted."""
+    done = []
+
+    def change(text):
+        record = _held.record
+        for k, start, end in _spans(text):
+            if _slot(k) in record:
+                continue
+            block = text[start:end]
+            logical = [l for l in _logical(block) if l.strip()]
+            kinds = _kinds(logical, Counter(_heads(block)))
+            record[_slot(k)] = {"lines": [_split(l)[0].rstrip("\n") for kd, l in zip(kinds, logical) if kd and kd[0] in ADOPTED], "prev": []}
+            done.append(k)
+        return text
+    edit(change, file)
+    return done
+
+
 def put_item(key, block, section="merge", file=None):
     return edit(lambda t: put(t, key, block, section), file)
 
