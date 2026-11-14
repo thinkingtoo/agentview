@@ -170,11 +170,11 @@ UNKNOWN = "- Could not tell what ships"
 
 def _same(line):
     """A line as the page may have re-saved it, and no further: a backslash before punctuation taken out, a
-    tag (`<name ...>`) dropped as pandoc drops an unknown one, `_` read as `*` (emphasis is written `*`), spaces
-    folded. Every other character counts, so `deploy_prod` and `deployprod`, `&&` and `||`, and the words
-    between a shell `<` and `>` stay different."""
+    bare tag (`<name>`, no attributes, so a `<in ... >out` redirect is not one) dropped as pandoc drops an
+    unknown one, `_` read as `*` (emphasis is written `*`), spaces folded. Every other character counts, so
+    `deploy_prod` and `deployprod`, `&&` and `||`, and the words between a shell `<` and `>` stay different."""
     line = re.sub(r"\\([!-/:-@\[-`{-~])", r"\1", line)
-    line = re.sub(r"</?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/?>", "", line)
+    line = re.sub(r"</?[A-Za-z][A-Za-z0-9-]*/?>", "", line)
     return " ".join(line.replace("_", "*").split())
 
 

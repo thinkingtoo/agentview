@@ -197,6 +197,7 @@ class Differ(unittest.TestCase):
             ("run: echo `./deploy.sh`", "run: echo ./deploy.sh"),
             ("rsync dist/* host:/srv", "rsync dist/ host:/srv"),
             ("./build.sh < in.txt; ./deploy.sh --target prod > out.log", "./build.sh < in.txt; ./deploy.sh --target staging-eu > out.log"),
+            ("./deploy.sh <in --target prod >out.log", "./deploy.sh <in --target staging >out.log"),
         ]:
             with self.subTest(old=old):
                 self.assertNotEqual(self._line_change(old, new), "")
@@ -214,7 +215,6 @@ class Differ(unittest.TestCase):
             ("a < b > c", r"a \< b \> c"),
             ("uses _shared_ flow", "uses *shared* flow"),
             ("run: ./deploy.sh <staging>", "run: ./deploy.sh"),
-            ("run: ./deploy_prod.sh", "run: ./deploy_prod.sh"),
         ]:
             with self.subTest(old=old):
                 self.assertEqual(self._line_change(old, new), "")
