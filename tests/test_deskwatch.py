@@ -26,7 +26,7 @@ def classifier_has_the_digest():
     """False when the classifier is missing or unreadable: the test that needs the digest then skips."""
     try:
         return "structure sha256" in deskships.CLASSIFIER.read_text()
-    except OSError:
+    except (OSError, ValueError):                  # a missing, unreadable or undecodable file
         return False
 
 

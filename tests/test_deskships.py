@@ -136,8 +136,9 @@ class Classify(unittest.TestCase):
         self.assertEqual(deskships.changed([head], [head, f"  - a.yml{mark}{digest}"]), "")      # the exact line, against a record from before the digest
 
     def test_the_classifier_gets_a_checkout_with_a_head_in_its_dot_git(self):
-        seen = Path(tempfile.mkdtemp(prefix="desk-ships-test-")) / "seen.json"
-        stub = seen.with_name("classifier.py")
+        tmp = Path(tempfile.mkdtemp(prefix="desk-ships-test-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        seen, stub = tmp / "seen.json", tmp / "classifier.py"
         stub.write_text(
             "import json, sys\n"
             "from pathlib import Path\n"
@@ -146,7 +147,6 @@ class Classify(unittest.TestCase):
             f"Path({str(seen)!r}).write_text(json.dumps({{'argv': sys.argv[2:], 'head': head.read_text() if head.is_file() else None,\n"
             "    'workflows': sorted(p.name for p in (root / '.github' / 'workflows').iterdir())}))\n"
             "print('d.yml')\nprint('  9: - run: ./deploy.sh')\n")
-        self.addCleanup(shutil.rmtree, seen.parent, True)
         saved = deskships.CLASSIFIER
         self.addCleanup(setattr, deskships, "CLASSIFIER", saved)
         deskships.CLASSIFIER = stub
