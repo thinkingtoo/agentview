@@ -6,7 +6,9 @@
 
 **Blocked by:** 12
 
-**Status:** ready-for-agent
+**Claimed by:** Xavier 2026-11-14 02:47
+
+**Status:** in-progress
 
 - [ ] A gh answer with malformed JSON for one repo leaves the other repos' found items written (test with fake gh)
 - [ ] Changing deskscan.BY fails a test (or found items are told apart by a field, not by wording)
