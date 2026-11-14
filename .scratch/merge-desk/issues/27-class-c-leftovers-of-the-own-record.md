@@ -14,7 +14,9 @@
 
 **Blocked by:** 19, 26 (same deskfile.py ownership code: one at a time, Tarek)
 
-**Status:** ready-for-agent
+**Claimed by:** Arvid 2026-11-14 16:03
+
+**Status:** in-progress
 
 - [ ] CRLF page: a hand-over replaces our lines, no LF block appended (test)
 - [ ] settle with no record: a second refused press replaces the first result line (test)
