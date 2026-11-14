@@ -1536,6 +1536,53 @@ class Leftovers(unittest.TestCase):
         self.assertEqual(twice, once)
         self.assertLess(twice.index("Not merged: CI is red\n"), twice.index("orphan=1"))
 
+    def three(self):
+        """A page of three items; the thread on the third closes with the `-->` a comment left open on the first would need."""
+        text = ("# D\n\n## Pull requests waiting for your merge\n" + self.block(self.OLD_SHA)
+                + "- [ ] Merge a/b#2: next\n  - Pinned commit: " + "d" * 40 + ", into main\n"
+                + "- [ ] Merge a/b#3: last\n  - Recommendation: wait." + self.THREAD.replace("QUOTE", "wait.") + "\n")
+        return text, written(text)
+
+    def test_a_comment_left_open_and_closed_by_a_later_threads_arrow_hides_no_item(self):
+        text, rec = self.three()
+        text = text.replace("Merge it.\n", "Merge it.<!-- oops\n", 1)
+        self.assertEqual(self.keys(text, rec), ["a/b#1"])
+        got = deskfile.put(text, "a/b#2", "- [ ] Merge a/b#2: next\n  - Pinned commit: " + "e" * 40 + ", into main\n", record=rec)
+        self.assertEqual((got.count("Merge a/b#2"), got.count("id=c9")), (1, 1))
+        self.assertEqual(self.keys(got, rec), ["a/b#1", "a/b#2", "a/b#3"])
+        got = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        self.assertEqual(self.keys(got, rec), ["a/b#1", "a/b#2", "a/b#3"])
+        live = self.live(got)
+        self.assertEqual((live.count("Pinned commit: " + self.NEW_SHA), live.count("Pinned commit: " + self.OLD_SHA), live.count("Handed over")), (1, 0, 1))
+
+    def test_a_new_item_put_on_a_page_with_a_comment_left_open_is_visible(self):
+        text = "# D\n\n## Pull requests waiting for your merge\n- [ ] Merge a/b#1: first\n  - Recommendation: x.<!-- oops\n"
+        got = deskfile.put(text, "a/b#9", "- [ ] Merge a/b#9: new\n", record={})
+        self.assertIn("a/b#9", self.keys(got, {}))
+        self.assertTrue(self.closed(got))
+
+    def test_the_stale_pin_is_still_replaced_when_the_person_edited_the_recommendation(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        self.over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)             # the record moved on, the write did not finish
+        text = text.replace("Recommendation: Merge it.", "Recommendation: Merge it, says the person.", 1)
+        got = self.over(text, self.block(self.THIRD_SHA, rec="R3", when="03:00"), rec)
+        self.assertEqual((got.count(self.OLD_SHA), got.count(self.NEW_SHA), got.count(self.THIRD_SHA), got.count("Handed over")), (0, 0, 1, 1))
+
+    def test_settle_on_a_crlf_page_puts_the_result_above_the_blank_line_after_the_item(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec).replace("\n", "\r\n")
+        text = text.replace("- [ ] Merge a/b#2", "\r\n- [ ] Merge a/b#2", 1)
+        one = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        self.assertEqual(self.lone_ends(one), [])
+        self.assertEqual(one, deskfile.settle(text.replace("\r\n", "\n"), "a/b#1", "Not merged: CI is red", record=rec).replace("\n", "\r\n"))
+
+    def test_a_missing_section_on_a_crlf_page_is_made_with_crlf(self):
+        text = "# D\r\n\r\nSome words.\r\n"
+        got = deskfile.put(text, "install:foo", "- [ ] Install foo: x\r\n", section="install", record={})
+        self.assertEqual(self.lone_ends(got), [])
+        self.assertIn("## Local installs waiting for you\r\n- [ ] Install foo", got)
+
 
 if __name__ == "__main__":
     unittest.main()

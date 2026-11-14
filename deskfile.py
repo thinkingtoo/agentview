@@ -155,15 +155,21 @@ def _spans(text):
 
 
 def _open_at(text):
-    """The offset of the `<!--` that opens the comment left open at the end of `text`, or None when every comment is closed."""
-    inside, at = False, None
+    """The offset of the `<!--` that opens a comment the person left open, or None when every comment is closed. That
+    is the comment still open at the end of `text`, or one that another `<!--` stands inside of before the `-->` that
+    closes it: a comment does not nest, so the first was never closed and a later thread's `-->` only ended it."""
+    inside, at, nested = False, None, False
     for m in re.finditer(r"<!--|-->", text):
         if m.group(0) == "<!--":
             if not inside:
                 at = m.start()
+            else:
+                nested = True
             inside = True
         else:
-            inside = False
+            if inside and nested:
+                return at
+            inside = nested = False
     return at if inside else None
 
 
@@ -599,8 +605,9 @@ def _prev_stands(entry, block):
     if texts:
         texts[0] = re.sub(r"^(\s*- \[)[xX]\]", r"\1 ]", texts[0], count=1)
     known = set(entry["prev"]) | set(entry["lines"])
-    if any(t not in known and any(shape.match(t) for _, shape in OWN_LINES) for t in texts[1:]):
-        return False                    # a line shaped like ours that no generation wrote: the person edited this block, it is no stale write
+    pin = dict(OWN_LINES)["pin"]
+    if any(t not in known and pin.match(t) for t in texts[1:]):
+        return False                    # a pin line that no generation wrote: the person edited the pin of this block, it is no stale write
     return len(_mine(texts, [(entry["prev"], None)])) > len(_mine(texts, [(entry["lines"], entry.get("at"))]))
 
 
@@ -647,23 +654,24 @@ def put(text, key, block, section="merge", record=None):
             _record_block(record, k, block, at if len(at) == len(_heads(block)) else None, behind)
             return text[:start] + kept + text[end:]
     _record_block(record, key, block)
-    if _eol(text) == "\r\n":
+    nl = _eol(text)
+    if nl == "\r\n":
         block = re.sub(r"\r?\n", "\r\n", block)
     heading = SECTIONS[section]
     at = _heading_end(text, heading)
     if at is not None and not text.endswith("\n") and at == len(text):
-        text += "\n"
-        at += 1
+        text += nl
+        at += len(nl)
     if at is None:
-        text = text.rstrip("\n") + "\n\n" + heading + "\n"
+        text = text.rstrip("\r\n") + nl * 2 + heading + nl
         at = len(text)
     end = next((o for o, line, inside in _walk(text) if o >= at and not inside and line.startswith("## ")),
                len(text))
     nxt = end < len(text)
     body = text[at:end]
-    tail = body[len(body.rstrip("\n")):]            # the blank line before the next heading
-    new = body.rstrip("\n") + ("\n" if body.strip() else "") + block
-    return text[:at] + new + (tail if nxt else "") + text[end:]
+    tail = body[len(body.rstrip("\r\n")):]          # the blank line before the next heading
+    new = body.rstrip("\r\n") + (nl if body.strip() else "") + block
+    return _unhidden(text[:at] + new + (tail if nxt else "") + text[end:], key)           # a comment left open above it would hide it
 
 
 def _heading_end(text, heading):
@@ -705,6 +713,9 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         body = block.rstrip("\n")
         tail = block[len(body):] or "\n"
         kept = [l.rstrip("\n") for l in _logical(body)]
+        trailing = []
+        while len(kept) > 1 and not kept[-1].strip():                    # blank lines after the item (a lone `\r` on a CRLF page) stay after the result
+            trailing.insert(0, kept.pop())
         at = len(kept) - 1                                              # our line is always the last one, bar the person's comments after it
         while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at], re.S):
             at -= 1
@@ -715,7 +726,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
             del kept[at]
             put_at = at                                                  # the new result goes where the old one stood, its orphaned threads after it
             if whole == head:
-                left = ["  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest)] if rest.strip() else []     # the result line is gone: what was on it stays, its threads as orphans
+                left = ["  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest).rstrip("\r") + cr] if rest.strip() else []     # the result line is gone: what was on it stays, its threads as orphans
             else:
                 left = ["  " + _orphaned(m.group(0)) + cr for m in CLOSED.finditer(rest)]                  # the words after a thread are ours: only the threads stay
         if record is not None and _slot(k) in record:
@@ -727,7 +738,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
             kept[0] = kept[0][:3] + " " + kept[0][4:]
         fresh = ["  - " + result + cr] + left
         kept[len(kept) if put_at is None else put_at:len(kept) if put_at is None else put_at] = fresh
-        return text[:start] + "\n".join(kept) + tail + text[end:]
+        return text[:start] + "\n".join(kept + trailing) + tail + text[end:]
     return text
 
 
