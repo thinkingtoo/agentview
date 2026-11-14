@@ -257,5 +257,81 @@ class Rotation(Case):
         self.assertFalse(list(self.log.parent.glob("*.new")))
 
 
+    def test_a_failing_fsync_or_floor_write_after_the_replace_leaves_a_working_log(self):
+        for what in ("fsync", "floor"):
+            with self.subTest(what=what):
+                self.setUp()
+                self.story()
+                self.filler(60)
+                size = self.log.stat().st_size
+                desk.MAX_LOG = size // 2
+                real = os.fsync
+                if what == "fsync":
+                    calls = []
+                    os.fsync = lambda fd: real(fd) if not calls.append(fd) and len(calls) == 1 else (_ for _ in ()).throw(OSError("no"))
+                else:
+                    (self.log.parent / desk.FLOOR).mkdir()          # a directory where the floor file goes: the write fails
+                try:
+                    got = desk.history()
+                finally:
+                    os.fsync = real
+                self.assertEqual(len(self.archives()), 1)
+                self.assertLess(self.log.stat().st_size, size)
+                self.assertEqual(desk.status_line("o/r#3").split(": ")[1].split(" ")[0], "merged")
+                self.assertEqual(len(desk.history()), len(got))
+
+    def test_a_ready_that_does_not_round_trip_is_carried_as_its_raw_line(self):
+        odd = ('{"at": "%s", "event": "ready", "key": "o/r#7", "pinned": "%s", "by": "\\ud800", "ships": ["a"], "base": "main"}'
+               % (STAMP, SHA))
+        with open(self.log, "a", encoding="utf-8") as fh:
+            fh.write(odd + "\n")
+        self.put("withdrawn", "o/r#7")        # the ready is carried only as the last press record, so it would be stripped
+        self.filler(60)
+        desk.MAX_LOG = self.log.stat().st_size // 2
+        desk.history()
+        self.assertEqual(len(self.archives()), 1)
+        self.assertIn(odd + "\n", self.log.read_text(encoding="utf-8"))
+        self.assertEqual(desk.status_line("o/r#7").split(": ")[1].split(" ")[0], "withdrawn")
+
+    def test_a_replace_that_fails_leaves_no_archive_link_behind_poll_after_poll(self):
+        self.story()
+        self.filler(60)
+        before = self.log.read_bytes()
+        desk.MAX_LOG = len(before) // 2
+        real = os.replace
+        os.replace = lambda *a: (_ for _ in ()).throw(OSError("read-only here"))
+        try:
+            for _ in range(3):
+                self.assertEqual(len(desk.history()), self.lines())
+        finally:
+            os.replace = real
+        self.assertEqual(self.archives(), [])
+        self.assertEqual(self.log.read_bytes(), before)
+        self.assertFalse(list(self.log.parent.glob("*.new")))
+
+    def test_a_floor_file_with_a_nonsense_size_is_ignored(self):
+        for text in ("9" * 30, "-5", "twelve", ""):
+            with self.subTest(floor=text):
+                self.setUp()
+                self.story()
+                self.filler(60)
+                (self.log.parent / desk.FLOOR).write_text(text)
+                desk.MAX_LOG = self.log.stat().st_size // 2
+                desk.history()
+                self.assertEqual(len(self.archives()), 1)
+
+    def test_a_log_between_the_limit_and_twice_the_floor_does_not_take_the_lock(self):
+        self.story()
+        self.filler(60)
+        desk.MAX_LOG = 100
+        desk.history()                           # rotates once: the floor is now the size of what had to be carried
+        real = deskfile.locked
+        deskfile.locked = lambda *a, **k: (_ for _ in ()).throw(AssertionError("took the lock"))
+        try:
+            desk.history()
+        finally:
+            deskfile.locked = real
+
+
 if __name__ == "__main__":
     unittest.main()
