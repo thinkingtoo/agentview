@@ -58,7 +58,7 @@ class Classify(unittest.TestCase):
             with self.subTest(width=width):
                 run = "./deploy.sh && " + "x" * (width - len("- run: ./deploy.sh && "))     # width of the line as the classifier cuts it
                 got = deskships.read("o/r", "main", "p" * 40, FakeGh({"deploy.yml": self._long(run)}, [("a" * 40, "x")]))
-                self.assertTrue(any(l.startswith("- Could not tell what ships:") and "too long to check" in l and "deploy.yml:9" in l
+                self.assertTrue(any(l.startswith("- Could not tell what ships:") and "too long to check" in l and "merge it on GitHub yourself" in l and "deploy.yml:9" in l
                                     for l in got), got)
                 self.assertNotIn("- Fires on push to main: deploy.yml", got)
 

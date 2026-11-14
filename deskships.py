@@ -123,7 +123,7 @@ def _classify(files, base):
            if len(text) >= HINT_CUT or len(desk.flatten(f"{name}:{n}: {text}", 10**6)) > LINE + 40]
     if cut or len(desk.flatten(head, 10**6)) > 300:
         # A line that reached either cut is shown without its end, so a change in that end could not be seen at the press.
-        return [], "a line in " + (", ".join(cut[:3]) or "the list of workflows") + " is too long to check"
+        return [], "a line in " + (", ".join(cut[:3]) or "the list of workflows") + " is too long to check; merge it on GitHub yourself after reading the workflow"
     out = [_line("- ", head, 300)]
     out += [_line("  - ", f"{name}:{n}: {text}", LINE + 40) for name, hs in deploying.items() for n, text in hs]
     return out, ""
