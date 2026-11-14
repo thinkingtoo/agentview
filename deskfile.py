@@ -156,20 +156,21 @@ def _spans(text):
 
 def _open_at(text):
     """The offset of the `<!--` that opens a comment the person left open, or None when every comment is closed. That
-    is the comment still open at the end of `text`, or one that another `<!--` stands inside of before the `-->` that
-    closes it: a comment does not nest, so the first was never closed and a later thread's `-->` only ended it."""
-    inside, at, nested = False, None, False
+    is the comment still open at the end of `text`, or one that a sheaf thread opens inside of, after a line that is an
+    item or a heading, before the `-->` that closes it: the first was never closed and the thread's `-->` only ended
+    it. Any other comment, one that holds a `<!--` of its own or a list line, is the person's note and stays."""
+    inside, at, broken = False, None, False
     for m in re.finditer(r"<!--|-->", text):
         if m.group(0) == "<!--":
             if not inside:
                 at = m.start()
-            else:
-                nested = True
+            elif THREAD.match(text, m.start()) and any(TASK.match(l) or HEADING.match(l) for l in text[at:m.start()].split("\n")[1:]):
+                broken = True
             inside = True
         else:
-            if inside and nested:
+            if inside and broken:
                 return at
-            inside = nested = False
+            inside = broken = False
     return at if inside else None
 
 
@@ -179,11 +180,12 @@ def _unhidden(text, key):
     it. The comment is closed before the next task line or heading, so what the person typed in it stays in it. Only a
     comment that hides `key` or sits inside its block is closed, one at a time, and none beyond it. `text`
     as it was when it holds no such comment, or when closing them does not bring `key` into view."""
-    here, found = text, False
+    here, found, last = text, False, None
     for _ in range(50):
         at = _open_at(here)
-        if at is None:
+        if at is None or at == last:
             break
+        last = at
         spans = [(s, e) for k, s, e in _spans(here) if k == key or (k.lower() == key.lower() and not key.startswith("install:"))]
         if spans and at >= spans[0][1]:
             break
@@ -711,15 +713,18 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         if pinned is not None and parse(block, record)[0].pinned != pinned:      # the item was handed over again meanwhile
             return text
         body = block.rstrip("\n")
+        crlf = _eol(block) == "\r\n"
         tail = block[len(body):] or "\n"
         kept = [l.rstrip("\n") for l in _logical(body)]
+        if crlf and not body.endswith("\r"):
+            kept[-1] += "\r"                                            # the page's last line has no line end: it gets one now that a line follows it
         trailing = []
         while len(kept) > 1 and not kept[-1].strip():                    # blank lines after the item (a lone `\r` on a CRLF page) stay after the result
             trailing.insert(0, kept.pop())
         at = len(kept) - 1                                              # our line is always the last one, bar the person's comments after it
         while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at], re.S):
             at -= 1
-        own, left, cr, put_at = _own(record, k, block), [], "\r" if body.endswith("\r") else "", None
+        own, left, cr, put_at = _own(record, k, block), [], "\r" if crlf else "", None
         head, rest = _split(kept[at])
         whole = _text(kept[at])[1]                                       # the line with its threads out: a thread in the middle of our words does not make them another line
         if RESULT.match(whole) and own is not None and own[whole] > 0:

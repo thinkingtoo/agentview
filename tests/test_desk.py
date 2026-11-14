@@ -1583,6 +1583,30 @@ class Leftovers(unittest.TestCase):
         self.assertEqual(self.lone_ends(got), [])
         self.assertIn("## Local installs waiting for you\r\n- [ ] Install foo", got)
 
+    def test_a_comment_that_holds_a_comment_closed_before_any_item_is_left_alone_and_nothing_loops(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec).replace("Merge it.\n", "Merge it.\n  <!-- old <!-- thread --> text -->\n", 1)
+        got = deskfile.put(text, "a/b#3", "- [ ] Merge a/b#3: new\n", record=rec)
+        self.assertEqual(got.count("-->"), text.count("-->"))
+        self.assertIn("a/b#3", self.keys(got, rec))
+
+    def test_a_persons_note_that_holds_a_list_line_and_a_comment_opener_is_left_alone(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = text.replace("Merge it.\n", "Merge it.\n  <!-- note: write <!-- to open\n- [ ] Merge a/b#9: x\n  -->\n", 1)
+        got = deskfile.put(text, "a/b#2", "- [ ] Merge a/b#2: next\n", record=rec)
+        self.assertIn("<!-- note: write <!-- to open\n- [ ] Merge a/b#9: x\n  -->\n", got)
+        self.assertNotIn("a/b#9", self.keys(got, rec))
+
+    def test_settle_on_a_crlf_page_whose_last_line_has_no_line_end_keeps_one_kind(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec).replace("\n", "\r\n")
+        text = text[:text.index("- [ ] Merge a/b#2")] + text[text.index("- [ ] Merge a/b#2"):].rstrip("\r\n")
+        text = text[:text.index("- [ ] Merge a/b#2")]                      # the item under test is the last one now, with no line end
+        text = text.rstrip("\r\n")
+        got = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        self.assertEqual(self.lone_ends(got), [])
+
 
 if __name__ == "__main__":
     unittest.main()
