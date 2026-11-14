@@ -4,8 +4,10 @@
 
 **Blocked by:** 07
 
-**Status:** needs-triage
+**Decision (Tarek, 2026-11-14, triage):** box 3: the relay keeps passing all five `op` values. Only Thierry's own tailnet devices reach :8445 (checked 2026-11-14: laptop, iphone-14-pro, tiroir-tdm, all thierry@), and he must be able to resolve and edit his own comments from the phone. Test that an `op` outside the five is refused, and write the reason into README next to the relay. Boxes 1-2 as written.
+
+**Status:** ready-for-agent
 
 - [ ] The relay's lock is not held across `sheaf open` (up to 60 s) and the sign-in (up to 45 s): after a 503 reset, desk requests from several devices must not queue behind one subprocess
 - [ ] One device cannot hold unlimited `/_/live` streams: each holds an AgentView thread and a hub connection with no cap per client today
-- [ ] The comment route lets whoever reaches :8445 edit, delete and resolve the owner's own comments on the desk (all five `op` values pass); decide whether the relay passes only `add` and `reply`, and test it
+- [ ] The comment route lets whoever reaches :8445 edit, delete and resolve the owner's own comments on the desk (all five `op` values pass); decided: all five pass (see Decision); test that any other op is refused
