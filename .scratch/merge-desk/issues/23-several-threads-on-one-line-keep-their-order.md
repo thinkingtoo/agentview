@@ -13,7 +13,7 @@
 
 **Status:** in-progress
 
-- [ ] Two threads and the person's words on one line keep their order across two re-hand-overs (test)
-- [ ] A non-sheaf HTML comment is never marked orphan (test)
-- [ ] An unclosed `<!--` in a person's line leaves the following items intact (test)
-- [ ] GLOSSARY has Record and Orphan
+- [x] Two threads and the person's words on one line keep their order across two re-hand-overs (test): tests/test_desk.py ThreadsOnOneLine.test_two_threads_and_the_persons_words_on_one_line_keep_their_order_across_two_hand_overs, red on f4866b0, passes at 21658f4 (branch rune/23)
+- [x] A non-sheaf HTML comment is never marked orphan (test): ThreadsOnOneLine.test_a_comment_that_is_not_a_sheaf_thread_is_never_marked_orphan, red before, passes at 21658f4
+- [x] An unclosed `<!--` in a person's line leaves the following items intact (test): ThreadsOnOneLine.test_an_unclosed_comment_in_a_persons_line_leaves_the_following_items_intact, red before, passes at 21658f4
+- [x] GLOSSARY has Record and Orphan: GLOSSARY.md already has 'Desk record' (the .merge-desk.own.json) and 'Orphan (desk)' on origin/dev; no edit needed
