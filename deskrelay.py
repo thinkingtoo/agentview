@@ -289,8 +289,8 @@ STREAMS = Streams()
 
 
 def client_of(h):
-    """Who is asking: the address the `tailscale serve` proxy appended to X-Forwarded-For, which is the
-    last one (what came before it the caller wrote), else the connection's own."""
+    """Who is asking: the address the `tailscale serve` proxy set in X-Forwarded-For (it replaces what the
+    caller sent; the last entry is read all the same), else the connection's own."""
     seen = h.headers.get("X-Forwarded-For", "").rpartition(",")[2].strip()
     try:
         return str(ipaddress.ip_address(seen))
