@@ -59,6 +59,7 @@ class Item:
     pinned: str
     block: str
     after: int = 0          # the PR of the same repo that must be merged first; 0 for none
+    ships: list | None = None   # the lines under `What ships:` (a Deploy item), None when the item has none
 
 
 def key_of(first_line):
@@ -149,13 +150,29 @@ def _spans(text):
     return out
 
 
+SHIPS_HEADER = "  - What ships:"
+
+
+def ships_of(visible):
+    """The sub-list under `What ships:` (four spaces of indent taken off), or None when the block has none."""
+    out, inside = None, False
+    for line in visible.split("\n"):
+        if line.rstrip() == SHIPS_HEADER:
+            out, inside = [], True
+        elif inside and line.startswith("    "):
+            out.append(line[4:].rstrip())
+        elif inside:
+            inside = False
+    return out
+
+
 def parse(text):
     found = []
     for key, start, end in _spans(text):
         block = text[start:end]
         visible = re.sub(r"<!--.*?-->", "", block, flags=re.S)              # a comment pins nothing, and orders nothing
         pin, order = PINNED.search(visible), AFTER.search(visible)
-        found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block, int(order.group(1)) if order else 0))
+        found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block, int(order.group(1)) if order else 0, ships_of(visible)))
     return found
 
 

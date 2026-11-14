@@ -7,7 +7,9 @@ a time in page order, every item that is ticked and has no result yet:
 2. an item handed over `--after N` waits until PR N of the same repo is merged: "#N must go in first";
 3. while GitHub answers UNKNOWN it is asked again every 2 s, for up to 60 s;
 4. anything but MERGEABLE is "GitHub says <state>";
-5. `gh pr merge --merge --match-head-commit <pinned>`.
+5. what merging ships is read again from the base branch (`deskships`) and must be what the item showed
+   at hand-over, a Merge item included: "what ships changed: ...";
+6. `gh pr merge --merge --match-head-commit <pinned>`.
 
 The result goes under the item (`deskfile.settle`); a refused press unticks the box. Every press is
 two records in `merge-desk.log`: `pressing` before the first `gh` call, `merged` or `refused` after
@@ -38,6 +40,7 @@ import desk
 import deskfile
 import deskinstall
 import deskscan
+import deskships
 import log
 
 SYSTEM_PATH = desk.SYSTEM_PATH
@@ -73,14 +76,14 @@ def gh(*args):
     try:
         got = subprocess.run([GH, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL,
                              timeout=CALL_TIMEOUT, env={**os.environ, "PATH": SYSTEM_PATH, "GH_PROMPT_DISABLED": "1"})
-    except (OSError, subprocess.TimeoutExpired) as err:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as err:    # ValueError: output that is not text
         return CANNOT, str(err)
     return got.returncode, (got.stdout if got.returncode == 0 else got.stdout + got.stderr).strip()
 
 
 def view(repo, n):
     """The PR as GitHub answers now: state, mergeable, headRefOid, mergeCommit."""
-    code, out = gh("pr", "view", str(n), "-R", repo, "--json", "state,mergeable,headRefOid,mergeCommit")
+    code, out = gh("pr", "view", str(n), "-R", repo, "--json", "state,mergeable,headRefOid,mergeCommit,baseRefName")
     if code:
         raise Unsure(desk.flatten(out, 160))
     try:
@@ -166,6 +169,29 @@ def check_after(k, repo):
         raise NotMerged(f"#{it.after} must go in first")
 
 
+def taken_back(k, pinned):
+    """The person may have unticked or replaced the item while the press waited."""
+    now = item(k)
+    if not now or not now.ticked or now.pinned != pinned:
+        raise TakenBack("the press was taken back before the merge")
+
+
+def check_ships(k, repo, base, pinned):
+    """Refuse when what merging ships is not what the hand-over showed. Read now, just before the merge,
+    from the base branch's workflow files and the commits; a Merge item that shows nothing must still ship nothing."""
+    it = item(k)
+    if not base:
+        raise NotMerged("GitHub gave no base branch to read what ships from")
+    shown = it.ships if it else None
+    try:
+        now = deskships.read(repo, base, pinned, gh, commits=shown is not None)
+    except deskships.Unreadable as why:
+        raise NotMerged(f"could not read what ships: {why}") from None
+    gone = deskships.changed(shown or [], now)
+    if gone:
+        raise NotMerged(f"what ships changed: {gone}")
+
+
 def check_and_merge(k, pinned):
     """Make the merge or raise NotMerged. Returns (sha, already_merged)."""
     repo, n = split(k)
@@ -193,10 +219,10 @@ def check_and_merge(k, pinned):
         raise NotMerged(f"GitHub still says UNKNOWN after {WAIT_MAX} s")
     if pr.get("mergeable") != "MERGEABLE":
         raise NotMerged(f"GitHub says {pr.get('mergeable')}")
-    now = item(k)                                           # the person may have taken the press back while we waited
-    if not now or not now.ticked or now.pinned != pinned:
-        raise TakenBack("the press was taken back before the merge")
+    taken_back(k, pinned)
     check_after(k, repo)                                    # handed over again with an order while we waited
+    check_ships(k, repo, pr.get("baseRefName"), pinned)     # read again just before the merge, not at the start: time passed in the wait
+    taken_back(k, pinned)                                   # and again: reading what ships takes seconds
     code, out = gh("pr", "merge", str(n), "-R", repo, "--merge", "--match-head-commit", pinned)
     after = view(repo, n)                                   # an unreadable answer leaves the press open
     for _ in range(POST_POLLS if code == 0 else 0):         # accepted, but GitHub may still show it open for a moment

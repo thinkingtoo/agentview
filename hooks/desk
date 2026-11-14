@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Hand a pull request to the merge desk, ask what became of it, take it back. Run by the session itself.
 
-    desk ready OWNER/REPO N --what "what it does" --rec merge|wait|dont [--why "the evidence"] [--after N] [--by NAME]
+    desk ready OWNER/REPO N --what "what it does" --rec merge|wait|dont [--why "the evidence"] [--after N] [--by NAME] [--ships TEXT]
     desk status [OWNER/REPO N]
     desk withdraw OWNER/REPO N
     desk page [--no-browser]
 
 `ready` pins the PR's head as it is now; handing the same PR over again replaces the item and
-re-pins. See desk.py.
+re-pins. A repo whose base branch deploys makes the item a Deploy item with a "What ships" list;
+`--ships` does the same for a repo whose main is run from outside GitHub. See desk.py, deskships.py.
 """
 import sys
 from pathlib import Path

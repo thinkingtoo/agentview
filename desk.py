@@ -1,6 +1,6 @@
 """The merge desk, from a session's side: hand a pull request over, ask what became of it, take it back.
 
-    desk ready OWNER/REPO N --what TEXT --rec merge|wait|dont [--why TEXT] [--after N] [--by NAME]
+    desk ready OWNER/REPO N --what TEXT --rec merge|wait|dont [--why TEXT] [--after N] [--by NAME] [--ships TEXT]
     desk status [OWNER/REPO N]
     desk withdraw OWNER/REPO N
     desk page [--no-browser]
@@ -115,17 +115,31 @@ def history(k=None):
     return out
 
 
-def item_block(repo, n, what, rec, why, pinned, base, after, by, when):
+def item_block(repo, n, what, rec, why, pinned, base, after, by, when, ships=None):
+    """`ships`: the lines of "What ships" (deskships.read); with any, the item is a Deploy item."""
     rec_line = RECS[rec] + "." + (" " + why if why else "")
-    lines_ = [f"- [ ] Merge {key(repo, n)}: {what}",
+    lines_ = [f"- [ ] {'Deploy' if ships else 'Merge'} {key(repo, n)}: {what}",
               f"  - Recommendation: {rec_line}",
               f"  - Pinned commit: {pinned}" + (f", into {base}" if base else "")
-              + (f"; must go after #{after}" if after else ""),
-              f"  - Handed over by {by}, {when}."]
+              + (f"; must go after #{after}" if after else "")]
+    if ships:
+        lines_ += ["  - What ships:"] + ["    " + line for line in ships]
+    lines_.append(f"  - Handed over by {by}, {when}.")
     return "\n".join(lines_) + "\n"
 
 
-def ready(repo, n, what, rec, why="", after=None, by="a session"):
+def gh(*args):
+    """(exit code, output) of one `gh` call, for what `deskships` asks of GitHub."""
+    if not GH:
+        return 1, "gh was not found on PATH"
+    try:
+        got = subprocess.run([GH, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as err:
+        return 1, str(err)
+    return got.returncode, (got.stdout if got.returncode == 0 else got.stdout + got.stderr).strip()
+
+
+def ready(repo, n, what, rec, why="", after=None, by="a session", ships=""):
     repo, n = check_repo(repo), check_number(n)
     if rec not in RECS:
         raise Refused(f"--rec is merge, wait or dont, not {rec!r}")
@@ -141,8 +155,15 @@ def ready(repo, n, what, rec, why="", after=None, by="a session"):
         raise Refused(f"{key(repo, n)} is not open: GitHub says {state}")
     if not re.fullmatch(r"[0-9a-f]{40}", head or ""):
         raise Refused(f"GitHub gave no commit for {key(repo, n)}")
+    import deskships                       # deskships uses flatten from here
+    if not base:
+        raise Refused(f"GitHub gave no base branch for {key(repo, n)}")
+    try:
+        shipped = deskships.read(repo, base, head, gh, outside=flatten(ships))
+    except deskships.Unreadable as why_not:
+        raise Refused(f"could not tell what merging {key(repo, n)} ships: {why_not}") from None
     block = item_block(repo, n, what, rec, flatten(why), head, flatten(base, 80), after,
-                       flatten(by, 80) or "a session", time.strftime("%Y-%m-%d %H:%M"))
+                       flatten(by, 80) or "a session", time.strftime("%Y-%m-%d %H:%M"), shipped)
     with deskfile.locked():
         deskfile.put_item(key(repo, n), block)
         log("ready", key(repo, n), pinned=head, rec=rec, by=by)
@@ -216,6 +237,7 @@ def main(argv=None, out=None, err=None):
     r.add_argument("--why", default="", help="the evidence: reviews, CI")
     r.add_argument("--after", help="a PR number that must be merged first")
     r.add_argument("--by", default="a session", help="who hands it over")
+    r.add_argument("--ships", default="", help="one line, for a repo whose main is run from outside GitHub: the item becomes a Deploy item")
     s = sub.add_parser("status", help="waiting, merged as <sha>, or refused and why")
     s.add_argument("repo", nargs="?")
     s.add_argument("number", nargs="?")
@@ -227,7 +249,7 @@ def main(argv=None, out=None, err=None):
     a = p.parse_args(argv)
     try:
         if a.cmd == "ready":
-            head = ready(a.repo, a.number, a.what, a.rec, a.why, a.after, a.by)
+            head = ready(a.repo, a.number, a.what, a.rec, a.why, a.after, a.by, a.ships)
             print(f"{key(a.repo, a.number)} is on the desk, pinned at {head}", file=out)
         elif a.cmd == "withdraw":
             if not withdraw(a.repo, a.number):
