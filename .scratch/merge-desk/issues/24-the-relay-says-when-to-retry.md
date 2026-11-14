@@ -5,6 +5,7 @@
 - `COMMENT_OPS` in deskrelay.py is a copy of the hub's comment OPS with no guard: a sixth op added in sheaf would be refused by the relay without anyone noticing.
 - Check once, on the real `tailscale serve` path, whether X-Forwarded-For reaches the relay (if not, every device shares one stream bucket of 6).
 - From Codex on 11 (lucas-11-codex-1.md, finding 2, class c): `client_of` (deskrelay.py:276-283) trusts X-Forwarded-For, so a local program that reaches the relay directly can send a new value per stream and get past the 6-per-client cap (the total of 24 still holds). Trust the header only from the tailscale serve peer, or say in README why not.
+  Also from Codex on 11 (lucas-11-codex-2.md, finding 2, class c, accepted by Tarek): the leader of a hub lookup returns its own late answer to its own request after a reset; that one request may use the obsolete port or cookie, gets a 503 at worst and the next one heals.
 
 **Blocked by:** 11
 
