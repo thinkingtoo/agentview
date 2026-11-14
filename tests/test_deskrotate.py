@@ -25,6 +25,14 @@ STAMP = "2026-11-14T02:00:00+0100"
 BULK = ["x" * 100] * 200        # about 20 KB of raw What-ships lines, as a hand-over of a deploying repo keeps
 
 
+SAVED = (desk.MAX_LOG, deskwatch.gh, deskwatch.GRACE, deskwatch.log.error)
+
+
+def restore():
+    desk.MAX_LOG, deskwatch.gh, deskwatch.GRACE, deskwatch.log.error = SAVED
+    desk._floor = 0
+
+
 def setUpModule():
     global _runtime
     _runtime = tempfile.mkdtemp()
@@ -43,9 +51,7 @@ class Case(unittest.TestCase):
         old = os.environ.get("XDG_STATE_HOME")
         os.environ["XDG_STATE_HOME"] = str(self.tmp / "state")
         self.addCleanup(lambda: os.environ.pop("XDG_STATE_HOME") if old is None else os.environ.__setitem__("XDG_STATE_HOME", old))
-        self.saved = (desk.MAX_LOG, deskwatch.gh, deskwatch.GRACE, deskwatch.log.error)
-        self.addCleanup(lambda: (setattr(desk, "MAX_LOG", self.saved[0]), setattr(deskwatch, "gh", self.saved[1]),
-                                 setattr(deskwatch, "GRACE", self.saved[2]), setattr(deskwatch.log, "error", self.saved[3])))
+        self.addCleanup(restore)
         desk._floor = 0
         deskwatch.GRACE = 0
         deskwatch.log.error = lambda *a, **k: None
