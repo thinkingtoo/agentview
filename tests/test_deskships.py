@@ -101,6 +101,18 @@ class Classify(unittest.TestCase):
         self.assertNotEqual(deskships.changed(old, self._lines(run.replace("  ", " "))[0]), "")
         self.assertNotEqual(deskships.changed(old, self._lines(run.replace("  ", "\u00a0 "))[0]), "")
 
+    def test_a_changed_structure_digest_is_a_change_and_a_record_without_one_is_not(self):
+        head = "- Fires on push to main: a.yml"
+        line = lambda d: f"  - a.yml{deskships.STRUCTURE_MARK}{d * 32}"
+        self.assertEqual(deskships.changed([head, line("a")], [head, line("a")]), "")
+        self.assertIn("a.yml: structure", deskships.changed([head, line("a")], [head, line("b")]))
+        self.assertEqual(deskships.changed([head], [head, line("b")]), "")          # handed over before the digest existed
+        self.assertIn("a.yml: structure", deskships.changed([head, line("a")], [head]))
+
+    def test_the_classifier_gets_a_checkout_with_a_head_in_its_dot_git(self):
+        got = deskships.read("o/r", "main", "p" * 40, FakeGh({"d.yml": DEPLOYS}, [("a" * 40, "x")]))
+        self.assertEqual(got[0], "- Fires on push to main: d.yml")                  # an empty .git reads as "could not tell"
+
     def test_a_long_list_of_workflows_is_listed_not_refused(self):
         flows = {f"deploy-{i:03}-" + "x" * 20 + ".yml": DEPLOYS for i in range(20)}
         got = deskships.read("o/r", "main", "p" * 40, FakeGh(flows, [("a" * 40, "x")]))
