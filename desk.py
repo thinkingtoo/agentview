@@ -100,7 +100,7 @@ def log(event, k, **fields):
 
 def history(k=None):
     try:
-        raw = log_path().read_text(encoding="utf-8").splitlines()
+        raw = log_path().read_text(encoding="utf-8").split("\n")   # not splitlines: U+2028 and \x85 inside a record would cut it
     except FileNotFoundError:
         return []
     out = []
@@ -166,7 +166,7 @@ def ready(repo, n, what, rec, why="", after=None, by="a session", ships=""):
                        flatten(by, 80) or "a session", time.strftime("%Y-%m-%d %H:%M"), shipped)
     with deskfile.locked():
         deskfile.put_item(key(repo, n), block)
-        log("ready", key(repo, n), pinned=head, rec=rec, by=by)
+        log("ready", key(repo, n), pinned=head, rec=rec, by=by, ships=shipped, base=base)   # raw: the press compares these, never the page
     return head
 
 

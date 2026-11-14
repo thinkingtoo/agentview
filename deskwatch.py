@@ -176,18 +176,32 @@ def taken_back(k, pinned):
         raise TakenBack("the press was taken back before the merge")
 
 
+def handed_over(k, pinned):
+    """The `ready` record of this pinned commit: it holds the raw lines `desk ready` read and the base they were read
+    from. None when there is none, or when it predates them."""
+    ready = next((r for r in reversed(desk.history(k)) if r["event"] == "ready" and r.get("pinned") == pinned), None)
+    lines = ready.get("ships") if ready else None
+    return ready if isinstance(lines, list) and all(isinstance(l, str) for l in lines) else None
+
+
 def check_ships(k, repo, base, pinned):
-    """Refuse when what merging ships is not what the hand-over showed. Read now, just before the merge,
-    from the base branch's workflow files and the commits; a Merge item that shows nothing must still ship nothing."""
-    it = item(k)
+    """Refuse when what merging ships is not what the hand-over read. Read now, just before the merge, from the
+    base branch's workflow files and the commits, and compared with the lines stored at the hand-over, character
+    for character: never with the text on the page, which the person and sheaf may rewrite. A Merge item that
+    shows nothing must still ship nothing."""
     if not base:
         raise NotMerged("GitHub gave no base branch to read what ships from")
-    shown = it.ships if it else None
+    ready = handed_over(k, pinned)
+    if ready is None or not isinstance(ready.get("base"), str):
+        raise NotMerged("no record of what ships was kept at the hand-over; hand it over again")
+    if ready["base"] != base:
+        raise NotMerged(f"the base branch changed after the hand-over (handed over into {ready['base']}, now {base}); hand it over again")
+    shown = ready["ships"]
     try:
-        now = deskships.read(repo, base, pinned, gh, commits=shown is not None)
+        now = deskships.read(repo, base, pinned, gh, commits=bool(shown))
     except deskships.Unreadable as why:
         raise NotMerged(f"could not read what ships: {why}") from None
-    gone = deskships.changed(shown or [], now)
+    gone = deskships.changed(shown, now)
     if gone:
         raise NotMerged(f"what ships changed: {gone}")
 

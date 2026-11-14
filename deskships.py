@@ -37,6 +37,7 @@ OUTSIDE = "- Outside GitHub: "
 COMMITS = "- Commits that go out"
 SHOWN = 100                 # commits listed; the rest are counted
 LINE = 140
+HINT_CUT = 140             # where branch_deploys.py cuts a hint line
 WORKFLOW = re.compile(r"[A-Za-z0-9_.-]+\.ya?ml")
 HINT = re.compile(r"^\s+(\d+): (.*)$")
 
@@ -117,7 +118,13 @@ def _classify(files, base):
     deploying = {name: hs for name, hs in hits.items() if hs}
     if not deploying:
         return [], ""
-    out = [_line("- ", f"Fires on push to {base}: " + ", ".join(deploying), 300)]
+    head = f"Fires on push to {base}: " + ", ".join(deploying)
+    cut = [f"{name}:{n}" for name, hs in deploying.items() for n, text in hs
+           if len(text) >= HINT_CUT or len(desk.flatten(f"{name}:{n}: {text}", 10**6)) > LINE + 40]
+    if cut or len(desk.flatten(head, 10**6)) > 300:
+        # A line that reached either cut is shown without its end, so a change in that end could not be seen at the press.
+        return [], "a line in " + (", ".join(cut[:3]) or "the list of workflows") + " is too long to check; merge it on GitHub yourself after reading the workflow"
+    out = [_line("- ", head, 300)]
     out += [_line("  - ", f"{name}:{n}: {text}", LINE + 40) for name, hs in deploying.items() for n, text in hs]
     return out, ""
 
@@ -168,12 +175,6 @@ FLOWS = "- This pull request changes workflow files:"
 UNKNOWN = "- Could not tell what ships"
 
 
-def _same(line):
-    """A line as the page may have re-saved it: backslashes, `*`, `_`, backticks and raw HTML tags taken out and
-    spaces folded. Every other character counts, so `&&` and `||` stay different."""
-    return " ".join(re.sub(r"<[^>]*>|[\\*_`]", "", line).split())
-
-
 def _split(lines):
     """(lines compared as they are, commit shas, changed workflow files, whether commits were hidden behind "and N more")."""
     rest, shas, flows, cut, inside, in_flows = [], [], set(), False, False, False
@@ -182,7 +183,7 @@ def _split(lines):
             continue
         in_files = in_flows and l.startswith("  - ")
         if in_files:
-            flows.add(_same(l[4:]))
+            flows.add(l[4:])
             continue
         in_flows = l == FLOWS
         if in_flows:
@@ -199,15 +200,16 @@ def _split(lines):
 
 
 def changed(old, new):
-    """"" when what ships is the same; else what differs. Not compared: the person's Outside line, and the
+    """Both sides are raw `read` output, compared character for character: nothing is stripped or folded, because
+    what the page makes of a line is no business of this check. "" when what ships is the same; else what differs. Not compared: the person's Outside line, and the
     commits and changed workflow files that left the range (once the PR this one stacks on is merged they do);
     only a new one counts, and no commit counts when the stored range was cut."""
     old_rest, old_shas, old_flows, old_cut = _split(old)
     new_rest, new_shas, new_flows, _ = _split(new)
-    old_same = {_same(l) for l in old_rest}
-    new_same = {_same(l) for l in new_rest}
-    gone = [l.strip(" -") for l in old_rest if _same(l) not in new_same]
-    came = [l.strip(" -") for l in new_rest if _same(l) not in old_same]
+    old_set = set(old_rest)
+    new_set = set(new_rest)
+    gone = [l.strip(" -") for l in old_rest if l not in new_set]
+    came = [l.strip(" -") for l in new_rest if l not in old_set]
     came += [f"workflow file {f}" for f in sorted(new_flows - old_flows)]
     if not old_cut:
         came += [f"commit {text}" for sha, text in new_shas if sha not in {s for s, _ in old_shas}]
