@@ -328,15 +328,40 @@ class Ships(Case):
         deskwatch.tick()
         self.assertEqual(len(self.merge_calls()), 1)
 
-    def test_a_deploy_line_too_long_to_check_refuses_the_press_with_that_reason(self):
+    def _long_deploy(self, tail=""):
+        self.workflow("deploy.yml", DEPLOY_YML.replace("./deploy.sh", "./deploy.sh && " + "x" * 200 + tail))
+
+    def test_a_long_deploy_line_that_is_unchanged_is_pressed(self):
         self.pr(272)
-        self.workflow("deploy.yml", DEPLOY_YML.replace("./deploy.sh", "./deploy.sh && " + "x" * 200))
+        self._long_deploy()
         self.commits("x")
         self.hand_over_with_ships(272)
         self.tick_box(272)
         deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+
+    def test_a_deploy_line_changed_after_the_cut_refuses_the_press_with_that_reason(self):
+        self.pr(272)
+        self._long_deploy()
+        self.commits("x")
+        self.hand_over_with_ships(272)
+        self.tick_box(272)
+        self._long_deploy(" && ./other.sh")
+        deskwatch.tick()
         self.assertEqual(self.merge_calls(), [])
-        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*too long to check")
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: ")
+
+    def test_a_workflow_that_cannot_be_parsed_is_a_deploy_item_that_cannot_be_pressed(self):
+        self.pr(272)
+        self.workflow("broken.yml", "on: [push\njobs: {\n")
+        self.commits("x")
+        self.hand_over_with_ships(272)
+        self.assertTrue(self.item(272).block.startswith("- [ ] Deploy "), self.item(272).block)
+        self.assertIn("Could not tell what ships: broken.yml could not be parsed", self.item(272).block)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*could not tell")
 
     def test_a_merge_item_stays_a_merge_item_when_the_workflows_only_test(self):
         self.pr(272)

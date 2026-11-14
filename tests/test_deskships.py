@@ -53,14 +53,89 @@ class Classify(unittest.TestCase):
     def _long(self, run):
         return DEPLOYS.replace("./deploy.sh", run)
 
-    def test_a_deploy_line_that_reached_a_cut_is_could_not_tell_and_names_the_line(self):
-        for width in (140, 141, 400):
+    def _run_of_width(self, width):
+        return "./deploy.sh && " + "x" * (width - len("- run: ./deploy.sh && "))          # the width of the whole line
+
+    def _lines(self, run):
+        got = deskships.read("o/r", "main", "p" * 40, FakeGh({"deploy.yml": self._long(run)}, [("a" * 40, "x")]))
+        return got, [l for l in got if l.startswith("  - deploy.yml:9: ")]
+
+    def test_a_deploy_line_longer_than_any_cut_is_still_listed_and_names_its_digest(self):
+        for width in (139, 140, 141, 155, 400, 5000):
             with self.subTest(width=width):
-                run = "./deploy.sh && " + "x" * (width - len("- run: ./deploy.sh && "))     # width of the line as the classifier cuts it
-                got = deskships.read("o/r", "main", "p" * 40, FakeGh({"deploy.yml": self._long(run)}, [("a" * 40, "x")]))
-                self.assertTrue(any(l.startswith("- Could not tell what ships:") and "too long to check" in l and "merge it on GitHub yourself" in l and "deploy.yml:9" in l
-                                    for l in got), got)
-                self.assertNotIn("- Fires on push to main: deploy.yml", got)
+                got, lines = self._lines(self._run_of_width(width))
+                self.assertEqual(got[0], "- Fires on push to main: deploy.yml")
+                self.assertEqual(len(lines), 1, got)
+                self.assertLessEqual(len(lines[0]), 4 + 180)
+                self.assertEqual("sha256:" in lines[0], len("deploy.yml:9: ") + width > 180, lines[0])
+
+    def test_a_change_after_the_cut_is_a_change(self):
+        for width in (141, 155, 400):
+            with self.subTest(width=width):
+                old = self._lines(self._run_of_width(width))[0]
+                new = self._lines(self._run_of_width(width - 1) + "y")[0]
+                self.assertEqual(deskships.changed(old, old), "")
+                self.assertNotEqual(deskships.changed(old, new), "")
+
+    def test_a_change_of_one_space_or_a_no_break_space_after_the_cut_is_a_change(self):
+        base = self._run_of_width(300)
+        old = self._lines(base)[0]
+        for new_run in (base.replace("xx", "x x", 1), base.replace("xx", "x\u00a0x", 1), base.replace("&& ", "&&  ", 1)):
+            with self.subTest(run=new_run[:30]):
+                self.assertNotEqual(deskships.changed(old, self._lines(new_run)[0]), "")
+
+    def test_a_short_line_that_the_page_would_fold_is_compared_unfolded(self):
+        run = "./deploy.sh  --env prod"
+        old = self._lines(run)[0]
+        self.assertNotEqual(deskships.changed(old, self._lines(run.replace("  ", " "))[0]), "")
+        self.assertNotEqual(deskships.changed(old, self._lines(run.replace("  ", "\u00a0 "))[0]), "")
+
+    def test_a_long_list_of_workflows_is_listed_not_refused(self):
+        flows = {f"deploy-{i:03}-" + "x" * 20 + ".yml": DEPLOYS for i in range(20)}
+        got = deskships.read("o/r", "main", "p" * 40, FakeGh(flows, [("a" * 40, "x")]))
+        self.assertTrue(got[0].startswith("- Fires on push to main: deploy-000-"), got[0])
+        self.assertIn("sha256:", got[0])
+        self.assertNotIn("Could not tell", "\n".join(got))
+        changed = dict(flows, **{"deploy-019-" + "x" * 20 + ".yml": DEPLOYS.replace("./deploy.sh", "./other.sh")})
+        again = deskships.read("o/r", "main", "p" * 40, FakeGh(changed, [("a" * 40, "x")]))
+        self.assertNotEqual(deskships.changed(got, again), "")
+
+    def _tell(self, got):
+        return [l for l in got if l.startswith("- Could not tell what ships:")]
+
+    def test_a_workflow_that_cannot_be_parsed_is_could_not_tell_and_names_the_file(self):
+        for text in ("on: [push\njobs: {\n", "on: push\njobs:\n  d:\n    steps: [a, b\n", "\tname: x\non: push\n"):
+            with self.subTest(text=text):
+                got = deskships.read("o/r", "main", "p" * 40, FakeGh({"ci.yml": TESTS_ONLY, "broken.yml": text}, [("a" * 40, "x")]))
+                tell = self._tell(got)
+                self.assertEqual(len(tell), 1, got)
+                self.assertIn("broken.yml", tell[0])
+                self.assertIn("could not be parsed", tell[0])
+                self.assertNotIn("ci.yml", tell[0])
+                self.assertNotIn("- Fires on push to main: broken.yml", got)
+
+    def test_a_workflow_that_cannot_be_parsed_and_has_a_deploy_word_is_could_not_tell_too(self):
+        got = deskships.read("o/r", "main", "p" * 40, FakeGh({"b.yml": "on: [push\n# x\nrun: ./deploy.sh\n  bad: [\n"}, [("a" * 40, "x")]))
+        self.assertEqual(len(self._tell(got)), 1, got)
+
+    def test_a_press_cannot_pass_a_workflow_it_could_not_parse(self):
+        got = deskships.read("o/r", "main", "p" * 40, FakeGh({"b.yml": "on: [push\njobs: {\n"}, [("a" * 40, "x")]))
+        self.assertIn("could not tell", deskships.changed(got, got).lower())
+
+    def test_every_could_not_tell_says_what_the_person_can_do(self):
+        saved = deskships.CLASSIFIER
+        self.addCleanup(setattr, deskships, "CLASSIFIER", saved)
+        deskships.CLASSIFIER = Path("/nonexistent/branch_deploys.py")
+        missing = deskships.read("o/r", "main", "p" * 40, FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")]))
+        deskships.CLASSIFIER = saved
+        broken = deskships.read("o/r", "main", "p" * 40, FakeGh({"b.yml": "on: [push\n"}, [("a" * 40, "x")]))
+        cut = deskships.read("o/r", "main", "p" * 40, FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")], files=[f"f{i}" for i in range(300)]))
+        for got in (missing, broken, cut):
+            tell = self._tell(got)
+            self.assertEqual(len(tell), 1, got)
+            self.assertIn("merge it on GitHub yourself", tell[0])
+            self.assertIn("ask the session to", tell[0])
+            self.assertIn("split the pull request", tell[0])
 
     def test_a_deploy_line_that_fits_under_both_cuts_is_listed_whole(self):
         run = "./deploy.sh && " + "x" * (130 - len("- run: ./deploy.sh && "))
@@ -69,7 +144,7 @@ class Classify(unittest.TestCase):
         self.assertTrue(got[2].endswith(run), got)
 
     def test_a_press_cannot_pass_a_line_it_could_not_check(self):
-        old = ["- Could not tell what ships: deploy.yml:9 is too long to check"]
+        old = ["- Could not tell what ships: the classifier did not run"]
         self.assertIn("could not tell", deskships.changed(old, old).lower())
 
     def test_a_repo_with_no_workflows_at_all_ships_nothing(self):

@@ -9,6 +9,10 @@ A merge also ships what its own commits add: the push after the merge runs the w
 merged commit, so a pull request that changes `.github/workflows/` is a Deploy item whatever the base
 says (the file names come from the compare call, no content of the head is read).
 
+A line the page cannot show whole (longer than the page's cut, or one the page would fold: a run of spaces,
+a no-break space) ends in `(full line sha256:<16 hex>)`, a digest of the line as the classifier gave it
+(`--full`: never cut), so the press compares the whole line though the page shows part of it.
+
 Classification reads workflow files only. The base branch's `.github/workflows` are fetched through
 the GitHub API into a folder of their own and `~/.claude/routines/branch_deploys.py` (which parses
 YAML and runs nothing) is pointed at that folder: no checkout, and nothing from the pull request's
@@ -19,6 +23,7 @@ raises `Unreadable`.
 
 `run(*gh_args) -> (exit code, output)` is `gh`; the caller passes its own.
 """
+import hashlib
 import json
 import re
 import shutil
@@ -37,14 +42,23 @@ OUTSIDE = "- Outside GitHub: "
 COMMITS = "- Commits that go out"
 SHOWN = 100                 # commits listed; the rest are counted
 LINE = 140
-HINT_CUT = 140             # where branch_deploys.py cuts a hint line
+HELP = "To go on, read the workflows and merge it on GitHub yourself, or ask the session to fix this or split the pull request"
 WORKFLOW = re.compile(r"[A-Za-z0-9_.-]+\.ya?ml")
 HINT = re.compile(r"^\s+(\d+): (.*)$")
+UNPARSED = re.compile(r"^\s+! could not parse: (.*)$")
 
 
 def _line(prefix, text, limit=LINE):
     """A sub-list line: `prefix` is the dash and its indent, `text` one flattened line that cannot open a box or a comment."""
     return prefix + desk.flatten(text, limit)
+
+
+def _shown(prefix, text, limit=LINE):
+    """Like `_line`, but a line that `_line` would cut or fold carries a digest of the whole of it."""
+    if desk.flatten(text, 10**6) == text and len(text) <= limit:
+        return prefix + text
+    suffix = f" (full line sha256:{hashlib.sha256(text.encode('utf-8', 'surrogatepass')).hexdigest()[:16]})"
+    return prefix + desk.flatten(text, limit - len(suffix)) + suffix
 
 
 class Unreadable(Exception):
@@ -100,7 +114,7 @@ def _classify(files, base):
             wf.mkdir(parents=True)
             for name, text in files.items():
                 (wf / name).write_text(text, encoding="utf-8")
-            got = subprocess.run([PYTHON, "-W", "ignore", str(CLASSIFIER), str(root), base], capture_output=True,
+            got = subprocess.run([PYTHON, "-W", "ignore", str(CLASSIFIER), str(root), base, "--full"], capture_output=True,
                                  text=True, stdin=subprocess.DEVNULL, timeout=30)
     except (OSError, ValueError, subprocess.TimeoutExpired) as err:
         return [], f"the classifier did not run: {type(err).__name__}"       # no path or text in it: it must read the same twice
@@ -109,23 +123,25 @@ def _classify(files, base):
         return [], desk.flatten(got.stderr or got.stdout or f"the classifier exited {got.returncode}", 160)
     if got.returncode == 1:
         return [], ""
-    hits, current = {}, None
+    hits, current, unparsed = {}, None, {}
     for raw in got.stdout.splitlines():
         if raw and not raw[0].isspace():
             current = hits.setdefault(raw.strip(), [])
+            name = raw.strip()
+        elif current is not None and (bad := UNPARSED.match(raw)):
+            unparsed[name] = bad.group(1)
         elif current is not None and (hint := HINT.match(raw)):
             current.append((hint.group(1), hint.group(2)))
+    if unparsed:
+        # Whether it fires on this base, and what it runs, cannot be read: not "tests only", not a plain Merge.
+        names = ", ".join(desk.flatten(n, 60) for n in list(unparsed)[:3])
+        return [], f"{names} could not be parsed ({desk.flatten(next(iter(unparsed.values())), 60)}), so it cannot be cleared"
     deploying = {name: hs for name, hs in hits.items() if hs}
     if not deploying:
         return [], ""
     head = f"Fires on push to {base}: " + ", ".join(deploying)
-    cut = [f"{name}:{n}" for name, hs in deploying.items() for n, text in hs
-           if len(text) >= HINT_CUT or len(desk.flatten(f"{name}:{n}: {text}", 10**6)) > LINE + 40]
-    if cut or len(desk.flatten(head, 10**6)) > 300:
-        # A line that reached either cut is shown without its end, so a change in that end could not be seen at the press.
-        return [], "a line in " + (", ".join(cut[:3]) or "the list of workflows") + " is too long to check; merge it on GitHub yourself after reading the workflow"
-    out = [_line("- ", head, 300)]
-    out += [_line("  - ", f"{name}:{n}: {text}", LINE + 40) for name, hs in deploying.items() for n, text in hs]
+    out = [_shown("- ", head, 300)]
+    out += [_shown("  - ", f"{name}:{n}: {text}", LINE + 40) for name, hs in deploying.items() for n, text in hs]
     return out, ""
 
 
@@ -167,7 +183,7 @@ def read(repo, base, pinned, run, outside="", commits=None):
     if outside:
         head.append(_line(OUTSIDE, outside, 300))
     if cannot:
-        head.append(_line("- ", f"Could not tell what ships: {cannot}", 300))
+        head.append(_line("- ", f"Could not tell what ships: {desk.flatten(cannot, 150).rstrip(". ")}. {HELP}.", 400))
     return head + deploy + commit_lines
 
 
