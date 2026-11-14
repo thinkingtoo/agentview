@@ -233,6 +233,10 @@ TEST_YML = "name: ci\non:\n  push:\n    branches: [dev]\njobs:\n  t:\n    runs-o
 class Ships(Case):
     """What ships is read at the hand-over and again just before the merge; a difference refuses the press."""
 
+    def setUp(self):
+        super().setUp()
+        self.vouch({})              # the defaults, not what this machine's config.json says
+
     def deploy(self, n=272):
         self.pr(n)
         self.workflow("deploy.yml", DEPLOY_YML)
