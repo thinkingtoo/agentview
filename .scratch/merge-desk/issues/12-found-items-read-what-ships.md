@@ -4,7 +4,9 @@
 
 **Blocked by:** 05, 08
 
-**Status:** ready-for-agent
+**Claimed by:** Wanda 2026-11-14 01:49
+
+**Status:** in-progress
 
 - [ ] A found PR on a deploying repo is a Deploy item with What ships; on a test-only repo it stays Merge
 - [ ] A gh failure while classifying a found PR leaves it out of the desk for that day (logged), never a Merge item by default
