@@ -131,11 +131,19 @@ def _floor_path():
 
 
 def _floor():
-    """The size the log had just after it was last rotated, 0 when it never was."""
+    """The size the log had just after it was last rotated, 0 when it never was or when the file holds nonsense:
+    a log only grows after a rotation, so a floor above its size (or below nothing) is not one."""
     try:
-        return int(_floor_path().read_text())
+        floor = int(_floor_path().read_text())
     except (OSError, ValueError):
         return 0
+    return floor if 0 <= floor <= _size() else 0
+
+
+def _due():
+    """Whether the log is big enough to rotate: past MAX_LOG and past twice what it was after the last rotation."""
+    size = _size()
+    return size > MAX_LOG and size > 2 * _floor()
 
 
 def _scan(fh):
@@ -188,9 +196,10 @@ def rotate():
     A rotation that cannot be made (no hard links, a full disk) leaves the log as it was."""
     with deskfile.locked():
         p = log_path()
-        if _size() <= MAX_LOG or _size() <= 2 * _floor():
+        if not _due():
             return
         tmp = p.with_name(p.name + ".new")
+        linked = None
         try:
             with open(p, "rb") as fh:
                 seen = _scan(fh)
@@ -202,9 +211,12 @@ def rotate():
                             fh.seek(at)
                             raw = fh.readline()
                             if at not in whole and at in ready_at:
-                                rec = json.loads(raw)
-                                rec.pop("ships", None)
-                                raw = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+                                try:
+                                    rec = json.loads(raw)
+                                    rec.pop("ships", None)
+                                    raw = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+                                except ValueError:
+                                    pass                # a hand-edited line that does not round-trip: carried as it is
                             out.write(raw if raw.endswith(b"\n") else raw + b"\n")   # a cut last line must not swallow the next key's
                     out.flush()
                     os.fsync(out.fileno())
@@ -215,20 +227,26 @@ def rotate():
                 n += 1
                 archive = p.with_name(f"{p.name}.{stamp}-{n}")
             os.link(p, archive)
+            linked = archive
             os.replace(tmp, p)
         except (OSError, ValueError):
             tmp.unlink(missing_ok=True)
+            if linked:
+                linked.unlink(missing_ok=True)       # a rotation that did not happen leaves no archive, poll after poll
             return
-        fd = os.open(p.parent, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        _floor_path().write_text(str(_size()))
+        try:                                          # the replace is done: nothing below may raise to the caller
+            fd = os.open(p.parent, os.O_RDONLY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            _floor_path().write_text(str(_size()))
+        except OSError:
+            pass
 
 
 def history(k=None):
-    if _size() > MAX_LOG:
+    if _due():                  # before the lock: between MAX_LOG and twice the floor a poll takes none
         rotate()
     out = []
     for line in _read_log().split("\n"):   # not splitlines: U+2028 and \x85 inside a record would cut it

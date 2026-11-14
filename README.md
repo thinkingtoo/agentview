@@ -1124,15 +1124,15 @@ not restart until you know how it got there.
   `/usr/local/bin:/usr/bin:/bin` when the server starts (the startup line `desk` names
   it), never an entry of the service's PATH, which leads with `~/.local/bin`.
   The log stays bounded: past 2 MiB (`desk.MAX_LOG`) the first reader rotates it. The
-  whole old log is kept as `merge-desk.log.<time>` beside it (nothing prunes these), and
+  whole old log is kept as `merge-desk.log.<time>` beside it (nothing prunes these: delete the old ones by hand when the disk asks), and
   the new log starts with, per key, the last record, the last status record, the last
   press record and, while the key is on the page or its press is open, its last `ready`
   whole (the press compares what ships with it). A poll then reads the carried records
   (a few hundred bytes for each PR the desk has ever seen, 15-25 KB for each item still
   open) plus what was written since; a log that is still big after a rotation is rotated
-  again only when it has doubled (`.merge-desk.floor`). The first read of a log that was
+  again only when it has doubled (`.merge-desk.floor`; a floor file that is not a size below the log's is ignored). The first read of a log that was
   already larger reads it once to rotate it. A rotation that cannot be made (no hard
-  links, a full disk) leaves the log as it was.
+  links, a full disk) leaves the log as it was, and no archive; a failure after the replace (the directory sync, the floor file) is swallowed.
 - **Reload the page once** in every tab that was open before the restart that
   brings the overview as the only view. Such a tab keeps the page it was
   served, and that page reads `blocks`, which the roster no longer has: every
