@@ -478,6 +478,30 @@ class HubLock(unittest.TestCase):
         self.assertEqual([d.port for d in followed], [4002])          # it asked again; it did not take 4001
         self.assertEqual(len(runs), 2)
 
+    def test_a_run_that_failed_is_every_waiting_devices_answer_even_after_a_reset(self):
+        # the first device to be told 503 resets the hub; the others, waking after it, take the same failure
+        # rather than each starting a run of its own that can take a minute
+        gate, runs = threading.Event(), []
+        self.addCleanup(gate.set)
+
+        def locate(self_):
+            runs.append(1)
+            gate.wait(10)
+            raise deskrelay.Refused(503, "the desk's hub could not be found: down")
+        hub = self.hub(locate=locate)
+        first, _, errs = self.in_threads(1, hub.desk)
+        while not runs:
+            time.sleep(0.01)
+        more, _, more_errs = self.in_threads(3, hub.desk)
+        time.sleep(0.2)
+        hub.reset()                                                   # what the first 503 does
+        gate.set()
+        for t in first + more:
+            t.join(5)
+        errs += more_errs
+        self.assertEqual((len(runs), len(errs)), (1, 4))
+        self.assertTrue(all(isinstance(e, deskrelay.Refused) and e.status == 503 for e in errs))
+
 
 class StreamCap(unittest.TestCase):
     def test_one_client_holds_so_many_streams_and_no_more(self):

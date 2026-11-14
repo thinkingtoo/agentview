@@ -180,11 +180,11 @@ class SheafHub:
                 return self._lead(what, make, flight)
             if not flight.done.wait(SIGNIN_WAIT):
                 raise Refused(503, "sheaf is slow to answer where the desk's hub is or how to sign in")
+            if flight.error is not None:
+                raise flight.error                  # a failure is every waiting request's answer, reset or not
             with self._lock:
                 if flight.generation != self._generation:
-                    continue                        # a reset came while this one waited: ask again
-            if flight.error is not None:
-                raise flight.error
+                    continue                        # a reset came while this one waited: its value is out of date
             return flight.value
 
     def _lead(self, what, make, flight):
