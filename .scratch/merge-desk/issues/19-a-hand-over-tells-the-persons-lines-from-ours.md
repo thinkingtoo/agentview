@@ -4,7 +4,7 @@
 
 **Blocked by:** 16
 
-**Claimed by:** Nuno 2026-11-14 02:59
+**Claimed by:** Maja 2026-11-14 02:59
 
 **Status:** in-progress
 
