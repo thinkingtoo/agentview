@@ -10,9 +10,9 @@
 
 **Claimed by:** Leire 2026-11-14
 
-**Status:** open
+**Status:** done
 
-- [ ] a stub classifier fixture in tests/, same output format as the real one
-- [ ] test_deskwatch passes with `HOME` on an empty directory (no classifier): no failure, no skip but the real-classifier test
-- [ ] test_deskships passes the same way
-- [ ] one real-classifier test, marked, skips cleanly; it compares the stub with the real output
+- [x] a stub classifier fixture in tests/, same output format as the real one (leire/35 2781443: tests/stub_classifier.py; mutation dropping the indent from its digest fails the key-moved test)
+- [x] test_deskwatch passes with `HOME` on an empty directory (no classifier): no failure, no skip but the real-classifier test (HOME on an empty dir: test_deskships + test_deskwatch 132 tests OK, skipped=1 which is the real-classifier test; real HOME: 132 OK, 0 skipped)
+- [x] test_deskships passes the same way (same run)
+- [x] one real-classifier test, marked, skips cleanly; it compares the stub with the real output (RealClassifier in tests/test_deskships.py: skipUnless usable; compares exit code and output, digest hash normalised, on 3 fixture sets)
