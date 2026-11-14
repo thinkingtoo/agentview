@@ -181,13 +181,50 @@ def items(file=None):
     return parse(_read(Path(file) if file else path()))
 
 
-OWN = re.compile(r"  - (?:Recommendation: |Pinned commit: |What ships:$|Handed over by )")
-SHIPS_LINE = "    "
+# The lines AgentView writes under an item, by kind. A line is its own only in the exact shape it writes it;
+# anything else under the item is the person's and stays.
+OWN_LINES = (("rec", re.compile(r"  - Recommendation: ")),
+             ("pin", re.compile(r"  - Pinned commit: [0-9a-f]{7,40}\b")),
+             ("by", re.compile(r"  - Handed over by .*, \d{4}-\d\d-\d\d \d\d:\d\d\.$")))
+COMMENT_OPEN = re.compile(r"<!--")
+CLOSED = re.compile(r"<!--.*?-->", re.S)
+
+
+def _split(line):
+    """(text before the first `<!--`, the rest of the logical line from it on). The rest is what sheaf or the
+    person added to the line: threads, and whatever follows them. It is kept as it is."""
+    at = line.find("<!--")
+    return (line, "") if at < 0 else (line[:at], line[at:])
+
+
+def _kinds(logical):
+    """The kind of each logical line of a block: `task`, `rec`, `pin`, `by`, `ships` (the header), `ships:<text>`
+    (a bullet under it) or `result` for what AgentView wrote, None for what it did not. A kind counts once."""
+    out, seen, in_ships = [], set(), False
+    for i, line in enumerate(logical):
+        head = _split(line)[0].rstrip("\n")
+        if i == 0:
+            kind = "task"
+        elif head == SHIPS_HEADER:
+            kind = "ships"
+        elif in_ships and head.startswith("    ") and head.strip():
+            kind = "ships:" + head
+        elif RESULT.match(head):
+            kind = "result"
+        else:
+            kind = next((k for k, shape in OWN_LINES if shape.match(head)), None)
+        if kind in seen and not kind.startswith("ships:"):
+            kind = None
+        elif kind:
+            seen.add(kind)
+        in_ships = kind == "ships" or (in_ships and kind is not None and kind.startswith("ships:"))
+        out.append(kind)
+    return out
 
 
 def _logical(block):
-    """The block as logical lines: a physical line, and the ones after it that start inside a comment it opened,
-    so a thread that sheaf wrote across several lines stays one piece with the line it is about."""
+    """The block as logical lines: a physical line plus the ones after it that start inside a comment it opened,
+    so a thread sheaf wrote across several lines stays one piece with the line it is about."""
     out = []
     for _, line, inside in _walk(block):
         if inside and out:
@@ -197,70 +234,40 @@ def _logical(block):
     return out
 
 
-def _kind(bare, in_ships):
-    """What an old line of the block is, by its text outside comments: the key of the line AgentView wrote
-    (`task`, `rec`, `pin`, `ships`, `ships:<text>`, `by`, `result`), or None for a line it did not write."""
-    if "<!--" in bare:                                           # a comment left open: not ours to read
-        return None
-    line = bare.rstrip()
-    if in_ships and line.startswith(SHIPS_LINE):
-        return "ships:" + line
-    for name, start in (("rec", "  - Recommendation: "), ("pin", "  - Pinned commit: "), ("by", "  - Handed over by ")):
-        if line.startswith(start):
-            return name
-    if line == SHIPS_HEADER:
-        return "ships"
-    return "result" if RESULT.match(line) else None
-
-
-def _classify(logical):
-    """[(kind, bare text, the comments and what follows them)] for each logical line of a block; the first
-    is the task line. A kind of None is a line the person wrote."""
-    out, in_ships = [], False
-    for i, line in enumerate(logical):
-        bare = re.sub(r"<!--.*?-->", "", line, flags=re.S)
-        kind = "task" if i == 0 else _kind(bare, in_ships)
-        in_ships = kind in ("ships", ) or (in_ships and kind is not None and kind.startswith("ships:"))
-        out.append((kind, bare, line))
-    return out
-
-
-def _marks(line):
-    """The comments of a logical line, whole, in order."""
-    return [m.group(0) for m in re.finditer(r"<!--.*?-->", line, flags=re.S)]
-
-
 def carry(old, new):
-    """`new` (the block AgentView writes now) with what `old` (the block on the page) holds that AgentView did not
-    write: the comment threads sheaf keeps in it, and lines the person wrote. Only AgentView's own lines are
-    replaced. A thread stays on the line of its kind (`Recommendation`, `Pinned commit`, ...), and on the same
-    line of text when the line comes back the same; one whose line is gone from the new block goes on a line
-    of its own at the end of the item, and a line of the person's stays after the line of its kind it followed."""
+    """`new`, the block AgentView writes now, with what `old`, the block on the page, holds that AgentView did not
+    write: the threads sheaf keeps on its lines, and the lines the person wrote. Only AgentView's own lines are
+    replaced. A thread, and the text after it, goes on the new line of the same kind; one whose kind is not in
+    the new block (or that is never closed) goes on a line of its own at the end of the item. A line of the
+    person's stays after the line of the kind it followed."""
     if not new.endswith("\n"):
         new += "\n"
-    olds = _classify(_logical(old))
-    while olds and olds[-1][0] is None and not olds[-1][1].strip():
-        olds.pop()                                               # the blank lines before the next item are the page's, not the item's
-    news = _classify(_logical(new))
-    present = {k for k, _, _ in news}
-    home = lambda k: k if k in present else ("ships" if k.startswith("ships:") and "ships" in present else None)
-    marks, theirs, strays, last = {}, {}, [], "task"
-    for kind, bare, line in olds:
+    new_lines = _logical(new)
+    new_kinds = _kinds(new_lines)
+    home = lambda k: k if k in new_kinds else ("ships" if k.startswith("ships:") and "ships" in new_kinds else None)
+    marks, theirs, orphans, blanks, last = {}, {}, [], [], "task"
+    old_lines = _logical(old)
+    for kind, line in zip(_kinds(old_lines), old_lines):
         if kind is None:
-            if bare.strip() or theirs.get(home(last)) or strays:         # blank lines count only between lines of the person's
-                (theirs.setdefault(home(last), []) if home(last) else strays).append(line)
+            if not line.strip():
+                blanks.append(line)                              # kept only when a line of the person's comes after it
+                continue
+            (theirs.setdefault(home(last), []) if home(last) else orphans).extend(blanks + [line])
+            blanks = []
             continue
         last = kind
-        for m in _marks(line):
-            if home(kind):
-                marks.setdefault(home(kind), []).append(m)
-            else:
-                strays.append("  " + m)
+        rest = _split(line)[1].rstrip("\n")
+        if not rest:
+            continue
+        if CLOSED.sub("", rest).count("<!--") or not home(kind):   # a thread left open would swallow the lines below it
+            orphans.append("  " + rest + "\n")
+        else:
+            marks.setdefault(home(kind), []).append(rest)
     out = []
-    for kind, _, line in news:
+    for kind, line in zip(new_kinds, new_lines):
         out.append(line.rstrip("\n") + "".join(marks.pop(kind, [])) + "\n")
         out.extend(theirs.pop(kind, []))
-    return "".join(out + [l if l.endswith("\n") else l + "\n" for l in strays])
+    return "".join(l if l.endswith("\n") else l + "\n" for l in out + orphans)
 
 
 def put(text, key, block, section="merge"):

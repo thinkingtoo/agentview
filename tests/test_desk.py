@@ -414,7 +414,7 @@ class RehandOver(unittest.TestCase):
         self.assertIn(self.THREAD, got)
 
     def test_a_thread_on_the_task_line_and_on_the_pinned_line_both_stay(self):
-        t1 = self.THREAD.replace("c1", "c1")
+        t1 = self.THREAD
         t2 = self.THREAD.replace("id=c1", "id=c2").replace("Friday", "Monday")
         old = self.block(self.OLD_SHA)
         old = old.replace("what it does\n", "what it does" + t1 + "\n", 1).replace(", into main\n", ", into main" + t2 + "\n", 1)
@@ -464,6 +464,44 @@ class RehandOver(unittest.TestCase):
         self.assertIn(self.THREAD, got)
         self.assertEqual(deskfile.parse(got)[0].pinned, self.NEW_SHA)
 
+    def test_text_after_a_threads_closing_arrow_stays(self):
+        old = self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it." + self.THREAD + " PERSON: only after Friday\n", 1)
+        got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
+        self.assertIn(self.THREAD + " PERSON: only after Friday\n", got)
+
+    def test_a_thread_on_a_line_of_its_own_stays_where_it_stood(self):
+        old = self.block(self.OLD_SHA).replace("  - Pinned", "  " + self.THREAD + "\n  - Pinned", 1)
+        got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
+        self.assertIn("  " + self.THREAD + "\n  - Pinned commit: " + self.NEW_SHA, got)
+        self.assertEqual(deskfile.put(got, "a/b#1", self.block(self.NEW_SHA)), got)
+
+    def test_a_person_line_shaped_like_ours_but_not_exactly_stays_and_keeps_its_place(self):
+        old = (self.block(self.OLD_SHA) + "  - Recommendation: PERSON: do not merge yet\n    because the migration is tomorrow\n"
+               + "  - Pinned commit: see the thread above\n")
+        got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
+        self.assertIn("  - Recommendation: PERSON: do not merge yet\n    because the migration is tomorrow\n  - Pinned commit: see the thread above\n", got)
+        self.assertEqual(deskfile.put(got, "a/b#1", self.block(self.NEW_SHA)), got)
+
+    def test_a_thread_moved_to_the_end_is_still_there_after_a_second_hand_over(self):
+        old = self.block(self.OLD_SHA).replace("  - Handed", "  - What ships:\n    - old deployment" + self.THREAD + "\n  - Handed", 1)
+        once = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
+        self.assertIn(self.THREAD, once)
+        self.assertEqual(deskfile.put(once, "a/b#1", self.block(self.NEW_SHA)), once)
+
+    def test_an_unclosed_thread_on_the_task_line_is_kept_and_hides_none_of_the_new_lines(self):
+        old = self.block(self.OLD_SHA).replace("what it does\n", "what it does<!-- sheaf-comment id=c1 by=\"T\" at=2026-11-14T01:00 status=open quote=\"x\"\nunfinished thread\n", 1)
+        got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
+        self.assertIn("unfinished thread", got)
+        self.assertEqual(deskfile.parse(got)[0].pinned, self.NEW_SHA)
+        self.assertEqual(deskfile.put(got, "a/b#1", self.block(self.NEW_SHA)), got)
+
+    def test_the_text_after_an_unclosed_thread_to_the_end_of_the_file_is_kept(self):
+        text = ("# D\n\n## Pull requests waiting for your merge\n- [ ] Merge a/b#1: first\n  - Recommendation: merge.<!-- sheaf-comment id=c1\n"
+                "unfinished thread\n- [ ] Merge a/b#2: second\n  - PERSON'S TEXT\n")
+        got = deskfile.put(text, "a/b#1", "- [ ] Merge a/b#1: first\n  - Recommendation: wait.\n")
+        for kept in ("unfinished thread", "Merge a/b#2: second", "PERSON'S TEXT"):
+            self.assertIn(kept, got)
+
     def test_a_thread_whose_closing_arrow_was_lost_is_kept_too(self):
         old = self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it.<!-- sheaf-comment id=c1 by=\"T\" at=2026-11-14T01:00 status=open quote=\"x\"\nhalf a thread\n", 1)
         got = deskfile.put(self.page(old), "a/b#1", self.block(self.NEW_SHA))
@@ -480,7 +518,7 @@ class Comments(unittest.TestCase):
                 "- [ ] Merge a/b#2: second\n")
         self.assertEqual(deskfile.drop(text, "a/b#1"), "## Pull requests waiting for your merge\n- [ ] Merge a/b#2: second\n")
         replaced = deskfile.put(text, "a/b#1", "- [ ] Merge a/b#1: new\n")
-        self.assertNotIn("do not merge", replaced)
+        self.assertIn("<!-- comment:\n- do not merge until Friday\n## Pull requests waiting for your merge\n-->\n", replaced)   # the person's, so kept
         self.assertEqual([i.key for i in deskfile.parse(replaced)], ["a/b#1", "a/b#2"])
 
     def test_a_heading_named_in_a_comment_is_not_the_section(self):
