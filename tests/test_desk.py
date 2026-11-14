@@ -1039,12 +1039,12 @@ class OwnRecord(unittest.TestCase):
 
     def test_adopt_keeps_the_ships_list_whole_across_a_thread_on_a_line_of_its_own(self):
         f, rec = self.legacy()
-        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - one\n  " + self.thread("x") + "\n    - two\n  - Pinned commit:", 1))
+        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - Outside GitHub: one\n  " + self.thread("x") + "\n    - Outside GitHub: two\n  - Pinned commit:", 1))
         deskfile.adopt(f)
         deskfile.put_item("a/b#1", self.block(self.NEW_SHA, ships=["x"], when="02:00"), file=f)
         got = f.read_text()
-        self.assertNotIn("    - two\n", got)
-        self.assertNotIn("    - one\n", got)
+        self.assertNotIn("Outside GitHub: two\n", got)
+        self.assertNotIn("Outside GitHub: one\n", got)
 
     def test_adopt_checks_the_record_under_the_lock(self):
         f, rec = self.legacy()
@@ -1069,11 +1069,11 @@ class OwnRecord(unittest.TestCase):
 
     def test_adopt_does_not_take_a_bullet_after_a_blank_line_in_the_ships_list(self):
         f, rec = self.legacy()
-        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - one\n\n    - the person's bullet\n  - Pinned commit:", 1))
+        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - Outside GitHub: one\n\n    - the person's bullet\n  - Pinned commit:", 1))
         deskfile.adopt(f)
         deskfile.put_item("a/b#1", self.block(self.NEW_SHA, ships=["x"], when="02:00"), file=f)
         self.assertIn("    - the person's bullet\n", f.read_text())
-        self.assertNotIn("    - one\n", f.read_text())
+        self.assertNotIn("Outside GitHub: one\n", f.read_text())
 
     def test_adopt_reads_an_empty_record_with_a_space_in_it(self):
         f, rec = self.legacy()
@@ -1110,6 +1110,57 @@ class OwnRecord(unittest.TestCase):
         got = self.hand_over(text, self.block(self.NEW_SHA).replace("what it does", "what it now does"), rec)
         self.assertIn("- [ ] Deploy a/b#1: what it now does\n", got)
         self.assertEqual(got.count("Deploy a/b#1"), 1)
+
+    THIRD_SHA, FOURTH_SHA = "c" * 40, "d" * 40
+
+    def test_adopt_does_not_take_a_note_of_the_persons_under_what_ships(self):
+        """Ticket 31a: a four-space line under `What ships:` is ours only in a shape AgentView writes."""
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - Fires on push to main: ci.yml\n      - ci.yml:3: run: deploy\n    - NOTE: deploy manually\n  - Pinned commit:", 1))
+        deskfile.adopt(f)
+        self.assertNotIn("NOTE: deploy manually", rec.read_text())
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, ships=["Outside GitHub: x"], when="02:00"), file=f)
+        got = f.read_text()
+        self.assertIn("    - NOTE: deploy manually\n", got)
+        self.assertNotIn("Fires on push to main: ci.yml", got)               # what AgentView wrote is still replaced
+        self.assertNotIn("ci.yml:3: run: deploy", got)
+
+    def test_adopt_does_not_take_a_persons_line_nested_under_one_of_ours(self):
+        f, rec = self.legacy()
+        f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - Commits that go out (1):\n      - abcdef0 fix it\n      - my note\n  - Pinned commit:", 1))
+        deskfile.adopt(f)
+        deskfile.put_item("a/b#1", self.block(self.NEW_SHA, ships=["Outside GitHub: x"], when="02:00"), file=f)
+        got = f.read_text()
+        self.assertIn("      - my note\n", got)
+        self.assertNotIn("abcdef0 fix it", got)
+
+    def ships(self):
+        return ["Outside GitHub: x", "Fires on push to main: ci.yml"]
+
+    def test_a_page_is_not_behind_because_the_person_put_a_copy_of_an_old_pin_line_in_place_of_ours(self):
+        """Ticket 31b: the page holds the last generation (B); the person removed its pin and handed-over lines and typed
+        a copy of the pin line of the generation before (A). More of A's lines match than of B's, but the page is not A."""
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA, ships=self.ships()), rec)
+        text = self.hand_over(text, self.block(self.NEW_SHA, ships=self.ships(), when="02:00"), rec)
+        copy_ = f"  - Pinned commit: {self.OLD_SHA}, into main\n"
+        text = text.replace(f"  - Pinned commit: {self.NEW_SHA}, into main\n", copy_).replace("  - Handed over by a session, 2026-11-14 02:00.\n", "")
+        got = self.hand_over(text, self.block(self.THIRD_SHA, ships=self.ships(), when="03:00"), rec)
+        self.assertEqual(got.count(copy_), 1)
+        self.assertEqual(got.count(f"Pinned commit: {self.THIRD_SHA}"), 1)
+
+    def test_prev_after_failed_writes_is_one_generation_and_a_copy_of_an_old_line_is_kept_once_the_page_is_new(self):
+        rec = {}
+        first = self.hand_over(self.page(""), self.block(self.OLD_SHA, ships=self.ships()), rec)       # A, on the page
+        self.hand_over(first, self.block(self.NEW_SHA, ships=self.ships(), when="02:00"), rec)        # A to B: not written
+        self.hand_over(first, self.block(self.THIRD_SHA, ships=self.ships(), when="03:00"), rec)      # B to C: not written
+        text = self.hand_over(first, self.block(self.FOURTH_SHA, ships=self.ships(), when="04:00"), rec)
+        self.assertEqual(rec["a/b#1"]["prev"], deskfile._heads(self.block(self.OLD_SHA, ships=self.ships())))     # one generation, the one the page held
+        for sha in (self.OLD_SHA, self.NEW_SHA, self.THIRD_SHA):
+            copy_ = f"  - Pinned commit: {sha}, into main\n"
+            mine = text.replace("  - What ships:\n", copy_ + "  - What ships:\n", 1)
+            got = self.hand_over(mine, self.block(self.FOURTH_SHA, ships=self.ships(), when="05:00"), copy.deepcopy(rec))
+            self.assertEqual(got.count(copy_), 1, sha)
 
 
 class Comments(unittest.TestCase):
@@ -1597,6 +1648,25 @@ class Leftovers(unittest.TestCase):
         got = deskfile.put(text, "a/b#2", "- [ ] Merge a/b#2: next\n", record=rec)
         self.assertIn("<!-- note: write <!-- to open\n- [ ] Merge a/b#9: x\n  -->\n", got)
         self.assertNotIn("a/b#9", self.keys(got, rec))
+
+    NOTE = '<!-- private note\n- [ ] Merge a/b#9: old\nperson tail\nliteral <!-- sheaf-comment x -->\nmore tail\n-->\n- [ ] Merge a/b#1: real\n'
+
+    def test_drop_leaves_a_closed_note_that_holds_a_list_line_and_a_literal_thread_opener_whole(self):
+        """Ticket 31c: the note closes itself, after the literal opener's own arrow; it is not a comment left open."""
+        self.assertEqual(deskfile.drop(self.NOTE, "a/b#9", record={}), self.NOTE)
+        self.assertTrue(self.closed(self.NOTE))
+
+    def test_put_leaves_a_closed_note_that_holds_a_list_line_and_a_literal_thread_opener_closed(self):
+        got = put_after(self.NOTE, "a/b#1", "- [ ] Merge a/b#1: real now\n")
+        self.assertEqual(got, self.NOTE.replace("real\n", "real now\n"))
+        got = deskfile.put(self.NOTE, "a/b#2", "- [ ] Merge a/b#2: new\n", record={})
+        self.assertTrue(got.startswith(self.NOTE[:self.NOTE.index("-->") + 4]))
+        self.assertEqual(self.keys(got, {}), ["a/b#1", "a/b#2"])
+
+    def test_a_note_closed_after_the_literal_thread_is_told_apart_from_a_comment_a_thread_closes(self):
+        left = "<!-- oops\n- [ ] Merge a/b#9: old\nand\n  <!-- sheaf-comment id=c9 by=\"T\" status=open quote=\"x\" -->\n- [ ] Merge a/b#1: real\n"
+        self.assertEqual(deskfile._open_at(left), 0)
+        self.assertIsNone(deskfile._open_at(self.NOTE))
 
     def test_settle_on_a_crlf_page_whose_last_line_has_no_line_end_keeps_one_kind(self):
         rec = {}

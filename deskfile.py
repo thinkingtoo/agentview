@@ -158,9 +158,12 @@ def _open_at(text):
     """The offset of the `<!--` that opens a comment the person left open, or None when every comment is closed. That
     is the comment still open at the end of `text`, or one that a sheaf thread opens inside of, after a line that is an
     item or a heading, before the `-->` that closes it: the first was never closed and the thread's `-->` only ended
-    it. Any other comment, one that holds a `<!--` of its own or a list line, is the person's note and stays."""
+    it. Any other comment, one that holds a `<!--` of its own or a list line, is the person's note and stays: so is one
+    that has its own `-->` after the thread's (a stray arrow with no opener left): the person closed it, the thread
+    only sits inside the note."""
+    marks = list(re.finditer(r"<!--|-->", text))
     inside, at, broken = False, None, False
-    for m in re.finditer(r"<!--|-->", text):
+    for n, m in enumerate(marks):
         if m.group(0) == "<!--":
             if not inside:
                 at = m.start()
@@ -168,7 +171,7 @@ def _open_at(text):
                 broken = True
             inside = True
         else:
-            if inside and broken:
+            if inside and broken and not (n + 1 < len(marks) and marks[n + 1].group(0) == "-->"):
                 return at
             inside = broken = False
     return at if inside else None
@@ -599,10 +602,17 @@ def _slot(key):
     return key if key.startswith("install:") else key.lower()
 
 
+def _specific(texts, other):
+    """The lines of `texts` that `other` does not have (as many times over): what tells the one generation from the other."""
+    return Counter(texts) - Counter(other)
+
+
 def _prev_stands(entry, block):
     """Whether `block` is the generation before the record's last (a write that did not finish: the record moved on,
     the page did not). The lines of `prev` are AgentView's only then: a person's copy of an old pin line in a block of
-    the last generation is theirs, however often its text stands."""
+    the last generation is theirs, however often its text stands. The page is behind when it holds more of the lines only
+    the earlier generation wrote than of those only the last wrote, and most of the earlier ones: a person who removed
+    two lines of ours and typed a copy of an old pin line has not made the page an old one."""
     if not entry["prev"]:
         return False
     texts = _heads(block)
@@ -612,7 +622,10 @@ def _prev_stands(entry, block):
     pin = dict(OWN_LINES)["pin"]
     if any(t not in known and pin.match(t) for t in texts[1:]):
         return False                    # a pin line that no generation wrote: the person edited the pin of this block, it is no stale write
-    return len(_mine(texts, [(entry["prev"], None)])) > len(_mine(texts, [(entry["lines"], entry.get("at"))]))
+    earlier, last = _specific(entry["prev"], entry["lines"]), _specific(entry["lines"], entry["prev"])
+    old = Counter(texts[i] for i in _mine(texts, [(entry["prev"], None)])) & earlier
+    new = Counter(texts[i] for i in _mine(texts, [(entry["lines"], entry.get("at"))])) & last
+    return sum(old.values()) > sum(new.values()) and 2 * sum(old.values()) > sum(earlier.values())   # most of what only the earlier one wrote is there: one copied line of it is not a page
 
 
 def _own(record, key, block=None):
@@ -806,11 +819,27 @@ def _is_empty_record(file):
         return False
 
 
+SHIPS_TOP = re.compile(r"    - (?:Outside GitHub: |Could not tell what ships|Fires on push to |This pull request changes workflow files:|Commits that go out \()")
+SHIPS_UNDER = (("Fires on push to ", re.compile(r"      - [A-Za-z0-9_.-]+\.ya?ml(?::\d+: |: structure sha256:)")),
+               ("Commits that go out (", re.compile(r"      - (?:[0-9a-f]{7} |and \d+ more$)")),
+               ("This pull request changes workflow files:", re.compile(r"      - \.github/workflows/")))
+
+
+def _ships_line_is_ours(head, parent):
+    """Whether `head`, a line under `What ships:`, has a shape `deskships` writes: a bullet of its own kind, or a line
+    under the bullet `parent` (the text of the last top bullet taken) of the kind that bullet has. A person's note under
+    the header is neither."""
+    if SHIPS_TOP.match(head):
+        return True
+    return any(parent.startswith(top) and shape.match(head) for top, shape in SHIPS_UNDER)
+
+
 def _adoptable(block):
     """The lines of `block` AgentView wrote, judged by shape and place, or None when the block holds two lines of one
-    kind (a person's copy beside ours: which is ours cannot be told). A bullet counts only inside the `What ships:` list;
-    the task line is taken with its box unticked, as AgentView wrote it."""
-    out, seen, in_ships = [], Counter(), False
+    kind (a person's copy beside ours: which is ours cannot be told). A bullet counts only inside the `What ships:` list
+    and only in a shape `deskships` writes (`_ships_line_is_ours`), so a note the person typed there is not taken; the
+    task line is taken with its box unticked, as AgentView wrote it."""
+    out, seen, in_ships, parent = [], Counter(), False, ""
     for i, line in enumerate(_logical(block)):
         head = _split(line)[0].rstrip("\r\n")
         if i == 0:
@@ -822,10 +851,15 @@ def _adoptable(block):
             continue                                         # a thread on a line of its own ends nothing
         kind = next((k for k, shape in OWN_LINES if shape.match(head)), None)
         if head == SHIPS_HEADER:
-            in_ships = True
+            in_ships, parent = True, ""
             out.append(head)
         elif in_ships and head.startswith("    ") and head.strip():
-            out.append(head)
+            if _ships_line_is_ours(head, parent):
+                out.append(head)
+                if SHIPS_TOP.match(head):
+                    parent = head[6:]
+            elif not head.startswith("      "):
+                parent = ""                                  # a note of the person's between bullets: what is nested after it is not ours
         else:
             in_ships = False
             if RESULT.match(head):
