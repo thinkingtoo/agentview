@@ -428,7 +428,7 @@ def tidy(now=None):
         keys = [i.key for i in deskfile.items()]
         last = {}
         for rec in desk.history():
-            if rec["event"] in ("ready", "pressing", "merged", "installed", "refused", "withdrawn"):
+            if rec["event"] in desk.STATUS:
                 last[rec["key"]] = rec
         for k in dict.fromkeys(keys):
             if keys.count(k) != 1 or k not in last:

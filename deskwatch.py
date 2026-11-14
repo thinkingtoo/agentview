@@ -109,8 +109,7 @@ def record(event, k, **fields):
 
 
 def last_event(k):
-    return next((r for r in reversed(desk.history(k))
-                 if r["event"] in ("ready", "pressing", "merged", "installed", "refused")), None)
+    return next((r for r in reversed(desk.history(k)) if r["event"] in desk.PRESSED), None)
 
 
 def split(k):
@@ -305,7 +304,7 @@ def recover():
     """Settle each press that began and never recorded a result. Never presses."""
     last = {}
     for rec in desk.history():
-        if rec["event"] in ("ready", "pressing", "merged", "installed", "refused", "withdrawn"):
+        if rec["event"] in desk.STATUS:
             last[rec["key"]] = rec
     for k, rec in last.items():
         if rec["event"] != "pressing":

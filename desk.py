@@ -15,6 +15,7 @@ The state lives under `$XDG_STATE_HOME/agentview/`, never under `~/.claude`.
 """
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -33,6 +34,10 @@ REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 RECS = {"merge": "merge", "wait": "wait", "dont": "don't merge"}
 TEXT_MAX = 300
 LOG = "merge-desk.log"
+FLOOR = ".merge-desk.floor"
+STATUS = ("ready", "pressing", "merged", "installed", "refused", "withdrawn")
+PRESSED = STATUS[:-1]           # what `deskwatch.last_event` looks at: a withdrawal is not one
+MAX_LOG = 2 * 1024 * 1024       # bytes: past this the log is rotated, so a poll never reads more
 
 
 class Refused(Exception):
@@ -98,19 +103,137 @@ def log(event, k, **fields):
         fh.write(line + "\n")
 
 
-def history(k=None):
+def _read_log():
     try:
-        raw = log_path().read_text(encoding="utf-8").split("\n")   # not splitlines: U+2028 and \x85 inside a record would cut it
+        return log_path().read_text(encoding="utf-8")
     except FileNotFoundError:
-        return []
-    out = []
-    for line in raw:
+        return ""
+
+
+def _size(p=None):
+    try:
+        return (p or log_path()).stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
+def _sieve(line):
+    """The record a line of the log holds, or None when `history` skips the line."""
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        return None
+    return rec if isinstance(rec, dict) and isinstance(rec.get("event"), str) and isinstance(rec.get("key"), str) else None
+
+
+def _floor_path():
+    return log_path().with_name(FLOOR)
+
+
+def _floor():
+    """The size the log had just after it was last rotated, 0 when it never was."""
+    try:
+        return int(_floor_path().read_text())
+    except (OSError, ValueError):
+        return 0
+
+
+def _scan(fh):
+    """Per key, the byte offset of its first record and of the ones a rotation may carry: the last (`any`), the
+    last status record, the last press record, the last `ready`."""
+    seen = {"first": {}, "any": {}, "status": {}, "pressed": {}, "ready": {}}
+    at = 0
+    for raw in iter(fh.readline, b""):
+        rec = _sieve(raw.decode("utf-8", "replace"))
+        if rec:
+            k, event = rec["key"], rec["event"]
+            seen["first"].setdefault(k, at)
+            seen["any"][k] = at
+            if event in STATUS:
+                seen["status"][k] = (at, event)
+            if event in PRESSED:
+                seen["pressed"][k] = at
+            if event == "ready":
+                seen["ready"][k] = at
+        at += len(raw)
+    return seen
+
+
+def _carry(seen, on_page):
+    """({key: offsets to carry, in file order}, the offsets of the `ready` records carried whole)."""
+    keep, whole = {}, set()
+    for k in seen["first"]:
+        at = {seen["any"][k]}
+        if k in seen["status"]:
+            at.add(seen["status"][k][0])
+        if k in seen["pressed"]:
+            at.add(seen["pressed"][k])
+        if k in seen["ready"] and (k in on_page or seen["status"][k][1] in ("ready", "pressing")):
+            at.add(seen["ready"][k])
+            whole.add(seen["ready"][k])
+        keep[k] = sorted(at)
+    return keep, whole
+
+
+def rotate():
+    """Start a new log that holds what the desk still asks of the old one, and keep the old one beside it as
+    `merge-desk.log.<time>`. Per key, in the order the keys first appeared: its last record, its last status
+    record (the last record may be a `tidied`), its last press record (`last_event` skips a `withdrawn`), and
+    its last `ready` whole while the key is on the page or its press is open, because the press compares what
+    ships with that record and nothing else holds the raw lines. A `ready` carried only because it is the
+    last press record loses its `ships`: a press that finds none says "hand it over again".
+    Under the desk lock, so no record is written between the read and the replace; the new log is complete
+    before it takes the old one's place, so a crash leaves one of the two. The new size is written to
+    `.merge-desk.floor`: a log that is still big then is not rotated again until it has doubled, by any process.
+    A rotation that cannot be made (no hard links, a full disk) leaves the log as it was."""
+    with deskfile.locked():
+        p = log_path()
+        if _size() <= MAX_LOG or _size() <= 2 * _floor():
+            return
+        tmp = p.with_name(p.name + ".new")
         try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        if (isinstance(rec, dict) and isinstance(rec.get("event"), str) and isinstance(rec.get("key"), str)
-                and (k is None or rec["key"] == k)):
+            with open(p, "rb") as fh:
+                seen = _scan(fh)
+                keep, whole = _carry(seen, {i.key for i in deskfile.items()})
+                ready_at = set(seen["ready"].values())
+                with open(tmp, "wb") as out:
+                    for k in sorted(seen["first"], key=seen["first"].get):
+                        for at in keep[k]:
+                            fh.seek(at)
+                            raw = fh.readline()
+                            if at not in whole and at in ready_at:
+                                rec = json.loads(raw)
+                                rec.pop("ships", None)
+                                raw = (json.dumps(rec, ensure_ascii=False) + "\n").encode("utf-8")
+                            out.write(raw if raw.endswith(b"\n") else raw + b"\n")   # a cut last line must not swallow the next key's
+                    out.flush()
+                    os.fsync(out.fileno())
+            stamp = time.strftime("%Y%m%dT%H%M%S")
+            archive = p.with_name(f"{p.name}.{stamp}")
+            n = 1
+            while archive.exists():
+                n += 1
+                archive = p.with_name(f"{p.name}.{stamp}-{n}")
+            os.link(p, archive)
+            os.replace(tmp, p)
+        except (OSError, ValueError):
+            tmp.unlink(missing_ok=True)
+            return
+        fd = os.open(p.parent, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        _floor_path().write_text(str(_size()))
+
+
+def history(k=None):
+    if _size() > MAX_LOG:
+        rotate()
+    out = []
+    for line in _read_log().split("\n"):   # not splitlines: U+2028 and \x85 inside a record would cut it
+        rec = _sieve(line)
+        if rec and (k is None or rec["key"] == k):
             out.append(rec)
     return out
 
@@ -181,7 +304,7 @@ def withdraw(repo, n):
 
 
 def status_line(k):
-    last = next((r for r in reversed(history(k)) if r["event"] in ("ready", "withdrawn", "pressing", "merged", "installed", "refused")), None)
+    last = next((r for r in reversed(history(k)) if r["event"] in STATUS), None)
     if last is None:
         return f"{k}: not on the desk"
     ev = last["event"]
