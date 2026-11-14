@@ -6,7 +6,9 @@
 
 **Claimed by:** Chiara 2026-11-14 00:52
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] A repo whose workflows only test stays a Merge item
-- [ ] The "What ships" lines are read at hand-over and again just before the merge; a change between the two refuses the press and says what changed
+- [x] A repo whose workflows only test stays a Merge item
+  - Evidence: tests.test_desk Ships.test_a_repo_whose_workflows_only_test_stays_a_merge_item and tests.test_deskwatch Ships.test_a_merge_item_stays_a_merge_item_when_the_workflows_only_test (real branch_deploys.py on fixture workflows), branch chiara/05-deploy-items 8c03d67
+- [x] The "What ships" lines are read at hand-over and again just before the merge; a change between the two refuses the press and says what changed
+  - Evidence: tests.test_deskwatch Ships (changed workflow line, new commit, change during the UNKNOWN wait, GitHub unreadable, taken back during the read all refuse and untick; mutation: removing the check_ships call fails 6 of 10), 170 tests green across the desk test files
