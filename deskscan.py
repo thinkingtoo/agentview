@@ -427,10 +427,10 @@ def settled_at(rec):
 def results(it, record):
     """The result lines of the item that AgentView wrote, as the item's record reads its block (`deskfile._kinds`,
     the reading `settle` and `put` use): a line is ours only where the record lists its text, in the place its order
-    gives it, and a second copy of it is the person's. An item with no record has none. The head of each line, its
+    gives it, and a second copy of it is the person's. An item with no record, or whose page is the generation before the record's last, has none. The head of each line, its
     threads taken out."""
     got = (record or {}).get(deskfile._slot(it.key))
-    if got is None:
+    if got is None or deskfile._prev_stands(got, it.block):        # no record, or a write that did not finish: nothing here is proof
         return []
     logical = deskfile._logical(it.block)
     kinds = deskfile._kinds(logical, deskfile._own(record, it.key, it.block), orders=deskfile._orders(got))

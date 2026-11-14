@@ -791,6 +791,20 @@ class Tidy(Case):
         self.assertEqual(deskscan.tidy(), [])
         self.assertEqual(self.keys(), [k])
 
+    def test_a_result_line_of_a_generation_that_never_reached_the_page_is_not_ours(self):
+        k = f"{REPO}#9"
+        self.hand_over(REPO, 9)
+        self.log_at("merged", k, 30, sha="c" * 40)
+        rec_file = deskfile.path().parent / deskfile.RECORD
+        rec = json.loads(rec_file.read_text())
+        slot = k.lower()
+        old = rec[slot]["lines"]
+        rec[slot] = {"lines": [l for l in old if "Recommendation" not in l and "Pinned commit" not in l] + ["  - Merged as ddddddd at 11:00"], "prev": old}
+        rec_file.write_text(json.dumps(rec))                # the record moved on, the page did not
+        deskfile.path().write_text(self.page().rstrip("\n") + "\n  - Merged as ddddddd at 11:00\n")
+        self.assertEqual(deskscan.tidy(), [])
+        self.assertEqual(self.keys(), [k])
+
     def test_a_merged_item_younger_than_a_day_stays_so_the_person_sees_it(self):
         k = self.merged(ago_h=23)
         self.assertEqual(deskscan.tidy(), [])
