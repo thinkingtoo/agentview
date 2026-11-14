@@ -685,7 +685,6 @@ class OwnRecord(unittest.TestCase):
 
     def test_a_thread_on_a_line_whose_words_changed_keeps_an_anchor_sheaf_finds(self):
         rec = {}
-        old = self.block(self.OLD_SHA).replace("Merge it.\n", "Merge it." + self.thread("Merge it.") + "\n", 1)
         text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)
         text = text.replace("Merge it.\n", "Merge it." + self.thread("Merge it.") + "\n", 1)
         self.assertEqual(anchor_problems(text), [])
@@ -695,6 +694,15 @@ class OwnRecord(unittest.TestCase):
         self.assertIn("Wait for Friday.", got)
         self.assertEqual(got.count("sheaf-comment"), 1)
         self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, rec="Wait, the migration is tomorrow."), rec), got)
+
+    def test_a_thread_quoting_words_the_line_shows_without_their_marks_stays_on_the_line(self):
+        for rec, quote in (("Wait, then run `make`", "run make"), ("Wait, then **run** it", "run it"), ("See [the PR](http://x/1)", "See the PR")):
+            rec_ = {}
+            text = self.hand_over(self.page(""), self.block(self.OLD_SHA, rec=rec), rec_)
+            text = text.replace(rec + "\n", rec + self.thread(quote) + "\n", 1)
+            got = self.hand_over(text, self.block(self.NEW_SHA, rec=rec, when="02:00"), rec_)
+            self.assertNotIn("orphan=1", got, rec)
+            self.assertIn(rec + self.thread(quote), got)
 
     def test_a_thread_whose_words_are_still_the_end_of_the_new_line_stays_on_it(self):
         rec = {}

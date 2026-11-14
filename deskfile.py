@@ -261,7 +261,6 @@ def _logical(block):
     return out
 
 
-COMMENT = re.compile(r"<!--.*?-->", re.S)
 QUOTE = re.compile(r'<!--\s*(?:sheaf|rd)-comment\b[^\n]*?\bquote="([^"\n]*)"')
 ORPHAN = re.compile(r"<!--\s*(?:sheaf|rd)-comment\b[^\n]*?\borphan=1\b")
 
@@ -274,6 +273,8 @@ def _anchored(head, comment):
     if not quote or ORPHAN.match(comment):
         return True
     before = re.sub(r"^\s*(?:[-*+] (?:\[[ xX]\] )?)?", "", head)
+    before = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", before)             # sheaf quotes the words shown: a link's text, not its address
+    before = re.sub(r"[`*_~\\]", "", html.unescape(before))                 # and without the marks of bold, italic, code
     return "".join(before.split()).endswith("".join(html.unescape(quote.group(1)).split()))
 
 
@@ -290,7 +291,7 @@ def _settle_threads(rest, old_head, new_head):
     if old_head == new_head:
         return rest, []
     kept, lost, at = "", [], 0
-    for m in COMMENT.finditer(rest):
+    for m in CLOSED.finditer(rest):
         kept += rest[at:m.start()]
         if _anchored(new_head, m.group(0)):
             kept += m.group(0)
@@ -332,7 +333,7 @@ def carry(old, new, own=None):
         if not rest:
             continue
         if CLOSED.sub("", rest).count("<!--") or not home(kind):   # a thread left open would swallow the lines below it
-            orphans.append("  " + COMMENT.sub(lambda m: _orphaned(m.group(0)), rest) + "\n")   # its line is gone: nothing is left to quote
+            orphans.append("  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest) + "\n")   # its line is gone: nothing is left to quote
         else:
             marks.setdefault(home(kind), []).append((head.rstrip("\n"), rest))
     out = []
@@ -480,12 +481,12 @@ def edit(change, file=None):
                 before = _read(f)
                 _held.record = record = copy.deepcopy(stored)
                 after = change(before)
+                if after != before and _read(f) != before:
+                    continue
                 if record != stored and not lines.write_atomic(f.parent / RECORD, json.dumps(record)):
                     raise OSError(f"could not write {f.parent / RECORD}")
                 if after == before:
                     return after
-                if _read(f) != before:
-                    continue
                 if not lines.write_atomic(f, after):
                     raise OSError(f"could not write {f}")
                 return after
