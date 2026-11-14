@@ -35,7 +35,7 @@ FILES_CUT = 300             # GitHub's compare lists at most this many files
 CLASSIFIER = Path.home() / ".claude" / "routines" / "branch_deploys.py"
 OUTSIDE = "- Outside GitHub: "
 COMMITS = "- Commits that go out"
-SHOWN = 30                  # commits listed; the rest are counted
+SHOWN = 100                 # commits listed; the rest are counted
 LINE = 140
 WORKFLOW = re.compile(r"[A-Za-z0-9_.-]+\.ya?ml")
 HINT = re.compile(r"^\s+(\d+): (.*)$")
@@ -91,18 +91,18 @@ def _classify(files, base):
         return [], ""
     if not CLASSIFIER.is_file():
         return [], f"the classifier {CLASSIFIER} is missing"
-    with tempfile.TemporaryDirectory(prefix="desk-ships-") as tmp:
-        root = Path(tmp)
-        (root / ".git").mkdir()
-        wf = root / ".github" / "workflows"
-        wf.mkdir(parents=True)
-        try:
+    try:
+        with tempfile.TemporaryDirectory(prefix="desk-ships-") as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            wf = root / ".github" / "workflows"
+            wf.mkdir(parents=True)
             for name, text in files.items():
                 (wf / name).write_text(text, encoding="utf-8")
-            got = subprocess.run([PYTHON, str(CLASSIFIER), str(root), base], capture_output=True, text=True,
-                                 stdin=subprocess.DEVNULL, timeout=30)
-        except (OSError, ValueError, subprocess.TimeoutExpired) as err:
-            return [], f"the classifier did not run: {err}"
+            got = subprocess.run([PYTHON, "-W", "ignore", str(CLASSIFIER), str(root), base], capture_output=True,
+                                 text=True, stdin=subprocess.DEVNULL, timeout=30)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as err:
+        return [], f"the classifier did not run: {type(err).__name__}"       # no path or text in it: it must read the same twice
     # Python exits 1 on any traceback, so exit 1 means "nothing fires" only when it said nothing at all.
     if got.stderr.strip() or got.returncode not in (0, 1) or (got.returncode == 1 and got.stdout.strip()):
         return [], desk.flatten(got.stderr or got.stdout or f"the classifier exited {got.returncode}", 160)
@@ -132,7 +132,7 @@ def _compare(repo, base, pinned, run):
         data = json.loads(out)
         total = int(data["total_commits"])
         shown = [(c["sha"][:7], c["commit"]["message"].split("\n")[0]) for c in data["commits"]]
-        files = [f for entry in data.get("files") or [] for f in (entry["filename"], entry.get("previous_filename"))
+        files = [f for entry in data["files"] for f in (entry["filename"], entry.get("previous_filename"))
                  if isinstance(f, str)]
     except (ValueError, KeyError, TypeError, AttributeError):
         raise Unreadable("GitHub's list of commits could not be read") from None
@@ -141,7 +141,7 @@ def _compare(repo, base, pinned, run):
     if total > min(SHOWN, len(shown)):
         lines.append(f"  - and {total - min(SHOWN, len(shown))} more")
     flows = sorted({f for f in files if f.startswith(".github/workflows/")})
-    return lines, flows, len(data.get("files") or []) >= FILES_CUT
+    return lines, flows, len(data["files"]) >= FILES_CUT
 
 
 def read(repo, base, pinned, run, outside="", commits=None):
@@ -164,36 +164,47 @@ def read(repo, base, pinned, run, outside="", commits=None):
     return head + deploy + commit_lines
 
 
-def _unescaped(line):
-    """The page's own save may put a backslash before punctuation in what it stores: not a change."""
-    return re.sub(r"\\(.)", r"\1", line)
+FLOWS = "- This pull request changes workflow files: "
+UNKNOWN = "- Could not tell what ships"
+
+
+def _same(line):
+    """A line as the page may have re-saved it (markdown escapes, `**` for `__`, raw HTML dropped): letters and digits only."""
+    return re.sub(r"[^0-9a-z]+", "", line.lower())
 
 
 def _split(lines):
-    """(everything but the persons' Outside line and the commits, the commit entries)."""
-    rest, commits, inside = [], [], False
+    """(lines compared as they are, commit shas, changed workflow files, whether commits were hidden behind "and N more")."""
+    rest, shas, flows, cut, inside = [], [], set(), False, False
     for l in lines:
         if l.startswith(OUTSIDE):
             continue
-        if l.startswith(COMMITS):
+        if l.startswith(FLOWS):
+            flows |= {f.strip() for f in l[len(FLOWS):].split(",")}
+        elif l.startswith(COMMITS):
             inside = True
         elif inside and l.startswith("  - "):
-            commits.append(l)
+            cut = cut or l.startswith("  - and ")
+            shas.append((l[4:].split(" ", 1)[0], l.strip(" -")))
         else:
             inside = False
             rest.append(l)
-    return [_unescaped(l) for l in rest], [_unescaped(l) for l in commits]
+    return rest, shas, flows, cut
 
 
 def changed(old, new):
-    """"" when what ships is the same; else what differs. The person's Outside line is not compared. Commits
-    only count when one is new: once the PR this one stacks on is merged, its commits leave the range."""
-    old_rest, old_commits = _split(old)
-    new_rest, new_commits = _split(new)
-    gone = [l.strip(" -") for l in old_rest if l not in new_rest]
-    came = [l.strip(" -") for l in new_rest if l not in old_rest]
-    came += [l.strip(" -") for l in new_commits if l not in old_commits and not l.startswith("  - and ")]
-    if not (gone or came) and old_rest != new_rest:
-        came = ["its lines were reordered"]
-    parts = (["now: " + "; ".join(came)] if came else []) + (["no longer: " + "; ".join(gone)] if gone else [])
+    """"" when what ships is the same; else what differs. Not compared: the person's Outside line, and the
+    commits and changed workflow files that left the range (once the PR this one stacks on is merged they do);
+    only a new one counts, and no commit counts when the stored range was cut."""
+    old_rest, old_shas, old_flows, old_cut = _split(old)
+    new_rest, new_shas, new_flows, _ = _split(new)
+    old_same = {_same(l) for l in old_rest}
+    new_same = {_same(l) for l in new_rest}
+    gone = [l.strip(" -") for l in old_rest if _same(l) not in new_same]
+    came = [l.strip(" -") for l in new_rest if _same(l) not in old_same]
+    came += [f"workflow file {f}" for f in sorted(new_flows - old_flows)]
+    if not old_cut:
+        came += [f"commit {text}" for sha, text in new_shas if sha not in {s for s, _ in old_shas}]
+    came += [l.strip(" -") for l in new_rest if l.startswith(UNKNOWN)]
+    parts = (["now: " + "; ".join(dict.fromkeys(came))] if came else []) + (["no longer: " + "; ".join(gone)] if gone else [])
     return desk.flatten("; ".join(parts), 240)

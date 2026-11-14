@@ -50,7 +50,7 @@ if args[0] == "api":
         sys.exit(0)
     if "/compare/" in path:
         f = d + "/compare-" + repo_
-        print(open(f).read() if os.path.exists(f) else json.dumps({{"total_commits": 0, "commits": []}}))
+        print(open(f).read() if os.path.exists(f) else json.dumps({{"total_commits": 0, "files": [], "commits": []}}))
         sys.exit(0)
     sys.exit(9)
 if args[:2] not in (["pr", "view"], ["pr", "merge"]):
@@ -146,7 +146,7 @@ class Case(unittest.TestCase):
         (d / name).write_text(text)
 
     def commits(self, *msgs, repo=REPO):
-        (self.prs / ("compare-" + repo.replace("/", "_"))).write_text(json.dumps({"total_commits": len(msgs), "commits": [
+        (self.prs / ("compare-" + repo.replace("/", "_"))).write_text(json.dumps({"total_commits": len(msgs), "files": [], "commits": [
             {"sha": f"{i + 1:07x}" + "0" * 33, "commit": {"message": m}} for i, m in enumerate(msgs)]}))
 
     def hand_over_with_ships(self, n, pinned=SHA, repo=REPO, outside=""):
@@ -338,6 +338,19 @@ class Ships(Case):
         deskwatch.tick()
         self.assertEqual(self.merge_calls(), [])
         self.assertIn("Not merged: could not read what ships", self.item(272).block)
+
+    def test_a_press_taken_back_while_what_ships_is_read_does_not_merge(self):
+        self.deploy()
+        real = deskwatch.gh
+
+        def gh(*a):
+            if a[0] == "api":
+                deskfile.edit(lambda t: t.replace("- [x] Deploy", "- [ ] Deploy"))
+            return real(*a)
+        deskwatch.gh = gh
+        self.addCleanup(setattr, deskwatch, "gh", real)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
 
     def test_the_gh_wrapper_turns_undecodable_output_into_a_failed_call(self):
         bad = self.tmp / "bin" / "gh2"

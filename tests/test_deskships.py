@@ -104,10 +104,10 @@ class Classify(unittest.TestCase):
         self.assertNotIn("<!--", line)
 
     def test_more_commits_than_shown_are_counted(self):
-        commits = [(f"{i:07x}" + "0" * 33, f"c{i}") for i in range(40)]
-        got = deskships.read("o/r", "main", "p" * 40, FakeGh({"deploy.yml": DEPLOYS}, commits, total=40))
-        self.assertIn("- Commits that go out (40):", got)
-        self.assertEqual(got[-1], "  - and 10 more")
+        commits = [(f"{i:07x}" + "0" * 33, f"c{i}") for i in range(130)]
+        got = deskships.read("o/r", "main", "p" * 40, FakeGh({"deploy.yml": DEPLOYS}, commits, total=130))
+        self.assertIn("- Commits that go out (130):", got)
+        self.assertEqual(got[-1], "  - and 30 more")
 
 
 class Hardening(unittest.TestCase):
@@ -130,12 +130,49 @@ class Hardening(unittest.TestCase):
         got = deskships.read("o/r", "main", "p" * 40, FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")]))
         self.assertIn("Could not tell what ships", got[0])
 
+    def test_a_compare_answer_without_files_is_unreadable(self):
+        gh = FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")])
+        real = gh.__call__
+
+        def no_files(*a):
+            code, out = real(*a)
+            if "/compare/" in " ".join(a):
+                out = json.dumps({k: v for k, v in json.loads(out).items() if k != "files"})
+            return code, out
+        with self.assertRaises(deskships.Unreadable):
+            deskships.read("o/r", "main", "p" * 40, no_files)
+
     def test_a_workflow_with_a_name_that_cannot_be_fetched_safely_is_an_error_not_skipped(self):
         with self.assertRaises(deskships.Unreadable):
             deskships.read("o/r", "main", "p" * 40, FakeGh({"my deploy.yml": DEPLOYS}))
 
 
 class Differ(unittest.TestCase):
+    def test_commits_are_compared_by_sha_only_so_a_page_that_rewrote_the_message_is_no_change(self):
+        old = ["- Commits that go out (1):", "  - aaaaaaa **init** fix"]
+        new = ["- Commits that go out (1):", "  - aaaaaaa __init__ fix"]
+        self.assertEqual(deskships.changed(old, new), "")
+
+    def test_a_range_that_was_cut_at_hand_over_is_not_compared_after_the_parent_merged(self):
+        old = ["- Commits that go out (40):", "  - 0000001 a", "  - and 10 more"]
+        new = ["- Commits that go out (10):", "  - 0000031 z"]
+        self.assertEqual(deskships.changed(old, new), "")
+
+    def test_workflow_files_that_left_the_range_are_not_a_change_but_a_new_one_is(self):
+        old = ["- This pull request changes workflow files: .github/workflows/a.yml, .github/workflows/b.yml"]
+        self.assertEqual(deskships.changed(old, []), "")
+        self.assertEqual(deskships.changed(old, old[:1]), "")
+        self.assertIn("c.yml", deskships.changed(old, ["- This pull request changes workflow files: .github/workflows/c.yml"]))
+
+    def test_a_could_not_tell_answer_now_is_always_a_change(self):
+        both = ["- Could not tell what ships: the classifier is missing"]
+        self.assertIn("could not tell", deskships.changed(both, both).lower())
+
+    def test_punctuation_the_page_rewrote_in_a_workflow_line_is_no_change(self):
+        old = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./**init**.sh"]
+        new = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./__init__.sh"]
+        self.assertEqual(deskships.changed(old, new), "")
+
     def test_commits_that_dropped_out_of_the_range_are_not_a_change(self):
         old = ["- Fires on push to main: deploy.yml", "- Commits that go out (2):", "  - aaaaaaa One", "  - bbbbbbb Two"]
         new = ["- Fires on push to main: deploy.yml", "- Commits that go out (1):", "  - bbbbbbb Two"]
@@ -144,7 +181,7 @@ class Differ(unittest.TestCase):
     def test_a_commit_that_is_new_is_a_change(self):
         old = ["- Commits that go out (1):", "  - aaaaaaa One"]
         new = ["- Commits that go out (2):", "  - aaaaaaa One", "  - ccccccc Three"]
-        self.assertIn("ccccccc Three", deskships.changed(old, new))
+        self.assertIn("commit ccccccc Three", deskships.changed(old, new))
 
     def test_a_backslash_the_page_added_to_the_stored_lines_is_not_a_change(self):
         old = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./my\\_deploy.sh \\*"]

@@ -211,11 +211,11 @@ def check_and_merge(k, pinned):
         raise NotMerged(f"GitHub still says UNKNOWN after {WAIT_MAX} s")
     if pr.get("mergeable") != "MERGEABLE":
         raise NotMerged(f"GitHub says {pr.get('mergeable')}")
-    now = item(k)                                           # the person may have taken the press back while we waited
-    if not now or not now.ticked or now.pinned != pinned:
-        raise TakenBack("the press was taken back before the merge")
     check_after(k, repo)                                    # handed over again with an order while we waited
     check_ships(k, repo, pr.get("baseRefName"), pinned)     # read again just before the merge, not at the start: time passed in the wait
+    now = item(k)                                           # the person may have taken the press back while we waited, and reading what ships takes seconds
+    if not now or not now.ticked or now.pinned != pinned:
+        raise TakenBack("the press was taken back before the merge")
     code, out = gh("pr", "merge", str(n), "-R", repo, "--merge", "--match-head-commit", pinned)
     after = view(repo, n)                                   # an unreadable answer leaves the press open
     for _ in range(POST_POLLS if code == 0 else 0):         # accepted, but GitHub may still show it open for a moment

@@ -45,7 +45,7 @@ if args[0] == "api":
         sys.exit(0)
     if "/compare/" in path:
         f = d + "/compare-" + repo_
-        print(open(f).read() if os.path.exists(f) else json.dumps({{"total_commits": 0, "commits": []}}))
+        print(open(f).read() if os.path.exists(f) else json.dumps({{"total_commits": 0, "files": [], "commits": []}}))
         sys.exit(0)
 if args[:2] != ["pr", "view"]:
     print("fake gh: unexpected " + " ".join(args), file=sys.stderr)
@@ -111,7 +111,7 @@ class Ships(Case):
     def setUp(self):
         super().setUp()
         self.pr(self.REPO, 5)
-        (self.prs / "compare-tiroir_apex").write_text(json.dumps({"total_commits": 1, "commits": [
+        (self.prs / "compare-tiroir_apex").write_text(json.dumps({"total_commits": 1, "files": [], "commits": [
             {"sha": "abc1234" + "0" * 33, "commit": {"message": "Fix the thing\n\nbody"}}]}))
 
     def workflow(self, name, text):
