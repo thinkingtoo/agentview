@@ -149,9 +149,9 @@ class Case(unittest.TestCase):
         (self.prs / ("compare-" + repo.replace("/", "_"))).write_text(json.dumps({"total_commits": len(msgs), "files": [], "commits": [
             {"sha": f"{i + 1:07x}" + "0" * 33, "commit": {"message": m}} for i, m in enumerate(msgs)]}))
 
-    def hand_over_with_ships(self, n, pinned=SHA, repo=REPO, outside=""):
-        """The hand-over as `desk ready` makes it: the lines read from the (fake) GitHub at that moment."""
-        ships = deskships.read(repo, "dev", pinned, deskwatch.gh, outside=outside)
+    def hand_over_with_ships(self, n, pinned=SHA, repo=REPO, outside="", keep=lambda line: True):
+        """The hand-over as `desk ready` makes it: the lines read from the (fake) GitHub at that moment (`keep` drops lines: a record made by an older desk)."""
+        ships = [l for l in deskships.read(repo, "dev", pinned, deskwatch.gh, outside=outside) if keep(l)]
         k = f"{repo}#{n}"
         with deskfile.locked():
             deskfile.put_item(k, desk.item_block(repo, n, f"what {n} does", "merge", "CI green", pinned, "dev", None,
@@ -545,6 +545,30 @@ class Ships(Case):
         self.hand_over_with_ships(272)
         self.assertTrue(self.item(272).block.startswith("- [ ] Merge "))
         self.assertNotIn("What ships", self.item(272).block)
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+
+    @unittest.skipUnless("structure sha256" in deskships.CLASSIFIER.read_text(), "needs branch_deploys.py with the structure digest (ticket 25, ~/.claude)")
+    def test_a_key_moved_under_another_mapping_between_the_hand_over_and_the_press_is_refused(self):
+        self.pr(272)
+        two = DEPLOY_YML + "  b:\n    runs-on: x\n"                  # job b after job d, which holds the deploy step
+        self.workflow("deploy.yml", two)
+        self.commits("Fix the thing")
+        self.hand_over_with_ships(272)
+        self.tick_box(272)
+        moved = two.replace("  b:\n    runs-on: x\n", "    b:\n      runs-on: x\n")   # same lines, same numbers; b is now a key of job d
+        self.assertNotEqual(moved, two)
+        self.workflow("deploy.yml", moved)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: what ships changed: .*deploy.yml: structure sha256:")
+
+    def test_a_hand_over_from_before_the_digest_still_merges_when_nothing_changed(self):
+        self.pr(272)
+        self.workflow("deploy.yml", DEPLOY_YML)
+        self.commits("Fix the thing")
+        self.hand_over_with_ships(272, keep=lambda l: deskships.STRUCTURE_MARK not in l)
         self.tick_box(272)
         deskwatch.tick()
         self.assertEqual(len(self.merge_calls()), 1)

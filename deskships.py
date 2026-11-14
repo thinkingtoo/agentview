@@ -47,6 +47,9 @@ HELP = "To go on, merge it on GitHub yourself after reading the workflows, or as
 WORKFLOW = re.compile(r"[A-Za-z0-9_.-]+\.ya?ml")
 HINT = re.compile(r"^\s+(\d+): (.*)$")
 UNPARSED = re.compile(r"^\s+! could not parse: (.*)$")
+STRUCTURE = re.compile(r"^\s+= structure sha256:([0-9a-f]{32})$")      # --full: one digest of the keys and their nesting, per workflow
+STRUCTURE_MARK = ": structure sha256:"
+STRUCTURE_LINE = re.compile(r"  - " + WORKFLOW.pattern + re.escape(STRUCTURE_MARK) + r"[0-9a-f]{32}")   # the whole line: a hint that only contains the mark is not one
 
 
 def _line(prefix, text, limit=LINE):
@@ -111,6 +114,7 @@ def _classify(files, base):
         with tempfile.TemporaryDirectory(prefix="desk-ships-") as tmp:
             root = Path(tmp)
             (root / ".git").mkdir()
+            (root / ".git" / "HEAD").write_text("ref: refs/heads/main\n")      # the classifier does not take an empty .git for a checkout
             wf = root / ".github" / "workflows"
             wf.mkdir(parents=True)
             for name, text in files.items():
@@ -124,7 +128,7 @@ def _classify(files, base):
         return [], desk.flatten(got.stderr or got.stdout or f"the classifier exited {got.returncode}", 160)
     if got.returncode == 1:
         return [], ""
-    hits, current, unparsed = {}, None, {}
+    hits, current, unparsed, structure = {}, None, {}, {}
     for raw in got.stdout.splitlines():
         if raw and not raw[0].isspace():
             name = raw.strip()
@@ -133,6 +137,8 @@ def _classify(files, base):
             unparsed[name] = bad.group(1)
         elif current is not None and (hint := HINT.match(raw)):
             current.append((hint.group(1), hint.group(2)))
+        elif current is not None and (digest := STRUCTURE.match(raw)):
+            structure[name] = digest.group(1)
     if unparsed:
         # Whether it fires on this base, and what it runs, cannot be read: not "tests only", not a plain Merge.
         names = ", ".join(desk.flatten(n, 60) for n in list(unparsed)[:3])
@@ -142,7 +148,10 @@ def _classify(files, base):
         return [], ""
     head = f"Fires on push to {base}: " + ", ".join(deploying)
     out = [_shown("- ", head, 300)]
-    out += [_shown("  - ", f"{name}:{n}: {text}", LINE + 40) for name, hs in deploying.items() for n, text in hs]
+    for name, hs in deploying.items():
+        out += [_shown("  - ", f"{name}:{n}: {text}", LINE + 40) for n, text in hs]
+        if name in structure:       # the hint lines are compared without their indent: the digest sees a key moved under another
+            out.append(_shown("  - ", f"{name}{STRUCTURE_MARK}{structure[name]}", LINE + 40))
     return out, ""
 
 
@@ -224,6 +233,8 @@ def changed(old, new):
     only a new one counts, and no commit counts when the stored range was cut."""
     old_rest, old_shas, old_flows, old_cut = _split(old)
     new_rest, new_shas, new_flows, _ = _split(new)
+    if not any(STRUCTURE_LINE.fullmatch(l) for l in old_rest):       # a hand-over from before the digest existed: nothing to compare it with
+        new_rest = [l for l in new_rest if not STRUCTURE_LINE.fullmatch(l)]
     old_set = set(old_rest)
     new_set = set(new_rest)
     gone = [l.strip(" -") for l in old_rest if l not in new_set]
