@@ -1167,7 +1167,7 @@ class CopyOfOurLine(unittest.TestCase):
         self.assertLess(recommendation, new)
         self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
 
-    def test_a_copy_of_the_recommendation_line_above_ours_is_kept_and_ours_is_replaced(self):
+    def test_a_copy_of_the_recommendation_line_after_ours_is_kept_and_ours_is_replaced(self):
         rec = {}
         text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
         text = text.replace("  - Pinned commit", "  - Recommendation: Merge it.\n  - Pinned commit", 1)           # the person's copy, after ours
