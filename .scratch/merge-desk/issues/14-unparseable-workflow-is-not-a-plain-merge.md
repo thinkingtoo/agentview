@@ -4,6 +4,8 @@
 
 **Also (added 2026-11-14 from 13's round 2):** the classifier cuts hint lines at 140 characters (branch_deploys.py:132) and deskships._line at 180, so two long deploy lines differing only after the cut compare equal. Give full lines or a hash per line from branch_deploys.py, store and compare that in deskships; then lift 13's stopgap (a cut line refuses). And a "could not tell" refusal says what the person can do (e.g. merge on GitHub after reading the workflows, or ask the session to split the PR).
 
+**Notes from 13's round 3 (class c, not fixed there):** `desk.flatten` folds NBSP and runs of spaces, so a change only in those compares equal; a base retarget between the check and the merge goes through (`--match-head-commit` pins the head only); `HINT_CUT` copies the classifier's 140 (a width=141 test guards it). Priority: the monorepo's tiroir-central-deploy.yml has hint lines of 155-156 chars, so until this ticket lands every such item refuses as "too long to check".
+
 **Blocked by:** 05, 13
 
 **Status:** ready-for-agent
