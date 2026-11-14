@@ -5,6 +5,7 @@
 - (class c, c1) `_prev_stands` takes a person's copy of an old pin line for ours when the person also edited our current pin line; the copy is then dropped at the next hand-over.
 - (class c, c2) `prev` in the record grows without bound while writes to the page keep failing.
 - (class c, c3) A CRLF page ends with mixed line endings after a hand-over (our new lines are LF). Also `adopt`'s `done` and `skipped` lists are filled twice when `edit` retries (this one predates ticket 27).
+- (class b, Sonnet round 2, predates 27) `TASK` ends in `(?::|$)` and `$` does not match before a `\r`: a colon-less task line on a CRLF page (`- [ ] Merge a/b#1\r\n`, `- [ ] Install foo\r\n`) is not read as an item. Check first whether AgentView writes a task line without a colon.
 
 **Blocked by:** 27
 
@@ -14,4 +15,5 @@
 - [ ] A copy of an old pin line stays the person's when they also edited our current pin line (test)
 - [ ] `prev` stays bounded while writes keep failing (test)
 - [ ] A CRLF page keeps one kind of line end after a hand-over (test)
+- [ ] A colon-less task line on a CRLF page is still an item, or AgentView never writes one (test or the line why)
 - [ ] `adopt` returns each key once when `edit` retries (test)
