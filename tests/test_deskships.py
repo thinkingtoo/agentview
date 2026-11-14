@@ -21,7 +21,8 @@ PR_ONLY = "name: pr\non:\n  pull_request:\njobs:\n  d:\n    runs-on: x\n    step
 class FakeGh:
     """Answers `gh api` for one repo: workflows by name per ref, a compare per (base, head)."""
 
-    def __init__(self, workflows=None, commits=(), total=None):
+    def __init__(self, workflows=None, commits=(), total=None, files=()):
+        self.files = list(files)
         self.workflows = workflows
         self.commits = list(commits)
         self.total = len(self.commits) if total is None else total
@@ -39,7 +40,7 @@ class FakeGh:
                 return 0, json.dumps([{"name": n, "type": "file"} for n in self.workflows])
             return (0, self.workflows[name]) if name in self.workflows else (1, "gh: Not Found (HTTP 404)")
         if "/compare/" in path:
-            return 0, json.dumps({"total_commits": self.total, "commits": [
+            return 0, json.dumps({"total_commits": self.total, "files": [{"filename": f} for f in self.files], "commits": [
                 {"sha": s, "commit": {"message": m + "\n\nbody"}} for s, m in self.commits]})
         return 1, "unexpected " + path
 
@@ -91,7 +92,8 @@ class Classify(unittest.TestCase):
 
     def test_a_workflow_name_that_climbs_out_of_the_folder_is_not_written(self):
         gh = FakeGh({"../evil.yml": DEPLOYS, "ci.yml": TESTS_ONLY})
-        self.assertEqual(deskships.read("o/r", "main", "p" * 40, gh), [])
+        with self.assertRaises(deskships.Unreadable):
+            deskships.read("o/r", "main", "p" * 40, gh)
         self.assertFalse(any("evil" in a for c in gh.calls for a in c if "/contents/.github/workflows/" in a))
 
     def test_commit_messages_cannot_open_a_box_or_a_second_line(self):
@@ -108,7 +110,48 @@ class Classify(unittest.TestCase):
         self.assertEqual(got[-1], "  - and 10 more")
 
 
+class Hardening(unittest.TestCase):
+    def test_a_pr_that_adds_a_workflow_is_a_deploy_because_the_merge_runs_the_merged_files(self):
+        gh = FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")], files=["src/a.py", ".github/workflows/release.yml"])
+        got = deskships.read("o/r", "main", "p" * 40, gh)
+        self.assertIn("- This pull request changes workflow files: .github/workflows/release.yml", got)
+
+    def test_a_file_list_cut_by_github_is_not_read_as_no_workflow_change(self):
+        gh = FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")], files=[f"f{i}" for i in range(300)])
+        self.assertIn("Could not tell what ships", "\n".join(deskships.read("o/r", "main", "p" * 40, gh)))
+
+    def test_a_classifier_that_crashes_is_not_nothing_ships(self):
+        import tempfile
+        bad = Path(tempfile.mkdtemp()) / "bd.py"
+        bad.write_text("raise SystemExit(1) if False else None\nimport nonexistent_module_x\n")
+        saved = deskships.CLASSIFIER
+        deskships.CLASSIFIER = bad
+        self.addCleanup(setattr, deskships, "CLASSIFIER", saved)
+        got = deskships.read("o/r", "main", "p" * 40, FakeGh({"ci.yml": TESTS_ONLY}, [("a" * 40, "x")]))
+        self.assertIn("Could not tell what ships", got[0])
+
+    def test_a_workflow_with_a_name_that_cannot_be_fetched_safely_is_an_error_not_skipped(self):
+        with self.assertRaises(deskships.Unreadable):
+            deskships.read("o/r", "main", "p" * 40, FakeGh({"my deploy.yml": DEPLOYS}))
+
+
 class Differ(unittest.TestCase):
+    def test_commits_that_dropped_out_of_the_range_are_not_a_change(self):
+        old = ["- Fires on push to main: deploy.yml", "- Commits that go out (2):", "  - aaaaaaa One", "  - bbbbbbb Two"]
+        new = ["- Fires on push to main: deploy.yml", "- Commits that go out (1):", "  - bbbbbbb Two"]
+        self.assertEqual(deskships.changed(old, new), "")
+
+    def test_a_commit_that_is_new_is_a_change(self):
+        old = ["- Commits that go out (1):", "  - aaaaaaa One"]
+        new = ["- Commits that go out (2):", "  - aaaaaaa One", "  - ccccccc Three"]
+        self.assertIn("ccccccc Three", deskships.changed(old, new))
+
+    def test_a_backslash_the_page_added_to_the_stored_lines_is_not_a_change(self):
+        old = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./my\\_deploy.sh \\*"]
+        new = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./my_deploy.sh *"]
+        self.assertEqual(deskships.changed(old, new), "")
+
+
     def test_what_changed_is_named(self):
         old = ["- Fires on push to main: deploy.yml", "  - 7: run: ./deploy.sh", "- Commits that go out (1):", "  - aaaaaaa One"]
         new = ["- Fires on push to main: deploy.yml", "  - 7: run: ./deploy.sh && ./more.sh", "- Commits that go out (1):", "  - aaaaaaa One"]

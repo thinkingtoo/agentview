@@ -75,7 +75,7 @@ def gh(*args):
     try:
         got = subprocess.run([GH, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL,
                              timeout=CALL_TIMEOUT, env={**os.environ, "PATH": SYSTEM_PATH, "GH_PROMPT_DISABLED": "1"})
-    except (OSError, subprocess.TimeoutExpired) as err:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as err:    # ValueError: output that is not text
         return CANNOT, str(err)
     return got.returncode, (got.stdout if got.returncode == 0 else got.stdout + got.stderr).strip()
 

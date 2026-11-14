@@ -134,7 +134,7 @@ def gh(*args):
         return 1, "gh was not found on PATH"
     try:
         got = subprocess.run([GH, *args], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=60)
-    except (OSError, subprocess.TimeoutExpired) as err:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as err:
         return 1, str(err)
     return got.returncode, (got.stdout if got.returncode == 0 else got.stdout + got.stderr).strip()
 

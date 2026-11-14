@@ -324,6 +324,29 @@ class Ships(Case):
         self.assertFalse(it.ticked)
         self.assertIn("Not merged: could not read what ships", it.block)
 
+    def test_a_workflow_file_that_is_not_utf8_refuses_the_press_it_does_not_crash_it(self):
+        k = self.deploy()
+        real = deskwatch.gh
+
+        def gh(*a):
+            if a[0] == "api" and a[1] == "-H":
+                raise_ = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")
+                return deskwatch.CANNOT, str(raise_)
+            return real(*a)
+        deskwatch.gh = gh
+        self.addCleanup(setattr, deskwatch, "gh", real)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertIn("Not merged: could not read what ships", self.item(272).block)
+
+    def test_the_gh_wrapper_turns_undecodable_output_into_a_failed_call(self):
+        bad = self.tmp / "bin" / "gh2"
+        bad.write_text(f"#!{sys.executable}\nimport sys\nsys.stdout.buffer.write(b'\\xff\\xfe')\n")
+        bad.chmod(bad.stat().st_mode | stat.S_IXUSR)
+        deskwatch.GH = str(bad)
+        code, _ = deskwatch.gh("api", "x")
+        self.assertEqual(code, deskwatch.CANNOT)
+
     def test_the_classifier_never_sees_the_pull_requests_head(self):
         self.deploy()
         deskwatch.tick()

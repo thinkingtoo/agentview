@@ -5,6 +5,10 @@ merge ships nothing (the item stays a Merge item). A Deploy item carries what th
 `What ships:` line, and the watcher reads it again just before the merge: a different answer refuses
 the press.
 
+A merge also ships what its own commits add: the push after the merge runs the workflow files of the
+merged commit, so a pull request that changes `.github/workflows/` is a Deploy item whatever the base
+says (the file names come from the compare call, no content of the head is read).
+
 Classification reads workflow files only. The base branch's `.github/workflows` are fetched through
 the GitHub API into a folder of their own and `~/.claude/routines/branch_deploys.py` (which parses
 YAML and runs nothing) is pointed at that folder: no checkout, and nothing from the pull request's
@@ -17,6 +21,7 @@ raises `Unreadable`.
 """
 import json
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,6 +30,8 @@ from pathlib import Path
 
 import desk
 
+PYTHON = "/usr/bin/python3" if shutil.which("python3", path="/usr/bin") else sys.executable   # one interpreter for hand-over and press
+FILES_CUT = 300             # GitHub's compare lists at most this many files
 CLASSIFIER = Path.home() / ".claude" / "routines" / "branch_deploys.py"
 OUTSIDE = "- Outside GitHub: "
 COMMITS = "- Commits that go out"
@@ -64,7 +71,11 @@ def _workflows(repo, base, run):
         raise Unreadable("GitHub's list of workflows could not be read") from None
     found = {}
     for name in names:
-        if not isinstance(name, str) or not WORKFLOW.fullmatch(name):
+        if not isinstance(name, str):
+            continue
+        if not WORKFLOW.fullmatch(name):
+            if name.lower().endswith((".yml", ".yaml")):
+                raise Unreadable(f"the workflow file name {desk.flatten(name, 60)!r} cannot be fetched safely")
             continue
         text = _gh(run, "api", "-H", "Accept: application/vnd.github.raw",
                    f"repos/{repo}/contents/.github/workflows/{name}?ref={ref}")
@@ -85,17 +96,18 @@ def _classify(files, base):
         (root / ".git").mkdir()
         wf = root / ".github" / "workflows"
         wf.mkdir(parents=True)
-        for name, text in files.items():
-            (wf / name).write_text(text, encoding="utf-8")
         try:
-            got = subprocess.run([sys.executable, str(CLASSIFIER), str(root), base], capture_output=True, text=True,
+            for name, text in files.items():
+                (wf / name).write_text(text, encoding="utf-8")
+            got = subprocess.run([PYTHON, str(CLASSIFIER), str(root), base], capture_output=True, text=True,
                                  stdin=subprocess.DEVNULL, timeout=30)
-        except (OSError, subprocess.TimeoutExpired) as err:
+        except (OSError, ValueError, subprocess.TimeoutExpired) as err:
             return [], f"the classifier did not run: {err}"
+    # Python exits 1 on any traceback, so exit 1 means "nothing fires" only when it said nothing at all.
+    if got.stderr.strip() or got.returncode not in (0, 1) or (got.returncode == 1 and got.stdout.strip()):
+        return [], desk.flatten(got.stderr or got.stdout or f"the classifier exited {got.returncode}", 160)
     if got.returncode == 1:
         return [], ""
-    if got.returncode != 0 or got.stderr.strip():
-        return [], desk.flatten(got.stderr or got.stdout or f"the classifier exited {got.returncode}", 160)
     hits, current = {}, None
     for raw in got.stdout.splitlines():
         if raw and not raw[0].isspace():
@@ -110,7 +122,8 @@ def _classify(files, base):
     return out, ""
 
 
-def _commits(repo, base, pinned, run):
+def _compare(repo, base, pinned, run):
+    """(the "Commits that go out" lines, the workflow files the pull request changes, whether the file list is cut)."""
     ref = urllib.parse.quote(base, safe="/")
     out = _gh(run, "api", f"repos/{repo}/compare/{ref}...{pinned}")
     if out is None:
@@ -119,13 +132,16 @@ def _commits(repo, base, pinned, run):
         data = json.loads(out)
         total = int(data["total_commits"])
         shown = [(c["sha"][:7], c["commit"]["message"].split("\n")[0]) for c in data["commits"]]
+        files = [f for entry in data.get("files") or [] for f in (entry["filename"], entry.get("previous_filename"))
+                 if isinstance(f, str)]
     except (ValueError, KeyError, TypeError, AttributeError):
         raise Unreadable("GitHub's list of commits could not be read") from None
     lines = [f"{COMMITS} ({total}):"]
     lines += [_line("  - ", f"{sha} {msg}") for sha, msg in shown[:SHOWN]]
     if total > min(SHOWN, len(shown)):
         lines.append(f"  - and {total - min(SHOWN, len(shown))} more")
-    return lines
+    flows = sorted({f for f in files if f.startswith(".github/workflows/")})
+    return lines, flows, len(data.get("files") or []) >= FILES_CUT
 
 
 def read(repo, base, pinned, run, outside="", commits=None):
@@ -133,6 +149,11 @@ def read(repo, base, pinned, run, outside="", commits=None):
     nothing was stated. `outside` is the person's own line for a repo run from outside GitHub;
     `commits=True` lists the commits even when the workflows ship nothing (the re-check of an item that already shows them)."""
     deploy, cannot = _classify(_workflows(repo, base, run), base)
+    commit_lines, flows, cut = _compare(repo, base, pinned, run)
+    if flows:
+        deploy = deploy + [_line("- ", "This pull request changes workflow files: " + ", ".join(flows), 300)]
+    if cut and not cannot:
+        cannot = f"GitHub lists only {FILES_CUT} changed files, so a changed workflow could be missed"
     if not (deploy or cannot or outside or commits):
         return []
     head = []
@@ -140,19 +161,39 @@ def read(repo, base, pinned, run, outside="", commits=None):
         head.append(_line(OUTSIDE, outside, 300))
     if cannot:
         head.append(_line("- ", f"Could not tell what ships: {cannot}", 300))
-    return head + deploy + _commits(repo, base, pinned, run)
+    return head + deploy + commit_lines
 
 
-def compared(lines):
-    return [l for l in lines if not l.startswith(OUTSIDE)]
+def _unescaped(line):
+    """The page's own save may put a backslash before punctuation in what it stores: not a change."""
+    return re.sub(r"\\(.)", r"\1", line)
+
+
+def _split(lines):
+    """(everything but the persons' Outside line and the commits, the commit entries)."""
+    rest, commits, inside = [], [], False
+    for l in lines:
+        if l.startswith(OUTSIDE):
+            continue
+        if l.startswith(COMMITS):
+            inside = True
+        elif inside and l.startswith("  - "):
+            commits.append(l)
+        else:
+            inside = False
+            rest.append(l)
+    return [_unescaped(l) for l in rest], [_unescaped(l) for l in commits]
 
 
 def changed(old, new):
-    """"" when the two answers agree (the person's own Outside line is not compared); else what differs."""
-    old, new = compared(old), compared(new)
-    if old == new:
-        return ""
-    gone = [l.strip(" -") for l in old if l not in new]
-    came = [l.strip(" -") for l in new if l not in old]
+    """"" when what ships is the same; else what differs. The person's Outside line is not compared. Commits
+    only count when one is new: once the PR this one stacks on is merged, its commits leave the range."""
+    old_rest, old_commits = _split(old)
+    new_rest, new_commits = _split(new)
+    gone = [l.strip(" -") for l in old_rest if l not in new_rest]
+    came = [l.strip(" -") for l in new_rest if l not in old_rest]
+    came += [l.strip(" -") for l in new_commits if l not in old_commits and not l.startswith("  - and ")]
+    if not (gone or came) and old_rest != new_rest:
+        came = ["its lines were reordered"]
     parts = (["now: " + "; ".join(came)] if came else []) + (["no longer: " + "; ".join(gone)] if gone else [])
-    return desk.flatten("; ".join(parts) or "its lines were reordered", 240)
+    return desk.flatten("; ".join(parts), 240)
