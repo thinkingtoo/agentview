@@ -1055,6 +1055,13 @@ laptop does, and the watcher merges the commit that was pinned.
   desk's address, never copied from the request. Another document, every other `/_/` route
   (save, jump, tell, export, the index, sign-in), a crafted path and a body that names another
   document are refused here with a 404 before the hub is asked.
+- **Who may edit comments, and why all five ops pass:** `POST /_/comment` passes the hub's five
+  `op` values: `add`, `reply`, `status` (resolve), `edit` and `delete`. Only Thierry's own tailnet
+  devices reach :8445 (laptop, phone, tiroir-tdm, all his), and he resolves and edits his own
+  comments on the desk from the phone, so the relay does not narrow them to a reply. Anyone who
+  could reach :8445 could do the same to the owner's comments on the desk; that is why the
+  tailnet's device list is the access control here. A sixth `op` (or none) is refused here with a
+  400, not left to the hub.
 - **No Tell:** a comment with `tell` set would make the hub run the laptop's own agent session;
   the relay refuses it.
 - **Who the hub sees:** the relay signs in itself (`sheaf signin-url`) and sends that cookie. The
@@ -1067,6 +1074,13 @@ laptop does, and the watcher merges the commit that was pinned.
   Origin it is refused (the desk page cannot send `X-Fleet`, the Origin is its guard).
 - **Local programs:** the hub used to refuse any local program that was not signed in. A program on
   the laptop that sends a loopback Origin to this server can now press the desk too.
+- **Streams are capped:** each open desk page holds an AgentView thread and a connection to the hub
+  for as long as it is open, so one client holds at most 6 `/_/live` streams and all clients 24; one
+  more is refused with a 429 until a stream ends. The client is the address `tailscale serve` appends
+  to `X-Forwarded-For`, else the connection's own.
+- **Slow questions don't queue:** finding the hub (`sheaf open`, up to 60 s) and signing in (up to
+  45 s) hold no lock. Requests that ask meanwhile share that one run, and a hub already known is
+  answered at once.
 - **When it does not answer:** the laptop's sheaf hub is not running and cannot be started
   (503), or the relay cannot sign in (503). Nothing is merged while the laptop is off.
 

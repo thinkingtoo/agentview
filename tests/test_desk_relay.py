@@ -46,8 +46,19 @@ class Plan(unittest.TestCase):
         self.assertEqual(self.ok("GET", f"/_/doc?doc={ADDRESS.replace('/', '%2F')}").target, f"/_/doc?doc=agentview%2Fmerge-desk.md")
         self.assertEqual(self.ok("GET", "/_/live?doc=agentview%2Fmerge-desk.md").stream, True)
         for route in ("tick", "comment", "seen"):
-            plan = self.ok("POST", f"/_/{route}", body(action=0, word="Merge"))
+            plan = self.ok("POST", f"/_/{route}", body(action=0, word="Merge", op="reply"))
             self.assertEqual((plan.target, plan.stream), (f"/_/{route}", False))
+
+    def test_a_comment_passes_with_each_of_the_five_ops_and_with_no_other(self):
+        # Decision (Tarek, 2026-11-14): only Thierry's own devices reach the relay, and he resolves and edits his
+        # comments from the phone, so all five of the hub's ops pass; a sixth is refused here, not left to the hub
+        for op in ("add", "reply", "status", "edit", "delete"):
+            with self.subTest(op=op):
+                self.assertEqual(self.ok("POST", "/_/comment", body(op=op, id="c1")).target, "/_/comment")
+        for op in ("purge", "Reply", "reply ", "", None, 1, ["reply"], {"op": "reply"}):
+            with self.subTest(op=op):
+                self.assertEqual(self.refused("POST", "/_/comment", body(op=op, id="c1")), 400)
+        self.assertEqual(self.refused("POST", "/_/comment", body(id="c1")), 400)
 
     def test_the_page_is_asked_without_a_query(self):
         self.assertEqual(self.ok("GET", PAGE + "?next=/other.md").target, PAGE)
@@ -344,6 +355,179 @@ class Relayed(unittest.TestCase):
                 conn.putheader(k, v)
             conn.endheaders()
             self.assertEqual(conn.getresponse().status, 408)
+
+
+class HubLock(unittest.TestCase):
+    """`SheafHub` asks `sheaf` where the hub is and for a sign-in: each can take a minute. What it has
+    kept is never behind that wait, and devices that ask while it runs share the one answer."""
+
+    def hub(self, locate=None, sign_in=None):
+        hub = deskrelay.SheafHub()
+        for name, fn in (("_locate", locate), ("_sign_in", sign_in)):
+            if fn:
+                patcher = mock.patch.object(deskrelay.SheafHub, name, fn if name == "_locate" else staticmethod(fn))
+                patcher.start()
+                self.addCleanup(patcher.stop)
+        return hub
+
+    def in_threads(self, count, call):
+        out, errs = [], []
+
+        def run():
+            try:
+                out.append(call())
+            except BaseException as err:
+                errs.append(err)
+        threads = [threading.Thread(target=run, daemon=True) for _ in range(count)]
+        for t in threads:
+            t.start()
+        return threads, out, errs
+
+    def test_what_is_kept_is_answered_while_the_hub_is_being_signed_in_to(self):
+        gate, started = threading.Event(), threading.Event()
+        self.addCleanup(gate.set)
+
+        def sign_in(port):
+            started.set()
+            gate.wait(10)
+            return "sheaf_4242=new"
+        hub = self.hub(locate=lambda self_: DESK._replace(port=4242), sign_in=sign_in)
+        self.assertEqual(hub.desk().port, 4242)
+        (t,), out, _ = self.in_threads(1, lambda: hub.cookie())
+        self.assertTrue(started.wait(5))
+        began = time.monotonic()
+        self.assertEqual(hub.desk().port, 4242)                    # the desk is kept: no wait for the sign-in
+        self.assertLess(time.monotonic() - began, 1.0)
+        gate.set()
+        t.join(5)
+        self.assertEqual(out, ["sheaf_4242=new"])
+
+    def test_devices_asking_while_sheaf_open_runs_share_that_one_run(self):
+        gate, runs = threading.Event(), []
+        self.addCleanup(gate.set)
+
+        def locate(self_):
+            runs.append(1)
+            gate.wait(10)
+            raise deskrelay.Refused(503, "the desk's hub could not be found: slow")
+        hub = self.hub(locate=locate)
+        threads, out, errs = self.in_threads(5, hub.desk)
+        time.sleep(0.3)
+        gate.set()
+        for t in threads:
+            t.join(5)
+        self.assertEqual((len(runs), len(errs), out), (1, 5, []))     # not five runs, not five waits one after the other
+        self.assertTrue(all(isinstance(e, deskrelay.Refused) and e.status == 503 for e in errs))
+
+    def test_a_failed_run_is_not_kept_and_the_next_request_tries_again(self):
+        answers = [deskrelay.Refused(503, "down"), DESK]
+
+        def locate(self_):
+            got = answers.pop(0)
+            if isinstance(got, Exception):
+                raise got
+            return got
+        hub = self.hub(locate=locate)
+        with self.assertRaises(deskrelay.Refused):
+            hub.desk()
+        self.assertEqual(hub.desk(), DESK)
+
+    def test_a_reset_while_a_run_is_going_is_not_undone_by_its_late_answer(self):
+        gate, started, runs = threading.Event(), threading.Event(), []
+        self.addCleanup(gate.set)
+
+        def locate(self_):
+            runs.append(1)
+            started.set()
+            if len(runs) == 1:
+                gate.wait(10)
+            return DESK._replace(port=4000 + len(runs))
+        hub = self.hub(locate=locate)
+        (t,), out, _ = self.in_threads(1, hub.desk)
+        self.assertTrue(started.wait(5))
+        hub.reset()                                                   # a 503 elsewhere: what was asked is out of date
+        gate.set()
+        t.join(5)
+        self.assertEqual(hub.desk().port, 4002)                       # the late answer was not kept; it asked again
+
+
+class StreamCap(unittest.TestCase):
+    def test_one_client_holds_so_many_streams_and_no_more(self):
+        streams = deskrelay.Streams(per_client=2, total=10)
+        streams.take("100.1.1.1")
+        streams.take("100.1.1.1")
+        with self.assertRaises(deskrelay.Refused) as caught:
+            streams.take("100.1.1.1")
+        self.assertEqual(caught.exception.status, 429)
+        streams.take("100.2.2.2")                                    # another device is not held back by the first
+        streams.drop("100.1.1.1")
+        streams.take("100.1.1.1")                                    # a stream that ended frees its place
+
+    def test_the_streams_of_all_clients_together_have_a_cap(self):
+        streams = deskrelay.Streams(per_client=5, total=3)
+        for client in ("a", "b", "c"):
+            streams.take(client)
+        with self.assertRaises(deskrelay.Refused) as caught:
+            streams.take("d")
+        self.assertEqual(caught.exception.status, 429)
+
+    def test_dropping_more_than_was_taken_is_harmless(self):
+        streams = deskrelay.Streams(per_client=1, total=1)
+        streams.drop("nobody")
+        streams.take("a")
+        with self.assertRaises(deskrelay.Refused):
+            streams.take("b")
+
+
+class StreamsThroughTheRelay(Relayed):
+    LIVE = f"/_/live?doc={ADDRESS.replace('/', '%2F')}"
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.object(deskrelay, "STREAMS", deskrelay.Streams(per_client=2, total=10))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def open_stream(self, **kwargs):
+        res, _ = self.call("GET", self.LIVE, read=False, **kwargs)
+        return res
+
+    def test_a_client_past_its_cap_is_told_to_wait_and_the_hub_is_not_asked(self):
+        first, second = self.open_stream(), self.open_stream()
+        self.assertEqual((first.status, second.status), (200, 200))
+        asked = len(StubHub.seen)
+        self.assertEqual(self.open_stream().status, 429)
+        self.assertEqual(len(StubHub.seen), asked)
+        self.assertEqual(self.call("GET", PAGE)[0].status, 200)       # the page itself is not a stream
+
+    def test_a_place_is_free_again_when_a_stream_ends(self):
+        first, second = self.open_stream(), self.open_stream()
+        StubHub.stream_gate.set()
+        for res in (first, second):
+            res.read()                                                 # the hub ended it, the relay let go
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            res = self.open_stream()
+            if res.status == 200:
+                break
+            res.read()
+            time.sleep(0.05)
+        self.assertEqual(res.status, 200)
+
+    def test_a_place_is_free_again_when_the_hub_does_not_answer(self):
+        self.stub.shutdown()
+        self.stub.server_close()
+        for _ in range(4):                                             # more than the cap: each failed one let go
+            self.assertEqual(self.open_stream().status, 503)
+
+    def test_the_client_is_the_address_the_proxy_saw_and_not_one_the_caller_wrote(self):
+        h = mock.Mock(client_address=("127.0.0.1", 5555))
+        h.headers = {"X-Forwarded-For": "6.6.6.6, 100.64.0.9"}
+        self.assertEqual(deskrelay.client_of(h), "100.64.0.9")        # the last hop is the one our own proxy appended
+        h.headers = {"X-Forwarded-For": "not an address"}
+        self.assertEqual(deskrelay.client_of(h), "127.0.0.1")
+        h.headers = {}
+        self.assertEqual(deskrelay.client_of(h), "127.0.0.1")
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ What a press from the phone can do is what a press on the laptop does: it ticks 
 watcher (`deskwatch`) merges the commit that was pinned.
 """
 import http.client
+import ipaddress
 import json
 import re
 import socket
@@ -34,6 +35,7 @@ import log
 
 BODY_MAX = 64 * 1024
 POSTS = ("tick", "comment", "seen")
+COMMENT_OPS = ("add", "reply", "status", "edit", "delete")     # the hub's five; see the README for why all five pass
 GETS = ("doc", "live")
 PAGE_ENTRY = "/desk"
 TIMEOUT = 15                     # the sign-in's connecting and answer
@@ -41,6 +43,9 @@ ASK_TIMEOUT = 60                 # the hub's answer to a request: a tick or a co
                                  # rendered first, and a read of the same document waits for that write
 READ_TIMEOUT = 30                # the phone's own body, once it has said how long it is
 STREAM_TIMEOUT = 70              # the hub's event stream says something every 25 s
+SIGNIN_WAIT = 120                # a device waiting on another's `sheaf open` or sign-in gives up after this
+STREAMS_PER_CLIENT = 6           # one page holds one stream, and a stream whose phone went away is let go only
+STREAMS_TOTAL = 24               # at the hub's next write (25 s), so a reconnecting device briefly holds two
 CHUNK = 8192
 LAST_EVENT = re.compile(r"[0-9A-Za-z:._-]{1,64}")
 PASSED = ("Content-Type", "Cache-Control", "Content-Security-Policy", "Referrer-Policy",
@@ -87,7 +92,7 @@ def _no_constant(name):
     raise ValueError(name)
 
 
-def _post_body(data, address):
+def _post_body(data, address, route):
     if len(data) > BODY_MAX:
         raise Refused(413, "that is too much for the desk")
     try:
@@ -101,6 +106,8 @@ def _post_body(data, address):
     if obj.get("tell", False) is not False:
         # A Tell runs the hub account's own agent session on the laptop: not a thing the desk page needs
         raise Refused(403, "the desk relay does not send a Tell")
+    if route == "/_/comment" and not (isinstance(obj.get("op"), str) and obj["op"] in COMMENT_OPS):
+        raise Refused(400, f"a comment's op is one of {', '.join(COMMENT_OPS)}")
     return json.dumps(obj).encode("utf-8")      # what was checked is what is sent, never the caller's own bytes
 
 
@@ -128,27 +135,65 @@ def plan(method, target, data, desk):
         if path in [f"/_/{g}" for g in GETS] and _only_doc(query, desk.address):
             return Plan("GET", f"{path}?doc={urllib.parse.quote(desk.address, safe='')}", None, path == "/_/live")
         raise nope
-    return Plan("POST", path, _post_body(data or b"", desk.address), False)
+    return Plan("POST", path, _post_body(data or b"", desk.address, path), False)
+
+
+class _Flight:
+    """One run of a slow question, and what it came to, for every request that asked it meanwhile."""
+    def __init__(self, generation):
+        self.generation, self.done, self.value, self.error = generation, threading.Event(), None, None
 
 
 class SheafHub:
     """The laptop's hub, as `sheaf` itself says where it is and how to sign in. Both are asked for
-    once and kept; a hub that moved or a key that was rotated is asked for again."""
+    once and kept; a hub that moved or a key that was rotated is asked for again.
+
+    Each question can take a minute (`sheaf open` up to 60 s, the sign-in up to 45 s), so the lock
+    guards the bookkeeping only and is never held across one. Requests that ask the same thing
+    while it runs share that one run, and what is kept is answered at once."""
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._desk = None
-        self._cookie = None
+        self._kept = {"desk": None, "cookie": None}
+        self._flights = {}
+        self._generation = 0
 
     def reset(self):
         with self._lock:
-            self._desk = self._cookie = None
+            self._generation += 1                   # a run that began before this has an answer out of date
+            self._kept = {"desk": None, "cookie": None}
+
+    def _ask(self, what, make, fresh=False):
+        with self._lock:
+            if not fresh and self._kept[what] is not None:
+                return self._kept[what]
+            flight = self._flights.get(what)
+            leader = flight is None
+            if leader:
+                flight = self._flights[what] = _Flight(self._generation)
+        if not leader:
+            if not flight.done.wait(SIGNIN_WAIT):
+                raise Refused(503, "the desk's hub is slow to say where it is")
+            if flight.error is not None:
+                raise flight.error
+            return flight.value
+        try:
+            flight.value = make()
+        except BaseException as err:
+            flight.error = err
+            raise
+        else:
+            with self._lock:
+                if flight.generation == self._generation:
+                    self._kept[what] = flight.value
+            return flight.value
+        finally:
+            with self._lock:
+                del self._flights[what]
+            flight.done.set()
 
     def desk(self):
-        with self._lock:
-            if self._desk is None:
-                self._desk = self._locate()
-            return self._desk
+        return self._ask("desk", self._locate)
 
     def _locate(self):
         try:
@@ -163,12 +208,7 @@ class SheafHub:
 
     def cookie(self, fresh=False):
         """`name=value`, the hub's cookie for this relay."""
-        with self._lock:
-            if fresh or self._cookie is None:
-                if self._desk is None:
-                    self._desk = self._locate()
-                self._cookie = self._sign_in(self._desk.port)
-            return self._cookie
+        return self._ask("cookie", lambda: self._sign_in(self.desk().port), fresh)
 
     @staticmethod
     def _sign_in(port):
@@ -199,6 +239,43 @@ class SheafHub:
 
 
 HUB = SheafHub()
+
+
+class Streams:
+    """How many event streams are open, in all and for each client: each holds a thread here and a
+    connection to the hub for as long as the page is open."""
+
+    def __init__(self, per_client=STREAMS_PER_CLIENT, total=STREAMS_TOTAL):
+        self._lock = threading.Lock()
+        self._per_client, self._total = per_client, total
+        self._open = {}
+
+    def take(self, client):
+        with self._lock:
+            if self._open.get(client, 0) >= self._per_client or sum(self._open.values()) >= self._total:
+                raise Refused(429, "too many desk streams are open: close the other desk pages and try again")
+            self._open[client] = self._open.get(client, 0) + 1
+
+    def drop(self, client):
+        with self._lock:
+            left = self._open.get(client, 0) - 1
+            if left > 0:
+                self._open[client] = left
+            else:
+                self._open.pop(client, None)
+
+
+STREAMS = Streams()
+
+
+def client_of(h):
+    """Who is asking: the address the `tailscale serve` proxy appended to X-Forwarded-For, which is the
+    last one (what came before it the caller wrote), else the connection's own."""
+    seen = h.headers.get("X-Forwarded-For", "").rpartition(",")[2].strip()
+    try:
+        return str(ipaddress.ip_address(seen))
+    except ValueError:
+        return h.client_address[0]
 
 
 def _ask(desk, plan_, cookie, last_event):
@@ -233,6 +310,15 @@ def _relay(plan_, desk, last_event):
 
 def serve(h, method):
     """Answer the request `h` (a `server.Handler`) holds. The caller has judged Host and, for a POST, Origin."""
+    held = []                                   # the stream places this request took
+    try:
+        _serve(h, method, held)
+    finally:
+        for client in held:
+            STREAMS.drop(client)
+
+
+def _serve(h, method, held):
     path = h.path.partition("?")[0]
     try:
         data = None
@@ -250,6 +336,9 @@ def serve(h, method):
                 raise Refused(408, "the body did not arrive") from None
         plan_ = plan(method, h.path, data, HUB.desk)
         desk = HUB.desk()
+        if plan_.stream:
+            STREAMS.take(client := client_of(h))
+            held.append(client)
         if plan_.target == PAGE_ENTRY:
             h.send_response(302)
             h.send_header("Location", desk.page)
