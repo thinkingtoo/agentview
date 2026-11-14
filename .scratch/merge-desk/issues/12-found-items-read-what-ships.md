@@ -6,8 +6,8 @@
 
 **Claimed by:** Wanda 2026-11-14 01:49
 
-**Status:** in-progress
+**Status:** in-progress until merged (done on branch wanda/12, Opus round 1 GO)
 
-- [ ] A found PR on a deploying repo is a Deploy item with What ships; on a test-only repo it stays Merge
-- [ ] A gh failure while classifying a found PR leaves it out of the desk for that day (logged), never a Merge item by default
-- [ ] Tests use a fake `gh` on PATH, never the real GitHub
+- [x] A found PR on a deploying repo is a Deploy item with What ships; on a test-only repo it stays Merge
+- [x] A gh failure while classifying a found PR leaves it out of the desk for that day (logged), never a Merge item by default
+- [x] Tests use a fake `gh` on PATH, never the real GitHub
