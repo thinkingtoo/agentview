@@ -656,6 +656,15 @@ class OwnRecord(unittest.TestCase):
         self.assertEqual(text.count("Not merged:"), 1)
         self.assertIn("Not merged: CI is red again", text)
 
+    def test_a_new_item_on_a_crlf_page_goes_under_its_heading_and_a_second_refusal_replaces_the_first(self):
+        rec = {}
+        text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec).replace("\n", "\r\n")
+        got = deskfile.put(text, "a/b#9", "- [ ] Merge a/b#9: new\n", record=rec)
+        self.assertEqual(got.count("## Pull requests waiting for your merge"), 1)
+        got = deskfile.settle(got, "a/b#1", "Not merged: CI is red", record=rec)
+        got = deskfile.settle(got.replace("\n", "\r\n").replace("\r\r", "\r"), "a/b#1", "Not merged: again", record=rec)
+        self.assertEqual(got.count("Not merged:"), 1)
+
     def test_a_page_two_generations_behind_its_record_is_still_replaced_whole(self):
         rec = {}
         text = self.hand_over(self.page(""), self.block(self.OLD_SHA), rec)

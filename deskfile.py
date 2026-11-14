@@ -590,7 +590,7 @@ def put(text, key, block, section="merge", record=None):
 def _heading_end(text, heading):
     """Offset just after the heading's own line (outside any comment), or None."""
     for offset, line, inside in _walk(text):
-        if not inside and line.rstrip("\n") == heading:
+        if not inside and line.rstrip("\r\n") == heading:
             return offset + len(line)
     return None
 
@@ -628,7 +628,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
         while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at]):
             at -= 1
         own = _own(record, k, block)
-        if RESULT.match(kept[at]) and own is not None and own[kept[at]] > 0:
+        if RESULT.match(kept[at].rstrip("\r")) and own is not None and own[kept[at].rstrip("\r")] > 0:
             del kept[at]
         if record is not None and _slot(k) in record:
             entry = record[_slot(k)]
