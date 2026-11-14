@@ -8,7 +8,9 @@
 
 **Blocked by:** 18
 
-**Status:** ready-for-agent
+**Claimed by:** Yara 2026-11-14 03:09
+
+**Status:** in-progress
 
 - [ ] `*a+*a+*b` against a 320-character branch answers within 1 s (test with a timeout)
 - [ ] A 3000-deep workflow gives a could-not-parse line and exit 0 (test)
