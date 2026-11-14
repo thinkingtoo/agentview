@@ -60,6 +60,7 @@ class Refused(Exception):
     def __init__(self, status, why, headers=()):
         super().__init__(why)
         self.status, self.why, self.headers = status, why, headers
+        self.generation = None                  # the hub's generation this refusal was about, when the hub knows it
 
 
 class Desk(NamedTuple):
@@ -142,6 +143,9 @@ def plan(method, target, data, desk):
     return Plan("POST", path, _post_body(data or b"", desk.address, path), False)
 
 
+_STALE = object()                                # a run's answer that a reset has made out of date
+
+
 class _Flight:
     """One run of a slow question, and what it came to, for every request that asked it meanwhile."""
     def __init__(self, generation):
@@ -162,12 +166,22 @@ class SheafHub:
         self._flights = {}
         self._generation = 0
 
-    def reset(self):
+    @property
+    def generation(self):
         with self._lock:
+            return self._generation
+
+    def reset(self, seen=None):
+        """Forget what is kept. `seen` is the generation the failing request saw: a 503 about an older one
+        has been acted on already, and does not invalidate the run that began after it."""
+        with self._lock:
+            if seen is not None and seen != self._generation:
+                return
             self._generation += 1                   # a run that began before this has an answer out of date
             self._kept = {"desk": None, "cookie": None}
 
     def _ask(self, what, make, fresh=False):
+        began = self.generation
         for _ in range(FOLLOW_ROUNDS):
             with self._lock:
                 if not fresh and self._kept[what] is not None:
@@ -179,27 +193,37 @@ class SheafHub:
                 if leader:
                     flight = self._flights[what] = _Flight(self._generation)
             if leader:
-                return self._lead(what, make, flight)
+                got = self._lead(what, make, flight)
+                if got is not _STALE:
+                    return got
+                continue                            # a reset came while it ran: ask again, as a follower would
             if not flight.done.wait(SIGNIN_WAIT):
-                raise Refused(503, "sheaf is slow to answer where the desk's hub is or how to sign in")
+                slow = Refused(503, "sheaf is slow to answer where the desk's hub is or how to sign in")
+                slow.generation = flight.generation
+                raise slow
             if flight.error is not None:
                 raise flight.error                  # a failure is every waiting request's answer, reset or not
             with self._lock:
                 if flight.generation != self._generation:
                     continue                        # a reset came while this one waited: its value is out of date
             return flight.value
-        raise Refused(503, "sheaf's answer kept going out of date while this request waited for it")
+        late = Refused(503, "sheaf's answer kept going out of date while this request waited for it")
+        late.generation = began                     # the generations it saw are over: that is no reason for another reset
+        raise late
 
     def _lead(self, what, make, flight):
         try:
             flight.value = make()
         except BaseException as err:
+            if isinstance(err, Refused):
+                err.generation = flight.generation
             flight.error = err
             raise
         else:
             with self._lock:
-                if flight.generation == self._generation:
-                    self._kept[what] = flight.value
+                if flight.generation != self._generation:
+                    return _STALE
+                self._kept[what] = flight.value
             return flight.value
         finally:
             with self._lock:
@@ -340,6 +364,7 @@ def serve(h, method):
 
 def _serve(h, method, held):
     path = h.path.partition("?")[0]
+    seen = HUB.generation                       # what this request's 503, if it gets one, is about
     try:
         data = None
         if method == "POST":
@@ -372,7 +397,7 @@ def _serve(h, method, held):
             raise Refused(503, "the laptop's sheaf hub did not answer") from None
     except Refused as why:
         if why.status == 503:
-            HUB.reset()                         # where the hub is, and its cookie, are asked for again
+            HUB.reset(seen if why.generation is None else why.generation)   # where the hub is, and its cookie, are asked for again
         log.event("desk-relay-refused", method=method, path=path, status=why.status, why=why.why)
         if why.status in (411, 413):
             h.close_connection = True
