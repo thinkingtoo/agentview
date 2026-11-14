@@ -163,7 +163,6 @@ class Differ(unittest.TestCase):
         head = "- This pull request changes workflow files:"
         old = [head, "  - .github/workflows/a.yml", "  - .github/workflows/_shared_.yml"]
         self.assertEqual(deskships.changed(old, []), "")
-        self.assertEqual(deskships.changed(old, [head, "  - .github/workflows/a.yml", "  - .github/workflows/*shared*.yml"]), "")
         self.assertIn("c.yml", deskships.changed(old, [head, "  - .github/workflows/c.yml"]))
 
     def test_a_could_not_tell_answer_now_is_always_a_change(self):
@@ -180,16 +179,11 @@ class Differ(unittest.TestCase):
         got = deskships.read("o/r", "main", "p" * 40, gh)
         self.assertEqual(sum(1 for l in got if l.startswith("  - .github/workflows/w")), 60)
 
-    def test_punctuation_the_page_rewrote_in_a_workflow_line_is_no_change(self):
-        old = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./**init**.sh"]
-        new = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./__init__.sh"]
-        self.assertEqual(deskships.changed(old, new), "")
-
     def _line_change(self, old, new):
         head = "- Fires on push to main: deploy.yml"
         return deskships.changed([head, "  - " + old], [head, "  - " + new])
 
-    def test_a_character_the_page_never_writes_is_a_change(self):
+    def test_the_stored_lines_are_compared_exactly_not_after_stripping(self):
         for old, new in [
             ("run: ./deploy_prod.sh", "run: ./deployprod.sh"),
             ("--env=prod_eu", "--env=prodeu"),
@@ -198,26 +192,20 @@ class Differ(unittest.TestCase):
             ("rsync dist/* host:/srv", "rsync dist/ host:/srv"),
             ("./build.sh < in.txt; ./deploy.sh --target prod > out.log", "./build.sh < in.txt; ./deploy.sh --target staging-eu > out.log"),
             ("./deploy.sh <in --target prod >out.log", "./deploy.sh <in --target staging >out.log"),
+            ("run: echo \\$TOKEN", "run: echo $TOKEN"),
+            ("cat <prod>out", "cat <dev>out"),
+            ("run: ./deploy.sh", "run: ./deploy.sh <prod>"),
+            ("rm -rf dist/_", "rm -rf dist/*"),
+            ("x && y", "x \\&& y"),
+            ("run: ./__init__.sh", "run: ./**init**.sh"),
         ]:
-            with self.subTest(old=old):
+            with self.subTest(old=old, new=new):
                 self.assertNotEqual(self._line_change(old, new), "")
 
-    def test_a_span_added_to_a_line_is_a_change(self):
-        self.assertNotEqual(self._line_change("run: ./deploy.sh", "run: ./deploy.sh <prod>x"), "")
-        self.assertNotEqual(self._line_change("run: ./deploy.sh", "run: ./deploy.sh < in.txt"), "")
-        self.assertNotEqual(self._line_change("run: ./deploy.sh", "run: ./deploy.sh < in > out"), "")
-
-    def test_what_the_page_writes_back_is_no_change(self):
-        for old, new in [
-            ("./__init__.sh", "./**init**.sh"),
-            ("rsync dist/* host:/srv", r"rsync dist/\* host:/srv"),
-            ("${{ secrets.K }}", r"\${{ secrets.K }}"),
-            ("a < b > c", r"a \< b \> c"),
-            ("uses _shared_ flow", "uses *shared* flow"),
-            ("run: ./deploy.sh <staging>", "run: ./deploy.sh"),
-        ]:
-            with self.subTest(old=old):
-                self.assertEqual(self._line_change(old, new), "")
+    def test_the_same_raw_line_is_no_change_whatever_it_holds(self):
+        for line in ["run: ./deploy.sh <staging>", "run: ./a_b.sh \\* <https://x.y> `z`", "cat <in --x >out", "a  b"]:
+            with self.subTest(line=line):
+                self.assertEqual(self._line_change(line, line), "")
 
     def test_commits_that_dropped_out_of_the_range_are_not_a_change(self):
         old = ["- Fires on push to main: deploy.yml", "- Commits that go out (2):", "  - aaaaaaa One", "  - bbbbbbb Two"]
@@ -228,12 +216,6 @@ class Differ(unittest.TestCase):
         old = ["- Commits that go out (1):", "  - aaaaaaa One"]
         new = ["- Commits that go out (2):", "  - aaaaaaa One", "  - ccccccc Three"]
         self.assertIn("commit ccccccc Three", deskships.changed(old, new))
-
-    def test_a_backslash_the_page_added_to_the_stored_lines_is_not_a_change(self):
-        old = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./my\\_deploy.sh \\*"]
-        new = ["- Fires on push to main: deploy.yml", "  - deploy.yml:7: run: ./my_deploy.sh *"]
-        self.assertEqual(deskships.changed(old, new), "")
-
 
     def test_what_changed_is_named(self):
         old = ["- Fires on push to main: deploy.yml", "  - 7: run: ./deploy.sh", "- Commits that go out (1):", "  - aaaaaaa One"]

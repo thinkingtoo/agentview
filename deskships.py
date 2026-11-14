@@ -168,16 +168,6 @@ FLOWS = "- This pull request changes workflow files:"
 UNKNOWN = "- Could not tell what ships"
 
 
-def _same(line):
-    """A line as the page may have re-saved it, and no further: a backslash before punctuation taken out, a
-    bare tag (`<name>`, no attributes, so a `<in ... >out` redirect is not one) dropped as pandoc drops an
-    unknown one, `_` read as `*` (emphasis is written `*`), spaces folded. Every other character counts, so
-    `deploy_prod` and `deployprod`, `&&` and `||`, and the words between a shell `<` and `>` stay different."""
-    line = re.sub(r"\\([!-/:-@\[-`{-~])", r"\1", line)
-    line = re.sub(r"</?[A-Za-z][A-Za-z0-9-]*/?>", "", line)
-    return " ".join(line.replace("_", "*").split())
-
-
 def _split(lines):
     """(lines compared as they are, commit shas, changed workflow files, whether commits were hidden behind "and N more")."""
     rest, shas, flows, cut, inside, in_flows = [], [], set(), False, False, False
@@ -186,7 +176,7 @@ def _split(lines):
             continue
         in_files = in_flows and l.startswith("  - ")
         if in_files:
-            flows.add(_same(l[4:]))
+            flows.add(l[4:])
             continue
         in_flows = l == FLOWS
         if in_flows:
@@ -203,15 +193,16 @@ def _split(lines):
 
 
 def changed(old, new):
-    """"" when what ships is the same; else what differs. Not compared: the person's Outside line, and the
+    """Both sides are raw `read` output, compared character for character: nothing is stripped or folded, because
+    what the page makes of a line is no business of this check. "" when what ships is the same; else what differs. Not compared: the person's Outside line, and the
     commits and changed workflow files that left the range (once the PR this one stacks on is merged they do);
     only a new one counts, and no commit counts when the stored range was cut."""
     old_rest, old_shas, old_flows, old_cut = _split(old)
     new_rest, new_shas, new_flows, _ = _split(new)
-    old_same = {_same(l) for l in old_rest}
-    new_same = {_same(l) for l in new_rest}
-    gone = [l.strip(" -") for l in old_rest if _same(l) not in new_same]
-    came = [l.strip(" -") for l in new_rest if _same(l) not in old_same]
+    old_set = set(old_rest)
+    new_set = set(new_rest)
+    gone = [l.strip(" -") for l in old_rest if l not in new_set]
+    came = [l.strip(" -") for l in new_rest if l not in old_set]
     came += [f"workflow file {f}" for f in sorted(new_flows - old_flows)]
     if not old_cut:
         came += [f"commit {text}" for sha, text in new_shas if sha not in {s for s, _ in old_shas}]

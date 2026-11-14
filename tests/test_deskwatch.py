@@ -137,7 +137,7 @@ class Case(unittest.TestCase):
         with deskfile.locked():
             deskfile.put_item(k, desk.item_block(repo, n, f"what {n} does", "merge", "CI green", pinned, "dev", after,
                                                  "Faisal", "2026-11-13 10:40"))
-            desk.log("ready", k, pinned=pinned)
+            desk.log("ready", k, pinned=pinned, ships=[])
         return k
 
     def workflow(self, name, text, repo=REPO):
@@ -156,7 +156,7 @@ class Case(unittest.TestCase):
         with deskfile.locked():
             deskfile.put_item(k, desk.item_block(repo, n, f"what {n} does", "merge", "CI green", pinned, "dev", None,
                                                  "Faisal", "2026-11-13 10:40", ships=ships))
-            desk.log("ready", k, pinned=pinned)
+            desk.log("ready", k, pinned=pinned, ships=ships)
         return k
 
     def tick_box(self, n, repo=REPO):
@@ -273,6 +273,33 @@ class Ships(Case):
         deskwatch.tick()
         self.assertEqual(self.merge_calls(), [])
         self.assertIn("Not merged: what ships changed", self.item(272).block)
+
+    def test_the_press_compares_the_stored_raw_lines_not_the_text_on_the_page(self):
+        k = self.deploy()
+        deskfile.edit(lambda t: t.replace("deploy.yml", "something-else.yml"))     # the person or the page rewrote the shown lines
+        deskwatch.tick()
+        self.assertEqual(len(self.merge_calls()), 1)
+        self.assertEqual(self.events(k), ["ready", "pressing", "merged"])
+
+    def test_a_deploy_line_that_differs_only_where_the_page_would_strip_refuses_the_press(self):
+        for old, new in [("./deploy.sh", "./deploy.sh <prod>"), ("./deploy.sh", "\\./deploy.sh"), ("./deploy.sh", "./deploy.sh_")]:
+            with self.subTest(new=new):
+                self.deploy()
+                self.workflow("deploy.yml", DEPLOY_YML.replace(old, new))
+                deskwatch.tick()
+                self.assertEqual(self.merge_calls(), [])
+                self.assertRegex(self.item(272).block, r"Not merged: what ships changed")
+
+    def test_an_item_handed_over_before_the_lines_were_stored_must_be_handed_over_again(self):
+        self.pr(272)
+        k = self.hand_over(272)
+        deskfile.edit(lambda t: t)
+        lines = [l for l in desk.log_path().read_text().splitlines()]
+        desk.log_path().write_text("\n".join(l.replace(', "ships": []', "") for l in lines) + "\n")
+        self.tick_box(272)
+        deskwatch.tick()
+        self.assertEqual(self.merge_calls(), [])
+        self.assertRegex(self.item(272).block, r"Not merged: .*hand it over again")
 
     def test_a_merge_item_stays_a_merge_item_when_the_workflows_only_test(self):
         self.pr(272)

@@ -131,6 +131,15 @@ class Ships(Case):
         self.assertEqual(item.pinned, SHA)
         self.assertEqual(item.ships[0], "- Fires on push to dev: deploy.yml")
 
+    def test_the_ready_record_keeps_the_raw_lines_the_press_will_compare(self):
+        self.workflow("deploy.yml", DEPLOY_YML)
+        self.assertEqual(self.ready(5, self.REPO).returncode, 0)
+        (item,) = deskfile.items(self.page)
+        log = (self.state / "agentview" / "merge-desk.log").read_text().splitlines()
+        (rec,) = [r for r in map(json.loads, log) if r["event"] == "ready"]
+        self.assertEqual(rec["ships"], item.ships)
+        self.assertEqual(rec["ships"][0], "- Fires on push to dev: deploy.yml")
+
     def test_a_repo_whose_workflows_only_test_stays_a_merge_item(self):
         self.workflow("ci.yml", TEST_YML)
         self.assertEqual(self.ready(5, self.REPO).returncode, 0)
