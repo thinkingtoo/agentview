@@ -27,3 +27,10 @@
 
 ## Done (Hilde, 2026-11-14)
 Branch hilde/29 in ~/.claude at c2db455 (not merged; waiting for Tarek). Tests: routines/tests/test_branch_deploys.py 78 passed. Class c left: an unclosed /dev/null fd in _emit (pre-existing, short-lived CLI), and test_no_workflows_folder_is_still_exit_1 runs the script twice per assertion.
+
+## Decisions
+- A `.github/workflows` that exists but is a plain file stays exit 1 (Codex round 1 called it class a; Tarek, 2026-11-14): GitHub reads no workflows from a file, so nothing fires.
+
+## Open notes (class c, not fixed)
+- `_emit` in routines/branch_deploys.py opens /dev/null for `dup2` and never closes the descriptor (pre-existing code, short-lived CLI).
+- `test_no_workflows_folder_is_still_exit_1` runs the script twice per assertion, taking the return code and stdout from different processes.
