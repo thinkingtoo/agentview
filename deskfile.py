@@ -398,11 +398,32 @@ def _anchored(head, comment):
     return bare(before).endswith(bare(quote.group(1)))
 
 
+THREAD = re.compile(r"<!--\s*(?:sheaf|rd)-comment\b")
+
+
 def _orphaned(comment):
-    """The thread as sheaf writes one whose passage is gone: `orphan=1` before the quote, on a line of its own."""
-    if ORPHAN.match(comment):
+    """The thread as sheaf writes one whose passage is gone: `orphan=1` before the quote, on a line of its own. A
+    comment that is not a sheaf thread is the person's note and stays as it is."""
+    if ORPHAN.match(comment) or not THREAD.match(comment):
         return comment
     return re.sub(r"(\bquote=\")", r"orphan=1 \1", comment, count=1)
+
+
+def _without_words(line, mid):
+    """`line` with the person's words `mid` taken out and every thread left where it stood among the words that are
+    AgentView's: the threads quote those words, so they must keep following them. The words come after ours (`mid`
+    is the end of the line with the threads out); a thread after them goes at the end."""
+    if not mid:
+        return line.rstrip("\n")
+    bare = CLOSED.sub("", line.rstrip("\r\n"))
+    keep, out, at = len(bare) - len(mid), "", 0
+    for m in CLOSED.finditer(line.rstrip("\r\n")):
+        text = line[at:m.start()]
+        out += text[:max(keep, 0)]
+        keep -= len(text)
+        out += m.group(0)
+        at = m.end()
+    return out + line[at:].rstrip("\r\n")[:max(keep, 0)]
 
 
 def _settle_threads(rest, old_head, new_head):
@@ -452,7 +473,10 @@ def carry(old, new, own=None, orders=None, at=None):
             if not line.strip():
                 blanks.append(line)                              # kept only when a line of the person's comes after it
                 continue
-            (theirs.setdefault(after(last), []) if after(last) else orphans).extend(blanks + [line])
+            if "<!--" in CLOSED.sub("", line):                    # a comment of the person's left open: it and what it swallows go last, closed, so it hides none of the lines AgentView writes
+                orphans.extend(blanks + [line.rstrip("\n") + " -->\n"])
+            else:
+                (theirs.setdefault(after(last), []) if after(last) else orphans).extend(blanks + [line])
             blanks = []
             continue
         last = kind
@@ -475,7 +499,7 @@ def carry(old, new, own=None, orders=None, at=None):
             gone = CLOSED.sub(lambda m: _orphaned(m.group(0)), rest)
             orphans.append("  " + gone + (" -->" if "<!--" in CLOSED.sub("", rest) and gone.rfind("<!--") > gone.rfind("-->") else "") + "\n")   # its line is gone: nothing is left to quote; a comment never closed is closed here, or it swallows the items below
         else:
-            marks.setdefault(home(kind), []).append((head.rstrip("\r\n"), rest, line.rstrip("\n") if mid == "" else None))
+            marks.setdefault(home(kind), []).append((head.rstrip("\r\n"), rest, _without_words(line, mid) if mid is not None else None))
     out, standing = [], Counter()
     def stand(line, ours=False):
         head = _split(line)[0].rstrip("\r\n")
@@ -623,13 +647,15 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
             return text
         body = block.rstrip("\n")
         tail = block[len(body):] or "\n"
-        kept = body.split("\n")
+        kept = [l.rstrip("\n") for l in _logical(body)]
         at = len(kept) - 1                                              # our line is always the last one, bar the person's comments after it
-        while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at]):
+        while at > 0 and re.fullmatch(r"\s*<!--.*-->\s*", kept[at], re.S):
             at -= 1
-        own = _own(record, k, block)
-        if RESULT.match(kept[at].rstrip("\r")) and own is not None and own[kept[at].rstrip("\r")] > 0:
+        own, left = _own(record, k, block), []
+        head, rest = _split(kept[at])
+        if RESULT.match(head.rstrip("\r")) and own is not None and own[head.rstrip("\r")] > 0:
             del kept[at]
+            left = ["  " + CLOSED.sub(lambda m: _orphaned(m.group(0)), rest)] if rest.strip() else []     # the result line is gone: what was on it stays, its threads as orphans
         if record is not None and _slot(k) in record:
             entry = record[_slot(k)]
             entry["lines"] = [l for l in entry["lines"] if not RESULT.match(l)] + ["  - " + result]
@@ -637,7 +663,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
             record[_slot(k)] = {"lines": ["  - " + result], "prev": []}
         if untick and kept[0][3] in "xX":
             kept[0] = kept[0][:3] + " " + kept[0][4:]
-        return text[:start] + "\n".join(kept + ["  - " + result]) + tail + text[end:]
+        return text[:start] + "\n".join(kept + ["  - " + result] + left) + tail + text[end:]
     return text
 
 

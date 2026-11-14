@@ -1213,6 +1213,77 @@ class Lock(unittest.TestCase):
         self.assertEqual(sorted(i.key for i in deskfile.items(f)), sorted(f"o/r#{i}" for i in range(1, 21)))
 
 
+class ThreadsOnOneLine(unittest.TestCase):
+    """Ticket 23: what sheaf and the person put on one of AgentView's lines survives hand-overs in its place, a comment
+    that is not a sheaf thread is never touched, and a comment the person left open does not swallow the page."""
+
+    OLD_SHA, NEW_SHA, THIRD_SHA = "a" * 40, "b" * 40, "c" * 40
+
+    def thread(self, quote, cid, kind="sheaf-comment"):
+        return f'<!-- {kind} id={cid} by="Thierry" at=2026-11-14T01:00 status=open quote="{quote}"\nWait for {cid}.\n-->'
+
+    def block(self, sha, when="01:00", ships=()):
+        out = "- [ ] Deploy a/b#1: what it does\n  - Recommendation: Merge it.\n"
+        if ships:
+            out += "  - What ships:\n" + "".join(f"    - {b}\n" for b in ships)
+        return out + f"  - Pinned commit: {sha}, into main\n  - Handed over by a session, 2026-11-14 {when}.\n"
+
+    def page(self, body):
+        return ("# D\n\n## Pull requests waiting for your merge\n" + body + "- [ ] Merge a/b#2: next\n"
+                "  - Pinned commit: " + "d" * 40 + "\n")
+
+    def over(self, text, block, rec):
+        return deskfile.put(text, "a/b#1", block, record=rec)
+
+    def test_two_threads_and_the_persons_words_on_one_line_keep_their_order_across_two_hand_overs(self):
+        rec, c1, c2 = {}, self.thread("Merge", "c1"), self.thread("it.", "c2")
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        line = f"  - Recommendation: Merge{c1} it.{c2} and fine\n"
+        text = text.replace("  - Recommendation: Merge it.\n", line, 1)
+        first = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        second = self.over(first, self.block(self.THIRD_SHA, when="03:00"), rec)
+        for got in (first, second):
+            self.assertIn(f"  - Recommendation: Merge{c1} it.{c2}\n", got)      # each thread still follows the words it quotes
+            self.assertEqual(got.count("and fine"), 1)                           # the person's words, once, on a line of their own
+            self.assertNotIn("orphan=1", got)
+        self.assertEqual(deskfile.put(second, "a/b#1", self.block(self.THIRD_SHA, when="03:00"), record=rec), second)
+
+    def test_a_comment_that_is_not_a_sheaf_thread_is_never_marked_orphan(self):
+        rec, note = {}, '<!-- todo quote="restart" check with Sven -->'
+        text = self.over(self.page(""), self.block(self.OLD_SHA, ships=["restart"]), rec)
+        text = text.replace("    - restart\n", f"    - restart{note}\n", 1)
+        got = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)           # the new block has no ships list: the line is gone
+        self.assertIn(note, got)
+        self.assertNotIn("orphan=1", got)
+        sheaf = self.thread("restart", "c1")
+        text = self.over(self.page(""), self.block(self.OLD_SHA, ships=["restart"]), rec)
+        text = text.replace("    - restart\n", f"    - restart{sheaf}\n", 1)
+        self.assertIn("orphan=1", self.over(text, self.block(self.NEW_SHA, when="02:00"), rec))   # a sheaf thread still is
+
+    def test_an_unclosed_comment_in_a_persons_line_leaves_the_following_items_intact(self):
+        rec = {}
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec) + "- [ ] Merge a/b#4: after\n"
+        text = text.replace("  - Recommendation: Merge it.\n", "  - Recommendation: Merge it.\n  my note <!-- never closed\n", 1)
+        got = self.over(text, self.block(self.NEW_SHA, when="02:00"), rec)
+        self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)     # the new lines are not in the comment
+        self.assertIn("my note <!-- never closed", got)
+        self.assertIn("- [ ] Merge a/b#4: after", got)                          # what the comment swallowed is kept as it was, once
+        self.assertEqual(got.count("Merge a/b#4"), 1)
+        self.assertEqual(got.count("<!--"), got.count("-->"))                  # and the comment ends: it swallows nothing of what comes next
+        self.assertEqual(self.over(got, self.block(self.NEW_SHA, when="02:00"), rec), got)        # a second, identical hand-over changes nothing
+
+    def test_settle_replaces_a_result_line_that_carries_a_thread_and_keeps_the_thread(self):
+        rec, c1 = {}, self.thread("Not merged: CI is red", "c1")
+        text = self.over(self.page(""), self.block(self.OLD_SHA), rec)
+        text = deskfile.settle(text, "a/b#1", "Not merged: CI is red", record=rec)
+        text = text.replace("Not merged: CI is red\n", f"Not merged: CI is red{c1}\n", 1)
+        got = deskfile.settle(text, "a/b#1", "Merged as abcdef0 at 10:00", record=rec)
+        self.assertNotIn("  - Not merged: CI is red", got)          # the old result line is replaced...
+        self.assertIn("Wait for c1.", got)                          # ...and the thread on it is kept, as an orphan, on a line of its own
+        self.assertIn("orphan=1", got)
+        self.assertEqual(got.count("  - Merged as abcdef0 at 10:00"), 1)
+
+
 class CopyOfOurLine(unittest.TestCase):
     """A person's byte-identical copy of a line AgentView wrote is theirs (ticket 26): the record says in what order
     AgentView wrote its lines and how many identical lines stood before each, so a copy out of its place is not ours."""
