@@ -1101,6 +1101,17 @@ class OwnRecord(unittest.TestCase):
         self.assertEqual(deskfile.drop(inst, "install:tool", record={}), inst)         # an install key is a tool's: exact
         self.assertNotIn("Install Tool", deskfile.drop(inst, "install:Tool", record={}))
 
+    def test_two_items_of_one_slot_are_a_conflict_that_put_settle_and_drop_resolve_on_the_first(self):
+        text = self.page(self.block(self.OLD_SHA))
+        rec = written(text)
+        two = text.replace("- [ ] Merge a/b#2: next\n", "- [ ] Deploy A/b#1: again\n  - Pinned commit: " + "e" * 40 + ", into main\n- [ ] Merge a/b#2: next\n")
+        self.assertEqual([i.pinned for i in deskfile.parse(two, rec)][:2], [self.OLD_SHA, ""])      # the entry is the first item's: the second is pinned at nothing
+        got = deskfile.settle(two, "A/B#1", "Merged at 12:00", record=rec)
+        self.assertEqual(got.index("Merged at 12:00") < got.index("Deploy A/b#1"), True)           # on the first
+        self.assertEqual(deskfile.put(two, "A/b#1", self.block(self.NEW_SHA, rec="R2", when="02:00"), record=rec).count("Deploy A/b#1: again"), 1)
+        self.assertEqual(deskfile.drop(two, "A/b#1", record=rec).count("Deploy"), 1)
+        self.assertIn("Deploy A/b#1: again", deskfile.drop(two, "A/b#1", record=rec))
+
     def test_adopt_does_not_take_a_bullet_after_a_blank_line_in_the_ships_list(self):
         f, rec = self.legacy()
         f.write_text(f.read_text().replace("  - Pinned commit:", "  - What ships:\n    - Outside GitHub: one\n\n    - the person's bullet\n  - Pinned commit:", 1))
@@ -1927,7 +1938,7 @@ class SettleAndPutShapes(unittest.TestCase):
         f = tmp / "merge-desk.md"
         deskfile.put_item("a/b#1", self.block(self.OLD_SHA), file=f)
         f.write_text(f.read_text() + "- [ ] Merge A/b#1: again\n  - Pinned commit: " + "e" * 40 + ", into main\n")
-        self.assertEqual(deskfile.adopt(f), ([], ["A/b#1"]))
+        self.assertEqual(deskfile.adopt(f), ([], ["a/b#1", "A/b#1"]))
 
     def test_a_persons_plain_copy_of_our_pin_line_is_theirs_when_a_thread_sits_in_the_middle_of_ours(self):
         rec = {}

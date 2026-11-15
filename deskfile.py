@@ -276,11 +276,12 @@ def parse(text, record=None):
     """The items of `text`. `record` is what AgentView wrote last (`edit` gives it): an item is pinned by its own
     `Pinned commit:` line only (a line the person wrote or changed pins nothing). An item with no entry in it, or no
     record at all, is pinned at nothing (""), and a press on it is refused until it is handed over again."""
-    found = []
+    found, seen = [], set()
     for key, start, end in _spans(text):
         block = text[start:end]
         visible = re.sub(r"<!--.*?-->", "", block, flags=re.S)              # a comment pins nothing, and orders nothing
-        got = (record or {}).get(_slot(key))                                 # the pin is read from what was written last, not from the generation before it
+        got = None if _slot(key) in seen else (record or {}).get(_slot(key))      # the pin is read from what was written last, not from the generation before it; the entry is the first item's, a second one under the same slot has none
+        seen.add(_slot(key))
         mine = _pin_line(block, None if got is None else Counter(got["lines"]), None if got is None else _orders(got, prev=False))
         pin, order = PINNED.search(mine or ""), AFTER.search(visible)     # an order only refuses a press, so a person's line may add one
         found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block, int(order.group(1)) if order else 0, ships_of(block)))
@@ -980,7 +981,7 @@ def adopt(file=None):
     """One-time, by hand (`desk adopt`): for each item with no entry in the record, write the entry from the lines
     of its block that AgentView wrote (by shape and place), taking them as its own. Items that have an entry are left
     alone, so a second run changes nothing. An item with two lines of one kind is skipped: it is the person's to sort
-    out. Refuses when the record file exists but cannot be read (corrupt means nothing is ours, not "start again").
+    out. So is each of two items whose keys differ only by case (one PR, one record entry: `_same`). Refuses when the record file exists but cannot be read (corrupt means nothing is ours, not "start again").
     Returns (the keys adopted, the keys skipped)."""
     f = Path(file) if file else path()
     rec = f.parent / RECORD
@@ -991,14 +992,12 @@ def adopt(file=None):
         skipped.clear()                                      # `edit` may run this again on a page that moved under it
         if rec.exists() and not _load_record(f) and not _is_empty_record(rec):      # looked at under the lock: nobody changes it between this and the write
             raise OSError(f"{rec} cannot be read; look at it before adopting")
-        record, seen = _held.record, set()
+        record = _held.record
         spans = _spans(text)
         slots = Counter(_slot(k) for k, _, _ in spans)
         for k, start, end in spans:
-            twin = _slot(k) in seen
-            seen.add(_slot(k))
-            if slots[_slot(k)] > 1 and (twin or _slot(k) not in record or _only_results(record[_slot(k)])):
-                skipped.append(k)                            # two items under one record entry (the case of their keys differs): one PR, a conflict for the person; neither takes the entry, and a second one has none of its own when the entry was there
+            if slots[_slot(k)] > 1:
+                skipped.append(k)                            # two items under one record entry (the case of their keys differs): one PR, a conflict for the person; neither takes the entry, whether it was there or not
                 continue
             if _slot(k) in record and not _only_results(record[_slot(k)]):
                 continue
