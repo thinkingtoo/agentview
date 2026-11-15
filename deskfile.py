@@ -216,7 +216,7 @@ def _unhidden(text, key):
         if at is None or at == last:
             break
         last = at
-        spans = [(s, e) for k, s, e in _spans(here) if k == key or (k.lower() == key.lower() and not key.startswith("install:"))]
+        spans = [(s, e) for k, s, e in _spans(here) if _same(k, key)]
         if spans and at >= spans[0][1]:
             break
         end = len(here)
@@ -227,7 +227,7 @@ def _unhidden(text, key):
         end -= len(here[:end]) - len(here[:end].rstrip("\r\n"))     # ... and before the line end that precedes it
         here = here[:end] + " -->" + here[end:]
         found = True
-    shown = any(k == key or (k.lower() == key.lower() and not key.startswith("install:")) for k, _, _ in _spans(here))
+    shown = any(_same(k, key) for k, _, _ in _spans(here))
     return here if found and shown else text
 
 
@@ -640,6 +640,14 @@ def _slot(key):
     return key if key.startswith("install:") else key.lower()
 
 
+def _same(k, key):
+    """Whether the page's key `k` names the item `key`. GitHub's owner and repo names are not case-sensitive, so `a/b#1`
+    and `A/b#1` are one PR and share one record slot; an `install:` key is a tool's and is exact. The one rule of `put`,
+    `settle`, `drop` and `_unhidden`; a page that holds two items of one slot is a conflict (`adopt` skips both) and
+    these four act on the first of them in page order."""
+    return _slot(k) == _slot(key)
+
+
 def _specific(texts, other):
     """The lines of `texts` that `other` does not have (as many times over): what tells the one generation from the other."""
     return Counter(texts) - Counter(other)
@@ -738,7 +746,7 @@ def put(text, key, block, section="merge", record=None):
         block += "\n"
     text = _unhidden(text, key)
     for k, start, end in _spans(text):
-        if k == key or (k.lower() == key.lower() and not key.startswith("install:")):   # GitHub's names are not case-sensitive, a tool's are
+        if _same(k, key):
             got, at = (record or {}).get(_slot(k)), []
             behind = got is not None and _prev_stands(got, text[start:end])
             kept = carry(text[start:end], block, _own(record, k, text[start:end]), None if got is None else _orders(got), at)
@@ -781,7 +789,7 @@ def drop(text, key, record=None):
     _refuse_unreadable_record()
     text = _unhidden(text, key)
     for k, start, end in _spans(text):
-        if k == key:
+        if _same(k, key):
             if record is not None:
                 record.pop(_slot(k), None)
             return text[:start] + text[end:]
@@ -801,7 +809,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
     record = getattr(_held, "record", None) if record is None else record
     text = _unhidden(text, key)
     for k, start, end in _spans(text):
-        if k != key:
+        if not _same(k, key):
             continue
         block = text[start:end]
         if pinned is not None and parse(block, record)[0].pinned != pinned:      # the item was handed over again meanwhile
@@ -984,11 +992,13 @@ def adopt(file=None):
         if rec.exists() and not _load_record(f) and not _is_empty_record(rec):      # looked at under the lock: nobody changes it between this and the write
             raise OSError(f"{rec} cannot be read; look at it before adopting")
         record, seen = _held.record, set()
-        for k, start, end in _spans(text):
+        spans = _spans(text)
+        slots = Counter(_slot(k) for k, _, _ in spans)
+        for k, start, end in spans:
             twin = _slot(k) in seen
             seen.add(_slot(k))
-            if twin and _slot(k) in record:
-                skipped.append(k)                            # a second item under the same record entry (the case of its key differs), whether the entry was there or made here: it cannot have one of its own
+            if slots[_slot(k)] > 1 and (twin or _slot(k) not in record or _only_results(record[_slot(k)])):
+                skipped.append(k)                            # two items under one record entry (the case of their keys differs): one PR, a conflict for the person; neither takes the entry, and a second one has none of its own when the entry was there
                 continue
             if _slot(k) in record and not _only_results(record[_slot(k)]):
                 continue

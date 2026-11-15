@@ -1070,7 +1070,36 @@ class OwnRecord(unittest.TestCase):
         f.write_text(f.read_text() + f.read_text().split("Deploy a/b#1", 1)[1].split("- [ ] Deploy a/b#2")[0].join(["- [ ] Deploy A/b#1", ""]))
         done, skipped = deskfile.adopt(f)
         self.assertEqual(sorted(k.lower() for k in done + skipped), ["a/b#1", "a/b#1", "a/b#2"])
-        self.assertEqual(len(done), 2)
+        self.assertEqual(done, ["a/b#2"])                      # one PR under two keys is a conflict: neither takes the entry (ticket 36)
+
+    def case_page(self):
+        """A legacy page of two items whose keys differ only by case; the first has two Recommendation lines."""
+        f, rec = self.legacy()
+        text = f.read_text()
+        one = text[text.index("- [ ] Deploy a/b#1"):text.index("- [ ] Deploy a/b#2")]
+        head = text[:text.index("- [ ] Deploy a/b#1")]
+        twice = one.replace("  - Recommendation: R1\n", "  - Recommendation: R1\n  - Recommendation: mine\n", 1)
+        self.assertNotEqual(twice, one)
+        f.write_text(head + twice + one.replace("a/b#1", "A/b#1"))
+        return f, rec
+
+    def test_adopt_gives_neither_of_two_items_that_differ_only_by_case_the_others_record(self):
+        f, rec = self.case_page()
+        done, skipped = deskfile.adopt(f)
+        self.assertEqual((done, sorted(skipped)), ([], ["A/b#1", "a/b#1"]))        # one PR, two items: the person sorts it out
+        self.assertFalse(rec.exists() and json.loads(rec.read_text()))
+
+    def test_one_rule_for_case_in_put_settle_and_drop(self):
+        text = self.page(self.block(self.OLD_SHA))                                    # the item is a/b#1
+        rec = written(text)
+        got = deskfile.settle(text, "A/B#1", "Merged at 12:00", record=rec)
+        self.assertIn("  - Merged at 12:00\n", got)                                  # settle finds it as put does
+        self.assertEqual(deskfile.drop(text, "A/B#1", record=rec).count("Deploy"), 0)
+        self.assertEqual(deskfile.put(text, "A/B#1", self.block(self.NEW_SHA, rec="R2", when="02:00"), record=rec).count("Deploy a/b#1"), 1)
+        inst = "# D\n\n## Local installs waiting for you\n- [ ] Install Tool: o/tool is behind\n  - Pinned commit: " + self.OLD_SHA + ", main of o/tool\n"
+        self.assertEqual([k for k, _, _ in deskfile._spans(inst)], ["install:Tool"])
+        self.assertEqual(deskfile.drop(inst, "install:tool", record={}), inst)         # an install key is a tool's: exact
+        self.assertNotIn("Install Tool", deskfile.drop(inst, "install:Tool", record={}))
 
     def test_adopt_does_not_take_a_bullet_after_a_blank_line_in_the_ships_list(self):
         f, rec = self.legacy()
