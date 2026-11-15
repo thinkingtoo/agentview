@@ -276,12 +276,12 @@ def parse(text, record=None):
     """The items of `text`. `record` is what AgentView wrote last (`edit` gives it): an item is pinned by its own
     `Pinned commit:` line only (a line the person wrote or changed pins nothing). An item with no entry in it, or no
     record at all, is pinned at nothing (""), and a press on it is refused until it is handed over again."""
-    found, seen = [], set()
+    found = []
+    slots = Counter(_slot(k) for k, _, _ in _spans(text))
     for key, start, end in _spans(text):
         block = text[start:end]
         visible = re.sub(r"<!--.*?-->", "", block, flags=re.S)              # a comment pins nothing, and orders nothing
-        got = None if _slot(key) in seen else (record or {}).get(_slot(key))      # the pin is read from what was written last, not from the generation before it; the entry is the first item's, a second one under the same slot has none
-        seen.add(_slot(key))
+        got = None if slots[_slot(key)] > 1 else (record or {}).get(_slot(key))      # the pin is read from what was written last, not from the generation before it; two items under one slot have none: the entry may be for the block the person added
         mine = _pin_line(block, None if got is None else Counter(got["lines"]), None if got is None else _orders(got, prev=False))
         pin, order = PINNED.search(mine or ""), AFTER.search(visible)     # an order only refuses a press, so a person's line may add one
         found.append(Item(key, block[3] in "xX", pin.group(1) if pin else "", block, int(order.group(1)) if order else 0, ships_of(block)))
@@ -645,8 +645,17 @@ def _same(k, key):
     """Whether the page's key `k` names the item `key`. GitHub's owner and repo names are not case-sensitive, so `a/b#1`
     and `A/b#1` are one PR and share one record slot; an `install:` key is a tool's and is exact. The one rule of `put`,
     `settle`, `drop` and `_unhidden`; a page that holds two items of one slot is a conflict (`adopt` skips both) and
-    these four act on the first of them in page order."""
+    these four act on the first of them in page order, with no record of it (`_conflict`)."""
     return _slot(k) == _slot(key)
+
+
+same_key = _same                # for the readers outside (`deskscan`): the one rule
+
+
+def _conflict(text, key):
+    """Whether `text` holds two items of the slot of `key`. The record's entry is then no proof for either: it may have
+    been written for the one the person added, so `parse`, `put`, `settle` and `drop` read and write no entry for them."""
+    return sum(_same(k, key) for k, _, _ in _spans(text)) > 1
 
 
 def _specific(texts, other):
@@ -746,6 +755,7 @@ def put(text, key, block, section="merge", record=None):
     if not block.endswith("\n"):
         block += "\n"
     text = _unhidden(text, key)
+    record = None if _conflict(text, key) else record
     for k, start, end in _spans(text):
         if _same(k, key):
             got, at = (record or {}).get(_slot(k)), []
@@ -789,6 +799,7 @@ def drop(text, key, record=None):
     record = getattr(_held, "record", None) if record is None else record
     _refuse_unreadable_record()
     text = _unhidden(text, key)
+    record = None if _conflict(text, key) else record
     for k, start, end in _spans(text):
         if _same(k, key):
             if record is not None:
@@ -809,6 +820,7 @@ def settle(text, key, result, untick=False, pinned=None, record=None):
     so the new result goes after the lines that are there. The new one goes in the record."""
     record = getattr(_held, "record", None) if record is None else record
     text = _unhidden(text, key)
+    record = None if _conflict(text, key) else record
     for k, start, end in _spans(text):
         if not _same(k, key):
             continue

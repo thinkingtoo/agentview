@@ -770,6 +770,15 @@ class Tidy(Case):
         self.assertEqual(deskscan.tidy(), [k])
         self.assertEqual(self.keys(), [])
 
+    def test_two_items_of_one_pr_whose_keys_differ_by_case_are_not_tidied(self):
+        k = self.merged()
+        page = self.page()
+        item = page[page.index("- [ ] "):]
+        deskfile.path().write_text(page.rstrip("\n") + "\n" + item.replace(REPO, REPO.upper()))        # the person adds the same PR in another case
+        before = self.page()
+        self.assertEqual(deskscan.tidy(), [])
+        self.assertEqual(self.page(), before)
+
     def test_a_merged_line_the_person_typed_does_not_make_the_story_over(self):
         k = f"{REPO}#9"
         self.hand_over(REPO, 9)                     # AgentView never settled it: the record holds no result line

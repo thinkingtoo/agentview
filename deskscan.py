@@ -463,7 +463,7 @@ def tidy(now=None):
             if rec["event"] in desk.STATUS:
                 last[rec["key"]] = rec
         for k in dict.fromkeys(keys):
-            if keys.count(k) != 1 or k not in last:
+            if sum(deskfile.same_key(x, k) for x in keys) != 1 or k not in last:      # two items of one PR (keys that differ by case) are the person's to sort out
                 continue
             dropped = []
 

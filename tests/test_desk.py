@@ -1105,12 +1105,23 @@ class OwnRecord(unittest.TestCase):
         text = self.page(self.block(self.OLD_SHA))
         rec = written(text)
         two = text.replace("- [ ] Merge a/b#2: next\n", "- [ ] Deploy A/b#1: again\n  - Pinned commit: " + "e" * 40 + ", into main\n- [ ] Merge a/b#2: next\n")
-        self.assertEqual([i.pinned for i in deskfile.parse(two, rec)][:2], [self.OLD_SHA, ""])      # the entry is the first item's: the second is pinned at nothing
+        self.assertEqual([i.pinned for i in deskfile.parse(two, rec)][:2], ["", ""])      # the entry may be for the block the person added: neither is pinned by it
+        before = copy.deepcopy(rec)
         got = deskfile.settle(two, "A/B#1", "Merged at 12:00", record=rec)
         self.assertEqual(got.index("Merged at 12:00") < got.index("Deploy A/b#1"), True)           # on the first
         self.assertEqual(deskfile.put(two, "A/b#1", self.block(self.NEW_SHA, rec="R2", when="02:00"), record=rec).count("Deploy A/b#1: again"), 1)
         self.assertEqual(deskfile.drop(two, "A/b#1", record=rec).count("Deploy"), 1)
         self.assertIn("Deploy A/b#1: again", deskfile.drop(two, "A/b#1", record=rec))
+        self.assertEqual(rec, before)                                                              # and none of them writes the entry
+
+    def test_settle_on_a_conflict_page_does_not_take_a_persons_identical_result_line_for_ours(self):
+        text = self.page(self.block(self.OLD_SHA).replace("a/b#1", "A/b#1"))
+        rec = written(text)
+        text = deskfile.settle(text, "A/b#1", "Merged at 10:00", record=rec)                       # ours, and in the record
+        mine = "- [ ] Deploy a/b#1: mine\n  - Merged at 10:00\n"                                      # the person adds one of the same PR above it
+        conflict = text.replace("- [ ] Deploy A/b#1", mine + "- [ ] Deploy A/b#1", 1)
+        got = deskfile.settle(conflict, "A/b#1", "Not merged: retry", record=rec)
+        self.assertEqual(got.count("  - Merged at 10:00\n"), 2)                                    # neither line is proven ours: both stay
 
     def test_adopt_does_not_take_a_bullet_after_a_blank_line_in_the_ships_list(self):
         f, rec = self.legacy()
