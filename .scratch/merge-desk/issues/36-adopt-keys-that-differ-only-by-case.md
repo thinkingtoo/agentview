@@ -9,7 +9,9 @@
 
 **Blocked by:**
 
-**Status:** open
+**Claimed by:** Anika 2026-11-15 01:09
+
+**Status:** in-progress
 
 ## Acceptance criteria
 - [ ] a red test on that exact page (`a/b#1` and `A/b#1`, each with two Recommendation lines for the first), then green: neither item takes the other's record
