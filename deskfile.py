@@ -654,7 +654,7 @@ same_key = _same                # for the readers outside (`deskscan`): the one 
 
 def _conflict(text, key):
     """Whether `text` holds two items of the slot of `key`. The record's entry is then no proof for either: it may have
-    been written for the one the person added, so `parse`, `put`, `settle` and `drop` read and write no entry for them."""
+    been written for the one the person added, so `parse`, `put` and `settle` read and write no entry for them (`drop` takes the slot out)."""
     return sum(_same(k, key) for k, _, _ in _spans(text)) > 1
 
 
@@ -799,10 +799,9 @@ def drop(text, key, record=None):
     record = getattr(_held, "record", None) if record is None else record
     _refuse_unreadable_record()
     text = _unhidden(text, key)
-    record = None if _conflict(text, key) else record
     for k, start, end in _spans(text):
         if _same(k, key):
-            if record is not None:
+            if record is not None:                                    # the shared entry goes too, on a conflict page as well: the item left has none of its own
                 record.pop(_slot(k), None)
             return text[:start] + text[end:]
     return text

@@ -1108,11 +1108,15 @@ class OwnRecord(unittest.TestCase):
         self.assertEqual([i.pinned for i in deskfile.parse(two, rec)][:2], ["", ""])      # the entry may be for the block the person added: neither is pinned by it
         before = copy.deepcopy(rec)
         got = deskfile.settle(two, "A/B#1", "Merged at 12:00", record=rec)
+        self.assertEqual(rec, before)                                                              # settle and put write no entry
         self.assertEqual(got.index("Merged at 12:00") < got.index("Deploy A/b#1"), True)           # on the first
         self.assertEqual(deskfile.put(two, "A/b#1", self.block(self.NEW_SHA, rec="R2", when="02:00"), record=rec).count("Deploy A/b#1: again"), 1)
-        self.assertEqual(deskfile.drop(two, "A/b#1", record=rec).count("Deploy"), 1)
-        self.assertIn("Deploy A/b#1: again", deskfile.drop(two, "A/b#1", record=rec))
-        self.assertEqual(rec, before)                                                              # and none of them writes the entry
+        self.assertEqual(rec, before)
+        left = deskfile.drop(two, "A/b#1", record=rec)
+        self.assertEqual(left.count("Deploy"), 1)
+        self.assertIn("Deploy A/b#1: again", left)
+        self.assertNotIn("a/b#1", rec)                                                             # drop takes the shared entry with it: the item left is not read by the removed one's
+        self.assertEqual(deskfile.parse(left, rec)[0].pinned, "")
 
     def test_settle_on_a_conflict_page_does_not_take_a_persons_identical_result_line_for_ours(self):
         text = self.page(self.block(self.OLD_SHA).replace("a/b#1", "A/b#1"))
