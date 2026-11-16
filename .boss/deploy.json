@@ -1,0 +1,1 @@
+{"version": 1, "non_deploying": ["dev"], "test_paths": ["tests/*"]}
