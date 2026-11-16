@@ -1022,6 +1022,27 @@ entry written wrong opens nothing; the server prints the entries it takes and
 the ones it ignores at start. Unset, nothing beyond `127.0.0.1` and `localhost`
 passes.
 
+### Tiroir pages that raise a pane (`tiroir_origins`)
+
+A page served by a tiroir can bring a session's terminal pane to the front: it sends `POST
+/api/jump` (or `/api/reopen` for an ended session) to `127.0.0.1` from the browser. Name the
+tiroir in `config.json`, one line per tiroir, shipped empty in `config.example.json`:
+
+```
+"tiroir_origins": ["https://first.tiroir.example"]
+```
+
+An entry is `scheme://host[:port]`, compared exactly. For a listed origin the server answers the
+preflight (`OPTIONS`) with CORS and `Access-Control-Allow-Private-Network: true`, and lets its POST
+through on those two routes, `X-Fleet` header and a Host naming this server still required. No other
+route, no other origin, no other Host. Read on every request: no restart. Chrome asks the person
+once per origin and profile.
+
+**What a listed origin can do:** it trusts the origin, not a page. Any HTML served from it can
+raise a pane of any live session it knows the key of, and reopen an ended session by its id. It
+cannot read a reply to anything else, rename, dismiss or read a Paste. Never list a client's tiroir
+without Thierry.
+
 ### Found items and `desk_found_repos`
 
 The daily scan puts green, mergeable PRs nobody handed over on the desk as found items, so you see that they

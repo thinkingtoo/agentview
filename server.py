@@ -77,6 +77,20 @@ def extra_origins():
     return {site for _, site in extra_entries() if site}
 
 
+TIROIR_ROUTES = ("/api/jump", "/api/reopen")
+
+
+def tiroir_origins():
+    """The sites in `tiroir_origins` of config.json: tiroir pages that may raise a terminal pane
+    from the browser. Only an entry written exactly as `scheme://host[:port]` counts; anything
+    else, or a value that is not a list, opens nothing. Read on every request, so adding a
+    tiroir is one line in the file."""
+    listed = fleet.read_config().get("tiroir_origins")
+    if not isinstance(listed, list):
+        return set()
+    return {site for entry in listed if isinstance(entry, str) and (site := _site(entry))}
+
+
 def desk_roster():
     """The merge desk's two fields of the roster: the Merges button's count and the daily ring."""
     return {"merges": deskring.waiting(), "merges_ring": deskring.ring_pending()}
@@ -347,6 +361,39 @@ class Handler(BaseHTTPRequestHandler):
         """
         return self._origin_ok() and self._host_ok() and self.headers.get("X-Fleet") == "1"
 
+    def _tiroir_origin(self):
+        """The Origin of a request from a listed tiroir page for jump or reopen, else None.
+        Scheme, host and port are compared exactly, and the Host must still name this server:
+        the list lets a page send these two routes, it does not let a rebound name in."""
+        origin = self.headers.get("Origin")
+        if origin is None or self.path not in TIROIR_ROUTES or not self._host_local():
+            return None
+        return origin if _site(origin) in tiroir_origins() and origin == origin.strip() else None
+
+    def end_headers(self):
+        """A reply to a listed tiroir page, refusals included, names that origin, or the page
+        cannot read it."""
+        if getattr(self, "_cors", None):
+            self.send_header("Access-Control-Allow-Origin", self._cors)
+            self.send_header("Vary", "Origin")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        """The preflight of a tiroir page's POST. Chrome also asks, in the same request, for
+        private-network access; the answer is yes for a listed origin on these two routes only."""
+        origin = self._tiroir_origin()
+        if origin is None:
+            log.event("refused", path=self.path, origin=self.headers.get("Origin"))
+            return self.send_error(403, "not a local request")
+        self._cors = origin
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "POST")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Fleet")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _local_get(self):
         """The text of a Paste may come out of the keyring, so its GET also needs the custom
         header, which a page on another origin cannot send without a preflight that is refused.
@@ -372,7 +419,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if deskrelay.claims(self.path):
             return self._desk_post()
-        if not self._local():
+        origin = self._tiroir_origin()
+        if origin is not None and self.headers.get("X-Fleet") == "1":
+            self._cors = origin
+        elif not self._local():
             log.event("refused", path=self.path, origin=self.headers.get("Origin"))
             return self.send_error(403, "not a local request")
         try:
