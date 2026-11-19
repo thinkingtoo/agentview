@@ -254,6 +254,17 @@ def elsewhere(made, crew, busy=frozenset(), watch=frozenset(), lines=None, revie
             if name not in placed and task.strip().casefold() not in IDLE_TASKS]
 
 
+def signs(busy=frozenset(), watch=frozenset(), review=frozenset()):
+    """`{name: sign}` of each worker doing something now, for claude-boss's ticket graph
+    in the goal page: "reviewing" (🔍) beats "busy" (🔨, a turn in flight), which beats
+    "watching" (🧪, a job of its own open). A worker at rest has none. The arguments are
+    `reviewing_names`, `busy_names` and `watching_names`."""
+    out = {name: "watching" for name in watch}
+    out.update({name: "busy" for name in busy})
+    out.update({name: "reviewing" for name in review})
+    return dict(sorted(out.items()))
+
+
 def rows(boxes, sessions, crew, met=False, busy=frozenset(), watch=frozenset(), review=frozenset()):
     """The rows of a track's card, in ORDER, each state in the goal file's order.
     `crew` is `workers`: who is working on the track now, with their tasks.

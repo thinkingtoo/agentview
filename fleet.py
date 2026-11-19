@@ -1024,6 +1024,8 @@ def _column(rows, project, folder_rule, follow, names, pinned, merged, own_lines
                          if running else [])
         # Workers whose task no row's ticket carries: said by name and task, not guessed onto a row.
         track["elsewhere"] = objectives.elsewhere(track["rows"], crew, busy, watch, own, review) if running else []
+        # What each worker is doing now, for the ticket graph claude-boss draws in the goal page.
+        track["signs"] = objectives.signs(busy, watch, review) if running else {}
     # The column of no project has no name to repeat.
     column_says = working.repeats(None if project is NO_PROJECT else name, about)
     made = [(m, tile_of(m, _suggestion(m, project, folder_rule, follow, names), column_says))

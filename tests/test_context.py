@@ -498,7 +498,7 @@ class Tracks(Cards):
                                "progress": {"done": 1, "total": 3, "text": "1 of 3", "met": False},
                                "boxes": [{"text": "cart", "done": True}, {"text": "receipt", "done": False},
                                          {"text": "refund", "done": False}],
-                               "goal": None, "elsewhere": [],
+                               "goal": None, "elsewhere": [], "signs": {},
                                "rows": [{"text": "receipt", "state": "planned", "awaiting_tick": False, "tickets": [], "busy": False, "watching": False, "reviewing": False},
                                         {"text": "refund", "state": "planned", "awaiting_tick": False, "tickets": [], "busy": False, "watching": False, "reviewing": False},
                                         {"text": "cart", "state": "done", "awaiting_tick": False, "tickets": [], "busy": False, "watching": False, "reviewing": False}]})
@@ -514,7 +514,7 @@ class Tracks(Cards):
 
     def test_a_track_with_no_boxes_shows_a_status_and_no_progress(self):
         got = self.track(boxes=())["track"]
-        self.assertEqual(got, {"status": "OPEN", "progress": None, "boxes": [], "goal": None, "elsewhere": [],
+        self.assertEqual(got, {"status": "OPEN", "progress": None, "boxes": [], "goal": None, "elsewhere": [], "signs": {},
                                "rows": []})
 
     def test_only_the_boxes_under_done_when_count_and_not_in_code(self):

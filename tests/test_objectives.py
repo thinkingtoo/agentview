@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import fleet
+import objectives
 import lines
 from test_projects import TrackFixtures, sess
 
@@ -680,3 +681,11 @@ class Reviewing(Panes):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Signs(unittest.TestCase):
+    def test_review_beats_a_turn_in_flight_which_beats_a_job_open_and_rest_has_none(self):
+        got = objectives.signs(busy={"Farid", "Lea"}, watch={"Mo", "Lea"}, review={"Farid"})
+        self.assertEqual(got, {"Farid": "reviewing", "Lea": "busy", "Mo": "watching"})
+        self.assertEqual(objectives.signs(), {})
+
