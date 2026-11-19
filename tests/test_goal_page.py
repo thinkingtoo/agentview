@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -88,6 +89,13 @@ class GoalPage(Fixture):
         got = of("checkout", now=100, run=sheaf)
         self.assertEqual(got, {"url": "http://127.0.0.1:27419/claude/pm/checkout.goal.md", "why": ""})
         self.assertEqual(sheaf.asked, [["status"]])
+
+    def test_with_a_door_set_the_answer_also_gives_the_page_through_it(self):
+        with unittest.mock.patch.dict("os.environ", {goal_page.DOOR: "https://Laptop.tailnet.ts.net:8446/"}):
+            got = of("checkout", now=100, run=Sheaf())
+        self.assertEqual(got["door"], "https://laptop.tailnet.ts.net:8446/claude/pm/checkout.goal.md")
+        with unittest.mock.patch.dict("os.environ", {goal_page.DOOR: "http://laptop.tailnet.ts.net:8446"}):
+            self.assertNotIn("door", of("checkout", now=200, run=Sheaf()))
 
     def test_with_no_hub_the_link_says_so_and_no_hub_is_started(self):
         sheaf = Sheaf(port=None)

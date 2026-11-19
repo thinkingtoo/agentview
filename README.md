@@ -129,7 +129,13 @@ of these that exists:
    listens on the laptop's 127.0.0.1 only and its sign-in cookie only goes
    with a page on that same name, so on agentview reached any other way, the
    phone over tailscale or `localhost` for two, the card says "goal on the
-   laptop" and still shows the boxes. A browser never signed in to the hub
+   laptop" and still shows the boxes, unless the hub has a door for the
+   phone: `sheafdoor.py` (unit `agentview-sheafdoor.service`) behind
+   `tailscale serve --bg --https=8446 http://127.0.0.1:8792`, with that origin
+   in `AGENTVIEW_SHEAF_DOOR` for both agentview and the door. The card off the
+   laptop then links through it. The phone signs in to the hub once: the link
+   `sheaf signin-url` prints, with `http://127.0.0.1:27419` replaced by the
+   door's origin. A browser never signed in to the hub
    (another Chrome profile, or after the hub's key changed) gets sheaf's "Not
    signed in" page, which says how to sign it in.
 3. **A repository's own words**: the first prose paragraph of its README, else of

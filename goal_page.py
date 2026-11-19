@@ -46,6 +46,10 @@ SCOPE = ["systemd-run", "--user", "--scope", "--quiet", "--"]
 STATUS_EVERY = 30               # seconds between two looks at the hub
 RETRY = 300                     # seconds before a bind that failed is tried again
 TIMEOUT = 10
+# The door to the hub for the phone (sheafdoor.py): its https origin, such as
+# `https://laptop.tailnet.ts.net:8446`. Set, the card off the laptop links there.
+DOOR = "AGENTVIEW_SHEAF_DOOR"
+DOOR_ORIGIN = re.compile(r"https://[a-z0-9.-]+:\d{1,5}")
 RUNNING = re.compile(r"hub running on 127\.0\.0\.1:(\d{1,5})\b")
 NONE_RUNS = "no hub is running"   # what `sheaf status` prints when nothing listens on its port
 # What it says on stderr when its hub runs and did not answer it in time, or hung up on it
@@ -304,4 +308,8 @@ def of(track, now, run=_run, start=_start, boss=None):
             return {"url": None, "why": _hub["why"]}
     if path is None:
         return {"url": None, "why": NO_ROOT}
-    return {"url": f"http://127.0.0.1:{port}{path}", "why": ""}
+    out = {"url": f"http://127.0.0.1:{port}{path}", "why": ""}
+    door = os.environ.get(DOOR, "").strip().rstrip("/").lower()
+    if DOOR_ORIGIN.fullmatch(door):
+        out["door"] = door + path
+    return out

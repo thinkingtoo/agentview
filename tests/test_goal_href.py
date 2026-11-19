@@ -20,10 +20,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAGE = ROOT / "index.html"
 
 HARNESS = """
-const location = {hostname: "127.0.0.1"};      // the laptop: the only page that links
+const location = {hostname: %s};
 %s
-console.log(goalLinkOf({track: {goal: {url: %s, why: ""}}}));
+console.log(goalLinkOf({track: {goal: {url: %s, door: %s, why: ""}}}));
 """
+LAPTOP, PHONE = "127.0.0.1", "laptop.tailnet.ts.net"
+DOOR = "https://laptop.tailnet.ts.net:8446/goals/kettle.md"
 
 ATTR = '"><img src=x onerror=alert(1)> x="'        # breaks out of a quoted attribute, if one is not escaped
 
@@ -42,7 +44,8 @@ def _page_js():
     """`esc`, `ON_THE_LAPTOP`, `onTheHub` and `goalLinkOf`, as the page has them."""
     src = PAGE.read_text()
     return "\n".join((_line(src, "const esc = "), _line(src, "const ON_THE_LAPTOP"),
-                      _function(src, "function onTheHub(url)"), _function(src, "function goalLinkOf(c)")))
+                      _function(src, "function onTheHub(url)"), _function(src, "function onTheDoor(url)"),
+                      _function(src, "function goalLinkOf(c)")))
 
 
 class Parsed(html.parser.HTMLParser):
@@ -61,8 +64,8 @@ class Parsed(html.parser.HTMLParser):
 
 @unittest.skipUnless(shutil.which("node"), "needs node to run the page's JS")
 class GoalHref(unittest.TestCase):
-    def link(self, url):
-        proc = subprocess.run(["node", "-e", HARNESS % (_page_js(), json.dumps(url))],
+    def link(self, url, host=LAPTOP, door=None):
+        proc = subprocess.run(["node", "-e", HARNESS % (json.dumps(host), _page_js(), json.dumps(url), json.dumps(door))],
                               capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         parsed = Parsed()
@@ -94,3 +97,20 @@ class GoalHref(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_off_the_laptop_the_link_is_the_door_on_the_page_s_own_host(self):
+        got = self.link("http://127.0.0.1:7417/goals/kettle.md", host=PHONE, door=DOOR)
+        self.assertEqual([tag for tag, _ in got.elements], ["a"])
+        self.assertEqual(got.elements[0][1]["href"], DOOR)
+
+    def test_a_door_on_another_host_or_without_https_links_nothing(self):
+        for door in ("https://elsewhere.example:8446/goals/kettle.md", "http://laptop.tailnet.ts.net:8446/goals/kettle.md",
+                     "https://x@laptop.tailnet.ts.net:8446/goals/kettle.md", None):
+            with self.subTest(door=door):
+                got = self.link("http://127.0.0.1:7417/goals/kettle.md", host=PHONE, door=door)
+                self.assertEqual([tag for tag, _ in got.elements], ["span"])
+                self.assertIn("goal on the laptop", got.text)
+
+    def test_on_the_laptop_the_hub_link_stays_even_with_a_door(self):
+        got = self.link("http://127.0.0.1:7417/goals/kettle.md", door=DOOR)
+        self.assertEqual(got.elements[0][1]["href"], "http://127.0.0.1:7417/goals/kettle.md")
