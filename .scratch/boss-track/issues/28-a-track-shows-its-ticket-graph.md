@@ -1,6 +1,10 @@
 # 28: A track shows its ticket graph
 
-**Status:** needs-triage
+**Status:** done (moved, 2026-11-19)
+
+**Moved:** Thierry wants the graph in the goal page itself, by fixed rules, updated on the fly. That is
+claude-boss work: `/home/tiroir/Projects/boss-plugin/.scratch/goal-graph/issues/01-the-goal-page-carries-its-ticket-graph.md`.
+Nothing to build here.
 
 **Why (2026-11-19, Thierry):** He asked whether boss tracks should all move to GitHub issues so the
 graph and the status could be followed visually. The tickets stay in local markdown (`.scratch/<track>/issues/`,
