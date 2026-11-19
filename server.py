@@ -306,6 +306,12 @@ def closed_now(live_ids):
              "title": _title(r), "at": r["last_seen"]} for r in gone]
 
 
+
+def signs_of(roster):
+    """`{track: {name: sign}}` of every track card in a roster round that carries signs."""
+    return {c["raw"]: c["track"]["signs"] for c in roster.get("columns", [])
+            if c.get("kind") == "track" and (c.get("track") or {}).get("signs")}
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, body, ctype):
         raw = body.encode("utf-8")
@@ -715,6 +721,10 @@ class Handler(BaseHTTPRequestHandler):
             if data is None:
                 return self.send_error(404, "no such Paste")
             self._send(data.decode("utf-8", "replace"), "text/plain; charset=utf-8")
+        elif self.path.split("?", 1)[0] == "/api/signs":
+            # What each running track's workers are doing now, for claude-boss's ticket
+            # graph in the goal page: {"signs": {track: {name: busy|watching|reviewing}}}.
+            self._send(json.dumps({"signs": signs_of(poll.round())}), "application/json")
         elif self.path.startswith("/api/search"):
             ask = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             query = (ask.get("q") or [""])[0]

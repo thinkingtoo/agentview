@@ -14,7 +14,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import server
 
-PATHS = ("/api/roster", "/api/search?q=x", "/api/paste_text?id=1", "/ticket/owner/repo/7", "/",
+PATHS = ("/api/roster", "/api/signs", "/api/search?q=x", "/api/paste_text?id=1", "/ticket/owner/repo/7", "/",
          "/index.html", "/nothing")
 
 
@@ -79,3 +79,13 @@ class GetGuard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Signs(unittest.TestCase):
+    def test_only_track_cards_with_signs_are_answered(self):
+        roster = {"columns": [{"kind": "track", "raw": "kettle", "track": {"signs": {"Farid": "busy"}}},
+                              {"kind": "track", "raw": "idle", "track": {"signs": {}}},
+                              {"kind": "track", "raw": "boxes-only", "track": None},
+                              {"kind": "project", "raw": "agentview"}]}
+        self.assertEqual(server.signs_of(roster), {"kettle": {"Farid": "busy"}})
+
