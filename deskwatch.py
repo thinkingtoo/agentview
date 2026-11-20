@@ -1,7 +1,7 @@
 """The merge desk's watcher: a ticked Merge item is merged, at the commit that was reviewed, and nothing else.
 
 `start()` runs `tick()` every few seconds on a thread of the server. A tick presses, one item at
-a time in page order, every item that is ticked and has no result yet:
+a time from the bottom of the page up (oldest first, the newest is on top), every item that is ticked and has no result yet:
 
 1. the PR's head must still be the item's pinned commit, else "the branch changed after the review";
 2. an item handed over `--after N` waits until PR N of the same repo is merged: "#N must go in first";
@@ -335,7 +335,7 @@ def tick():
             return
         recover()
         every = [i.key for i in deskfile.items()]
-        for k in dict.fromkeys(i.key for i in deskfile.items() if i.ticked):
+        for k in dict.fromkeys(i.key for i in reversed(deskfile.items()) if i.ticked):     # oldest first: the newest is on top
             if every.count(k) > 1:                              # which of two is meant? press neither
                 if k not in _warned:
                     _warned.add(k)

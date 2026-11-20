@@ -748,7 +748,7 @@ def _record_block(record, key, block, at=None, behind=False):
 
 def put(text, key, block, section="merge", record=None):
     """`text` with the item `key` set to `block`: replaced where it stands, else
-    added at the end of its section. A section that is not there yet is made. `record` is what AgentView wrote last
+    added at the top of its section, so the newest is first. A section that is not there yet is made. `record` is what AgentView wrote last
     (`edit` gives it); it is brought up to date with `block`."""
     record = getattr(_held, "record", None) if record is None else record
     _refuse_unreadable_record()
@@ -781,6 +781,9 @@ def put(text, key, block, section="merge", record=None):
                len(text))
     nxt = end < len(text)
     body = text[at:end]
+    first = next((o - at for o, line, inside in _walk(text) if at <= o < end and not inside and key_of(line)), None)
+    if first is not None:                           # above the first item; the person's own lines before it stay above
+        return _unhidden(text[:at + first] + block + text[at + first:], key)
     tail = body[len(body.rstrip("\r\n")):]          # the line end of the last line and the blank line before the next heading
     tail = tail[len(nl):] if tail.startswith(nl) else tail      # the new block brings its own line end
     new = body.rstrip("\r\n") + (nl if body.strip() else "") + block

@@ -220,8 +220,8 @@ class Press(Case):
     def test_an_item_with_a_comment_keeps_its_neighbour_bytes(self):
         self.pr(1)
         self.pr(2, head=SHA2)
-        self.hand_over(1)
         self.hand_over(2, SHA2)
+        self.hand_over(1)                                                   # on top, so the comment below lands on it
         deskfile.edit(lambda t: t.replace("  - Handed over by Faisal, 2026-11-13 10:40.\n",
                                           "  - Handed over by Faisal, 2026-11-13 10:40.\n  <!-- comment c1: wait -->\n", 1))
         before = self.item(1).block

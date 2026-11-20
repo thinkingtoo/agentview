@@ -680,7 +680,7 @@ class OwnRecord(unittest.TestCase):
         text = text.replace("Recommendation: Merge it.\n", "Recommendation: Merge it.<!-- never closed\n", 1)
         got = self.hand_over(text, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec)
         self.assertEqual(got.count("Recommendation:"), 1)
-        self.assertEqual([i.key for i in deskfile.parse(got, rec)], ["a/b#2", "a/b#1", "a/b#3"])      # a/b#3 was inside the open comment: it is an item again
+        self.assertEqual([i.key for i in deskfile.parse(got, rec)], ["a/b#1", "a/b#2", "a/b#3"])      # a/b#3 was inside the open comment: it is an item again
         self.assertEqual(got.count("<!--"), got.count("-->"))                                  # the comment is closed, before it
         self.assertEqual({i.key: i.pinned for i in deskfile.parse(got, rec)}["a/b#1"], self.NEW_SHA)
         self.assertEqual(self.hand_over(got, self.block(self.NEW_SHA, rec="R2", when="02:00"), rec), got)
@@ -990,8 +990,8 @@ class OwnRecord(unittest.TestCase):
         os.environ["XDG_RUNTIME_DIR"] = str(tmp / "run")
         self.addCleanup(lambda: os.environ.pop("XDG_RUNTIME_DIR") if old is None else os.environ.update(XDG_RUNTIME_DIR=old))
         f = tmp / "state" / "merge-desk.md"
-        deskfile.put_item("a/b#1", self.block(self.OLD_SHA, rec="R1"), file=f)
         deskfile.put_item("a/b#2", self.block(self.OLD_SHA, rec="R1").replace("a/b#1", "a/b#2"), file=f)
+        deskfile.put_item("a/b#1", self.block(self.OLD_SHA, rec="R1"), file=f)      # the newest goes on top: a/b#1 first on the page
         rec = f.parent / ".merge-desk.own.json"
         rec.unlink()
         return f, rec
@@ -1724,8 +1724,7 @@ class Leftovers(unittest.TestCase):
     def test_a_new_item_put_on_a_page_with_a_comment_left_open_is_visible(self):
         text = "# D\n\n## Pull requests waiting for your merge\n- [ ] Merge a/b#1: first\n  - Recommendation: x.<!-- oops\n"
         got = deskfile.put(text, "a/b#9", "- [ ] Merge a/b#9: new\n", record={})
-        self.assertIn("a/b#9", self.keys(got, {}))
-        self.assertTrue(self.closed(got))
+        self.assertEqual(self.keys(got, {}), ["a/b#9", "a/b#1"])             # on top, above the comment: nothing hides it
 
     def test_the_stale_pin_is_still_replaced_when_the_person_edited_the_recommendation(self):
         rec = {}
@@ -1872,13 +1871,13 @@ class SettleAndPutShapes(unittest.TestCase):
         self.assertIn("  - Merged at 12:00\r\n\r\n- [ ] Merge a/b#2", got)
         self.assertEqual(self.LONE_LF.findall(got), [])
 
-    def test_put_of_a_new_item_into_a_crlf_section_lands_right_under_the_last_item(self):
+    def test_put_of_a_new_item_into_a_crlf_section_lands_on_top_of_it(self):
         text = ("# D\r\n\r\n## Pull requests waiting for your merge\r\n" + self.block(self.OLD_SHA).replace("\n", "\r\n")
                 + "\r\n## Local installs waiting for you\r\n")
         rec = written(text)
         got = deskfile.put(text, "a/b#3", "- [ ] Merge a/b#3: new\n  - Pinned commit: " + "e" * 40 + ", into main\n", record=rec)
-        self.assertIn("a session, 2026-11-14 01:00.\r\n- [ ] Merge a/b#3: new\r\n", got)
-        self.assertIn(", into main\r\n\r\n## Local installs", got)
+        self.assertIn("your merge\r\n- [ ] Merge a/b#3: new\r\n  - Pinned commit: " + "e" * 40 + ", into main\r\n- [ ] Deploy a/b#1", got)
+        self.assertIn("2026-11-14 01:00.\r\n\r\n## Local installs", got)
         self.assertEqual(self.LONE_LF.findall(got), [])
 
     def test_a_header_with_a_trailing_space_is_adopted_with_its_bullets_and_not_handed_over_twice(self):
