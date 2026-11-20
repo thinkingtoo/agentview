@@ -62,6 +62,9 @@ class Name(unittest.TestCase):
         self.assertEqual(remotectl.name_for(session(boss=False, name="Kenji", tmux="cross-track:@1.%192")),
                          "cross-track-Kenji")
 
+    def test_an_unnamed_worker_is_named_for_its_track_alone(self):
+        self.assertEqual(remotectl.name_for(session(boss=False, name="(unnamed)", tmux="t1:@1.%2")), "t1")
+
     def test_a_numbered_tmux_session_is_no_track(self):
         self.assertEqual(remotectl.name_for(session(boss=False, name="Bram", tmux="34:@1.%199")), "Bram")
 
@@ -88,45 +91,78 @@ class Start(unittest.TestCase):
     def setUp(self):
         self.addCleanup(setattr, jump, "tmux_target", jump.tmux_target)
         jump.tmux_target = lambda pid, proc="/proc": "boss-chienvert-france:@3.%168"
+        self.addCleanup(remotectl._TYPED.clear)
         self.ran = []
         self.screen = IDLE
+        self.front = "0 claude"
+        self.t = 0
 
     def run_(self, argv, timeout=4):
         self.ran.append(argv)
-        out = self.screen if argv[1] == "capture-pane" else ""
+        out = {"capture-pane": self.screen, "display-message": self.front}.get(argv[1], "")
         return subprocess.CompletedProcess(argv, 0, out, "")
 
-    def start(self, s, reread=lambda: None):
-        clock = iter(range(0, 1000))
-        return remotectl.start(s, reread=reread, run=self.run_, sleep=lambda _: None,
-                               clock=lambda: next(clock))
+    def clock(self):
+        return self.t
+
+    def sleep(self, n):
+        self.t += n
+
+    def start(self, s, reread=None):
+        reread = reread or (lambda: s)
+        return remotectl.start(s, reread=reread, run=self.run_, sleep=self.sleep, clock=self.clock)
 
     def typed(self):
         return [a for a in self.ran if a[1] == "send-keys"]
 
-    def test_types_the_command_and_returns_the_link(self):
+    def test_escapes_then_types_the_command_and_returns_the_link(self):
         url = "https://claude.ai/code/session_01abc"
-        out = self.start(session(), reread=lambda: session(remote=url))
+        reads = iter([session()] + [session(remote=url)] * 50)
+        out = self.start(session(), reread=lambda: next(reads))
         self.assertEqual(out, {"ok": True, "url": url, "name": "chienvert-france-boss"})
         self.assertEqual(self.typed(), [
+            ["tmux", "send-keys", "-t", "%168", "Escape"],
             ["tmux", "send-keys", "-t", "%168", "-l", "/rc chienvert-france-boss"],
             ["tmux", "send-keys", "-t", "%168", "Enter"]])
+
+    def test_a_question_closed_by_the_escape_is_waited_out(self):
+        reads = iter([session(status="waiting")] * 2 + [session()] * 50)
+        out = self.start(session(status="waiting", waitingFor="question"), reread=lambda: next(reads))
+        self.assertIn(["tmux", "send-keys", "-t", "%168", "-l", "/rc chienvert-france-boss"], self.typed())
+        self.assertEqual(out["name"], "chienvert-france-boss")
+
+    def test_a_session_that_starts_working_after_the_escape_is_left_alone(self):
+        out = self.start(session(), reread=lambda: session(status="busy"))
+        self.assertEqual(out["reason"], "busy: busy")
+        self.assertEqual(self.typed(), [["tmux", "send-keys", "-t", "%168", "Escape"]])
+
+    def test_rc_is_never_typed_twice_while_its_link_is_on_the_way(self):
+        self.start(session())
+        self.ran.clear()
+        out = self.start(session())
+        self.assertFalse(out["ok"])
+        self.assertEqual(self.typed(), [])
+
+    def test_copy_mode_or_a_shell_in_front_is_refused_before_any_key(self):
+        for front in ("1 claude", "0 bash"):
+            self.front = front
+            self.assertFalse(self.start(session())["ok"])
+        self.assertEqual(self.typed(), [])
 
     def test_a_session_with_a_link_is_not_touched(self):
         out = self.start(session(remote="https://claude.ai/code/session_x"))
         self.assertTrue(out["ok"])
         self.assertEqual(self.ran, [])
 
-    def test_a_busy_or_waiting_session_is_refused_unread(self):
-        for s in (session(status="busy"), session(status="waiting", waitingFor="approve Bash")):
-            self.assertFalse(self.start(s)["ok"])
+    def test_a_busy_session_is_refused_untouched(self):
+        self.assertFalse(self.start(session(status="busy"))["ok"])
         self.assertEqual(self.ran, [])
 
-    def test_a_question_on_screen_is_refused(self):
+    def test_what_the_escape_did_not_close_is_refused(self):
         self.screen = QUESTION
         out = self.start(session())
-        self.assertEqual(out["reason"], "something is open on its screen")
-        self.assertEqual(self.typed(), [])
+        self.assertEqual(out["reason"], "something is still open on its screen")
+        self.assertEqual(self.typed(), [["tmux", "send-keys", "-t", "%168", "Escape"]])
 
     def test_a_pane_that_is_not_the_sessions_is_refused(self):
         jump.tmux_target = lambda pid, proc="/proc": "other:@1.%7"

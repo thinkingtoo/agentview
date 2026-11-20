@@ -1470,7 +1470,7 @@ function onPhone() { return matchMedia("(hover: none) and (pointer: coarse)").ma
 function wayOf(t) {
   if (onPhone() && typeof t.jump?.remote === "string" && t.jump.remote.startsWith("https://")) return "remote";
   const via = t.jump?.via;
-  if (onPhone() && via === "pane" && t.provider === "claude") return "rc";
+  if (onPhone() && via === "pane" && t.provider === "claude") return t.status === "busy" ? "" : "rc";
   return via === "pane" || via === "attach" ? via : "";
 }
 
