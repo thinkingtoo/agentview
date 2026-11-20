@@ -1133,8 +1133,8 @@ function openOf(c) {
   const who = (t.tags || []).includes("boss") ? "the boss" : "the first session";
   if (!via)
     return `<span class="ov-open none" title="${esc(who)}: ${esc(t.jump?.reason || "no terminal")}">no terminal</span>`;
-  return `<button class="ov-open can" data-sid="${esc(t.key)}" title="open ${esc(who)}, ${esc(t.name || named(t))}${via === "remote" ? " in the Claude app" : ""}">${
-    via === "attach" ? "attach" : "open"} ↗</button>`;
+  return `<button class="ov-open can" data-sid="${esc(t.key)}" title="open ${esc(who)}, ${esc(t.name || named(t))}${via === "remote" ? " in the Claude app" : via === "rc" ? ": put it under Remote Control first" : ""}">${
+    via === "attach" ? "attach ↗" : via === "rc" ? "start RC" : "open ↗"}</button>`;
 }
 
 // The card's movement: the strip the server summed over the project's
@@ -1464,10 +1464,13 @@ function suggestionChip(t) {
 // touch screen with no hover is the phone; the server sends the link.
 function onPhone() { return matchMedia("(hover: none) and (pointer: coarse)").matches; }
 
-// How a click reaches the session: "remote", "pane", "attach", or "" for nowhere.
+// How a click reaches the session: "remote", "rc", "pane", "attach", or "" for nowhere.
+// "rc" is a phone and a Claude session in a pane with no link yet: the click has
+// the server type /rc into it (`remotectl.py`), and the next tap opens it.
 function wayOf(t) {
   if (onPhone() && typeof t.jump?.remote === "string" && t.jump.remote.startsWith("https://")) return "remote";
   const via = t.jump?.via;
+  if (onPhone() && via === "pane" && t.provider === "claude") return "rc";
   return via === "pane" || via === "attach" ? via : "";
 }
 
@@ -1476,6 +1479,7 @@ function wayOf(t) {
 // leaving you to click for nothing.
 function jumpLabel(t, via) {
   if (via === "remote") return `<span class="go" title="open it in the Claude app">open ↗</span>`;
+  if (via === "rc") return `<span class="go" title="put it under Remote Control, then open it in the Claude app">start RC</span>`;
   if (via === "pane") return `<span class="go">open ↗</span>`;
   if (via === "attach") return `<span class="go">attach ↗</span>`;
   return `<span class="go none" title="${esc(t.jump?.reason || "no terminal")}">no terminal</span>`;
@@ -1538,6 +1542,19 @@ document.getElementById("main").addEventListener("click", async ev => {
   // its app only from a navigation the person started.
   const shown = COLUMNS.flatMap(c => [...(c.sessions || []), ...(c.pills || [])]).find(x => x.key === key);
   if (shown && wayOf(shown) === "remote") { location.href = shown.jump.remote; return; }
+  // A phone cannot follow a link that arrives after an await, so the link comes
+  // back on the tile and the next tap opens it.
+  if (shown && wayOf(shown) === "rc") {
+    say(key, "starting Remote Control…", false);
+    try {
+      const out = await (await post("/api/remote", { key })).json();
+      if (out.ok) { say(key, "ready: tap again to open", false); load(); }
+      else say(key, out.reason || "Remote Control did not start", true);
+    } catch (e) {
+      say(key, "Remote Control did not start", true);
+    }
+    return;
+  }
   el.classList.remove("jumped", "failed");
   el.querySelector(".why")?.remove();
   void el.offsetWidth;

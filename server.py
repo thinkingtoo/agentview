@@ -28,6 +28,7 @@ import notes
 import paste
 import poll
 import projects
+import remotectl
 import snapshot
 import subprocess
 import tickets
@@ -412,7 +413,7 @@ class Handler(BaseHTTPRequestHandler):
 
     ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "fold", "merge", "chime", "restore",
               "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep",
-              "paste_copied", "paste_done", "desk_page", "desk_rung")
+              "paste_copied", "paste_done", "desk_page", "desk_rung", "remote")
 
     def _desk_post(self):
         """A POST the desk relay answers (the phone's press): the Host and Origin are judged here, the way
@@ -506,6 +507,24 @@ class Handler(BaseHTTPRequestHandler):
             fleet.mark_seen(key, session)
         log.event("jumped", key=key, pid=session.get("pid"),
                   name=session.get("name"), **done)
+        self._send(json.dumps(done), "application/json")
+
+    def _remote(self, body):
+        """Put a session under Remote Control from the phone (`remotectl`): the page
+        names the session, the server makes the name and types the one command."""
+        key = body.get("key")
+        if not isinstance(key, str):
+            return self.send_error(400, "expected {key}")
+        hit = fleet.find(key)
+        if not hit:
+            return self.send_error(404, "no such live session")
+        provider, session = hit
+        if provider.name != "claude":
+            return self._send(json.dumps({"ok": False, "reason": f"{provider.name} sessions have no Remote Control"}),
+                              "application/json")
+        reread = lambda: (fleet.find(key) or (None, None))[1]
+        done = remotectl.start(session, fleet.is_concierge(session), reread)
+        log.event("remote", key=key, pid=session.get("pid"), name=session.get("name"), **done)
         self._send(json.dumps(done), "application/json")
 
     def _chime(self, body):
