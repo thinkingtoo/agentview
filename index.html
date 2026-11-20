@@ -350,7 +350,7 @@
   .banner { padding:6px 20px; font-size:13px; font-weight:600; overflow-wrap:anywhere;
             color:var(--bad); background:color-mix(in srgb,var(--bad) 12%,var(--bg));
             border-top:1px solid color-mix(in srgb,var(--bad) 40%,transparent); }
-#restore[hidden], #closed[hidden], #closedlist[hidden] { display: none; }
+#restore[hidden], #closed[hidden], #closedlist[hidden], #desktable[hidden] { display: none; }
 #save.unsafe { color: var(--wait); }
 /* Conversations this boot had that no longer run. A drop-down under the
    header, so opening it never moves the cards you were reading. */
@@ -358,6 +358,29 @@
               max-height:70vh; overflow:auto; background:var(--card); border:1px solid var(--line);
               border-radius:11px; box-shadow:0 8px 28px rgba(0,0,0,.35); padding:6px; }
 #closedlist .none { color:var(--dim); padding:10px 12px; font-size:13px; }
+/* The merge desk as a table: one row per item, sortable, its button ticks the box on the page. */
+#desktable { position:fixed; right:20px; z-index:6; width:min(900px, calc(100vw - 32px));
+             max-height:75vh; overflow:auto; background:var(--card); border:1px solid var(--line);
+             border-radius:11px; box-shadow:0 8px 28px rgba(0,0,0,.35); padding:8px; font-size:13px; }
+#desktable .bar { display:flex; justify-content:space-between; gap:10px; padding:2px 6px 8px; color:var(--dim); }
+#desktable .bar a { color:var(--accent); cursor:pointer; }
+#desktable table { width:100%; border-collapse:collapse; }
+#desktable th { text-align:left; color:var(--dim); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line);
+                cursor:pointer; white-space:nowrap; user-select:none; position:sticky; top:-8px; background:var(--card); }
+#desktable th:hover { color:var(--ink); }
+#desktable td { padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+#desktable td.nm { overflow-wrap:anywhere; }
+#desktable td.when, #desktable td.no { white-space:nowrap; color:var(--dim); }
+#desktable td.no a { color:var(--accent); }
+#desktable .verdict { display:inline-block; padding:1px 8px; border-radius:9px; font-weight:600; white-space:nowrap; cursor:help; }
+#desktable .verdict.merge { color:var(--busy); background:color-mix(in srgb,var(--busy) 15%,transparent); }
+#desktable .verdict.no { color:var(--bad); background:color-mix(in srgb,var(--bad) 15%,transparent); }
+#desktable .verdict.wait { color:var(--wait); background:color-mix(in srgb,var(--wait) 15%,transparent); }
+#desktable .verdict.none { color:var(--dim); background:color-mix(in srgb,var(--dim) 12%,transparent); }
+#desktable button.press { padding:3px 10px; white-space:nowrap; }
+#desktable .res { color:var(--dim); }
+#desktable .res.bad { color:var(--bad); }
+#desktable .none { color:var(--dim); padding:10px 12px; }
 .gone { display:flex; align-items:flex-start; gap:6px; border-radius:8px; }
 .gone:hover { background:color-mix(in srgb,var(--accent) 8%,transparent); }
 .gone .back { flex:1; min-width:0; text-align:left; background:none; border:0; padding:7px 10px; }
@@ -460,6 +483,7 @@ header button { white-space: nowrap; }
   <div id="banners" role="status"></div>
 </header>
 <div id="closedlist" hidden></div>
+<div id="desktable" hidden></div>
 <div id="found" hidden></div>
 <nav id="pager" aria-label="projects"></nav>
 <main id="main" class="ov"><div class="empty">loading…</div></main>
@@ -863,7 +887,7 @@ function drawHead(cols, down) {
       title="Go to the first Paste waiting for you">${PASTES} ${PASTES === 1 ? "Paste" : "Pastes"} waiting</button>` : "";
   // Not one of the three counts either: it lights nothing up, it opens the merge desk page. 0 hides it.
   const merges = MERGES ? ` &nbsp;·&nbsp; <button class="hc merges" data-merges
-      title="Open the merge desk: finished work that waits for your hand">Merges ${MERGES}</button>` : "";
+      title="The merge desk as a table: finished work that waits for your hand">Merges ${MERGES}</button>` : "";
   const html = `${total} ${total === 1 ? "session" : "sessions"} · ${cols.length} ${cols.length === 1 ? "project" : "projects"}`
     + (total < everyone ? ` <span class="hidden-note">(${everyone - total} filtered out)</span>` : "")
     + ` &nbsp;·&nbsp; ${buttons}${pastes}${merges}${down}`;
@@ -2123,19 +2147,104 @@ document.getElementById("sound").addEventListener("click", async () => {
   }).catch(() => {});
 });
 
-// The Merges button opens the desk page, the page `desk page` opens.
-document.getElementById("count").addEventListener("click", async ev => {
-  const button = ev.target.closest("button[data-merges]");
-  if (!button) return;
-  button.disabled = true;
+// The Merges button opens the desk as a sortable table; its "open the page" link opens the sheaf page.
+const DESK = { rows: [], sort: "handed_at", down: true, err: "", pressing: new Map() };
+const DESK_COLS = [["state", "Action"], ["verdict", "Recommendation"], ["number", "#"], ["name", "Name"], ["handed_at", "Handed over"]];
+const DESK_RANK = { merge: 0, wait: 1, none: 2, "don't merge": 3 };
+async function deskLoad() {
   try {
-    const r = await fetch("/api/desk_page", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" }, body: "{}" });
-    if (!r.ok) throw new Error(await r.text());
-  } catch (e) {
-    report("desk_page", e.message, e.stack);
-    button.title = "the desk page could not be opened: " + e.message;
+    const r = await fetch("/api/desk_items", { headers: { "X-Fleet": "1" } });
+    if (!r.ok) throw new Error((await r.text()).match(/<p>Message: (.*?)<\/p>/)?.[1] || `error ${r.status}`);
+    DESK.rows = (await r.json()).items; DESK.err = "";
+  } catch (e) { DESK.err = "the desk could not be read: " + e.message; }
+  paintDesk();
+}
+function deskKey(row, col) {
+  if (col === "verdict") return DESK_RANK[row.verdict] ?? 9;
+  if (col === "number") return row.number ?? -1;
+  if (col === "name") return (row.repo + " " + row.name).toLowerCase();
+  if (col === "state") return { waiting: 0, refused: 1, pressing: 2, done: 3 }[row.state] ?? 9;
+  return row.handed_at || 0;
+}
+function paintDesk() {
+  const box = document.getElementById("desktable");
+  if (box.hidden) return;
+  box.style.top = document.querySelector("header").getBoundingClientRect().bottom + 6 + "px";
+  const rows = [...DESK.rows].sort((a, b) => {
+    const x = deskKey(a, DESK.sort), y = deskKey(b, DESK.sort);
+    return (x < y ? -1 : x > y ? 1 : 0) * (DESK.down ? -1 : 1);
+  });
+  const merge = DESK.rows.filter(r => r.verdict === "merge" && r.state !== "done").length;
+  const head = DESK_COLS.map(([k, label]) =>
+    `<th data-sort="${k}">${label}${DESK.sort === k ? (DESK.down ? " ▾" : " ▴") : ""}</th>`).join("");
+  const body = rows.map(r => {
+    const failed = DESK.pressing.get(r.key);
+    let action;
+    if (r.state === "done") action = `<span class="res">${esc(r.result)}</span>`;
+    else if (r.state === "pressing" || failed === "pressing") action = `<span class="res">pressing…</span>`;
+    else if (!r.pinned) action = `<button class="press" disabled title="no record of this hand-over, so the desk would refuse it; use the page">${esc(r.kind)}</button>`;
+    else action = `<button class="press" data-key="${esc(r.key)}" data-pinned="${esc(r.pinned)}">${esc(r.kind)}</button>`;
+    const note = failed && failed !== "pressing" ? failed : r.state === "refused" ? r.result : "";
+    if (note) action += `<div class="res bad">${esc(note)}</div>`;
+    const cls = { merge: "merge", "don't merge": "no", wait: "wait" }[r.verdict] || "none";
+    const word = { merge: "merge", "don't merge": "don't merge", wait: "wait" }[r.verdict] || "no verdict";
+    const no = r.number == null ? "" : `<a href="https://github.com/${esc(r.repo)}/pull/${r.number}" target="_blank" rel="noopener">${r.number}</a>`;
+    return `<tr><td>${action}</td>
+      <td><span class="verdict ${cls}" title="${esc(r.why || "no reason given")}">${word}</span></td>
+      <td class="no">${no}</td>
+      <td class="nm">${r.repo ? `<span class="res">${esc(r.repo)}</span> ` : ""}${esc(r.name || r.key)}</td>
+      <td class="when">${esc(r.handed)}</td></tr>`;
+  }).join("");
+  box.innerHTML = `<div class="bar"><span>${DESK.rows.length} items · ${merge} to merge${DESK.err ? ` · <span class="res bad">${esc(DESK.err)}</span>` : ""}</span>
+      <a data-open-page title="open the merge desk page in sheaf">open the page</a></div>`
+    + (DESK.rows.length ? `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` : `<div class="none">nothing on the desk</div>`);
+}
+document.getElementById("count").addEventListener("click", ev => {
+  if (!ev.target.closest("button[data-merges]")) return;
+  const box = document.getElementById("desktable");
+  document.getElementById("closedlist").hidden = true;
+  box.hidden = !box.hidden;
+  if (!box.hidden) { paintDesk(); deskLoad(); }
+});
+document.getElementById("desktable").addEventListener("click", async ev => {
+  const th = ev.target.closest("th[data-sort]");
+  if (th) {
+    const k = th.dataset.sort;
+    DESK.down = DESK.sort === k ? !DESK.down : k === "handed_at" || k === "number";
+    DESK.sort = k;
+    return paintDesk();
   }
-  button.disabled = false;
+  if (ev.target.closest("a[data-open-page]")) {
+    try {
+      const r = await fetch("/api/desk_page", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" }, body: "{}" });
+      if (!r.ok) throw new Error(await r.text());
+    } catch (e) {
+      report("desk_page", e.message, e.stack);
+      DESK.err = "the desk page could not be opened"; paintDesk();
+    }
+    return;
+  }
+  const b = ev.target.closest("button.press[data-key]");
+  if (!b) return;
+  const key = b.dataset.key;
+  DESK.pressing.set(key, "pressing"); paintDesk();
+  try {
+    const r = await fetch("/api/desk_tick", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+      body: JSON.stringify({ key, pinned: b.dataset.pinned }) });
+    if (!r.ok) throw new Error((await r.text()).match(/<p>Message: (.*?)<\/p>/)?.[1] || `error ${r.status}`);
+    DESK.pressing.delete(key);
+  } catch (e) { DESK.pressing.set(key, e.message); }
+  await deskLoad();
+});
+// While it is open the table follows the desk: a press settles within the watcher's poll.
+setInterval(() => { if (!document.getElementById("desktable").hidden) deskLoad(); }, 5000);
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") document.getElementById("desktable").hidden = true;
+});
+document.addEventListener("click", e => {
+  // The path, not e.target.closest: a header click repaints the table, so the target is no longer in it.
+  const box = document.getElementById("desktable");
+  if (!e.composedPath().some(n => n === box || n.matches?.("button[data-merges]"))) box.hidden = true;
 });
 
 // The Paste count takes you to the first Paste on the page, in the order it is drawn.

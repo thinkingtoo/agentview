@@ -17,6 +17,7 @@ import context
 import desk
 import deskrelay
 import deskring
+import desktable
 import deskwatch
 import embedder
 import fleet
@@ -413,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
 
     ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "fold", "merge", "chime", "restore",
               "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep",
-              "paste_copied", "paste_done", "desk_page", "desk_rung", "remote")
+              "paste_copied", "paste_done", "desk_page", "desk_rung", "desk_tick", "remote")
 
     def _desk_post(self):
         """A POST the desk relay answers (the phone's press): the Host and Origin are judged here, the way
@@ -615,6 +616,19 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(500, str(why))
         self._send(json.dumps({"ok": True, "url": url}), "application/json")
 
+    def _desk_tick(self, body):
+        """The Merges table's button: tick the item's box on the page, as the person would; the watcher presses it."""
+        key, pinned = body.get("key"), body.get("pinned")
+        if not isinstance(key, str) or not isinstance(pinned, str):
+            return self.send_error(400, "expected {key, pinned}")
+        try:
+            desktable.tick(key, pinned)
+        except desktable.Refused as why:
+            return self.send_error(why.code, str(why))
+        except (OSError, ValueError) as why:
+            return self.send_error(500, str(why))
+        self._send(json.dumps({"ok": True}), "application/json")
+
     def _desk_rung(self, body):
         """The page played the desk's daily ring: it is spent until tomorrow."""
         if not deskring.mark_rung():
@@ -740,6 +754,16 @@ class Handler(BaseHTTPRequestHandler):
             if data is None:
                 return self.send_error(404, "no such Paste")
             self._send(data.decode("utf-8", "replace"), "text/plain; charset=utf-8")
+        elif self.path.split("?", 1)[0] == "/api/desk_items":
+            # The Merges table: one row per item on the merge desk page, in page order.
+            if not self._local_get():
+                log.event("refused", path="/api/desk_items", origin=self.headers.get("Origin"))
+                return self.send_error(403, "not a local request")
+            try:
+                data = desktable.rows()
+            except (OSError, ValueError) as why:
+                return self.send_error(500, str(why))
+            self._send(json.dumps({"items": data}), "application/json")
         elif self.path.split("?", 1)[0] == "/api/signs":
             # What each running track's workers are doing now, for claude-boss's ticket
             # graph in the goal page: {"signs": {track: {name: busy|watching|reviewing}}}.

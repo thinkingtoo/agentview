@@ -8,6 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -120,6 +121,35 @@ class Poll(unittest.TestCase):
             with urllib.request.urlopen(req, timeout=10) as r:
                 self.assertEqual(json.load(r), {"ok": True, "url": "http://127.0.0.1:1/x"})
         page.assert_called_once_with()
+
+    def test_the_merges_table_reads_its_rows_only_with_the_fleet_header(self):
+        base = f"http://127.0.0.1:{self.httpd.server_address[1]}/api/desk_items"
+        with mock.patch("desktable.rows", return_value=[{"key": "o/r#1"}]):
+            with urllib.request.urlopen(urllib.request.Request(base, headers={"X-Fleet": "1"}), timeout=10) as r:
+                self.assertEqual(json.load(r), {"items": [{"key": "o/r#1"}]})
+            with self.assertRaises(urllib.error.HTTPError) as got:
+                urllib.request.urlopen(base, timeout=10)
+            self.assertEqual(got.exception.code, 403)
+
+    def _tick(self, body):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.httpd.server_address[1]}/api/desk_tick", method="POST",
+            data=json.dumps(body).encode(), headers={"X-Fleet": "1"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.load(r)
+
+    def test_the_merges_table_button_ticks_and_a_refusal_keeps_its_code(self):
+        import desktable
+        with mock.patch("desktable.tick") as tick:
+            self.assertEqual(self._tick({"key": "o/r#1", "pinned": "a" * 40}), {"ok": True})
+        tick.assert_called_once_with("o/r#1", "a" * 40)
+        with mock.patch("desktable.tick", side_effect=desktable.Refused(409, "handed over again")):
+            with self.assertRaises(urllib.error.HTTPError) as got:
+                self._tick({"key": "o/r#1", "pinned": "b" * 40})
+        self.assertEqual(got.exception.code, 409)
+        with self.assertRaises(urllib.error.HTTPError) as got:
+            self._tick({"key": 1})
+        self.assertEqual(got.exception.code, 400)
 
 
 if __name__ == "__main__":
