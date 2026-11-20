@@ -381,6 +381,11 @@
 #desktable .res { color:var(--dim); }
 #desktable .res.bad { color:var(--bad); }
 #desktable .none { color:var(--dim); padding:10px 12px; }
+#desktable .chips { display:flex; flex-wrap:wrap; gap:6px; padding:0 6px 8px; }
+#desktable .chips button { padding:2px 9px; border-radius:9px; font-size:12px; opacity:.45; }
+#desktable .chips button.on { opacity:1; }
+#desktable button.discard { margin-left:6px; padding:3px 8px; white-space:nowrap; color:var(--dim); }
+#desktable button.discard.sure { color:var(--bad); border-color:var(--bad); }
 .gone { display:flex; align-items:flex-start; gap:6px; border-radius:8px; }
 .gone:hover { background:color-mix(in srgb,var(--accent) 8%,transparent); }
 .gone .back { flex:1; min-width:0; text-align:left; background:none; border:0; padding:7px 10px; }
@@ -2148,7 +2153,12 @@ document.getElementById("sound").addEventListener("click", async () => {
 });
 
 // The Merges button opens the desk as a sortable table; its "open the page" link opens the sheaf page.
-const DESK = { rows: [], sort: "handed_at", down: true, err: "", pressing: new Map() };
+// A chip hides or shows one kind of row; done rows (merged, installed) start hidden. `sure` is the row whose
+// Discard was clicked once: the second click closes the PR, deletes its branch and takes the item off the page.
+const DESK = { rows: [], sort: "handed_at", down: true, err: "", pressing: new Map(), hide: new Set(["done"]), sure: "" };
+const DESK_CHIPS = [["merge", "merge"], ["wait", "wait"], ["don't merge", "don't merge"], ["none", "no verdict"], ["done", "done"]];
+const deskChip = r => r.state === "done" ? "done" : r.verdict;
+try { const kept = JSON.parse(localStorage.getItem("deskHide")); if (Array.isArray(kept)) DESK.hide = new Set(kept); } catch (e) {}
 const DESK_COLS = [["state", "Action"], ["verdict", "Recommendation"], ["number", "#"], ["name", "Name"], ["handed_at", "Handed over"]];
 const DESK_RANK = { merge: 0, wait: 1, none: 2, "don't merge": 3 };
 async function deskLoad() {
@@ -2170,7 +2180,7 @@ function paintDesk() {
   const box = document.getElementById("desktable");
   if (box.hidden) return;
   box.style.top = document.querySelector("header").getBoundingClientRect().bottom + 6 + "px";
-  const rows = [...DESK.rows].sort((a, b) => {
+  const rows = DESK.rows.filter(r => !DESK.hide.has(deskChip(r))).sort((a, b) => {
     const x = deskKey(a, DESK.sort), y = deskKey(b, DESK.sort);
     return (x < y ? -1 : x > y ? 1 : 0) * (DESK.down ? -1 : 1);
   });
@@ -2183,7 +2193,12 @@ function paintDesk() {
     if (r.state === "done") action = `<span class="res">${esc(r.result)}</span>`;
     else if (r.state === "pressing" || failed === "pressing") action = `<span class="res">pressing…</span>`;
     else if (!r.pinned) action = `<button class="press" disabled title="no record of this hand-over, so the desk would refuse it; use the page">${esc(r.kind)}</button>`;
-    else action = `<button class="press" data-key="${esc(r.key)}" data-pinned="${esc(r.pinned)}">${esc(r.kind)}</button>`;
+    else {
+      const sure = DESK.sure === r.key, what = r.key.startsWith("install:") ? "remove it" : "close the PR";
+      action = `<button class="press" data-key="${esc(r.key)}" data-pinned="${esc(r.pinned)}">${esc(r.kind)}</button>`
+        + `<button class="discard${sure ? " sure" : ""}" data-key="${esc(r.key)}" data-pinned="${esc(r.pinned)}"
+            title="throw it away: close the PR on GitHub, delete its branch and take it off the desk">${sure ? `Sure? ${what}` : "Discard"}</button>`;
+    }
     const note = failed && failed !== "pressing" ? failed : r.state === "refused" ? r.result : "";
     if (note) action += `<div class="res bad">${esc(note)}</div>`;
     const cls = { merge: "merge", "don't merge": "no", wait: "wait" }[r.verdict] || "none";
@@ -2195,9 +2210,13 @@ function paintDesk() {
       <td class="nm">${r.repo ? `<span class="res">${esc(r.repo)}</span> ` : ""}${esc(r.name || r.key)}</td>
       <td class="when">${esc(r.handed)}</td></tr>`;
   }).join("");
-  box.innerHTML = `<div class="bar"><span>${DESK.rows.length} items · ${merge} to merge${DESK.err ? ` · <span class="res bad">${esc(DESK.err)}</span>` : ""}</span>
-      <a data-open-page title="open the merge desk page in sheaf">open the page</a></div>`
-    + (DESK.rows.length ? `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` : `<div class="none">nothing on the desk</div>`);
+  const chips = DESK_CHIPS.map(([k, label]) => {
+    const n = DESK.rows.filter(r => deskChip(r) === k).length;
+    return `<button data-chip="${esc(k)}" class="${DESK.hide.has(k) ? "" : "on"}" title="${DESK.hide.has(k) ? "show" : "hide"} these">${label} ${n}</button>`;
+  }).join("");
+  box.innerHTML = `<div class="bar"><span>${rows.length} of ${DESK.rows.length} shown · ${merge} to merge${DESK.err ? ` · <span class="res bad">${esc(DESK.err)}</span>` : ""}</span>
+      <a data-open-page title="open the merge desk page in sheaf">open the page</a></div><div class="chips">${chips}</div>`
+    + (rows.length ? `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>` : `<div class="none">nothing on the desk</div>`);
 }
 document.getElementById("count").addEventListener("click", ev => {
   if (!ev.target.closest("button[data-merges]")) return;
@@ -2223,6 +2242,29 @@ document.getElementById("desktable").addEventListener("click", async ev => {
       DESK.err = "the desk page could not be opened"; paintDesk();
     }
     return;
+  }
+  const chip = ev.target.closest("button[data-chip]");
+  if (chip) {
+    const k = chip.dataset.chip;
+    DESK.hide.has(k) ? DESK.hide.delete(k) : DESK.hide.add(k);
+    try { localStorage.setItem("deskHide", JSON.stringify([...DESK.hide])); } catch (e) {}
+    return paintDesk();
+  }
+  const d = ev.target.closest("button.discard[data-key]");
+  if (d) {
+    const key = d.dataset.key;
+    if (DESK.sure !== key) {
+      DESK.sure = key; paintDesk();
+      return setTimeout(() => { if (DESK.sure === key) { DESK.sure = ""; paintDesk(); } }, 6000);
+    }
+    DESK.sure = ""; DESK.pressing.set(key, "pressing"); paintDesk();
+    try {
+      const r = await fetch("/api/desk_discard", { method: "POST", headers: { "Content-Type": "application/json", "X-Fleet": "1" },
+        body: JSON.stringify({ key, pinned: d.dataset.pinned }) });
+      if (!r.ok) throw new Error((await r.text()).match(/<p>Message: (.*?)<\/p>/)?.[1] || `error ${r.status}`);
+      DESK.pressing.delete(key);
+    } catch (e) { DESK.pressing.set(key, e.message); }
+    return deskLoad();
   }
   const b = ev.target.closest("button.press[data-key]");
   if (!b) return;

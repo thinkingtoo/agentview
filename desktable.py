@@ -4,11 +4,17 @@ The page stays the one place a press is decided. `rows()` reads it through `desk
 writes the same `[x]` the person would type on the sheaf page, under the desk's own lock, and the watcher
 presses it on its next poll. A tick is refused when the item is not on the page once, is already ticked,
 or was handed over again at another commit since the table read it.
+
+`discard()` throws an item away: a PR is closed on GitHub with its branch deleted, and the item leaves the
+page. It is for the work nobody will merge, a "don't merge" on a retired device; GitHub keeps the closed PR,
+and its page offers to restore the branch.
 """
 import re
 
+import desk
 import deskfile
 import deskring
+import deskwatch
 
 VERDICT = re.compile(r"^  - Recommendation: (merge|don't merge|wait|found by the scan, no recommendation yet)\b\.?[ \t]*(.*)$", re.M)
 DONE = re.compile(r"^  - (?:Already merged|Merged|Already installed|Installed)\b.*$", re.M)
@@ -68,3 +74,36 @@ def tick(key, pinned, file=None):
         _, start, _ = spans[0]
         return text[:start + 3] + "x" + text[start + 4:]
     deskfile.edit(change, file)
+
+
+def _check(key, pinned, file=None):
+    """The item `key` as the page has it now, refused as `tick` refuses it."""
+    found = [i for i in deskfile.items(file) if deskfile.same_key(i.key, key)]
+    if not found:
+        raise Refused(404, f"{key} is no longer on the desk")
+    if len(found) > 1:
+        raise Refused(409, f"{key} is on the desk twice; fix the page first")
+    if found[0].ticked:
+        raise Refused(409, f"{key} is ticked: the watcher is pressing it")
+    if found[0].pinned != pinned:
+        raise Refused(409, f"{key} was handed over again since this table was read; reload it")
+    return found[0]
+
+
+def discard(key, pinned, gh=deskwatch.gh, file=None):
+    """Close the PR of item `key` (branch deleted) unless GitHub has it closed already, then take the item off the page."""
+    _check(key, pinned, file)
+    if not key.startswith("install:"):
+        repo, _, n = key.partition("#")
+        code, out = gh("pr", "view", n, "-R", repo, "--json", "state", "-q", ".state")
+        if code:
+            raise Refused(502, f"GitHub could not be asked about {key}: {desk.flatten(out, 160)}")
+        if out == "OPEN":
+            code, out = gh("pr", "close", n, "-R", repo, "--delete-branch",
+                           "--comment", "Discarded from the merge desk: not to be merged.")
+            if code:
+                raise Refused(502, f"GitHub did not close {key}: {desk.flatten(out, 160)}")
+    with deskfile.locked(file):
+        _check(key, pinned, file)
+        deskfile.drop_item(key, file)
+        desk.log("withdrawn", key, discarded=True)

@@ -414,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
 
     ROUTES = ("jump", "seen", "name", "line", "assign", "pin", "fold", "merge", "chime", "restore",
               "snapshot", "revive", "dismiss", "reopen", "ticket", "context", "notes", "keep",
-              "paste_copied", "paste_done", "desk_page", "desk_rung", "desk_tick", "remote")
+              "paste_copied", "paste_done", "desk_page", "desk_rung", "desk_tick", "desk_discard", "remote")
 
     def _desk_post(self):
         """A POST the desk relay answers (the phone's press): the Host and Origin are judged here, the way
@@ -623,6 +623,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(400, "expected {key, pinned}")
         try:
             desktable.tick(key, pinned)
+        except desktable.Refused as why:
+            return self.send_error(why.code, str(why))
+        except (OSError, ValueError) as why:
+            return self.send_error(500, str(why))
+        self._send(json.dumps({"ok": True}), "application/json")
+
+    def _desk_discard(self, body):
+        key, pinned = body.get("key"), body.get("pinned")
+        if not isinstance(key, str) or not isinstance(pinned, str):
+            return self.send_error(400, "expected {key, pinned}")
+        try:
+            desktable.discard(key, pinned)
         except desktable.Refused as why:
             return self.send_error(why.code, str(why))
         except (OSError, ValueError) as why:

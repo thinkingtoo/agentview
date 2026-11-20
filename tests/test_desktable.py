@@ -112,5 +112,57 @@ class Tick(Base):
         self.assertEqual(got.exception.code, 409)
 
 
+class Discard(Base):
+    def gh(self, state="OPEN", close=(0, "")):
+        calls = []
+
+        def fake(*args):
+            calls.append(args)
+            return (0, state) if args[:2] == ("pr", "view") else close
+        return calls, fake
+
+    def test_an_open_pr_is_closed_with_its_branch_and_leaves_the_page(self):
+        self.hand(1)
+        self.hand(2)
+        calls, gh = self.gh()
+        desktable.discard("sweatshop-ai/sheaf#1", SHA, gh=gh)
+        self.assertEqual([c[:2] for c in calls], [("pr", "view"), ("pr", "close")])
+        self.assertIn("--delete-branch", calls[1])
+        self.assertEqual([i.key for i in deskfile.items()], ["sweatshop-ai/sheaf#2"])
+
+    def test_a_pr_github_has_closed_already_only_leaves_the_page(self):
+        self.hand(1)
+        calls, gh = self.gh(state="MERGED")
+        desktable.discard("sweatshop-ai/sheaf#1", SHA, gh=gh)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(deskfile.items(), [])
+
+    def test_a_close_github_refuses_keeps_the_item(self):
+        self.hand(1)
+        _, gh = self.gh(close=(1, "HTTP 403"))
+        with self.assertRaises(desktable.Refused) as got:
+            desktable.discard("sweatshop-ai/sheaf#1", SHA, gh=gh)
+        self.assertEqual(got.exception.code, 502)
+        self.assertEqual(len(deskfile.items()), 1)
+
+    def test_a_ticked_or_rehanded_item_is_not_discarded_and_github_is_not_asked(self):
+        self.hand(1)
+        self.hand(2)
+        desktable.tick("sweatshop-ai/sheaf#2", SHA)
+        calls, gh = self.gh()
+        for key, pinned in (("sweatshop-ai/sheaf#1", "b" * 40), ("sweatshop-ai/sheaf#2", SHA)):
+            with self.assertRaises(desktable.Refused) as got:
+                desktable.discard(key, pinned, gh=gh)
+            self.assertEqual(got.exception.code, 409)
+        self.assertEqual(calls, [])
+        self.assertEqual(len(deskfile.items()), 2)
+
+    def test_a_gone_item_is_404(self):
+        _, gh = self.gh()
+        with self.assertRaises(desktable.Refused) as got:
+            desktable.discard("sweatshop-ai/sheaf#9", SHA, gh=gh)
+        self.assertEqual(got.exception.code, 404)
+
+
 if __name__ == "__main__":
     unittest.main()

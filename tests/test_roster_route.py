@@ -131,12 +131,22 @@ class Poll(unittest.TestCase):
                 urllib.request.urlopen(base, timeout=10)
             self.assertEqual(got.exception.code, 403)
 
-    def _tick(self, body):
+    def _tick(self, body, route="desk_tick"):
         req = urllib.request.Request(
-            f"http://127.0.0.1:{self.httpd.server_address[1]}/api/desk_tick", method="POST",
+            f"http://127.0.0.1:{self.httpd.server_address[1]}/api/{route}", method="POST",
             data=json.dumps(body).encode(), headers={"X-Fleet": "1"})
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.load(r)
+
+    def test_the_discard_button_reaches_desktable_and_a_refusal_keeps_its_code(self):
+        import desktable
+        with mock.patch("desktable.discard") as discard:
+            self.assertEqual(self._tick({"key": "o/r#1", "pinned": "a" * 40}, "desk_discard"), {"ok": True})
+        discard.assert_called_once_with("o/r#1", "a" * 40)
+        with mock.patch("desktable.discard", side_effect=desktable.Refused(502, "GitHub did not close")):
+            with self.assertRaises(urllib.error.HTTPError) as got:
+                self._tick({"key": "o/r#1", "pinned": "a" * 40}, "desk_discard")
+        self.assertEqual(got.exception.code, 502)
 
     def test_the_merges_table_button_ticks_and_a_refusal_keeps_its_code(self):
         import desktable
