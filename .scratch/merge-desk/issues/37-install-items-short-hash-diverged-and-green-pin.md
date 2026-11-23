@@ -10,13 +10,13 @@
 
 **Claimed by:** Emeka (session a30ee7a4), 2026-11-23
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 ## Acceptance criteria
-- [ ] red then green: a receipt with `rev=a30694be` is read as the tool at the full sha GitHub returns (gh stubbed), and an unknown short rev gives a refusal naming it
-- [ ] red then green: a diverged install gets an item that says so, and a press of it installs the pinned commit
-- [ ] red then green: with main's head ungreen and an older green commit, the item pins the green one; with no green commit in the window, no item and a log line
-- [ ] the module docstring of `deskinstall.py` says the three rules
+- [x] red then green: a receipt with `rev=a30694be` is read as the tool at the full sha GitHub returns (gh stubbed), and an unknown short rev gives a refusal naming it
+- [x] red then green: a diverged install gets an item that says so, and a press of it installs the pinned commit
+- [x] red then green: with main's head ungreen and an older green commit, the item pins the green one; with no green commit in the window, no item and a log line
+- [x] the module docstring of `deskinstall.py` says the three rules
 - [ ] only the touched test files run locally, at load < 8; agentview restarted afterwards per memory `restarting-agentview-kills-sessions`, and the live desk shows the sheaf item pinned at a green commit
 
 ## Context
@@ -25,3 +25,5 @@
 - agentview is public: noreply identity, history check before pushing (memories `agentview-is-public`, `history-check-gate-on-clean`).
 
 ## Comments
+
+- 2026-11-23, Emeka: done on branch install-37. Short revs resolve through `repos/<repo>/commits/<short>` (cached per process; an outage is said as such, not as an unknown commit). The pin is the newest green commit on main's first-parent line within 50 (one GraphQL call, 100 history nodes; more than 100 checks on a commit is not green). A diverged item is pressed only over the rev its `ready` record names. With no green commit, an item already on the page stays. Review: code-review (standards + spec) and an Opus fallback (Codex out of tokens), GO; fixes in the same push. Also fixed two dev tests left stale by 3ee417b (bottom-up presses, newest on top). Live check: see below.

@@ -89,7 +89,7 @@ GREEN_QUERY = """query($owner: String!, $name: String!, $n: Int!) {
     history(first: $n) { nodes {
       oid
       parents(first: 1) { nodes { oid } }
-      statusCheckRollup { contexts(first: 100) { nodes {
+      statusCheckRollup { contexts(first: 100) { pageInfo { hasNextPage } nodes {
         __typename ... on CheckRun { status conclusion } ... on StatusContext { state } } } }
     } }
   } } } }
@@ -124,6 +124,9 @@ def full_sha(repo, name, short):
     if (repo, short) in _resolved:
         return _resolved[(repo, short)]
     code, out = deskwatch.gh("api", f"repos/{repo}/commits/{short}", "--jq", ".sha")
+    if code and "No commit found" not in out:                 # an outage or a refused login is not an answer about the commit
+        raise NotInstalled(f"GitHub could not be asked which commit of {repo} the short commit {short} in the uv receipt "
+                           f"of {name} is: {desk.flatten(out, 120)}")
     if code or not SHA.fullmatch(out) or not out.startswith(short):
         raise NotInstalled(f"the uv receipt of {name} names the short commit {short}, which GitHub does not resolve to "
                            f"one commit of {repo}: {desk.flatten(out, 120)}")
@@ -197,9 +200,13 @@ def compare(repo, base, head):
 
 
 def node_green(node):
-    """Whether one commit of the GraphQL history has finished checks that are all good (deskscan's rule)."""
+    """Whether one commit of the GraphQL history has finished checks that are all good (deskscan's rule).
+    More checks than one page holds is not green: the ones not read could be red."""
     try:
-        return deskscan.green(node["statusCheckRollup"]["contexts"]["nodes"])
+        contexts = node["statusCheckRollup"]["contexts"]
+        if contexts.get("pageInfo", {}).get("hasNextPage") is not False:
+            return False
+        return deskscan.green(contexts["nodes"])
     except (KeyError, TypeError):
         return False
 
@@ -238,7 +245,7 @@ def plural(n):
 
 
 def item_block(tool, pin, behind, main_ahead, diverged, when):
-    title = f"installed commit {tool.rev[:7]} is not on main (history rewritten?)" if diverged \
+    title = f"installed commit {tool.rev[:7]} is not on main (history rewritten, or a branch build?)" if diverged \
         else f"{tool.repo} is {plural(behind)} behind its newest green main commit"
     lines = [
         f"- [ ] Install {tool.name}: {title}",

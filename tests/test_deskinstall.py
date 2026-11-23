@@ -56,7 +56,7 @@ if a[1] == "graphql":                                   # main's history, newest
     for i in range(hist.index(main), -1, -1):
         checks = [{{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"}}] if hist[i] in green else []
         nodes.append({{"oid": hist[i], "parents": {{"nodes": [{{"oid": hist[i - 1]}}] if i else []}},
-                      "statusCheckRollup": {{"contexts": {{"nodes": checks}}}} if checks else None}})
+                      "statusCheckRollup": {{"contexts": {{"pageInfo": {{"hasNextPage": False}}, "nodes": checks}}}} if checks else None}})
     print(json.dumps({{"data": {{"repository": {{"ref": {{"target": {{"oid": main, "history": {{"nodes": nodes}}}}}}}}}}}})); sys.exit(0)
 if a[1].endswith("/commits/main"):
     print(main); sys.exit(0)
@@ -244,6 +244,16 @@ class Receipts(Case):
         self.assertEqual(deskinstall.receipts(), [])
         self.assertEqual([e[1]["key"] for e in self.errors], ["install:sheafmd"])
 
+    def test_a_github_that_cannot_be_asked_is_not_called_an_unknown_short_rev(self):
+        self.receipt("sheafmd", OLD[:8])
+        (self.fake / "gh-down").write_text("")
+        with self.assertRaises(deskinstall.NotInstalled) as got:
+            deskinstall.read_receipt(self.tools / "sheafmd")
+        self.assertIn(f"GitHub could not be asked which commit of {REPO} the short commit {OLD[:8]}", str(got.exception))
+        self.assertNotIn("does not resolve", str(got.exception))
+        (self.fake / "gh-down").unlink()
+        self.assertEqual(deskinstall.read_receipt(self.tools / "sheafmd").rev, OLD)        # a failure is not kept
+
     def test_a_short_rev_shared_by_two_commits_is_refused(self):
         self.history([OLD, "abcdef1" + "0" * 33, "abcdef1" + "1" * 33])
         self.receipt("sheafmd", "abcdef1")
@@ -421,7 +431,7 @@ class Diverged(Case):
         it = self.found()
         self.assertEqual((it.ticked, it.pinned), (False, MAIN))
         self.assertIn("installed commit a30694b is not on main", it.block)
-        self.assertIn("history rewritten?", it.block)
+        self.assertIn("history rewritten, or a branch build?", it.block)
         self.assertIn(f"installed now: {self.GONE}", it.block)
         self.assertEqual(self.events(), ["ready"])
 
@@ -519,9 +529,12 @@ class GreenPin(Case):
         self.assertIn("main is 2 commits ahead of it", it.block)
 
     def test_the_green_rule_is_the_scan_s(self):
-        node = lambda *c: {"oid": MID, "parents": {"nodes": []}, "statusCheckRollup": {"contexts": {"nodes": list(c)}}}
+        node = lambda *c, more=False: {"oid": MID, "parents": {"nodes": []},
+                                       "statusCheckRollup": {"contexts": {"pageInfo": {"hasNextPage": more}, "nodes": list(c)}}}
         ok = {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SKIPPED"}
         self.assertTrue(deskinstall.node_green(node(ok)))
+        self.assertFalse(deskinstall.node_green(node(ok, more=True)))           # checks past the first page are not read
+        self.assertFalse(deskinstall.node_green({"oid": MID, "statusCheckRollup": {"contexts": {"nodes": [ok]}}}))
         self.assertFalse(deskinstall.node_green(node()))
         self.assertFalse(deskinstall.node_green({"oid": MID, "statusCheckRollup": None}))
         self.assertFalse(deskinstall.node_green(node(ok, {"__typename": "CheckRun", "status": "IN_PROGRESS", "conclusion": None})))
