@@ -17,7 +17,7 @@
 - [x] red then green: a diverged install gets an item that says so, and a press of it installs the pinned commit
 - [x] red then green: with main's head ungreen and an older green commit, the item pins the green one; with no green commit in the window, no item and a log line
 - [x] the module docstring of `deskinstall.py` says the three rules
-- [ ] only the touched test files run locally, at load < 8; agentview restarted afterwards per memory `restarting-agentview-kills-sessions`, and the live desk shows the sheaf item pinned at a green commit
+- [x] only the touched test files run locally, at load < 8; agentview restarted afterwards per memory `restarting-agentview-kills-sessions`, and the live desk shows the sheaf item pinned at a green commit
 
 ## Context
 - Desk page: http://127.0.0.1:27419/tiroir/.local/state/agentview/merge-desk.md; log `/home/tiroir/.local/state/agentview/merge-desk.log` (`install:sheafmd` records).
@@ -27,3 +27,4 @@
 ## Comments
 
 - 2026-11-23, Emeka: done on branch install-37. Short revs resolve through `repos/<repo>/commits/<short>` (cached per process; an outage is said as such, not as an unknown commit). The pin is the newest green commit on main's first-parent line within 50 (one GraphQL call, 100 history nodes; more than 100 checks on a commit is not green). A diverged item is pressed only over the rev its `ready` record names. With no green commit, an item already on the page stays. Review: code-review (standards + spec) and an Opus fallback (Codex out of tokens), GO; fixes in the same push. Also fixed two dev tests left stale by 3ee417b (bottom-up presses, newest on top). Live check: see below.
+- 2026-11-23 17:57, Emeka: agentview restarted (cgroup held server.py only on three reads; 17 claude processes, tmux 11748 and wezterm 15695 before and after). The first scan logged `ready install:sheafmd pinned=ad47060 installed=822a9f6`, and merge-desk.md now reads "Pinned commit: ad47060…, the newest green commit of main of sweatshop-ai/sheaf, main is 12 commits ahead of it" (main head 7df6e63 had no checks). Before the fix the scan had re-pinned main's head every 15 minutes all day. The rendered page was not read: curl gets 401 from the hub and the Chrome extension refused the tab.
