@@ -42,12 +42,34 @@ if a[0] != "api":
     sys.exit(9)
 if os.path.exists(d + "/gh-down"):
     print("HTTP 502", file=sys.stderr); sys.exit(1)
-repo_file = d + "/history-" + a[1].split("/")[1] + "_" + a[1].split("/")[2] + ".txt"
-hist = open(repo_file).read().split()
+def opt(name):
+    return next(x.split("=", 1)[1] for x in a if x.startswith(name + "="))
+slug = opt("owner") + "_" + opt("name") if a[1] == "graphql" else a[1].split("/")[1] + "_" + a[1].split("/")[2]
+hist = open(d + "/history-" + slug + ".txt").read().split()
+own = d + "/main-" + slug + ".txt"
+main = open(own).read().strip() if os.path.exists(own) else hist[-1]
+off = open(d + "/diverged.txt").read().split() if os.path.exists(d + "/diverged.txt") else []
+if a[1] == "graphql":                                   # main's history, newest first, each with its checks
+    open(d + "/graphql.log", "a").write(" ".join(a) + "\\n")
+    green = open(d + "/green-" + slug + ".txt").read().split() if os.path.exists(d + "/green-" + slug + ".txt") else hist
+    nodes = []
+    for i in range(hist.index(main), -1, -1):
+        checks = [{{"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SUCCESS"}}] if hist[i] in green else []
+        nodes.append({{"oid": hist[i], "parents": {{"nodes": [{{"oid": hist[i - 1]}}] if i else []}},
+                      "statusCheckRollup": {{"contexts": {{"nodes": checks}}}} if checks else None}})
+    print(json.dumps({{"data": {{"repository": {{"ref": {{"target": {{"oid": main, "history": {{"nodes": nodes}}}}}}}}}}}})); sys.exit(0)
 if a[1].endswith("/commits/main"):
-    own = d + "/main-" + a[1].split("/")[1] + "_" + a[1].split("/")[2] + ".txt"
-    print(open(own).read().strip() if os.path.exists(own) else hist[-1]); sys.exit(0)
+    print(main); sys.exit(0)
+if "/commits/" in a[1]:                                 # a short rev: GitHub answers 422 for none or several
+    short = a[1].split("/commits/")[1]
+    open(d + "/resolved.log", "a").write(short + "\\n")
+    got = [h for h in hist + off if h.startswith(short)]
+    if len(got) != 1:
+        print('{{"message":"No commit found for SHA: ' + short + '","status":"422"}}gh: No commit found for SHA: ' + short + " (HTTP 422)"); sys.exit(1)
+    print(got[0]); sys.exit(0)
 base, head = a[1].split("/compare/")[1].split("...")
+if base in off and head in hist:
+    print(f"diverged {{hist.index(head) + 1}}"); sys.exit(0)
 if base not in hist or head not in hist:
     print("Not Found", file=sys.stderr); sys.exit(1)
 i, j = hist.index(base), hist.index(head)
@@ -126,6 +148,7 @@ class Case(unittest.TestCase):
         deskwatch.sleep = lambda s: None
         deskwatch.log.error = lambda *a, **k: self.errors.append((a, k))
         deskwatch._warned.clear()
+        deskinstall._resolved.clear()
         deskinstall.EXES = {"uv": script(self.bin / "uv", FAKE_UV), "sheaf": script(self.bin / "sheaf", FAKE_SHEAF),
                             "systemd-run": None}
         self.addCleanup(self.restore)
@@ -185,7 +208,8 @@ class Receipts(Case):
             "other host": REAL_RECEIPT.replace("github.com", "gitlab.com"),
             "branch": REAL_RECEIPT.replace(f"rev={OLD}", "branch=main"),
             "no rev": REAL_RECEIPT.replace(f"?rev={OLD}", ""),
-            "short rev": REAL_RECEIPT.replace(OLD, OLD[:12]),
+            "six-hex rev": REAL_RECEIPT.replace(OLD, OLD[:6]),
+            "41-hex rev": REAL_RECEIPT.replace(OLD, OLD + "a"),
             "two reqs": REAL_RECEIPT.replace("requirements = [", "requirements = [{ name = \"b\", specifier = \"*\" }, "),
             "dot-dot repo": REAL_RECEIPT.replace("sweatshop-ai/sheaf?", "sweatshop-ai/..?"),
             "extra key": REAL_RECEIPT.replace('name = "sheafmd",', 'name = "sheafmd", extras = ["x"],'),
@@ -203,6 +227,54 @@ class Receipts(Case):
         (self.tools / "norceipt").mkdir()
         (self.tools / "stray-file").write_text("x")
         self.assertEqual([t.name for t in deskinstall.receipts()], ["sheafmd"])
+
+    def test_a_short_rev_is_read_as_the_full_commit_github_names(self):
+        self.receipt("sheafmd", OLD[:8])
+        got = deskinstall.read_receipt(self.tools / "sheafmd")
+        self.assertEqual((got.name, got.package, got.repo, got.rev), ("sheafmd", "sheafmd", REPO, OLD))
+        deskinstall.read_receipt(self.tools / "sheafmd")
+        self.assertEqual((self.fake / "resolved.log").read_text().split(), [OLD[:8]])     # asked once, then known
+
+    def test_a_short_rev_github_does_not_know_is_refused_by_name(self):
+        self.receipt("sheafmd", "abcdef12")
+        with self.assertRaises(deskinstall.NotInstalled) as got:
+            deskinstall.read_receipt(self.tools / "sheafmd")
+        self.assertIn("abcdef12", str(got.exception))
+        self.assertIn("No commit found", str(got.exception))
+        self.assertEqual(deskinstall.receipts(), [])
+        self.assertEqual([e[1]["key"] for e in self.errors], ["install:sheafmd"])
+
+    def test_a_short_rev_shared_by_two_commits_is_refused(self):
+        self.history([OLD, "abcdef1" + "0" * 33, "abcdef1" + "1" * 33])
+        self.receipt("sheafmd", "abcdef1")
+        with self.assertRaises(deskinstall.NotInstalled) as got:
+            deskinstall.read_receipt(self.tools / "sheafmd")
+        self.assertIn("abcdef1", str(got.exception))
+
+    def test_a_short_rev_keeps_every_other_rule(self):
+        for label, text in {"other owner": REAL_RECEIPT.replace("sweatshop-ai", "someone-else"),
+                            "extra key": REAL_RECEIPT.replace('name = "sheafmd",', 'name = "sheafmd", extras = ["x"],')}.items():
+            with self.subTest(label):
+                self.receipt("odd", OLD, text.replace(OLD, OLD[:8]))
+                self.assertIsNone(deskinstall.read_receipt(self.tools / "odd"))
+        self.assertFalse((self.fake / "resolved.log").exists())          # an odd shape never reaches GitHub
+
+    def test_a_press_with_an_unknown_short_rev_is_refused_naming_it(self):
+        self.found()
+        self.tick_box()
+        self.receipt("sheafmd", "abcdef12")
+        deskwatch.tick()
+        self.assertIn("Not installed: the uv receipt of sheafmd names the short commit abcdef12", self.item().block)
+        self.assertNotIn("known shape", self.item().block)
+        self.assertEqual(self.calls("uv.json"), [])
+
+    def test_a_press_over_a_short_rev_installs(self):
+        self.receipt("sheafmd", OLD[:8])
+        self.found()
+        self.tick_box()
+        deskwatch.tick()
+        self.assertEqual(self.events()[-1], "installed")
+        self.assertEqual(self.rev(), MAIN)
 
     def test_odd_receipts_never_become_items(self):
         self.receipt("odd", OLD, '[tool]\nrequirements = [{ name = "a", path = "/x/a.whl" }]\n')
@@ -223,7 +295,7 @@ class Scan(Case):
         self.assertEqual((it.key, it.ticked, it.pinned), ("install:sheafmd", False, MAIN))
         self.assertIn(OLD, it.block)
         self.assertIn(MAIN, it.block)
-        self.assertIn("2 commits behind main", it.block)
+        self.assertIn("2 commits behind its newest green main commit", it.block)
         text = deskfile.path().read_text()
         self.assertLess(text.index(deskfile.SECTIONS["install"]), text.index("- [ ] Install sheafmd"))
         self.assertEqual(len(deskfile.items()), 1)
@@ -334,6 +406,118 @@ class Scan(Case):
         deskinstall.scan_if_due()
         self.assertEqual(len(deskfile.items()), 1)              # not due again yet
         deskinstall._last_scan[0] = 0.0
+
+
+class Diverged(Case):
+    """An install whose commit is not on main any more (sheaf's history rewrite of 2026-11-20)."""
+    GONE = "a30694be" + "e" * 32
+
+    def setUp(self):
+        super().setUp()
+        (self.fake / "diverged.txt").write_text(self.GONE)
+        self.receipt("sheafmd", self.GONE)
+
+    def test_a_diverged_install_gets_an_item_that_says_so(self):
+        it = self.found()
+        self.assertEqual((it.ticked, it.pinned), (False, MAIN))
+        self.assertIn("installed commit a30694b is not on main", it.block)
+        self.assertIn("history rewritten?", it.block)
+        self.assertIn(f"installed now: {self.GONE}", it.block)
+        self.assertEqual(self.events(), ["ready"])
+
+    def test_a_press_of_it_installs_the_pinned_commit(self):
+        self.found()
+        self.tick_box()
+        deskwatch.tick()
+        self.assertEqual(self.events()[-1], "installed")
+        self.assertEqual(self.rev(), MAIN)
+        self.assertEqual(self.calls("uv.json")[0]["argv"][4], f"git+https://github.com/{REPO}@{MAIN}")
+
+    def test_a_short_diverged_rev_is_an_item_too(self):
+        self.receipt("sheafmd", self.GONE[:8])
+        self.assertIn("installed commit a30694b is not on main", self.found().block)
+
+    def test_a_diverged_install_that_is_not_the_one_handed_over_is_refused(self):
+        self.found()
+        self.tick_box()
+        other = "b" * 40
+        (self.fake / "diverged.txt").write_text(self.GONE + " " + other)
+        self.receipt("sheafmd", other)                          # installed by hand from some branch since
+        deskwatch.tick()
+        self.assertIn("Not installed: the installed commit changed since the hand-over", self.item().block)
+        self.assertEqual(self.calls("uv.json"), [])
+
+    def test_a_tool_ahead_of_main_still_has_no_item(self):
+        self.history([OLD, MID, MAIN, NEWER])
+        (self.fake / "main-sweatshop-ai_sheaf.txt").write_text(MAIN)
+        self.receipt("sheafmd", NEWER)
+        deskinstall.scan()
+        self.assertEqual(deskfile.items(), [])
+
+
+class GreenPin(Case):
+    def green(self, *shas):
+        (self.fake / "green-sweatshop-ai_sheaf.txt").write_text("\n".join(shas))
+
+    def test_with_main_s_head_not_green_the_newest_green_commit_is_pinned(self):
+        self.green(OLD, MID)
+        it = self.found()
+        self.assertEqual(it.pinned, MID)
+        self.assertIn("newest green commit of main", it.block)
+        self.assertIn("main is 1 commit ahead of it", it.block)
+        self.assertIn("1 commit behind", it.block)
+
+    def test_a_green_head_says_it_is_main(self):
+        it = self.found()
+        self.assertEqual(it.pinned, MAIN)
+        self.assertIn("newest green commit of main", it.block)
+        self.assertNotIn("ahead of it", it.block)
+
+    def test_with_no_green_commit_in_the_window_there_is_no_item_and_a_log_line(self):
+        self.green()
+        deskinstall.scan()
+        self.assertEqual(deskfile.items(), [])
+        self.assertEqual(len(self.errors), 1)
+        self.assertIn("no green commit", str(self.errors[0][0][1]))
+
+    def test_the_window_is_bounded(self):
+        many = [f"{i:040x}" for i in range(1, deskinstall.WINDOW + 3)]
+        self.history([OLD] + many)
+        self.green(OLD, many[0])                                # green only beyond the window
+        deskinstall.scan()
+        self.assertEqual(deskfile.items(), [])
+        self.assertIn("no green commit", str(self.errors[0][0][1]))
+        self.green(OLD, many[2])
+        self.assertEqual(self.found().pinned, many[2])
+
+    def test_an_install_at_the_green_pin_has_no_item_although_main_is_ahead(self):
+        self.green(OLD, MID)
+        self.receipt("sheafmd", MID)
+        deskinstall.scan()
+        self.assertEqual(deskfile.items(), [])
+
+    def test_an_install_newer_than_the_green_pin_is_never_taken_back(self):
+        self.green(OLD)
+        self.receipt("sheafmd", MID)
+        deskinstall.scan()
+        self.assertEqual(deskfile.items(), [])
+
+    def test_main_moving_without_a_new_green_commit_keeps_the_pin_and_says_how_far_main_is(self):
+        self.green(OLD, MID)
+        self.found()
+        self.history([OLD, MID, MAIN, NEWER])
+        it = self.found()
+        self.assertEqual(it.pinned, MID)
+        self.assertIn("main is 2 commits ahead of it", it.block)
+
+    def test_the_green_rule_is_the_scan_s(self):
+        node = lambda *c: {"oid": MID, "parents": {"nodes": []}, "statusCheckRollup": {"contexts": {"nodes": list(c)}}}
+        ok = {"__typename": "CheckRun", "status": "COMPLETED", "conclusion": "SKIPPED"}
+        self.assertTrue(deskinstall.node_green(node(ok)))
+        self.assertFalse(deskinstall.node_green(node()))
+        self.assertFalse(deskinstall.node_green({"oid": MID, "statusCheckRollup": None}))
+        self.assertFalse(deskinstall.node_green(node(ok, {"__typename": "CheckRun", "status": "IN_PROGRESS", "conclusion": None})))
+        self.assertFalse(deskinstall.node_green(node(ok, {"__typename": "StatusContext", "state": "FAILURE"})))
 
 
 class Press(Case):
@@ -615,8 +799,8 @@ class Shared(Case):
             desk.log("ready", k, pinned="a" * 40)
         self.tick_box()
         deskfile.edit(lambda t: t.replace(f"- [ ] Merge {k}:", f"- [x] Merge {k}:"))
-        deskwatch.tick()                                        # the Install section is the page's last: the merge goes first
-        self.assertEqual([o for o in self.order() if o.startswith(("uv", "gh pr"))], ["gh pr view", "uv"])
+        deskwatch.tick()                                        # presses run bottom up and the Install section is the page's last
+        self.assertEqual([o for o in self.order() if o.startswith(("uv", "gh pr"))], ["uv", "gh pr view"])
 
     def test_two_items_with_one_key_press_neither(self):
         self.found()

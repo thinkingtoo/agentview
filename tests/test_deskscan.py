@@ -1163,7 +1163,7 @@ class InstallItems(Case):
         (d / "uv-receipt.toml").write_text(self.RECEIPT.format(rev=rev))
 
     def installed_item(self, ago_h=30, pinned=MAIN):
-        block = deskinstall.item_block(deskinstall.Tool("sheafmd", "sheafmd", REPO, OLD), pinned, 3, "2026-11-12 10:00")
+        block = deskinstall.item_block(deskinstall.Tool("sheafmd", "sheafmd", REPO, OLD), pinned, 3, 0, False, "2026-11-12 10:00")
         deskfile.put_item("install:sheafmd", block, section="install")
         deskfile.edit(lambda t: deskfile.settle(t, "install:sheafmd", f"Installed as {pinned[:7]} at 10:00"))
         self.log_at("installed", "install:sheafmd", ago_h, sha=pinned)
@@ -1182,7 +1182,7 @@ class InstallItems(Case):
 
     def test_an_installed_line_added_by_the_person_to_an_item_we_never_settled_does_not_make_it_over(self):
         self.receipt(MAIN)
-        block = deskinstall.item_block(deskinstall.Tool("sheafmd", "sheafmd", REPO, OLD), MAIN, 3, "2026-11-12 10:00")
+        block = deskinstall.item_block(deskinstall.Tool("sheafmd", "sheafmd", REPO, OLD), MAIN, 3, 0, False, "2026-11-12 10:00")
         deskfile.put_item("install:sheafmd", block, section="install")
         self.log_at("installed", "install:sheafmd", 30, sha=MAIN)
         deskfile.path().write_text(self.page().rstrip("\n") + f"\n  - Installed as {MAIN[:7]} at 11:11\n")
@@ -1225,7 +1225,7 @@ class InstallItems(Case):
     def test_a_waiting_install_item_is_never_tidied(self):
         self.receipt(OLD)
         deskfile.put_item("install:sheafmd", deskinstall.item_block(
-            deskinstall.Tool("sheafmd", "sheafmd", REPO, OLD), MAIN, 3, "2026-11-12 10:00"), section="install")
+            deskinstall.Tool("sheafmd", "sheafmd", REPO, OLD), MAIN, 3, 0, False, "2026-11-12 10:00"), section="install")
         self.log_at("ready", "install:sheafmd", 500, pinned=MAIN)
         self.assertEqual(deskscan.tidy(), [])
 
