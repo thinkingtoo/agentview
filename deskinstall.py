@@ -17,8 +17,9 @@ Three rules decide the item:
    parents from the head, at most `WINDOW` commits, the first whose checks all finished well (the
    scan's rule, `deskscan.green`: at least one check, every one success, neutral or skipped). A
    commit with no checks at all (a notes-only push that `paths-ignore` keeps out of CI) is passed
-   over. With no green commit in the window there is no new item, and the scan logs it. The item
-   says how far main is ahead of the pin.
+   over. With no green commit in the window there is no new item, and the scan logs it; an item
+   already on the page stays as it is (its pin was green when it was handed over). The item says
+   how far main is ahead of the pin.
 3. **An install that left main gets an item too.** A tool behind the pin gets one; so does a tool
    whose commit GitHub calls diverged from it (a history rewrite left the install on no branch), and
    that item says the installed commit is not on main. A tool at the pin, or newer than it, gets
@@ -147,12 +148,10 @@ def read_receipt(folder):
         if set(req) - {"name", "git"} or not re.fullmatch(r"[^\s:]+", folder.name):
             return None
         desk.check_repo(f"{got.group(1)}/{got.group(2)}")                # no "." or ".." for a name
-        tool = Tool(folder.name, name, f"{got.group(1)}/{got.group(2)}", got.group(3))
     except (OSError, ValueError, KeyError, TypeError, UnicodeDecodeError, desk.Refused):
         return None
-    if len(tool.rev) < 40:
-        tool.rev = full_sha(tool.repo, tool.name, tool.rev)
-    return tool
+    repo, rev = f"{got.group(1)}/{got.group(2)}", got.group(3)
+    return Tool(folder.name, name, repo, rev if len(rev) == 40 else full_sha(repo, folder.name, rev))
 
 
 def folders():
@@ -206,7 +205,8 @@ def node_green(node):
 
 
 def green_pin(repo):
-    """(main's head, the newest green commit on main's first-parent line within WINDOW), the second None when none is green."""
+    """(main's head, the newest green commit on main's first-parent line within WINDOW or None, how many were looked at).
+    The walk also ends early where the HISTORY commits GitHub gave run out (merged branches take room)."""
     owner, name = repo.split("/")
     code, out = deskwatch.gh("api", "graphql", "-f", f"owner={owner}", "-f", f"name={name}", "-F", f"n={HISTORY}",
                              "-f", f"query={GREEN_QUERY}")
@@ -218,18 +218,19 @@ def green_pin(repo):
             raise ValueError
     except (ValueError, KeyError, TypeError):
         raise NotInstalled(f"GitHub could not be asked for {repo}'s checks on main: {desk.flatten(out, 120)}") from None
-    sha = head
-    for _ in range(WINDOW):
+    sha, looked = head, 0
+    while looked < WINDOW:
         node = nodes.get(sha)
         if not isinstance(node, dict):
             break
+        looked += 1
         if node_green(node):
-            return head, sha
+            return head, sha, looked
         try:
             sha = node["parents"]["nodes"][0]["oid"]
         except (KeyError, IndexError, TypeError):
             break
-    return head, None
+    return head, None, looked
 
 
 def plural(n):
@@ -262,9 +263,10 @@ def last(k):
 def scan_tool(tool):
     """Bring the item of one tool in line with GitHub. Raises NotInstalled when GitHub cannot be asked."""
     k = "install:" + tool.name
-    head, pin = green_pin(tool.repo)
+    head, pin, looked = green_pin(tool.repo)
     if pin is None:
-        raise NotInstalled(f"no green commit in the last {WINDOW} commits of {tool.repo}'s main (head {head[:7]}): no item")
+        raise NotInstalled(f"no green commit among the {looked} first-parent commits of {tool.repo}'s main looked at "
+                           f"(head {head[:7]}): no new item")
     status, behind = compare(tool.repo, tool.rev, pin)
     main_ahead = compare(tool.repo, pin, head)[1] if pin != head else 0
     with deskfile.locked():

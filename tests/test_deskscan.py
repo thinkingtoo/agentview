@@ -411,7 +411,7 @@ class Survives(Case):
         self.prs(REPO, pr(7), pr(8))
         self.prs(OTHER, pr(3))
         self.assertEqual(deskscan.scan([REPO, OTHER]), [f"{REPO}#8", f"{OTHER}#3"])
-        self.assertEqual(self.keys(), [f"{REPO}#8", f"{OTHER}#3"])
+        self.assertEqual(self.keys(), [f"{OTHER}#3", f"{REPO}#8"])                 # the newest hand-over is on top (3ee417b)
         self.assertEqual(self.errors[0][1].get("key"), f"{REPO}#7")
 
     def test_an_unexpected_error_on_one_repo_leaves_the_other_repos_found(self):
@@ -1167,6 +1167,17 @@ class InstallItems(Case):
         deskfile.put_item("install:sheafmd", block, section="install")
         deskfile.edit(lambda t: deskfile.settle(t, "install:sheafmd", f"Installed as {pinned[:7]} at 10:00"))
         self.log_at("installed", "install:sheafmd", ago_h, sha=pinned)
+
+    def test_an_unresolvable_short_rev_keeps_the_item_and_does_not_break_tidy(self):
+        self.receipt(MAIN[:8])
+        self.installed_item()
+        real = deskinstall.full_sha
+        def refuse(repo, name, short):
+            raise deskinstall.NotInstalled(f"the uv receipt of {name} names the short commit {short}")
+        deskinstall.full_sha = refuse
+        self.addCleanup(setattr, deskinstall, "full_sha", real)
+        self.assertEqual(deskscan.tidy(), [])
+        self.assertEqual(self.keys(), ["install:sheafmd"])
 
     def test_an_install_item_that_is_installed_and_at_its_pin_leaves(self):
         self.receipt(MAIN)

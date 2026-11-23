@@ -306,7 +306,7 @@ class Scan(Case):
         deskinstall.scan()
         self.assertEqual(deskfile.items(), [])
 
-    def test_a_tool_ahead_of_or_diverged_from_main_has_none(self):
+    def test_a_rev_github_does_not_know_is_logged_and_not_an_item(self):
         self.history([OLD, MAIN])
         self.receipt("sheafmd", NEWER)
         deskinstall.scan()
@@ -479,6 +479,14 @@ class GreenPin(Case):
         self.assertEqual(deskfile.items(), [])
         self.assertEqual(len(self.errors), 1)
         self.assertIn("no green commit", str(self.errors[0][0][1]))
+
+    def test_no_green_commit_leaves_an_item_already_there_as_it_is(self):
+        self.green(OLD, MID)
+        before = self.found()
+        self.green()
+        deskinstall.scan()
+        self.assertEqual(self.item(), before)
+        self.assertIn("no green commit among the 3 first-parent commits", str(self.errors[-1][0][1]))
 
     def test_the_window_is_bounded(self):
         many = [f"{i:040x}" for i in range(1, deskinstall.WINDOW + 3)]

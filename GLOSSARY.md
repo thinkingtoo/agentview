@@ -59,7 +59,7 @@ A comment thread whose passage is gone from its line, kept on a line of its own 
 A desk item the daily scan put there: an open pull request, green, mergeable and over a day old, that no session handed over. It says "found by the scan, no recommendation yet" and carries only what AgentView read itself. On a repo whose base branch deploys it is a Deploy item with its "What ships" lines, as a hand-over is; a PR AgentView could not read that for is not found. Its press is refused unless its repo is in `desk_found_repos` (a repo that may ship outside GitHub): the session that made the PR hands it over.
 
 **Tidy**:
-What the daily scan does to the desk after it looks for pull requests: a merged, installed or withdrawn item leaves the page a day after the log says so. An item with a comment thread that is not resolved, and an Install item still behind, stays.
+What the daily scan does to the desk after it looks for pull requests: a merged, installed or withdrawn item leaves the page a day after the log says so. An item with a comment thread that is not resolved, and an Install item still behind its pin or off main, stays.
 
 **Deploy**:
 A merge on a repository where the merge ships something, shown with what ships before it is pressed. A merge that ships nothing is a **Merge item**.
@@ -68,7 +68,7 @@ A merge on a repository where the merge ships something, shown with what ships b
 The sub-list of a Deploy item: the workflow lines of the base branch that deploy, publish or upload, the commits that go out, and, for a repository run from outside GitHub, the person's own line (`desk ready --ships`). It is read at hand-over and again just before the merge; a difference refuses the press.
 
 **Install**:
-Bringing a tool installed on this machine up to its repository's main and restarting what runs it.
+Bringing a tool installed on this machine up to the newest green commit of its repository's main (every check finished well) and restarting what runs it; also replacing an install whose commit is no longer on main.
 
 **Context line**:
 A short line under a project's name that reminds the person what the project is about.

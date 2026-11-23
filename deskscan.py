@@ -444,7 +444,10 @@ def over(it, rec, now, record):
     if ev == "merged":
         return not it.key.startswith("install:") and any(l.startswith(("  - Merged", "  - Already merged")) for l in said)
     if ev == "installed":
-        tool = deskinstall.tool_named(it.key.removeprefix("install:")) if it.key.startswith("install:") else None
+        try:
+            tool = deskinstall.tool_named(it.key.removeprefix("install:")) if it.key.startswith("install:") else None
+        except deskinstall.NotInstalled:                        # a short rev GitHub does not resolve: not proven installed
+            tool = None
         return (bool(tool) and bool(it.pinned) and tool.rev == it.pinned
                 and any(l.startswith(("  - Installed", "  - Already installed")) for l in said)
                 and not any(NOT_WELL.search(l) for l in said))      # a failed restart is news the person has not read
